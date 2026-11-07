@@ -127,7 +127,7 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880):
         if k > 0.8: center_text(d, cy - 110, "!", font(240), WHITE)
     elif kind == "graph":
         pts = [(140 + i * 100, cy + 220 - (i ** 1.6) * 22 - random.Random(i).randint(0, 40)) for i in range(9)]
-        n = max(2, int(len(pts) * a) + 1)
+        n = min(len(pts), max(2, int(len(pts) * a) + 1))
         d.line([(140, cy + 260), (W - 140, cy + 260)], fill=GREY, width=4); d.line([(140, cy - 300), (140, cy + 260)], fill=GREY, width=4)
         d.line(pts[:n], fill=GREEN if "down" not in (value or "").lower() else RED, width=14, joint="curve")
         x, y = pts[n - 1]; d.ellipse((x - 20, y - 20, x + 20, y + 20), fill=WHITE)
