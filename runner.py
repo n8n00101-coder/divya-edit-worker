@@ -79,8 +79,9 @@ async def create_job(j, wa, note):
                 if attempt:
                     raise
         size = os.path.getsize(res["path"]) / 1e6
+        print("video", res["path"], round(size, 2), "MB", res.get("duration"))
         if size > 15.5:
-            out = res["path"].replace(".mp4", "_wa.mp4")
+            out = res["path"].replace(".mp4", "_wa2.mp4")
             subprocess_run(["ffmpeg", "-y", "-loglevel", "error", "-i", res["path"], "-b:v", "1900k", "-maxrate", "2000k", "-bufsize", "4000k", "-c:a", "aac", "-b:a", "128k", out])
             res["path"] = out
         await wa.send_media(to, res["path"], "video", caption=f"🎬 {res['title']} ({int(res['duration'])}s, {res['lang']})\n\n{res.get('caption','')[:300]}")
