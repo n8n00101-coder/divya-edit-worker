@@ -389,5 +389,11 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     vf = f"vignette=PI/4.5,eq=contrast=1.06:saturation=1.08,noise=alls=7:allf=t,ass={ass}:fontsdir={FONTS}"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/raw.mp4", "-i", f"{wd}/mix.wav", "-vf", vf, "-c:v", "libx264", "-preset", "medium",
                     "-crf", "23", "-maxrate", "2300k", "-bufsize", "4600k", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", out], check=True)
+    if os.path.getsize(out) > 15_000_000:  # WhatsApp media limit is 16 MB
+        kb = max(600, int(14.2 * 8192 / total) - 140)
+        small = f"{wd}/divya_doc_wa.mp4"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", out, "-c:v", "libx264", "-preset", "medium", "-b:v", f"{kb}k",
+                        "-maxrate", f"{int(kb * 1.15)}k", "-bufsize", f"{kb * 2}k", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", small], check=True)
+        out = small
     return {"path": out, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
             "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total}
