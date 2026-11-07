@@ -12,6 +12,7 @@ os.makedirs("out", exist_ok=True); torch.set_num_threads(os.cpu_count())
 M.SUPPORTED_LANGUAGES["te"] = "Telugu"
 d = Path(snapshot_download("shankarpandala/chatterbox-telugu"))
 ve = VoiceEncoder(); ve.load_state_dict(torch.load(d/"ve.pt", map_location="cpu", weights_only=True)); ve.eval()
+T3Config.is_multilingual = property(lambda s: s.text_tokens_dict_size != 704)
 cfg = T3Config.multilingual(); cfg.text_tokens_dict_size = 2521
 t3 = T3(cfg); sd = load_file(d/"t3_mtl_te.safetensors")
 if "model" in sd: sd = sd["model"][0]
