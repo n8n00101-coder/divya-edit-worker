@@ -46,7 +46,7 @@ async def main():
         await wa.send_text(to, f"⚠️ Edit fail ayyindi: {str(e)[:300]}. Instruction konchem marchi malli try cheyyandi.")
         raise
 
-CHAT_MODELS = ["openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
+CHAT_MODELS = ["openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905", "openai/gpt-oss-20b"]
 
 
 def groq_chat(messages):
@@ -67,7 +67,7 @@ def groq_chat(messages):
 
 
 async def create_job(j, wa, note):
-    import create
+    import doc as create
     to = j["to"]
     try:
         res = None
@@ -81,9 +81,9 @@ async def create_job(j, wa, note):
         size = os.path.getsize(res["path"]) / 1e6
         if size > 15.5:
             out = res["path"].replace(".mp4", "_wa.mp4")
-            subprocess_run(["ffmpeg", "-y", "-loglevel", "error", "-i", res["path"], "-b:v", "1800k", "-c:a", "aac", out])
+            subprocess_run(["ffmpeg", "-y", "-loglevel", "error", "-i", res["path"], "-b:v", "1900k", "-maxrate", "2000k", "-bufsize", "4000k", "-c:a", "aac", "-b:a", "128k", out])
             res["path"] = out
-        await wa.send_media(to, res["path"], "video", caption=f"🎬 Ready! Topic: {res['topic']}\n\n{res['script'][:700]}")
+        await wa.send_media(to, res["path"], "video", caption=f"🎬 {res['title']} ({int(res['duration'])}s, {res['lang']})\n\n{res.get('caption','')[:300]}")
         try:
             httpx.post(f"{WORKER}/done", json={"to": to, "topic": res["topic"]}, headers={"x-runner-key": KEY}, timeout=20)
         except Exception:
