@@ -1,0 +1,23 @@
+name: youngall
+on: workflow_dispatch
+jobs:
+  yt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        spk: [S_005420, S_005303, S_017461, S_003282, S_012372, S_015007, S_004042, S_008456, S_014199, S_007811, S_006672, S_016322]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Install
+        run: |
+          pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cpu 2>&1 | tail -3
+          pip install chatterbox-tts 2>&1 | tail -5
+      - name: Generate
+        env: { PYTHONUNBUFFERED: "1", SPK: "${{ matrix.spk }}" }
+        run: python youngall.py
+      - uses: actions/upload-artifact@v4
+        with: { name: "all-${{ matrix.spk }}", path: out/ }
