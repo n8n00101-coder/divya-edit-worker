@@ -28,6 +28,8 @@ async def main():
     import whatsapp as wa, autoedit  # import after env is set (config reads env)
     to = j["to"]
     note = lambda t: wa.send_text(to, t)
+    if j.get("mode") == "create":
+        return await create_job(j, wa, note)
     try:
         src = await wa.download_media(j["media_id"], "mp4")
         res = await autoedit.auto_edit(src, j["instruction"], notify=note)
@@ -43,5 +45,57 @@ async def main():
     except Exception as e:
         await wa.send_text(to, f"⚠️ Edit fail ayyindi: {str(e)[:300]}. Instruction konchem marchi malli try cheyyandi.")
         raise
+
+CHAT_MODELS = ["openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]
+
+
+def groq_chat(messages):
+    last = ""
+    for k in [x.strip() for x in os.environ["GROQ_KEY"].split(",") if x.strip()]:
+        for m in CHAT_MODELS:
+            body = {"model": m, "messages": messages, "temperature": 0.8, "max_tokens": 2500}
+            if m.startswith("openai/gpt-oss"):
+                body["reasoning_effort"] = "low"
+            r = httpx.post("https://api.groq.com/openai/v1/chat/completions", json=body,
+                           headers={"Authorization": f"Bearer {k}"}, timeout=90)
+            if r.status_code == 200:
+                out = r.json()["choices"][0]["message"]["content"] or ""
+                if out.strip():
+                    return out
+            last = f"{m} {r.status_code}"
+    raise RuntimeError("LLM failed: " + last)
+
+
+async def create_job(j, wa, note):
+    import create
+    to = j["to"]
+    try:
+        res = None
+        for attempt in range(2):
+            try:
+                res = await create.make_video(j.get("brief", ""), groq_chat, notify=note, recent=j.get("recent", ""))
+                break
+            except (ValueError, KeyError) as e:  # bad plan JSON -> retry once
+                if attempt:
+                    raise
+        size = os.path.getsize(res["path"]) / 1e6
+        if size > 15.5:
+            out = res["path"].replace(".mp4", "_wa.mp4")
+            subprocess_run(["ffmpeg", "-y", "-loglevel", "error", "-i", res["path"], "-b:v", "1800k", "-c:a", "aac", out])
+            res["path"] = out
+        await wa.send_media(to, res["path"], "video", caption=f"🎬 Ready! Topic: {res['topic']}\n\n{res['script'][:700]}")
+        try:
+            httpx.post(f"{WORKER}/done", json={"to": to, "topic": res["topic"]}, headers={"x-runner-key": KEY}, timeout=20)
+        except Exception:
+            pass
+    except Exception as e:
+        await wa.send_text(to, f"⚠️ Video create lo problem vachindi: {str(e)[:250]}. Malli try chestha, leda topic marchi adugu.")
+        raise
+
+
+def subprocess_run(cmd):
+    import subprocess
+    subprocess.run(cmd, check=True)
+
 
 asyncio.run(main())
