@@ -1,47 +1,122 @@
 "use strict";
 const API = "https://divya.n8n00101.workers.dev/api";
+const APP_URL = "https://divya-app.n8n00101.workers.dev";
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
-const S = { token: store.get("token", ""), number: store.get("number", ""), lang: store.get("lang", "te"), voice: store.get("voice", true), theme: store.get("theme", "auto") };
+const S = { token: store.get("token", ""), number: store.get("number", ""), lang: store.get("lang", "te"), voice: store.get("voice", true), vf: store.get("vf", false), theme: store.get("theme", "auto"), wake: store.get("wake", false), consent: store.get("consent", false) };
+const isAndroid = /android/i.test(navigator.userAgent), isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata"; } catch { return "Asia/Kolkata"; } })();
 
+/* ---------- text ---------- */
 const T = {
-  te: { loginSub: "Nee WhatsApp number ivvu. Code WhatsApp ki vasthundi.", getCode: "Code pampu", verify: "Login", codeHint: "Code raakapothe WhatsApp lo Divya ki \"login\" ani pampu.", changeNum: "Number marchu", codeSentTo: n => `+${n} ki WhatsApp lo code pampa.`,
-    online: "Online", thinking: "Typing…", listening: "Vintunna…", releaseToSend: "Vadilithe pamputha", typeMsg: "Message…", holdMic: "Mic ni press chesi pattuko, matladu, vadilai.",
-    emptyTitle: "Hi, nenu Divya", emptySub: "Chat cheyyi, matladu, leda video create cheyyamanu.", s1: "Ee roju em cheddam?", s2: "Oka video idea cheppu", s3: "Nuvvu em cheyagalavu?",
-    createTitle: "Create", topicPh: "Topic (khaali ga unte nene select chestha)", voiceLang: "Voice language", voice: "Voice", female: "Female", male: "Male", length: "Length", createBtn: "Video create cheyyi", createNote: "Video ready ayyaka WhatsApp ki vasthundi.",
+  te: {
+    skip: "Content ki vellu", numLabel: "WhatsApp number", codeLabel: "6 ankela code",
+    loginSub: "Nee WhatsApp number ivvu. Code WhatsApp ki vasthundi.", getCode: "Code pampu", verify: "Login", codeHint: "Code raakapothe WhatsApp lo Divya ki \"login\" ani pampu.", changeNum: "Number marchu", codeSentTo: n => `+${n} ki WhatsApp lo code pampa.`, waitCode: "Code already pampa. WhatsApp chudu.",
+    openMenu: "Menu open cheyyi", closeMenu: "Menu close cheyyi", menu: "Main menu", heyDivya: "Hey Divya — matladu", quickActions: "Shortcuts",
+    sHome: "Home", sChat: "Chat", sCreate: "Video create", sVoice: "Voice assistant", sConnect: "Accounts connect", sSetup: "Server & API setup", sPlan: "Subscription", sDownload: "App download", sSettings: "Settings", logout: "Logout",
+    gChat: "Chat", gCreate: "Video", gVoice: "Voice", gConnect: "Connect", gSetup: "Server setup", gPlan: "Plan", gDownload: "Download", gSettings: "Settings",
+    screen: n => `${n} screen`,
+    hello: h => h < 12 ? "నమస్కారం, good morning" : h < 17 ? "నమస్కారం, good afternoon" : "నమస్కారం, good evening", greetSub: "Ee roju em cheddam?", heySub: "Tap chesi matladu: call, WhatsApp, open, songs, reminders",
+    noJob: "Video emi ledu", noJobSub: "Create lo kotha video start cheyyi.",
+    online: "Online", thinking: "Typing…", listening: "Vintunna…", releaseToSend: "Vadilithe pamputha", typeMsg: "Message…", holdMic: "Mic ni press chesi pattuko, matladu, vadilai.", holdToTalk: "Press chesi pattukoni matladu, leda message pampu", attachImage: "Image pampu",
+    emptyTitle: "Hi, nenu Divya", emptySub: "Chat cheyyi, matladu, leda pani cheppu.", s1: "YouTube open cheyyi", s2: "Ippudu time entha?", s3: "Nuvvu em cheyagalavu?",
+    topicLabel: "Topic", topicPh: "Topic (khaali ga unte nene select chestha)", voiceLang: "Voice language", voice: "Voice", female: "Female", male: "Male", length: "Length", createBtn: "Video create cheyyi", createNote: "Video ready ayyaka WhatsApp ki vasthundi. Videos Pro feature.",
     jobRun: "Video tayaru avuthondi", jobRunSub: "Konchem time paduthundi. Ready ayyaka WhatsApp lo pampistha.", jobDone: "Last video ready", jobDoneSub: "WhatsApp chudu.", jobFail: "Last video fail ayyindi", jobFailSub: "Malli try cheyyi.", started: "Start chesa! WhatsApp lo vasthundi.",
-    connectTitle: "Connect", connectNote: "Login page browser lo open avuthundi. Connect ayyaka ikkadiki tirigi raa.", connect: "Connect", connectedP: "Connected", soon: "Tvaralo", reconnect: "Malli",
-    settingsTitle: "Settings", language: "Language", voiceReplies: "Voice replies", voiceRepliesSub: "Mic lo adigithe Divya gattiga reply chestundi", theme: "Theme", auto: "Auto", light: "Light", dark: "Dark", connected: "Connected accounts", install: "App install cheyyi", logout: "Logout",
-    tChat: "Chat", tCreate: "Create", tConnect: "Connect", tSettings: "Settings", netErr: "Network problem. Malli try cheyyi.", visionOff: "Image", micDenied: "Mic permission ivvu (browser settings lo).", noRec: "Ee browser lo voice record avvadu.", loggedIn: n => `+${n} tho login`, waitCode: "Code already pampa. WhatsApp chudu.",
-    iosInstall: "iPhone/iPad: Safari lo Share (□↑) nokki \"Add to Home Screen\" select cheyyi.", genericInstall: "Browser menu (⋮) lo \"Install app\" leda \"Add to Home screen\" nokku." },
-  en: { loginSub: "Enter your WhatsApp number. The code comes on WhatsApp.", getCode: "Send code", verify: "Log in", codeHint: "No code? Send \"login\" to Divya on WhatsApp.", changeNum: "Change number", codeSentTo: n => `Code sent on WhatsApp to +${n}.`,
-    online: "Online", thinking: "Typing…", listening: "Listening…", releaseToSend: "Release to send", typeMsg: "Message…", holdMic: "Press and hold the mic, speak, then let go.",
-    emptyTitle: "Hi, I'm Divya", emptySub: "Chat, talk, or ask me to make a video.", s1: "What should we do today?", s2: "Give me a video idea", s3: "What can you do?",
-    createTitle: "Create", topicPh: "Topic (leave empty and I'll pick one)", voiceLang: "Voice language", voice: "Voice", female: "Female", male: "Male", length: "Length", createBtn: "Create video", createNote: "The video arrives on WhatsApp when it's ready.",
+    tapToTalk: "Tap chesi matladu", vIdle: "Tap chesi matladu", vWake: "\"Hey Divya\" kosam vintunna…", vListen: "Vintunna… cheppu", vThink: "Alochistunna…", vSpeak: "Cheptunna…", vNoSR: "Ee browser lo always-listening ledu. Orb ni press chesi pattukoni matladu.",
+    wakeSub: "App screen meeda open unnantha sepu vintundi", freeTitle: "Free:", freeList: "calls, WhatsApp message, apps/sites open, songs, reminders, time, weather, chinna questions.", proTitle: "Pro:", proList: "videos, multi-step agent pani, long research, account automation.",
+    voiceHonest: "Divya app open ga, screen meeda unnappude vintundi (web app background lo vinadu). Call/WhatsApp silent ga pampadu: dialer leda WhatsApp ni anni fill chesi open chestundi, nuvvu Call/Send nokkali. Voice recognition browser service (Chrome lo Google) dwara jarugutundi.",
+    callBtn: n => `Call ${n}`, waBtn: "WhatsApp open cheyyi", openBtn: n => `${n} open cheyyi`, playBtn: "YouTube lo vinu", calBtn: "Google Calendar lo add cheyyi", subBtn: "Plans chudu", pickContact: "Contacts nunchi select", typeNumber: "Number type cheyyi",
+    noNumber: n => `${n} number naa daggara ledu. "save ${n} 98xxxxxxxx" ani cheppu, leda contacts nunchi select cheyyi.`, askNumber: n => `${n} phone number?`, saved: (n, x) => `${n} number save chesa (+${x}). Ee phone lo matrame untundi.`,
+    remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
+    connectNote: "Login page browser lo open avuthundi. Connect ayyaka ikkadiki tirigi raa.", connect: "Connect", connectedP: "Connected", soon: "Tvaralo", 
+    setupIntro: "Divya nee sontha backend ni NEE accounts lo set chestundi — nee permission tharvathe. Ippudu: nee email tho login, API keys (free) add cheyyi. Keys encrypt chesi save avthayi, nee requests ki matrame vaadutham.",
+    googleRow: "Continue with Google", googleSub: "Nee email ni setup ki vaadutham", continueGoogle: "Continue",
+    consent: "Naa keys ni Divya encrypt chesi save chesi, naa requests kosam matrame vaadadaniki permission istunna.", guideBtn: "🔊 Voice tho step-by-step setup",
+    needConsent: "Mundu permission box tick cheyyi.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Ayyindi",
+    stepNot: "Inka ledu", stepOk: w => `Connected${w ? " · " + w : ""}`, stepFail: "Test fail", oneTap: "One-tap connect", openCreate: "Open & key create", pasteKey: "Key ikkada paste cheyyi", paste: "Paste", testSave: "Test & save", test: "Test", remove: "Remove", oauthSoon: "OAuth login tvaralo; ippudu token paste cheyyi.",
+    foundKey: (n, l) => `${n} key dorikindi (…${l}). Save cheyyana?`, keySaved: n => `${n} key save ayyindi, test pass.`, keyBad: n => `Idi ${n} key laaga ledu.`,
+    guideStep: (n, d) => `${n} setup. ${d} Nenu page open chestha. Nee email tho login avvu, key create chesi copy cheyyi, tarvatha Divya ki tirigi raa.`, guideReturn: "Key copy chesava? Clipboard nunchi chustunna.", guidePaste: "Key ni box lo paste chesi Test & save nokku.", guideDone: "Anni steps ayyayi. Super!", guideNextQ: n => `Next: ${n}. Continue cheyyana?`,
+    serverTitle: "Nee sontha server:", serverText: "Cloudflare token tho Divya nee account lo nee Worker deploy chestundi — tvaralo (prathi sari nee OK tho).", noPasswords: "Divya passwords save cheyyadu, accounts silent ga create cheyyadu, captchas bypass cheyyadu. Prathi provider lo login nuvve chestav.",
+    d_openrouter: "Free AI models tho brain (backup).", d_groq: "Fast brain + voice-to-text.", d_gemini: "Images/screenshots chadavadaniki.", d_cloudflare: "Nee sontha server (Worker) kosam.", d_github: "Video machine (Actions) kosam.", d_huggingface: "AI models/voices kosam.",
+    planNow: (p, u, l) => `Nee plan: ${p === "premium" ? "Premium (owner/friend access)" : "Free"}. Ee roju videos: ${l === null ? `${u} (limit ledu)` : `${u}/${l}`}.`,
+    freePlan: "Free", f1: "Voice commands: call, WhatsApp, open apps, songs, reminders, time, weather", f2: "Chat & chinna questions", f3: "Blind users kosam voice-first mode", f4: "Nee sontha API keys vaadochu",
+    p1: "Videos create (shared server lo roju ki 1 default)", p2: "Multi-step agent pani, long research", p3: "Account automation (post/upload — nee OK tho)", priceSoon: "Price: tvaralo", comingSoon: "Tvaralo vasthundi", noPayNote: "Ippudu payments levu. Pro ready ayyaka cheptham.",
+    installNow: "App install cheyyi", installed: "Divya ee device lo already app laaga install ayyindi ✓", canInstall: "Ee browser lo one-tap install undi.", cantPrompt: "Ee browser auto install chupinchadu — kinda steps follow avvu.", notApk: "Idi browser nunchi app laaga install avuthundi (PWA). Play Store APK kaadu.",
+    and1: "Chrome lo ee page open cheyyi.", and2: "Paina \"App install cheyyi\" nokku, leda menu (⋮) → \"Install app\" / \"Add to Home screen\".", and3: "Home screen lo Divya icon vasthundi.",
+    ios1: "Safari lo ee page open cheyyi.", ios2: "Share (□↑) nokku → \"Add to Home Screen\".", ios3: "\"Add\" nokku. Home screen nunchi open cheyyi.",
+    pc1: "Chrome/Edge address bar lo install icon (⊕ / monitor) nokku.", pc2: "Leda menu → \"Install Divya\" / \"Apps → Install this site as an app\".",
+    language: "Language", voiceReplies: "Voice replies", voiceRepliesSub: "Mic lo adigithe Divya gattiga reply chestundi", voiceFirst: "Voice-first mode", voiceFirstSub: "Prathi result gattiga cheptundi, answer tarvatha malli vintundi (blind users kosam)", theme: "Theme", auto: "Auto", light: "Light", dark: "Dark", connected: "Connected accounts",
+    netErr: "Network problem. Malli try cheyyi.", micDenied: "Mic permission ivvu (browser settings lo).", noRec: "Ee browser lo voice record avvadu.", loggedIn: n => `+${n} tho login`, orDone: "OpenRouter connect ayyindi ✓", orFail: "OpenRouter connect avvaledu.",
+  },
+  en: {
+    skip: "Skip to content", numLabel: "WhatsApp number", codeLabel: "6-digit code",
+    loginSub: "Enter your WhatsApp number. The code comes on WhatsApp.", getCode: "Send code", verify: "Log in", codeHint: "No code? Send \"login\" to Divya on WhatsApp.", changeNum: "Change number", codeSentTo: n => `Code sent on WhatsApp to +${n}.`, waitCode: "Code already sent. Check WhatsApp.",
+    openMenu: "Open menu", closeMenu: "Close menu", menu: "Main menu", heyDivya: "Hey Divya — talk", quickActions: "Shortcuts",
+    sHome: "Home", sChat: "Chat", sCreate: "Create video", sVoice: "Voice assistant", sConnect: "Connect accounts", sSetup: "Server & API setup", sPlan: "Subscription", sDownload: "Download app", sSettings: "Settings", logout: "Log out",
+    gChat: "Chat", gCreate: "Video", gVoice: "Voice", gConnect: "Connect", gSetup: "Server setup", gPlan: "Plan", gDownload: "Download", gSettings: "Settings",
+    screen: n => `${n} screen`,
+    hello: h => h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening", greetSub: "What shall we do today?", heySub: "Tap and speak: call, WhatsApp, open, songs, reminders",
+    noJob: "No video yet", noJobSub: "Start a new one in Create.",
+    online: "Online", thinking: "Typing…", listening: "Listening…", releaseToSend: "Release to send", typeMsg: "Message…", holdMic: "Press and hold the mic, speak, then let go.", holdToTalk: "Press and hold to talk, or send message", attachImage: "Send image",
+    emptyTitle: "Hi, I'm Divya", emptySub: "Chat, talk, or give me a task.", s1: "Open YouTube", s2: "What time is it?", s3: "What can you do?",
+    topicLabel: "Topic", topicPh: "Topic (leave empty and I'll pick one)", voiceLang: "Voice language", voice: "Voice", female: "Female", male: "Male", length: "Length", createBtn: "Create video", createNote: "The video arrives on WhatsApp when it's ready. Videos are a Pro feature.",
     jobRun: "Making your video", jobRunSub: "This takes a while. It'll arrive on WhatsApp.", jobDone: "Last video is ready", jobDoneSub: "Check WhatsApp.", jobFail: "Last video failed", jobFailSub: "Try again.", started: "Started! It'll arrive on WhatsApp.",
-    connectTitle: "Connect", connectNote: "Sign-in opens in your browser. Come back here when done.", connect: "Connect", connectedP: "Connected", soon: "Soon", reconnect: "Again",
-    settingsTitle: "Settings", language: "Language", voiceReplies: "Voice replies", voiceRepliesSub: "When you speak, Divya answers aloud", theme: "Theme", auto: "Auto", light: "Light", dark: "Dark", connected: "Connected accounts", install: "Install app", logout: "Log out",
-    tChat: "Chat", tCreate: "Create", tConnect: "Connect", tSettings: "Settings", netErr: "Network problem. Try again.", visionOff: "Image", micDenied: "Allow microphone access in browser settings.", noRec: "Voice recording isn't supported in this browser.", loggedIn: n => `Logged in as +${n}`, waitCode: "Code already sent. Check WhatsApp.",
-    iosInstall: "iPhone/iPad: in Safari tap Share (□↑), then \"Add to Home Screen\".", genericInstall: "Open the browser menu (⋮) and choose \"Install app\" or \"Add to Home screen\"." },
+    tapToTalk: "Tap to talk", vIdle: "Tap to talk", vWake: "Listening for \"Hey Divya\"…", vListen: "Listening… go ahead", vThink: "Thinking…", vSpeak: "Speaking…", vNoSR: "Always-listening isn't supported in this browser. Press and hold the orb to talk.",
+    wakeSub: "Listens only while the app is open on screen", freeTitle: "Free:", freeList: "calls, WhatsApp messages, open apps/sites, songs, reminders, time, weather, short questions.", proTitle: "Pro:", proList: "videos, multi-step agent tasks, long research, account automation.",
+    voiceHonest: "Divya listens only while the app is open on screen (a web app can't listen in the background). It can't call or send WhatsApp silently: it opens the dialer or WhatsApp with everything filled in, and you tap Call or Send. Speech recognition runs through the browser's service (Google in Chrome).",
+    callBtn: n => `Call ${n}`, waBtn: "Open WhatsApp", openBtn: n => `Open ${n}`, playBtn: "Listen on YouTube", calBtn: "Add to Google Calendar", subBtn: "See plans", pickContact: "Pick from contacts", typeNumber: "Type number",
+    noNumber: n => `I don't have ${n}'s number. Say "save ${n} 98xxxxxxxx", or pick from contacts.`, askNumber: n => `${n}'s phone number?`, saved: (n, x) => `Saved ${n} (+${x}). It stays on this phone only.`,
+    remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
+    connectNote: "Sign-in opens in your browser. Come back here when done.", connect: "Connect", connectedP: "Connected", soon: "Soon",
+    setupIntro: "Divya sets up your own backend in YOUR accounts — only with your permission. For now: sign in with your email and add free API keys. Keys are encrypted and used only for your requests.",
+    googleRow: "Continue with Google", googleSub: "Uses your email for setup", continueGoogle: "Continue",
+    consent: "I allow Divya to save my keys encrypted and use them only for my requests.", guideBtn: "🔊 Voice-guided setup, step by step",
+    needConsent: "Please tick the permission box first.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Done",
+    stepNot: "Not set", stepOk: w => `Connected${w ? " · " + w : ""}`, stepFail: "Test failed", oneTap: "One-tap connect", openCreate: "Open & create key", pasteKey: "Paste key here", paste: "Paste", testSave: "Test & save", test: "Test", remove: "Remove", oauthSoon: "OAuth sign-in coming soon; paste a token for now.",
+    foundKey: (n, l) => `Found a ${n} key (…${l}). Save it?`, keySaved: n => `${n} key saved and tested.`, keyBad: n => `That doesn't look like a ${n} key.`,
+    guideStep: (n, d) => `${n} setup. ${d} I'll open the page. Sign in with your email, create a key, copy it, then come back to Divya.`, guideReturn: "Did you copy the key? Checking the clipboard.", guidePaste: "Paste the key in the box and tap Test and save.", guideDone: "All steps are done. Great!", guideNextQ: n => `Next: ${n}. Continue?`,
+    serverTitle: "Your own server:", serverText: "With your Cloudflare token, Divya will deploy your own Worker in your account — coming soon (with your OK each time).", noPasswords: "Divya never stores passwords, never creates accounts silently, and never bypasses captchas. You sign in to each provider yourself.",
+    d_openrouter: "Brain with free AI models (backup).", d_groq: "Fast brain + speech-to-text.", d_gemini: "Reads images and screenshots.", d_cloudflare: "For your own server (Worker).", d_github: "For the video machine (Actions).", d_huggingface: "For AI models and voices.",
+    planNow: (p, u, l) => `Your plan: ${p === "premium" ? "Premium (owner/friend access)" : "Free"}. Videos today: ${l === null ? `${u} (no limit)` : `${u}/${l}`}.`,
+    freePlan: "Free", f1: "Voice commands: call, WhatsApp, open apps, songs, reminders, time, weather", f2: "Chat & short questions", f3: "Voice-first mode for blind users", f4: "Use your own API keys",
+    p1: "Create videos (1/day by default on the shared server)", p2: "Multi-step agent tasks, long research", p3: "Account automation (post/upload — with your OK)", priceSoon: "Price: soon", comingSoon: "Coming soon", noPayNote: "No payments yet. We'll tell you when Pro is ready.",
+    installNow: "Install app", installed: "Divya is already installed as an app on this device ✓", canInstall: "One-tap install is available in this browser.", cantPrompt: "This browser doesn't show an install prompt — follow the steps below.", notApk: "This installs from your browser as an app (PWA). It's not a Play Store APK.",
+    and1: "Open this page in Chrome.", and2: "Tap \"Install app\" above, or menu (⋮) → \"Install app\" / \"Add to Home screen\".", and3: "The Divya icon appears on your home screen.",
+    ios1: "Open this page in Safari.", ios2: "Tap Share (□↑) → \"Add to Home Screen\".", ios3: "Tap \"Add\", then open Divya from your home screen.",
+    pc1: "In Chrome/Edge, click the install icon (⊕ / monitor) in the address bar.", pc2: "Or menu → \"Install Divya\" / \"Apps → Install this site as an app\".",
+    language: "Language", voiceReplies: "Voice replies", voiceRepliesSub: "When you speak, Divya answers aloud", voiceFirst: "Voice-first mode", voiceFirstSub: "Speaks every result and keeps listening after each answer (for blind users)", theme: "Theme", auto: "Auto", light: "Light", dark: "Dark", connected: "Connected accounts",
+    netErr: "Network problem. Try again.", micDenied: "Allow microphone access in browser settings.", noRec: "Voice recording isn't supported in this browser.", loggedIn: n => `Logged in as +${n}`, orDone: "OpenRouter connected ✓", orFail: "OpenRouter didn't connect.",
+  },
 };
 const t = (k, ...a) => { const v = (T[S.lang] || T.te)[k]; return typeof v === "function" ? v(...a) : v ?? k; };
 function applyLang() {
   document.documentElement.lang = S.lang;
   $$("[data-t]").forEach(e => e.textContent = t(e.dataset.t));
   $$("[data-tp]").forEach(e => e.placeholder = t(e.dataset.tp));
-  $$("#setLang button").forEach(b => b.classList.toggle("on", b.dataset.v === S.lang));
+  $$("[data-tl]").forEach(e => e.setAttribute("aria-label", t(e.dataset.tl)));
+  $$("#setLang button").forEach(b => { b.classList.toggle("on", b.dataset.v === S.lang); b.setAttribute("aria-checked", b.dataset.v === S.lang); });
   if ($("#msgs .empty")) renderEmpty();
-  if (S.number) $("#me").textContent = t("loggedIn", S.number);
+  if (S.number) { $("#me").textContent = t("loggedIn", S.number); $("#drawerMe").textContent = "+" + S.number; }
+  $("#greet").textContent = t("hello", new Date().getHours());
+  if (cur) setTitle(cur);
+  setVState(VA.state || "idle");
+  renderSteps();
 }
 function applyTheme() {
   document.documentElement.dataset.theme = S.theme;
-  $$("#setTheme button").forEach(b => b.classList.toggle("on", b.dataset.v === S.theme));
+  $$("#setTheme button").forEach(b => { b.classList.toggle("on", b.dataset.v === S.theme); b.setAttribute("aria-checked", b.dataset.v === S.theme); });
   const dark = S.theme === "dark" || (S.theme === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
-  $$('meta[name="theme-color"]').forEach(m => { m.removeAttribute("media"); m.content = dark ? "#0c0c12" : "#f6f6fa"; });
+  $$('meta[name="theme-color"]').forEach(m => { m.removeAttribute("media"); m.content = dark ? "#000000" : "#ffffff"; });
 }
-function toast(msg) { const e = $("#toast"); e.textContent = msg; e.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.remove("show"), 2600); }
-function sheet(msg) { $("#sheetText").textContent = msg; $("#sheet").hidden = false; }
-$("#sheetOk").onclick = () => $("#sheet").hidden = true;
+function announce(msg) { const e = $("#sr"); e.textContent = ""; setTimeout(() => e.textContent = msg, 60); }
+function toast(msg, say) { const e = $("#toast"); e.textContent = msg; e.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.remove("show"), 3000); if (say || S.vf) speak(msg); }
+function sheet(msg, btns) {
+  $("#sheetText").textContent = msg; const box = $("#sheetBtns"); box.innerHTML = "";
+  (btns || [{ label: "OK", primary: true }]).forEach(b => { const x = document.createElement("button"); x.className = "btn " + (b.primary ? "primary" : "secondary"); x.textContent = b.label; x.onclick = () => { $("#sheet").hidden = true; b.fn && b.fn(); }; box.appendChild(x); });
+  $("#sheet").hidden = false; setTimeout(() => box.querySelector(".primary")?.focus(), 50);
+  if (S.vf) speak(msg);
+}
+$$("[role=radiogroup] button").forEach(b => b.setAttribute("role", "radio"));
 
 async function api(path, { method = "GET", json, form } = {}) {
   const h = {}; if (S.token) h.authorization = "Bearer " + S.token;
@@ -54,7 +129,7 @@ async function api(path, { method = "GET", json, form } = {}) {
 }
 
 /* ---------- login ---------- */
-function showLogin() { $("#main").hidden = true; $("#login").hidden = false; $("#numForm").hidden = false; $("#codeForm").hidden = true; $("#loginErr").textContent = ""; setTimeout(() => $("#num").focus(), 300); }
+function showLogin() { $("#main").hidden = true; $("#login").hidden = false; $("#numForm").hidden = false; $("#codeForm").hidden = true; $("#loginErr").textContent = ""; vaStop(); setTimeout(() => $("#num").focus(), 300); }
 $("#numForm").onsubmit = async e => {
   e.preventDefault(); const n = $("#num").value.replace(/\D/g, "");
   if (n.length !== 10) { $("#loginErr").textContent = "10 digits"; return; }
@@ -78,42 +153,152 @@ $("#codeForm").onsubmit = async e => {
 $("#changeNum").onclick = showLogin;
 function logout(silent) {
   if (!silent && S.token) api("logout", { method: "POST", json: {} }).catch(() => {});
-  S.token = ""; store.del("token"); store.del("chat"); $("#msgs").innerHTML = ""; showLogin();
+  S.token = ""; store.del("token"); store.del("chat"); $("#msgs").innerHTML = ""; closeDrawer(); showLogin();
 }
 
-/* ---------- tabs ---------- */
-function tab(name) {
-  $$(".tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
-  $$(".screen.tab").forEach(s => s.classList.toggle("active", s.id === "tab-" + name));
+/* ---------- drawer + routing ---------- */
+const ROUTES = ["home", "chat", "create", "voice", "connect", "setup", "plan", "download", "settings"];
+let cur = "";
+function openDrawer() { $("#drawer").classList.add("open"); $("#drawer").inert = false; $("#drawerBg").hidden = false; $("#menuBtn").setAttribute("aria-expanded", "true"); $("#menuBtn").setAttribute("aria-label", t("closeMenu")); setTimeout(() => $("#drawer a[aria-current=page]")?.focus() || $("#drawer a")?.focus(), 60); }
+function closeDrawer(focusBack) { $("#drawer").classList.remove("open"); $("#drawer").inert = true; $("#drawerBg").hidden = true; $("#menuBtn").setAttribute("aria-expanded", "false"); $("#menuBtn").setAttribute("aria-label", t("openMenu")); if (focusBack) $("#menuBtn").focus(); }
+$("#menuBtn").onclick = () => $("#drawer").classList.contains("open") ? closeDrawer(true) : openDrawer();
+$("#drawerBg").onclick = () => closeDrawer(true);
+document.addEventListener("keydown", e => { if (e.key === "Escape") { if (!$("#sheet").hidden) $("#sheet").hidden = true; else if ($("#drawer").classList.contains("open")) closeDrawer(true); } });
+$("#drawer").addEventListener("click", e => { if (e.target.closest("a")) closeDrawer(); });
+$("#drawerLogout").onclick = () => logout(false);
+function setTitle(name) { const s = $("#s-" + name); $("#screen-title").textContent = t(s.dataset.title); document.title = `${t(s.dataset.title)} · Divya`; }
+function route() {
+  if ($("#main").hidden) return;
+  let name = (location.hash.match(/^#\/(\w+)/) || [])[1]; if (!ROUTES.includes(name)) name = "home";
+  const first = !cur; if (name === cur) return; cur = name;
+  $$("#screens .screen").forEach(s => s.classList.toggle("active", s.id === "s-" + name));
+  $$("#drawer a[data-r]").forEach(a => a.dataset.r === name ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  setTitle(name);
+  if (!first) { $("#screen-title").focus({ preventScroll: true }); }
+  announce(t("screen", t($("#s-" + name).dataset.title)));
+  if (S.vf && !first && VA.state !== "speak") speak(t("screen", t($("#s-" + name).dataset.title)));
   if (name === "connect" || name === "settings") loadConnect();
-  if (name === "create") loadStatus();
+  if (name === "create" || name === "home") loadStatus();
+  if (name === "setup") { loadKeys(); loadConnect(); }
+  if (name === "plan") loadPlan();
+  if (name === "download") renderDownload();
   if (name === "chat") scrollDown();
 }
-$$(".tabbar button").forEach(b => b.onclick = () => tab(b.dataset.tab));
+window.addEventListener("hashchange", route);
+const go = name => { location.hash = "#/" + name; };
+
+/* ---------- speech out ---------- */
+let voices = []; const loadVoices = () => voices = speechSynthesis?.getVoices() || [];
+if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+function speak(text) {
+  return new Promise(res => {
+    if (!("speechSynthesis" in window) || !text) return res();
+    const clean = String(text).replace(/https?:\/\/\S+/g, "").replace(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF]/gu, "").replace(/[✓•…]/g, " ").trim(); if (!clean) return res();
+    const u = new SpeechSynthesisUtterance(clean); const telugu = /[\u0C00-\u0C7F]/.test(clean);
+    const want = telugu ? ["te-IN"] : ["en-IN", "hi-IN", "en-GB", "en-US"];
+    const fem = /female|heera|veena|neerja|swara|kalpana|zira|samantha|google/i;
+    let v = null; for (const l of want) { const c = voices.filter(x => x.lang.replace("_", "-") === l); v = c.find(x => fem.test(x.name)) || c[0]; if (v) break; }
+    if (v) { u.voice = v; u.lang = v.lang; } else u.lang = telugu ? "te-IN" : "en-IN";
+    u.rate = 1; u.pitch = 1.05; let done = false; const fin = () => { if (!done) { done = true; res(); } };
+    u.onend = fin; u.onerror = fin; setTimeout(fin, Math.min(30000, 1500 + clean.length * 90));
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  });
+}
+function chime(up = true) {
+  try {
+    const C = window.AudioContext || window.webkitAudioContext; if (!C) return; chime.c = chime.c || new C(); const c = chime.c; const n = c.currentTime;
+    [[up ? 660 : 880, 0], [up ? 990 : 590, .11]].forEach(([f, d]) => { const o = c.createOscillator(), g = c.createGain(); o.type = "sine"; o.frequency.value = f; g.gain.setValueAtTime(0, n + d); g.gain.linearRampToValueAtTime(.18, n + d + .02); g.gain.exponentialRampToValueAtTime(.001, n + d + .22); o.connect(g).connect(c.destination); o.start(n + d); o.stop(n + d + .25); });
+  } catch {}
+}
+
+/* ---------- contacts (local only) + actions ---------- */
+const contacts = () => store.get("contacts", {});
+function findContact(name) { if (!name) return ""; const c = contacts(); const k = name.toLowerCase().trim(); if (c[k]) return c[k]; const hit = Object.keys(c).find(x => x.includes(k) || k.includes(x)); return hit ? c[hit] : ""; }
+function saveContact(name, num) { const c = contacts(); c[name.toLowerCase().trim()] = num; store.set("contacts", c); }
+function normNum(s) { const d = String(s || "").replace(/\D/g, ""); if (d.length < 7) return ""; return d.length === 10 ? "91" + d : d; }
+function localCommand(text) {
+  let m = text.match(/^(?:save|సేవ్)\s+(.+?)\s+(?:number\s+|నంబర్\s+)?(\+?[\d\s-]{10,})\s*(?:save\s*(?:cheyyi|chey)?)?$/i) || text.match(/^(.+?)\s+number\s+(\+?[\d\s-]{10,})\s+save\s*(?:cheyyi|chey)?$/i);
+  if (m) { const n = normNum(m[2]); if (n) { saveContact(m[1], n); return { reply: t("saved", m[1], n) }; } }
+  if (pendingContact && /\d{10}/.test(text.replace(/\D/g, ""))) { const n = normNum(text); const p = pendingContact; pendingContact = null; saveContact(p.name, n); return { reply: t("saved", p.name, n), action: { ...p.action, number: n } }; }
+  return null;
+}
+let pendingContact = null;
+function openUrl(url) {
+  if (store.get("noauto", false)) return;
+  if (/^(tel:|intent:)/.test(url)) { location.href = url; return; }
+  const w = window.open(url, "_blank", "noopener"); if (!w) location.href = url;
+}
+function ytUrl(q) { const web = "https://www.youtube.com/results?search_query=" + encodeURIComponent(q); return isAndroid ? `intent://www.youtube.com/results?search_query=${encodeURIComponent(q)}#Intent;scheme=https;package=com.google.android.youtube;S.browser_fallback_url=${encodeURIComponent(web)};end` : web; }
+function calUrl(at, text) { const f = d => new Date(d).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, ""); return "https://calendar.google.com/calendar/render?" + new URLSearchParams({ action: "TEMPLATE", text, dates: `${f(at)}/${f(at + 15 * 60000)}`, details: "Divya reminder" }); }
+/* returns {buttons, auto(), say} ; buttons rendered as links/buttons for screen readers */
+function planAction(a) {
+  const out = { buttons: [], auto: null, say: "" };
+  if (!a) return out;
+  if (a.type === "call") {
+    const num = a.number || findContact(a.name); const who = a.name || ("+" + num);
+    if (num) { out.buttons.push({ label: t("callBtn", who), href: "tel:+" + num }); out.auto = () => openUrl("tel:+" + num); }
+    else { pendingContact = { name: a.name, action: a }; out.say = t("noNumber", a.name); addContactButtons(out, a); }
+  } else if (a.type === "whatsapp") {
+    const num = a.number || findContact(a.name); const url = `https://wa.me/${num || ""}?text=${encodeURIComponent(a.text || "")}`;
+    out.buttons.push({ label: t("waBtn"), href: url }); out.auto = () => openUrl(url);
+    if (!num && a.name) addContactButtons(out, a, true);
+  } else if (a.type === "open") { out.buttons.push({ label: t("openBtn", new URL(a.url).hostname.replace(/^www\./, "")), href: a.url }); out.auto = () => openUrl(a.url); }
+  else if (a.type === "play") { const u = ytUrl(a.query || ""); out.buttons.push({ label: t("playBtn"), href: u }); out.auto = () => openUrl(u); }
+  else if (a.type === "reminder") { addReminder(a.at, a.text); out.buttons.push({ label: t("calBtn"), href: calUrl(a.at, a.text), alt: true }); }
+  else if (a.type === "subscribe") out.buttons.push({ label: t("subBtn"), href: "#/plan" });
+  return out;
+}
+function addContactButtons(out, a, alt) {
+  if (navigator.contacts?.select) out.buttons.push({ label: t("pickContact"), alt: true, fn: async () => { try { const [c] = await navigator.contacts.select(["name", "tel"], { multiple: false }); const n = normNum(c?.tel?.[0]); if (n) { saveContact(a.name, n); pendingContact = null; runAction({ ...a, number: n }, true); } } catch {} } });
+  out.buttons.push({ label: t("typeNumber"), alt: true, fn: () => { const v = prompt(t("askNumber", a.name)); const n = normNum(v); if (n) { saveContact(a.name, n); pendingContact = null; runAction({ ...a, number: n }, true); } } });
+}
+function runAction(a, auto) { const p = planAction(a); if (auto && p.auto) p.auto(); return p; }
+function renderButtons(box, btns) {
+  btns.forEach(b => {
+    const el = document.createElement(b.href ? "a" : "button"); el.className = "act-btn" + (b.alt ? " alt" : ""); el.textContent = b.label;
+    if (b.href) { el.href = b.href; if (!b.href.startsWith("#")) { el.target = "_blank"; el.rel = "noopener"; } } else el.onclick = b.fn;
+    box.appendChild(el);
+  });
+}
+
+/* reminders: in-app timers (only while open) + calendar link */
+const remTimers = {};
+function addReminder(at, text) { const l = store.get("rem", []).filter(r => r.at > Date.now()); if (!l.some(r => r.at === at)) l.push({ at, text }); store.set("rem", l); schedule(); if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {}); }
+function schedule() {
+  store.get("rem", []).forEach(r => {
+    if (remTimers[r.at] || r.at < Date.now() - 60000) return;
+    remTimers[r.at] = setTimeout(() => {
+      chime(false); navigator.vibrate?.([200, 100, 200]); const msg = t("remFire", r.text); toast(msg, true);
+      try { if (Notification.permission === "granted") navigator.serviceWorker?.ready.then(reg => reg.showNotification(t("notifTitle"), { body: r.text, icon: "/icon-192.png" })); } catch {}
+      store.set("rem", store.get("rem", []).filter(x => x.at !== r.at));
+    }, Math.max(0, r.at - Date.now()));
+  });
+}
 
 /* ---------- chat ---------- */
-const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const linkify = s => esc(s).replace(/https?:\/\/[^\s<]+/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
 function scrollDown() { const m = $("#msgs"); requestAnimationFrame(() => m.scrollTop = m.scrollHeight); }
 function bubble(role, text, extra = {}) {
   $("#msgs .empty")?.remove();
   const d = document.createElement("div"); d.className = "msg " + (role === "user" ? "me" : role === "sys" ? "sys" : "bot");
-  if (extra.img) { const i = new Image(); i.src = extra.img; d.appendChild(i); if (text) { const p = document.createElement("div"); p.textContent = text; d.appendChild(p); } }
-  else d.innerHTML = (extra.heard ? `<span class="heard">🎙️</span>` : "") + linkify(text);
+  if (extra.img) { const i = new Image(); i.src = extra.img; i.alt = "image"; d.appendChild(i); if (text) { const p = document.createElement("div"); p.textContent = text; d.appendChild(p); } }
+  else d.innerHTML = (extra.heard ? `<span class="heard" aria-hidden="true">🎙️</span>` : "") + linkify(text);
+  if (extra.buttons?.length) { const box = document.createElement("div"); box.className = "act"; renderButtons(box, extra.buttons); d.appendChild(box); }
   $("#msgs").appendChild(d); scrollDown(); return d;
 }
 function typing(on) {
-  $("#msgs .typing")?.remove(); $("#status").textContent = on ? t(on === "listen" ? "listening" : "thinking") : t("online");
-  if (on === true) { const d = document.createElement("div"); d.className = "msg bot typing"; d.innerHTML = "<i></i><i></i><i></i>"; $("#msgs").appendChild(d); scrollDown(); }
+  $("#msgs .typing")?.remove();
+  if (on === true) { const d = document.createElement("div"); d.className = "msg bot typing"; d.setAttribute("aria-label", t("thinking")); d.innerHTML = "<i></i><i></i><i></i>"; $("#msgs").appendChild(d); scrollDown(); }
 }
 function renderEmpty() {
   const m = $("#msgs"); m.innerHTML = "";
   const e = document.createElement("div"); e.className = "empty";
-  e.innerHTML = `<img src="/icon-192.png" alt=""><h3>${esc(t("emptyTitle"))}</h3><div class="muted">${esc(t("emptySub"))}</div><div class="chips">${["s1", "s2", "s3"].map(k => `<button class="chip">${esc(t(k))}</button>`).join("")}</div>`;
+  e.innerHTML = `<img src="/icon-192.png" alt=""><h2>${esc(t("emptyTitle"))}</h2><div class="muted">${esc(t("emptySub"))}</div><div class="chips">${["s1", "s2", "s3"].map(k => `<button class="chip">${esc(t(k))}</button>`).join("")}</div>`;
   e.querySelectorAll(".chip").forEach(c => c.onclick = () => send(c.textContent));
   m.appendChild(e);
 }
-function saveChat() { store.set("chat", $$("#msgs .msg:not(.typing):not(.sys)").slice(-40).map(e => ({ r: e.classList.contains("me") ? "user" : "assistant", c: e.querySelector("img") ? "[image]" : e.textContent }))); }
+function saveChat() { store.set("chat", $$("#msgs .msg:not(.typing):not(.sys)").slice(-40).map(e => ({ r: e.classList.contains("me") ? "user" : "assistant", c: e.querySelector("img") ? "[image]" : (e.firstChild?.nodeType === 3 || !e.querySelector(".act") ? e.textContent : [...e.childNodes].filter(n => !(n.classList && n.classList.contains("act"))).map(n => n.textContent).join("")) }))); }
 async function loadHistory() {
   const cached = store.get("chat", null);
   const draw = list => { if (!list.length) return renderEmpty(); $("#msgs").innerHTML = ""; list.forEach(x => bubble(x.r, x.c)); };
@@ -123,12 +308,24 @@ async function loadHistory() {
     if (d.ok) { const list = d.messages.filter(m => m.content).map(m => ({ r: m.role, c: m.content.replace(/^\[screenshot\] /, "🖼️ ").replace(/^\[app\] /, "") })); if (!cached || list.length) { draw(list); saveChat(); } }
   } catch {}
 }
+let coords = store.get("coords", null);
+function getCoords() { return new Promise(res => { if (!navigator.geolocation) return res(null); navigator.geolocation.getCurrentPosition(p => { coords = { lat: p.coords.latitude, lon: p.coords.longitude, at: Date.now() }; store.set("coords", coords); res(coords); }, () => res(null), { timeout: 8000, maximumAge: 3600000 }); }); }
+async function assist(text) {
+  const local = localCommand(text); if (local) return { ok: true, local: true, ...local };
+  const c = coords && Date.now() - coords.at < 86400000 ? coords : null;
+  let d = await api("assist", { method: "POST", json: { text, tz, ...(c ? { lat: c.lat, lon: c.lon } : {}) } });
+  if (d.need === "location") { const g = await getCoords(); if (g) d = await api("assist", { method: "POST", json: { text, tz, lat: g.lat, lon: g.lon } }); }
+  return d;
+}
 let busy = false;
 async function send(text) {
   text = (text || "").trim(); if (!text || busy) return;
   busy = true; bubble("user", text); $("#input").value = ""; autoGrow(); updateBtn(); typing(true);
-  try { const d = await api("chat", { method: "POST", json: { text } }); typing(false); bubble("bot", d.ok ? d.reply : (d.error || t("netErr"))); if (d.video_started) toast(t("started")); }
-  catch (e) { typing(false); if (e.message !== "login") bubble("sys", t("netErr")); }
+  try {
+    const d = await assist(text); typing(false);
+    if (!d.ok && !d.reply) bubble("bot", d.error || t("netErr"));
+    else { const p = runAction(d.action, true); bubble("bot", d.reply + (p.say ? "\n" + p.say : ""), { buttons: p.buttons }); if (S.vf) speak(d.reply + (p.say ? " " + p.say : "")); if (d.video_started) toast(t("started")); }
+  } catch (e) { typing(false); if (e.message !== "login") bubble("sys", t("netErr")); }
   busy = false; saveChat();
 }
 const input = $("#input");
@@ -146,7 +343,7 @@ $("#file").onchange = async e => {
   const q = input.value.trim(); input.value = ""; autoGrow(); updateBtn();
   busy = true; bubble("user", q, { img: url }); typing(true);
   const fd = new FormData(); fd.append("image", small, "image.jpg"); fd.append("lang", S.lang); if (q) fd.append("q", q);
-  try { const d = await api("image", { method: "POST", form: fd }); typing(false); bubble("bot", d.reply || d.error || t("netErr")); }
+  try { const d = await api("image", { method: "POST", form: fd }); typing(false); bubble("bot", d.reply || d.error || t("netErr")); if (S.vf) speak(d.reply || ""); }
   catch (er) { typing(false); if (er.message !== "login") bubble("sys", t("netErr")); }
   busy = false; saveChat();
 };
@@ -160,79 +357,141 @@ function shrink(file) {
   });
 }
 
-/* voice: push-to-talk */
-let rec, chunks = [], recStart = 0, recTimer, stream;
-const micBtn = $("#micSend");
+/* ---------- push-to-talk recorder (chat mic + orb fallback) ---------- */
+let rec, chunks = [], recStart = 0, recTimer, stream, recTarget = "chat";
 function pickMime() { for (const m of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"]) if (window.MediaRecorder && MediaRecorder.isTypeSupported?.(m)) return m; return ""; }
-async function startRec() {
-  if (busy) return;
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast(t("noRec"));
+async function startRec(btn, target) {
+  if (busy) return; recTarget = target;
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast(t("noRec"), true);
   try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }); }
-  catch { return toast(t("micDenied")); }
-  if (!micBtn.pressed) { stream.getTracks().forEach(x => x.stop()); return; }
-  speechSynthesis?.cancel();
+  catch { return toast(t("micDenied"), true); }
+  if (!btn.pressed) { stream.getTracks().forEach(x => x.stop()); return; }
+  speechSynthesis?.cancel(); vaPause();
   const mime = pickMime(); rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined); chunks = [];
   rec.ondataavailable = e => e.data.size && chunks.push(e.data);
   rec.onstop = onRecStop; rec.start(); recStart = Date.now();
-  micBtn.classList.add("recording"); $("#recBar").hidden = false; typing("listen");
+  btn.classList.add("recording"); if (target === "chat") $("#recBar").hidden = false; else setVState("listen");
   navigator.vibrate?.(15);
-  recTimer = setInterval(() => { const s = Math.floor((Date.now() - recStart) / 1000); $("#recTime").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; if (s >= 120) stopRec(); }, 250);
+  recTimer = setInterval(() => { const s = Math.floor((Date.now() - recStart) / 1000); $("#recTime").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; if (s >= 120) stopRec(btn); }, 250);
 }
-function stopRec() {
-  clearInterval(recTimer); micBtn.classList.remove("recording"); $("#recBar").hidden = true; $("#recTime").textContent = "0:00";
-  if (rec && rec.state !== "inactive") rec.stop(); else typing(false);
-}
+function stopRec(btn) { clearInterval(recTimer); btn.classList.remove("recording"); $("#recBar").hidden = true; $("#recTime").textContent = "0:00"; if (rec && rec.state !== "inactive") rec.stop(); }
 async function onRecStop() {
   stream?.getTracks().forEach(x => x.stop());
-  const dur = Date.now() - recStart; typing(false);
-  if (dur < 600) { toast(t("holdMic")); return; }
+  const dur = Date.now() - recStart;
+  if (dur < 600) { toast(t("holdMic"), true); if (recTarget !== "chat") setVState(vaIdleState()); return; }
   const type = rec.mimeType || "audio/webm"; const ext = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : "webm";
   const blob = new Blob(chunks, { type });
-  busy = true; const me = bubble("user", "🎙️ …"); typing(true);
-  const fd = new FormData(); fd.append("audio", blob, "voice." + ext); fd.append("lang", S.lang);
-  try {
-    const d = await api("voice", { method: "POST", form: fd }); typing(false);
-    if (d.ok) { me.innerHTML = `<span class="heard">🎙️</span>` + linkify(d.heard); bubble("bot", d.reply); if (S.voice) speak(d.reply); if (d.video_started) toast(t("started")); }
-    else { me.remove(); bubble("sys", d.error || t("netErr")); }
-  } catch (e) { typing(false); me.remove(); if (e.message !== "login") bubble("sys", t("netErr")); }
-  busy = false; saveChat();
+  const fd = new FormData(); fd.append("audio", blob, "voice." + ext); fd.append("lang", S.lang); fd.append("assist", "1"); fd.append("tz", tz);
+  if (coords) { fd.append("lat", coords.lat); fd.append("lon", coords.lon); }
+  busy = true;
+  if (recTarget === "chat") {
+    const me = bubble("user", "🎙️ …"); typing(true);
+    try {
+      const d = await api("voice", { method: "POST", form: fd }); typing(false);
+      if (d.heard) { me.innerHTML = `<span class="heard" aria-hidden="true">🎙️</span>` + linkify(d.heard); const p = runAction(d.action, true); bubble("bot", (d.reply || d.error || "") + (p.say ? "\n" + p.say : ""), { buttons: p.buttons }); if (S.voice || S.vf) speak((d.reply || "") + " " + (p.say || "")); if (d.video_started) toast(t("started")); }
+      else { me.remove(); bubble("sys", d.error || t("netErr")); }
+    } catch (e) { typing(false); me.remove(); if (e.message !== "login") bubble("sys", t("netErr")); }
+    busy = false; saveChat();
+  } else {
+    setVState("think");
+    try { const d = await api("voice", { method: "POST", form: fd }); busy = false; if (d.heard) await vaShow(d.heard, d); else { $("#vReply").textContent = d.error || t("netErr"); speak(d.error || t("netErr")); setVState(vaIdleState()); } }
+    catch (e) { busy = false; setVState(vaIdleState()); }
+  }
 }
-micBtn.addEventListener("pointerdown", e => { if (micBtn.classList.contains("send")) return; e.preventDefault(); micBtn.pressed = true; micBtn.setPointerCapture?.(e.pointerId); startRec(); });
-const up = () => { if (!micBtn.pressed) return; micBtn.pressed = false; if (rec && rec.state === "recording") stopRec(); else if (!rec || rec.state === "inactive") { toast(t("holdMic")); } };
-micBtn.addEventListener("pointerup", up); micBtn.addEventListener("pointercancel", up);
-micBtn.addEventListener("click", e => { if (micBtn.classList.contains("send")) send(input.value); });
-micBtn.addEventListener("contextmenu", e => e.preventDefault());
+function holdable(btn, target, isSendable) {
+  btn.addEventListener("pointerdown", e => { if (isSendable && btn.classList.contains("send")) return; if (target === "voice" && SR) return; e.preventDefault(); btn.pressed = true; btn.setPointerCapture?.(e.pointerId); startRec(btn, target); });
+  const up = () => { if (!btn.pressed) return; btn.pressed = false; if (rec && rec.state === "recording") stopRec(btn); };
+  btn.addEventListener("pointerup", up); btn.addEventListener("pointercancel", up);
+  btn.addEventListener("contextmenu", e => e.preventDefault());
+}
+const micBtn = $("#micSend");
+holdable(micBtn, "chat", true);
+micBtn.addEventListener("click", () => { if (micBtn.classList.contains("send")) send(input.value); });
+// keyboard / screen-reader double-tap on the chat mic: start voice assistant listening instead of hold
+micBtn.addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && micBtn.classList.contains("mic")) { e.preventDefault(); go("voice"); setTimeout(() => vaOnce(), 300); } });
 
-/* speech out */
-let voices = []; const loadVoices = () => voices = speechSynthesis?.getVoices() || [];
-if ("speechSynthesis" in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
-function speak(text) {
-  if (!("speechSynthesis" in window)) return;
-  const clean = text.replace(/https?:\/\/\S+/g, "").replace(/[\u{1F300}-\u{1FAFF}\u2600-\u27BF]/gu, "").trim(); if (!clean) return;
-  const u = new SpeechSynthesisUtterance(clean); const telugu = /[\u0C00-\u0C7F]/.test(clean);
-  const want = telugu ? ["te-IN"] : ["en-IN", "hi-IN", "en-GB", "en-US"];
-  const fem = /female|heera|veena|neerja|swara|kalpana|zira|samantha|google/i;
-  let v = null; for (const l of want) { const c = voices.filter(x => x.lang.replace("_", "-") === l); v = c.find(x => fem.test(x.name)) || c[0]; if (v) break; }
-  if (v) { u.voice = v; u.lang = v.lang; } else u.lang = telugu ? "te-IN" : "en-IN";
-  u.rate = 1; u.pitch = 1.1; speechSynthesis.cancel(); speechSynthesis.speak(u);
+/* ---------- "Hey Divya" voice assistant ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const WAKE = /\b(?:hey|hi|hay|he|ok|okay|ఓకే|హే|హాయ్)[\s,]*(?:divya|diviya|divyaa|dhivya|divia|దివ్య|దివ్యా)\b|(?:హే|హాయ్)\s*దివ్యా?/i;
+const VA = { on: false, state: "idle", r: null, cmdTimer: 0, once: false, followUp: false };
+function setVState(s) {
+  VA.state = s; const o = $("#orb"); if (o) o.dataset.state = s;
+  const txt = { idle: SR ? t("vIdle") : t("vNoSR"), wake: t("vWake"), listen: t("vListen"), think: t("vThink"), speak: t("vSpeak") }[s] || "";
+  $("#vState").textContent = txt; $("#wakeDot").hidden = !(VA.on && s === "wake");
 }
+const vaIdleState = () => VA.on ? "wake" : "idle";
+function vaKill() { if (VA.r) { VA.r.onend = null; VA.r.onresult = null; VA.r.onerror = null; try { VA.r.abort(); } catch {} VA.r = null; } clearTimeout(VA.cmdTimer); }
+function vaListen(mode) {
+  if (!SR || document.hidden || $("#main").hidden) return;
+  vaKill(); const r = new SR(); VA.r = r;
+  r.lang = S.lang === "en" ? "en-IN" : "te-IN"; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
+  setVState(mode);
+  if (mode === "listen") VA.cmdTimer = setTimeout(() => { if (VA.state === "listen") { vaKill(); VA.followUp = false; if (VA.on) vaListen("wake"); else setVState("idle"); } }, VA.followUp ? 7000 : 9000);
+  r.onresult = e => {
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const res = e.results[i], txt = res[0].transcript.trim();
+      if (VA.state === "wake") {
+        const m = txt.match(WAKE);
+        if (m) { const after = txt.slice(m.index + m[0].length).replace(/^[\s,.!]+/, ""); chime(); if (res.isFinal && after.length > 1) return vaCommand(after); setVState("listen"); clearTimeout(VA.cmdTimer); VA.cmdTimer = setTimeout(() => { if (VA.state === "listen") setVState("wake"); }, 8000); $("#vHeard").textContent = after; }
+      } else if (VA.state === "listen") {
+        const clean = txt.replace(WAKE, "").replace(/^[\s,.!]+/, "");
+        $("#vHeard").textContent = clean;
+        if (res.isFinal && clean.length > 1) return vaCommand(clean);
+      }
+    }
+  };
+  r.onerror = e => { if (e.error === "not-allowed" || e.error === "service-not-allowed") { VA.on = false; store.set("wake", false); $("#wakeToggle").checked = false; setVState("idle"); toast(t("micDenied"), true); } };
+  r.onend = () => { if (VA.r !== r) return; VA.r = null; if (document.hidden) return; if (VA.state === "wake" && VA.on) setTimeout(() => VA.on && VA.state === "wake" && !VA.r && vaListen("wake"), 300); else if (VA.state === "listen") setTimeout(() => VA.state === "listen" && !VA.r && vaListen("listen"), 200); };
+  try { r.start(); } catch {}
+}
+async function vaCommand(text) {
+  vaKill(); VA.followUp = false; setVState("think"); $("#vHeard").textContent = "“" + text + "”"; $("#vReply").textContent = ""; $("#vActions").innerHTML = "";
+  if (cur !== "voice") go("voice");
+  try { const d = await assist(text); await vaShow(text, d); }
+  catch (e) { $("#vReply").textContent = t("netErr"); await speak(t("netErr")); vaAfter(); }
+}
+async function vaShow(heard, d) {
+  $("#vHeard").textContent = "“" + heard + "”";
+  const p = runAction(d.action, true); const reply = (d.reply || d.error || t("netErr")) + (p.say ? " " + p.say : "");
+  $("#vReply").textContent = reply; $("#vActions").innerHTML = ""; renderButtons($("#vActions"), p.buttons);
+  if (d.video_started) toast(t("started"));
+  setVState("speak"); await speak(reply); vaAfter();
+}
+function vaAfter() { if (document.hidden) { setVState(vaIdleState()); return; } if (S.vf && SR) { VA.followUp = true; chime(); vaListen("listen"); } else if (VA.on) vaListen("wake"); else setVState("idle"); }
+function vaOnce() { if (!SR) { toast(t("vNoSR"), true); return; } speechSynthesis?.cancel(); chime(); $("#vReply").textContent = ""; $("#vHeard").textContent = ""; $("#vActions").innerHTML = ""; vaListen("listen"); }
+function vaStart() { if (!SR) { setVState("idle"); return; } VA.on = true; store.set("wake", true); $("#wakeToggle").checked = true; if (VA.state !== "listen" && VA.state !== "think" && VA.state !== "speak") vaListen("wake"); }
+function vaStop() { VA.on = false; store.set("wake", false); $("#wakeToggle").checked = false; vaKill(); setVState("idle"); }
+function vaPause() { vaKill(); }
+$("#wakeToggle").onchange = e => e.target.checked ? vaStart() : vaStop();
+$("#orbBtn").addEventListener("click", () => { if (!SR) return; if (VA.state === "listen") { vaKill(); setVState(vaIdleState()); if (VA.on) vaListen("wake"); } else vaOnce(); });
+holdable($("#orbBtn"), "voice", false);
+$("#heyBtn").onclick = () => { go("voice"); setTimeout(() => SR ? vaOnce() : toast(t("vNoSR"), true), 250); };
+$("#quickMic").onclick = () => { go("voice"); setTimeout(() => SR ? vaOnce() : toast(t("vNoSR"), true), 250); };
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { vaKill(); if (VA.state !== "idle") setVState(vaIdleState()); }
+  else if (S.token && !$("#main").hidden) { if (VA.on) vaListen("wake"); if (guide.id) guideReturn(); if (cur === "connect" || cur === "setup") loadConnect(); }
+});
 
 /* ---------- create ---------- */
-$$(".seg[data-name] button").forEach(b => b.onclick = () => { b.parentElement.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); });
+$$(".seg[data-name] button").forEach(b => b.onclick = () => { b.parentElement.querySelectorAll("button").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-checked", x === b); }); });
+$$(".seg button").forEach(b => b.setAttribute("aria-checked", b.classList.contains("on")));
 $("#createBtn").onclick = async () => {
   const pick = n => $(`.seg[data-name=${n}] .on`).dataset.v;
   $("#createBtn").disabled = true;
   try {
     const d = await api("create", { method: "POST", json: { topic: $("#topic").value.trim(), language: pick("language"), voice: pick("voice"), length: pick("length") } });
-    if (d.ok) { toast(t("started")); $("#topic").value = ""; setJob("run"); setTimeout(loadStatus, 4000); } else { toast(d.error || t("netErr")); if (d.busy) setJob("run"); }
+    if (d.ok) { toast(t("started")); $("#topic").value = ""; setJob("run"); setTimeout(loadStatus, 4000); }
+    else if (d.premium_required) sheet(d.error, [{ label: t("subBtn"), primary: true, fn: () => go("plan") }, { label: "OK" }]);
+    else { toast(d.error || t("netErr")); if (d.busy) setJob("run"); }
   } catch (e) { if (e.message !== "login") toast(t("netErr")); }
   $("#createBtn").disabled = false;
 };
 function setJob(kind, when) {
-  if (!kind) return $("#jobCard").hidden = true;
-  $("#jobCard").hidden = false; $("#jobDot").className = "pulse" + (kind === "done" ? " done" : kind === "fail" ? " fail" : "");
-  $("#jobTitle").textContent = t(kind === "run" ? "jobRun" : kind === "done" ? "jobDone" : "jobFail");
-  $("#jobSub").textContent = t(kind === "run" ? "jobRunSub" : kind === "done" ? "jobDoneSub" : "jobFailSub") + (when ? " · " + when : "");
+  const title = kind ? t(kind === "run" ? "jobRun" : kind === "done" ? "jobDone" : "jobFail") : t("noJob");
+  const sub = kind ? t(kind === "run" ? "jobRunSub" : kind === "done" ? "jobDoneSub" : "jobFailSub") + (when ? " · " + when : "") : t("noJobSub");
+  const cls = "pulse" + (kind === "done" ? " done" : kind === "fail" ? " fail" : kind ? "" : " idle");
+  $("#jobCard").hidden = !kind; $("#jobDot").className = cls; $("#jobTitle").textContent = title; $("#jobSub").textContent = sub;
+  $("#homeJobDot").className = cls; $("#homeJobTitle").textContent = title; $("#homeJobSub").textContent = sub;
 }
 let statusTimer;
 async function loadStatus() {
@@ -243,48 +502,148 @@ async function loadStatus() {
     if (d.busy || (r && r.status !== "completed")) setJob("run", r ? ago(r.created_at) : "");
     else if (r) setJob(r.conclusion === "success" ? "done" : "fail", ago(r.updated_at));
     else if (d.last) setJob("done"); else setJob(null);
-    if ($("#tab-create").classList.contains("active") && (d.busy || (r && r.status !== "completed"))) statusTimer = setTimeout(loadStatus, 15000);
+    if ((cur === "create" || cur === "home") && (d.busy || (r && r.status !== "completed"))) statusTimer = setTimeout(loadStatus, 15000);
   } catch {}
 }
 
 /* ---------- connect ---------- */
 const PDESC = { te: { youtube: "Videos upload cheyadaniki", google: "Gmail, Drive", instagram: "Reels post cheyadaniki", facebook: "Page lo post cheyadaniki", telegram: "Telegram lo kuda Divya" }, en: { youtube: "Upload videos", google: "Gmail, Drive", instagram: "Post Reels", facebook: "Post to your Page", telegram: "Divya on Telegram too" } };
-const PCOL = { youtube: "#ff0033", google: "#4285f4", instagram: "linear-gradient(45deg,#f9a825,#e91e63,#7b1fa2)", facebook: "#1877f2", telegram: "#29a9eb" };
+let connData = [];
+async function connectLink(prov) {
+  const w = window.open("about:blank", "_blank");
+  const r = await api("connect/link", { method: "POST", json: { provider: prov } }).catch(() => ({}));
+  if (r.ok && r.url) { if (w) w.location = r.url; else location.href = r.url; } else { w?.close(); toast(r.error || t("netErr")); }
+}
 async function loadConnect() {
   try {
-    const d = await api("connect"); if (!d.ok) return;
+    const d = await api("connect"); if (!d.ok) return; connData = d.providers;
     $("#connCount").textContent = `${d.providers.filter(p => p.connected).length}/${d.providers.length}`;
-    $("#provList").innerHTML = d.providers.map(p => `<div class="row"><div class="prov"><div class="pi" style="background:${PCOL[p.id]}">${p.name[0]}</div><div class="pt"><b>${esc(p.name)}</b><span class="muted small">${esc(p.connected ? (p.who || t("connectedP")) : (PDESC[S.lang]?.[p.id] || p.desc))}</span></div></div>
-      ${p.connected ? `<span class="pill ok">✓ ${t("connectedP")}</span>` : p.ready ? `<button class="pill go" data-p="${p.id}">${t("connect")}</button>` : `<span class="pill wait">${t("soon")}</span>`}</div>`).join("");
-    $$("#provList [data-p]").forEach(b => b.onclick = async () => {
-      const w = window.open("about:blank", "_blank");
-      const r = await api("connect/link", { method: "POST", json: { provider: b.dataset.p } }).catch(() => ({}));
-      if (r.ok && r.url) { if (w) w.location = r.url; else location.href = r.url; } else { w?.close(); toast(r.error || t("netErr")); }
-    });
+    $("#provList").innerHTML = d.providers.map(p => `<div class="row"><div class="prov"><div class="pi" aria-hidden="true">${esc(p.name[0])}</div><div class="pt"><b>${esc(p.name)}</b><span class="muted small">${esc(p.connected ? (p.who || t("connectedP")) : (PDESC[S.lang]?.[p.id] || p.desc))}</span></div></div>
+      ${p.connected ? `<span class="pill ok">✓ ${t("connectedP")}</span>` : p.ready ? `<button class="pill go" data-p="${p.id}" aria-label="${esc(t("connect") + " " + p.name)}">${t("connect")}</button>` : `<span class="pill wait">${t("soon")}</span>`}</div>`).join("");
+    $$("#provList [data-p]").forEach(b => b.onclick = () => connectLink(b.dataset.p));
+    const g = d.providers.find(p => p.id === "google");
+    if (g) { $("#gWho").textContent = g.connected ? (g.who || t("connectedP")) : t("googleSub"); $("#gBtn").hidden = !!g.connected || !g.ready; }
   } catch {}
 }
-document.addEventListener("visibilitychange", () => { if (!document.hidden && S.token && $("#tab-connect").classList.contains("active")) loadConnect(); });
+$("#gBtn").onclick = () => connectLink("google");
+
+/* ---------- server & API setup ---------- */
+const CF_TPL = "https://dash.cloudflare.com/profile/api-tokens?" + new URLSearchParams({ permissionGroupKeys: JSON.stringify([{ key: "workers_scripts", type: "edit" }, { key: "workers_kv_storage", type: "edit" }, { key: "account_settings", type: "read" }]), name: "Divya", accountId: "*", zoneId: "all" });
+const KP = {
+  openrouter: { name: "OpenRouter", oauth: true, rx: /^sk-or-v1-[a-f0-9]{40,}$/i, url: "https://openrouter.ai/settings/keys" },
+  groq: { name: "Groq", rx: /^gsk_[A-Za-z0-9]{20,}$/, url: "https://console.groq.com/keys" },
+  gemini: { name: "Gemini", rx: /^AIza[0-9A-Za-z_-]{30,}$/, url: "https://aistudio.google.com/app/apikey" },
+  cloudflare: { name: "Cloudflare", rx: /^[A-Za-z0-9_-]{40}$/, url: CF_TPL },
+  github: { name: "GitHub", soon: true, rx: /^(ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,})$/, url: "https://github.com/settings/tokens/new?scopes=repo,workflow&description=Divya" },
+  huggingface: { name: "Hugging Face", soon: true, rx: /^hf_[A-Za-z0-9]{30,}$/, url: "https://huggingface.co/settings/tokens/new?tokenType=read&tokenName=Divya" },
+};
+let keyState = {};
+async function loadKeys() { try { const d = await api("keys"); if (d.ok) { keyState = Object.fromEntries(d.providers.map(p => [p.id, p])); renderSteps(); } } catch {} }
+function renderSteps() {
+  const box = $("#steps"); if (!box) return; $("#consent").checked = S.consent;
+  box.innerHTML = Object.entries(KP).map(([id, k]) => {
+    const s = keyState[id] || {}; const st = s.set ? (s.ok ? t("stepOk", s.who) : t("stepFail")) : t("stepNot");
+    return `<li class="step${s.set && s.ok ? " done" : ""}" id="st-${id}"><div class="step-h"><b>${esc(k.name)}</b><span class="pill wait">${esc(st)}</span></div>
+      <p class="muted small">${esc(t("d_" + id))}${k.soon ? " " + esc(t("oauthSoon")) : ""}</p>
+      <div class="btns">${k.oauth ? `<button class="act-btn" data-or>${esc(t("oneTap"))}</button>` : ""}<a class="act-btn${k.oauth ? " alt" : ""}" href="${esc(k.url)}" target="_blank" rel="noopener" data-open="${id}">${esc(t("openCreate"))}</a>
+      ${s.set ? `<button class="act-btn alt" data-test="${id}">${esc(t("test"))}</button><button class="act-btn alt" data-del="${id}">${esc(t("remove"))}</button>` : ""}</div>
+      <div class="keyrow"><label class="sr-only" for="key-${id}">${esc(k.name + " " + t("pasteKey"))}</label><input class="keyfield" id="key-${id}" type="password" autocomplete="off" spellcheck="false" placeholder="${esc(t("pasteKey"))}" data-key="${id}">
+      <button class="act-btn alt" data-paste="${id}" aria-label="${esc(t("paste") + " " + k.name)}">${esc(t("paste"))}</button><button class="act-btn" data-save="${id}" aria-label="${esc(t("testSave") + " " + k.name)}">${esc(t("testSave"))}</button></div></li>`;
+  }).join("");
+  box.querySelectorAll("[data-or]").forEach(b => b.onclick = orConnect);
+  box.querySelectorAll("[data-save]").forEach(b => b.onclick = () => saveKey(b.dataset.save, $("#key-" + b.dataset.save).value.trim()));
+  box.querySelectorAll("[data-paste]").forEach(b => b.onclick = async () => { try { const v = (await navigator.clipboard.readText()).trim(); $("#key-" + b.dataset.paste).value = v; checkPasted(b.dataset.paste, v); } catch { $("#key-" + b.dataset.paste).focus(); toast(t("guidePaste"), true); } });
+  box.querySelectorAll("[data-key]").forEach(i => i.addEventListener("input", () => checkPasted(i.dataset.key, i.value.trim())));
+  box.querySelectorAll("[data-test]").forEach(b => b.onclick = async () => { const d = await api("keys/test", { method: "POST", json: { provider: b.dataset.test } }).catch(() => ({})); toast(d.ok ? t("stepOk", d.who) : (d.error || t("netErr")), true); loadKeys(); });
+  box.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => { await api("keys/delete", { method: "POST", json: { provider: b.dataset.del } }).catch(() => {}); loadKeys(); });
+}
+$("#consent").onchange = e => { S.consent = e.target.checked; store.set("consent", S.consent); };
+function needConsent(then) { if (S.consent) return true; sheet(t("needConsent"), [{ label: t("allow"), primary: true, fn: () => { S.consent = true; store.set("consent", true); $("#consent").checked = true; then && then(); } }, { label: t("cancel") }]); return false; }
+function checkPasted(id, v) { if (v && KP[id].rx.test(v)) confirmKey(id, v); }
+function confirmKey(id, v) {
+  if (confirmKey.open === v) return; confirmKey.open = v;
+  sheet(t("foundKey", KP[id].name, v.slice(-4)), [{ label: t("save"), primary: true, fn: () => { confirmKey.open = ""; saveKey(id, v); } }, { label: t("cancel"), fn: () => { confirmKey.open = ""; } }]);
+}
+async function saveKey(id, v) {
+  if (!v) { $("#key-" + id)?.focus(); return; }
+  if (!needConsent(() => saveKey(id, v))) return;
+  if (!KP[id].rx.test(v) && v.length < 16) { toast(t("keyBad", KP[id].name), true); return; }
+  const d = await api("keys/save", { method: "POST", json: { provider: id, key: v, consent: true } }).catch(() => ({}));
+  if (d.ok) { toast(t("keySaved", KP[id].name), true); if (guide.id === id) { guide.id = ""; await loadKeys(); return guideNext(true); } }
+  else toast(d.error || t("netErr"), true);
+  loadKeys();
+}
+async function orConnect() {
+  if (!needConsent(orConnect)) return;
+  const v = [...crypto.getRandomValues(new Uint8Array(48))].map(b => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"[b % 64]).join("");
+  const dig = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)));
+  const ch = btoa(String.fromCharCode(...dig)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  store.set("orv", v);
+  location.href = "https://openrouter.ai/auth?" + new URLSearchParams({ callback_url: APP_URL + "/setup", code_challenge: ch, code_challenge_method: "S256" });
+}
+async function orFinish() {
+  const code = store.get("orcode", ""), v = store.get("orv", ""); if (!code || !v) { store.del("orcode"); return; }
+  store.del("orcode"); store.del("orv");
+  const d = await api("keys/openrouter", { method: "POST", json: { code, verifier: v } }).catch(() => ({}));
+  toast(d.ok ? t("orDone") : (d.error || t("orFail")), true); loadKeys();
+}
+/* voice-guided setup: speak each step, open the page, read the clipboard on return, one confirmation to save */
+const guide = { id: "" };
+$("#guideBtn").onclick = () => { if (needConsent(() => guideNext())) guideNext(); };
+async function guideNext(afterSave) {
+  await loadKeys();
+  const id = Object.keys(KP).find(k => !(keyState[k]?.set && keyState[k]?.ok));
+  if (!id) { guide.id = ""; toast(t("guideDone"), true); return; }
+  if (afterSave) return sheet(t("guideNextQ", KP[id].name), [{ label: t("next"), primary: true, fn: () => guideOpen(id) }, { label: t("done") }]);
+  guideOpen(id);
+}
+function guideOpen(id) {
+  guide.id = id; $("#st-" + id)?.scrollIntoView({ block: "center" });
+  speak(t("guideStep", KP[id].name, t("d_" + id)));
+  if (KP[id].oauth) return orConnect();
+  window.open(KP[id].url, "_blank", "noopener");
+}
+async function guideReturn() {
+  const id = guide.id; if (!id || KP[id].oauth) return;
+  try { const v = (await navigator.clipboard.readText()).trim(); if (KP[id].rx.test(v)) { $("#key-" + id).value = v; return confirmKey(id, v); } } catch {}
+  $("#key-" + id)?.focus(); speak(t("guidePaste"));
+}
+
+/* ---------- plan ---------- */
+async function loadPlan() { try { const d = await api("plan"); if (d.ok) $("#planNow").textContent = t("planNow", d.plan, d.used_today, d.videos_per_day); } catch {} }
+
+/* ---------- download / install ---------- */
+let deferred = null; const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferred = e; renderDownload(); });
+window.addEventListener("appinstalled", () => { deferred = null; renderDownload(); });
+function renderDownload() {
+  const st = $("#dlStatus"), b = $("#installBtn");
+  if (standalone()) { st.textContent = t("installed"); b.hidden = true; return; }
+  b.hidden = false; st.textContent = deferred ? t("canInstall") : t("cantPrompt");
+}
+$("#installBtn").onclick = async () => {
+  if (deferred) { deferred.prompt(); await deferred.userChoice.catch(() => {}); deferred = null; renderDownload(); }
+  else sheet(isIOS ? `${t("ios1")}\n${t("ios2")}\n${t("ios3")}` : isAndroid ? `${t("and1")}\n${t("and2")}` : `${t("pc1")}\n${t("pc2")}`);
+};
 
 /* ---------- settings ---------- */
-$$("#setLang button").forEach(b => b.onclick = () => { S.lang = b.dataset.v; store.set("lang", S.lang); applyLang(); loadConnect(); });
+$$("#setLang button").forEach(b => b.onclick = () => { S.lang = b.dataset.v; store.set("lang", S.lang); applyLang(); loadConnect(); if (VA.r) vaListen(VA.state); });
 $$("#setTheme button").forEach(b => b.onclick = () => { S.theme = b.dataset.v; store.set("theme", S.theme); applyTheme(); });
 $("#setVoice").onchange = e => { S.voice = e.target.checked; store.set("voice", S.voice); };
-$("#goConnect").onclick = () => tab("connect");
+$("#setVF").onchange = e => { S.vf = e.target.checked; store.set("vf", S.vf); if (S.vf) { S.voice = true; store.set("voice", true); $("#setVoice").checked = true; speak(t("voiceFirst") + " on"); } };
 $("#logout").onclick = () => logout(false);
 matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyTheme);
 
-/* install */
-let deferred; const standalone = matchMedia("(display-mode: standalone)").matches || navigator.standalone;
-window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); deferred = e; $("#installRow").hidden = false; });
-if (!standalone && /iphone|ipad|ipod/i.test(navigator.userAgent)) $("#installRow").hidden = false;
-$("#installRow").onclick = async () => { if (deferred) { deferred.prompt(); await deferred.userChoice; deferred = null; $("#installRow").hidden = true; } else sheet(/iphone|ipad|ipod/i.test(navigator.userAgent) ? t("iosInstall") : t("genericInstall")); };
-window.addEventListener("appinstalled", () => $("#installRow").hidden = true);
-
 /* ---------- boot ---------- */
 function enter() {
-  $("#login").hidden = true; $("#main").hidden = false; $("#me").textContent = t("loggedIn", S.number);
-  loadHistory(); loadConnect(); tab("chat");
+  $("#login").hidden = true; $("#main").hidden = false; $("#me").textContent = t("loggedIn", S.number); $("#drawerMe").textContent = "+" + S.number;
+  loadHistory(); loadConnect(); loadKeys(); schedule(); cur = "";
+  route(); setTimeout(() => $("#screen-title").focus({ preventScroll: true }), 50);
+  if (store.get("orcode", "")) { go("setup"); orFinish(); }
+  if (S.wake && SR) vaStart();
 }
-applyTheme(); applyLang(); $("#setVoice").checked = S.voice; updateBtn();
+// OpenRouter PKCE callback lands on /setup?code=...
+if (location.pathname === "/setup") { const c = new URLSearchParams(location.search).get("code"); if (c) store.set("orcode", c); history.replaceState(null, "", "/#/setup"); }
+applyTheme(); applyLang(); $("#setVoice").checked = S.voice; $("#setVF").checked = S.vf; $("#wakeToggle").checked = S.wake && !!SR; $("#wakeToggle").disabled = !SR; updateBtn(); setJob(null); setVState("idle");
 if (S.token) enter(); else showLogin();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
