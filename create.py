@@ -11,6 +11,13 @@ BG, RED, WHITE, GREEN, YEL, GREY = (12, 12, 14), (235, 50, 60), (240, 240, 240),
 VISUALS = ["counter", "bar", "chat", "check", "warning", "graph", "clock", "heart", "battery", "calendar", "list", "versus"]
 FONTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 VOICES = {"male": "te-IN-MohanNeural", "female": "te-IN-ShrutiNeural"}
+# Engine switch for create mode: env DIVYA_ENGINE=v3 -> doc3.py (engine v3), anything else -> doc.py (v2, default).
+ENGINE = os.environ.get("DIVYA_ENGINE", "v2").strip().lower() or "v2"
+
+
+def engine_module():
+    import importlib
+    return importlib.import_module("doc3" if ENGINE == "v3" else "doc")
 
 
 def font(size, bold=True):
