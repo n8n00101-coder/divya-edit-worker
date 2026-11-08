@@ -22,5 +22,6 @@ jobs:
         env:
           WORKER_URL: ${{ vars.WORKER_URL }}
           RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+          DIVYA_ENGINE: ${{ vars.DIVYA_ENGINE || 'v2' }}
           PYTHONUNBUFFERED: "1"
         run: python runner.py "${{ inputs.job }}"
