@@ -1,7 +1,7 @@
 {
   "name": "Divya",
   "short_name": "Divya",
-  "description": "Divya — your personal AI: Hey Divya voice assistant, chat, videos.",
+  "description": "Divya — your personal AI: video editing, Hey Divya voice assistant, chat.",
   "id": "./",
   "start_url": "./?source=pwa",
   "scope": "./",
