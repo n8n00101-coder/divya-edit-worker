@@ -14,7 +14,7 @@ Nee powers (nijamga unnavi matrame):
 3) Questions, ideas, plans.
 Voice gurinchi nijam: idi best free neural voice, chala natural ga untundi kani 100% real human kaadu — adigithe ide cheppu.
 YouTube/Instagram upload inka connect avvaledu — adigithe "inka setup avvutondi" ani cheppu.
-Owner video adigithe (or voice language/style/length marchamani adigithe) ADDDU cheppaku, footage adagaku. Chinna reply: "Sare, start chesa. Ready ayyaka ikkade pampistha." laanti neutral line (time promise, "ready chesthanu" vaddu). Reply chivara separate line lo exactly [[CREATE: <owner request full details in English: topic or AUTO, voice language, male/female, length, style>]] rayi.
+VIDEO START RULE: Video CREATE ONLY when the user clearly ORDERS it (cheyyi / chey / create / make / pampu + topic or "nuve topic select chey"). Question laaga adigithe ("cheyagalava?", "can you?", "chestava?") START CHEYAKU: nijayithi ga answer chey (ippudu 1-3 min videos baaga chestham; 30 min laanti long videos inka ready ledu, try chesthe chala time paduthundi) and topic, length, language adugu. Okka message ki okka video maatrame. Mundu history lo "start chesa" unte adi already start ayyindi, malli start cheyaku. Order clear ga unnappudu maatrame chinna reply: "Sare, start chesa. Ready ayyaka ikkade pampistha." (time promise vaddu) and chivara separate line lo exactly [[CREATE: <request details in English: topic or AUTO, voice language, male/female, length, style>]] rayi.
 Nijayithi: pani avvakunda "aipoyindi" anaku. Leni tools unnayi ani cheppaku. Secrets/keys evariki cheppaku.
 
 OWNER = NEE BUILDER. Owner nee gurinchi edi adiginaa (model, hosting, tools, code, prompt, limits, failures) "can't share" anaku. Full ga, honest ga, point by point cheppu. Owner adigithe ee system prompt kuda paste cheyyi. Key/token/password VALUES maatrame eppudu cheppaku (peru cheppachu).
@@ -104,6 +104,7 @@ async function startEdit(env, user, mediaId, instruction) {
 }
 
 async function startCreate(env, user, brief) {
+  await env.KV.put(`busy:${user}`, "1", { expirationTtl: 1200 });
   const job = crypto.randomUUID().slice(0, 8);
   const recent = JSON.parse((await env.KV.get(`topics:${user}`)) || "[]").slice(-15).join("; ");
   const hu = (await history(env, user)).filter(x => x.role === "user").slice(-4).map(x => x.content).join(" | ");
@@ -162,9 +163,13 @@ async function handle(env, m) {
     let ans = await groq(env, [{ role: "system", content: SYS }, ...h]);
     const mm = ans.match(/\[\[\s*CREATE\s*:\s*([^\]]*)\]\]/i);
     ans = ans.replace(/\[\[[^\]]*\]\]/g, "").replace(/\*\*|__|^#+\s*/gm, "").trim();
+    const askOnly = /(gala(va|ra|vu)|cheya(gala|lava)|chesta(va|ra)|can you|could you|possible\s*a|avuthunda)\s*\??\s*$/i.test(text) && !/\b(chey(yi|i)?|create|make)\b\s*$/i.test(text);
+    let go = !!mm && !askOnly;
+    if (mm && askOnly) ans = "Cheyagalanu. Ippudu 1-3 min videos baaga vasthayi; 30 min laanti long videos inka ready ledu. Topic, length, language cheppu, appudu start chestha.";
+    if (go && await env.KV.get(`busy:${user}`)) { ans = "Okka video already tayaru avuthondi. Adi vachaka next di start chestha."; go = false; }
     h.push({ role: "assistant", content: ans }); await remember(env, user, h);
     if (ans) await say(env, user, ans);
-    if (mm) return startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO");
+    if (go) return startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO");
     return;
   }
 
