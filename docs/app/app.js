@@ -1,9 +1,12 @@
 "use strict";
-const API = "https://divya.n8n00101.workers.dev/api";
+// API hosts, tried in order; the first that answers is remembered. Add a second host here (e.g. a custom domain) if *.workers.dev is blocked.
+const API_BASES = ["https://divya.n8n00101.workers.dev/api"];
+let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 10) || 0, API_BASES.length - 1)];
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
+const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
-const S = { token: store.get("token", ""), number: store.get("number", ""), lang: store.get("lang", "te"), voice: store.get("voice", true), vf: store.get("vf", false), theme: store.get("theme", "auto"), wake: store.get("wake", false), consent: store.get("consent", false) };
+const S = { token: store.get("token", ""), number: store.get("number", ""), acct: store.get("acct", null), lang: store.get("lang", "te"), voice: store.get("voice", true), vf: store.get("vf", false), theme: store.get("theme", "auto"), wake: store.get("wake", false), consent: store.get("consent", false) };
 const isAndroid = /android/i.test(navigator.userAgent), isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kolkata"; } catch { return "Asia/Kolkata"; } })();
 
@@ -11,7 +14,13 @@ const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZon
 const T = {
   te: {
     skip: "Content ki vellu", numLabel: "WhatsApp number", codeLabel: "6 ankela code",
-    loginSub: "Nee WhatsApp number ivvu. Code WhatsApp ki vasthundi.", getCode: "Code pampu", verify: "Login", codeHint: "Code raakapothe WhatsApp lo Divya ki \"login\" ani pampu.", changeNum: "Number marchu", codeSentTo: n => `+${n} ki WhatsApp lo code pampa.`, waitCode: "Code already pampa. WhatsApp chudu.",
+    loginSub: "Nee WhatsApp number ivvu. Code WhatsApp ki vasthundi.", loginSub2: "Nee personal AI. Login avvu leda kotha account create cheyyi.", loginWays: "Login vidhanam", tabLogin: "Login", tabSignup: "Sign up", tabWa: "WhatsApp code",
+    idLabel: "Email leda phone number", idPh: "Email leda phone number", pwLabel: "Password", newPwLabel: "Password (kanisam 8)", nameLabel: "Nee peru", emailLabel: "Email", phoneLabel: "Phone (WhatsApp) — optional", showPw: "Password chupinchu",
+    logIn: "Login", forgot: "Password marchipoyava?", createAcct: "Account create cheyyi", suHint: "Phone WhatsApp code tho verify ayyaka matrame link avuthundi. Kotha accounts Free plan lo untayi.",
+    forgotT: "Password reset", forgotSub: "Nee email leda verified phone ivvu. Reset code nee verified WhatsApp ki vasthundi.", sendResetCode: "Reset code pampu", backLogin: "Login ki venakki", setPw: "Kotha password set cheyyi", rsSentTo: n => `${n} ki WhatsApp lo code pampa.`,
+    verifyPhoneT: "Phone verify", pvSentTo: n => `${n} ki WhatsApp lo 6 ankela code pampa.`, later: "Tarvatha", needId: "Email leda phone ivvu.", needPw: "Password ivvu.", triesLeft: n => ` (${n} tries migilayi)`,
+    netBlockedT: "Divya server ki connect avvaledu.", netBlocked: "Nee network (ISP) *.workers.dev ni block chestundochu. Mobile data ↔ Wi-Fi marchi chudu, leda Private DNS (1.1.1.1 / dns.google) on cheyyi.", offline: "Internet ledu. Connection chusi malli try cheyyi.", retry: "Malli try cheyyi",
+    account: "Account", phoneOk: n => `Phone: ${n} ✓ verified`, phoneNone: "Phone link avvaledu. Link chesthe phone tho login + password reset vasthayi.", phonePend: n => `Phone ${n}: inka verify avvaledu.`, sendCode: "Code pampu", phoneLinked: "Phone link ayyindi ✓", delAcct: "Account delete cheyyi", delWarn: "Nee account, login, app chat history delete avuthayi. Password tho confirm cheyyi.", delConfirm: "Delete confirm", deleted: "Account delete ayyindi.", getCode: "Code pampu", verify: "Login", codeHint: "Code raakapothe WhatsApp lo Divya ki \"login\" ani pampu.", changeNum: "Number marchu", codeSentTo: n => `+${n} ki WhatsApp lo code pampa.`, waitCode: "Code already pampa. WhatsApp chudu.",
     openMenu: "Menu open cheyyi", closeMenu: "Menu close cheyyi", menu: "Main menu", heyDivya: "Hey Divya — matladu", quickActions: "Shortcuts",
     sHome: "Home", sChat: "Chat", sCreate: "Video create", sVoice: "Voice assistant", sConnect: "Accounts connect", sSetup: "Server & API setup", sPlan: "Subscription", sDownload: "App download", sSettings: "Settings", logout: "Logout",
     gChat: "Chat", gCreate: "Video", gVoice: "Voice", gConnect: "Connect", gSetup: "Server setup", gPlan: "Plan", gDownload: "Download", gSettings: "Settings",
@@ -46,11 +55,17 @@ const T = {
     ios1: "Safari lo ee page open cheyyi.", ios2: "Share (□↑) nokku → \"Add to Home Screen\".", ios3: "\"Add\" nokku. Home screen nunchi open cheyyi.",
     pc1: "Chrome/Edge address bar lo install icon (⊕ / monitor) nokku.", pc2: "Leda menu → \"Install Divya\" / \"Apps → Install this site as an app\".",
     language: "Language", voiceReplies: "Voice replies", voiceRepliesSub: "Mic lo adigithe Divya gattiga reply chestundi", voiceFirst: "Voice-first mode", voiceFirstSub: "Prathi result gattiga cheptundi, answer tarvatha malli vintundi (blind users kosam)", theme: "Theme", auto: "Auto", light: "Light", dark: "Dark", connected: "Connected accounts",
-    netErr: "Network problem. Malli try cheyyi.", micDenied: "Mic permission ivvu (browser settings lo).", noRec: "Ee browser lo voice record avvadu.", loggedIn: n => `+${n} tho login`, orDone: "OpenRouter connect ayyindi ✓", orFail: "OpenRouter connect avvaledu.",
+    netErr: "Network problem. Malli try cheyyi.", micDenied: "Mic permission ivvu (browser settings lo).", noRec: "Ee browser lo voice record avvadu.", loggedIn: n => `${n} tho login`, orDone: "OpenRouter connect ayyindi ✓", orFail: "OpenRouter connect avvaledu.",
   },
   en: {
     skip: "Skip to content", numLabel: "WhatsApp number", codeLabel: "6-digit code",
-    loginSub: "Enter your WhatsApp number. The code comes on WhatsApp.", getCode: "Send code", verify: "Log in", codeHint: "No code? Send \"login\" to Divya on WhatsApp.", changeNum: "Change number", codeSentTo: n => `Code sent on WhatsApp to +${n}.`, waitCode: "Code already sent. Check WhatsApp.",
+    loginSub: "Enter your WhatsApp number. The code comes on WhatsApp.", loginSub2: "Your personal AI. Log in or create an account.", loginWays: "Ways to log in", tabLogin: "Log in", tabSignup: "Sign up", tabWa: "WhatsApp code",
+    idLabel: "Email or phone number", idPh: "Email or phone number", pwLabel: "Password", newPwLabel: "Password (8+ characters)", nameLabel: "Your name", emailLabel: "Email", phoneLabel: "Phone (WhatsApp) — optional", showPw: "Show password",
+    logIn: "Log in", forgot: "Forgot password?", createAcct: "Create account", suHint: "Your phone links only after you verify it with a WhatsApp code. New accounts start on the Free plan.",
+    forgotT: "Reset password", forgotSub: "Enter your email or verified phone. The reset code goes to your verified WhatsApp.", sendResetCode: "Send reset code", backLogin: "Back to log in", setPw: "Set new password", rsSentTo: n => `Code sent on WhatsApp to ${n}.`,
+    verifyPhoneT: "Verify phone", pvSentTo: n => `We sent a 6-digit code on WhatsApp to ${n}.`, later: "Later", needId: "Enter your email or phone.", needPw: "Enter your password.", triesLeft: n => ` (${n} tries left)`,
+    netBlockedT: "Can't reach Divya's server.", netBlocked: "Your network (ISP) may be blocking *.workers.dev. Switch between mobile data and Wi-Fi, or turn on Private DNS (1.1.1.1 / dns.google).", offline: "You're offline. Check your connection and try again.", retry: "Try again",
+    account: "Account", phoneOk: n => `Phone: ${n} ✓ verified`, phoneNone: "No phone linked. Link one to log in by phone and reset your password.", phonePend: n => `Phone ${n}: not verified yet.`, sendCode: "Send code", phoneLinked: "Phone linked ✓", delAcct: "Delete account", delWarn: "This deletes your account, login and app chat history. Confirm with your password.", delConfirm: "Confirm delete", deleted: "Account deleted.", getCode: "Send code", verify: "Log in", codeHint: "No code? Send \"login\" to Divya on WhatsApp.", changeNum: "Change number", codeSentTo: n => `Code sent on WhatsApp to +${n}.`, waitCode: "Code already sent. Check WhatsApp.",
     openMenu: "Open menu", closeMenu: "Close menu", menu: "Main menu", heyDivya: "Hey Divya — talk", quickActions: "Shortcuts",
     sHome: "Home", sChat: "Chat", sCreate: "Create video", sVoice: "Voice assistant", sConnect: "Connect accounts", sSetup: "Server & API setup", sPlan: "Subscription", sDownload: "Download app", sSettings: "Settings", logout: "Log out",
     gChat: "Chat", gCreate: "Video", gVoice: "Voice", gConnect: "Connect", gSetup: "Server setup", gPlan: "Plan", gDownload: "Download", gSettings: "Settings",
@@ -85,7 +100,7 @@ const T = {
     ios1: "Open this page in Safari.", ios2: "Tap Share (□↑) → \"Add to Home Screen\".", ios3: "Tap \"Add\", then open Divya from your home screen.",
     pc1: "In Chrome/Edge, click the install icon (⊕ / monitor) in the address bar.", pc2: "Or menu → \"Install Divya\" / \"Apps → Install this site as an app\".",
     language: "Language", voiceReplies: "Voice replies", voiceRepliesSub: "When you speak, Divya answers aloud", voiceFirst: "Voice-first mode", voiceFirstSub: "Speaks every result and keeps listening after each answer (for blind users)", theme: "Theme", auto: "Auto", light: "Light", dark: "Dark", connected: "Connected accounts",
-    netErr: "Network problem. Try again.", micDenied: "Allow microphone access in browser settings.", noRec: "Voice recording isn't supported in this browser.", loggedIn: n => `Logged in as +${n}`, orDone: "OpenRouter connected ✓", orFail: "OpenRouter didn't connect.",
+    netErr: "Network problem. Try again.", micDenied: "Allow microphone access in browser settings.", noRec: "Voice recording isn't supported in this browser.", loggedIn: n => `Logged in as ${n}`, orDone: "OpenRouter connected ✓", orFail: "OpenRouter didn't connect.",
   },
 };
 const t = (k, ...a) => { const v = (T[S.lang] || T.te)[k]; return typeof v === "function" ? v(...a) : v ?? k; };
@@ -96,7 +111,7 @@ function applyLang() {
   $$("[data-tl]").forEach(e => e.setAttribute("aria-label", t(e.dataset.tl)));
   $$("#setLang button").forEach(b => { b.classList.toggle("on", b.dataset.v === S.lang); b.setAttribute("aria-checked", b.dataset.v === S.lang); });
   if ($("#msgs .empty")) renderEmpty();
-  if (S.number) { $("#me").textContent = t("loggedIn", S.number); $("#drawerMe").textContent = "+" + S.number; }
+  if (S.token) { $("#me").textContent = t("loggedIn", whoAmI()); $("#drawerMe").textContent = whoAmI(); renderAcct(); }
   $("#greet").textContent = t("hello", new Date().getHours());
   if (cur) setTitle(cur);
   setVState(VA.state || "idle");
@@ -118,18 +133,92 @@ function sheet(msg, btns) {
 }
 $$("[role=radiogroup] button").forEach(b => b.setAttribute("role", "radio"));
 
+async function apiFetch(path, opts) {
+  // try the remembered API host first, then the others; a TypeError means the host was unreachable (blocked, DNS, offline)
+  const order = [API, ...API_BASES.filter(b => b !== API)]; let last;
+  for (const base of order) {
+    try { const r = await fetch(base + "/" + path, opts); if (base !== API) { API = base; localStorage.setItem("dv_apiIdx", String(API_BASES.indexOf(base))); } netState(true); return r; }
+    catch (e) { last = e; }
+  }
+  netState(false); const err = new Error("net"); err.cause = last; throw err;
+}
 async function api(path, { method = "GET", json, form } = {}) {
   const h = {}; if (S.token) h.authorization = "Bearer " + S.token;
   let body; if (json) { h["content-type"] = "application/json"; body = JSON.stringify({ lang: S.lang, ...json }); } else if (form) body = form;
   const sep = path.includes("?") ? "&" : "?";
-  const r = await fetch(API + "/" + path + (method === "GET" ? `${sep}lang=${S.lang}` : ""), { method, headers: h, body });
+  const r = await apiFetch(path + (method === "GET" ? `${sep}lang=${S.lang}` : ""), { method, headers: h, body });
   const d = await r.json().catch(() => ({ ok: false, error: "bad response" }));
-  if (r.status === 401 && path !== "login/verify") { logout(true); throw new Error("login"); }
+  if (r.status === 401 && !/^(login\/verify|auth\/|account\/(password|delete))/.test(path)) { logout(true); throw new Error("login"); }
   return { status: r.status, ...d };
 }
+/* network-blocked banner: shown when no API host answers */
+function netState(ok) {
+  $$(".net-banner").forEach(b => { b.hidden = ok; if (!ok) b.querySelector(".nb-text").textContent = navigator.onLine === false ? t("offline") : t("netBlocked"); });
+}
+async function netCheck() {
+  for (const base of [API, ...API_BASES.filter(b => b !== API)]) {
+    const c = new AbortController(), tm = setTimeout(() => c.abort(), 9000);
+    try { const r = await fetch(base + "/health", { signal: c.signal, cache: "no-store" }); clearTimeout(tm); if (r.ok) { API = base; netState(true); return true; } } catch {} clearTimeout(tm);
+  }
+  netState(false); return false;
+}
+document.addEventListener("click", e => { if (e.target.closest("[data-retry]")) netCheck().then(ok => ok && toast("✓")); });
+window.addEventListener("online", () => netCheck());
 
 /* ---------- login ---------- */
-function showLogin() { $("#main").hidden = true; $("#login").hidden = false; $("#numForm").hidden = false; $("#codeForm").hidden = true; $("#loginErr").textContent = ""; vaStop(); setTimeout(() => $("#num").focus(), 300); }
+const AUTH_FORMS = ["pwForm", "suForm", "numForm", "codeForm", "fgForm", "rsForm", "pvForm"];
+let authTab = store.get("authTab", "pw");
+function showForm(id, focus) {
+  AUTH_FORMS.forEach(f => $("#" + f).hidden = f !== id); $("#loginErr").textContent = "";
+  const tab = { pwForm: "pw", suForm: "su", numForm: "wa", codeForm: "wa" }[id];
+  $("#authTabs").hidden = !tab;
+  $$("#authTabs button").forEach(b => { const on = b.dataset.v === tab; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); b.tabIndex = on ? 0 : -1; });
+  if (focus) setTimeout(() => $("#" + focus)?.focus(), 200);
+}
+function setTab(v, focus = true) { authTab = v; store.set("authTab", v); showForm({ pw: "pwForm", su: "suForm", wa: "numForm" }[v], focus ? { pw: "pwId", su: "suName", wa: "num" }[v] : null); }
+$$("#authTabs button").forEach(b => b.onclick = () => setTab(b.dataset.v));
+$("#authTabs").addEventListener("keydown", e => { if (!/Arrow(Left|Right)/.test(e.key)) return; const v = ["pw", "su", "wa"], i = v.indexOf(authTab); setTab(v[(i + (e.key === "ArrowRight" ? 1 : 2)) % 3], false); $("#tab-" + authTab).focus(); });
+$$(".eye").forEach(b => b.onclick = () => { const i = b.parentElement.querySelector("input"); const show = i.type === "password"; i.type = show ? "text" : "password"; b.setAttribute("aria-pressed", show); });
+function showLogin() { $("#main").hidden = true; $("#login").hidden = false; setTab(authTab, false); vaStop(); setTimeout(() => $({ pw: "#pwId", su: "#suName", wa: "#num" }[authTab]).focus(), 300); netCheck(); }
+const whoAmI = () => S.number ? "+" + S.number : (S.acct?.email || "");
+const normId = v => { v = v.trim(); return v.includes("@") ? v.toLowerCase() : v.replace(/[^\d+]/g, ""); };
+function setSession(d) { S.token = d.token; S.number = d.number || ""; S.acct = d.account || S.acct || null; store.set("token", S.token); store.set("number", S.number); store.set("acct", S.acct); }
+async function authCall(btn, path, json, onOk) {
+  $("#loginErr").textContent = ""; btn.disabled = true;
+  try { const d = await api(path, { method: "POST", json }); if (!d.ok) { $("#loginErr").textContent = (d.error || t("netErr")) + (d.tries_left > 0 && d.tries_left < 5 ? t("triesLeft", d.tries_left) : ""); if (S.vf) speak($("#loginErr").textContent); return d; } await onOk(d); return d; }
+  catch (e) { $("#loginErr").textContent = e.message === "net" ? t("netBlockedT") : t("netErr"); }
+  finally { btn.disabled = false; }
+}
+$("#pwForm").onsubmit = e => {
+  e.preventDefault(); const id = normId($("#pwId").value), pw = $("#pwPass").value;
+  if (!id) { $("#loginErr").textContent = t("needId"); return $("#pwId").focus(); } if (!pw) { $("#loginErr").textContent = t("needPw"); return $("#pwPass").focus(); }
+  authCall($("#pwBtn"), "auth/login", { id, password: pw }, d => { $("#pwPass").value = ""; setSession(d); enter(); });
+};
+$("#suForm").onsubmit = e => {
+  e.preventDefault();
+  const json = { name: $("#suName").value.trim(), email: $("#suEmail").value.trim(), phone: $("#suPhone").value.replace(/[^\d+]/g, ""), password: $("#suPass").value };
+  authCall($("#suBtn"), "auth/signup", json, d => {
+    $("#suPass").value = ""; setSession(d);
+    if (d.phone_status === "sent") { $("#pvSent").textContent = t("pvSentTo", "+" + d.account.phone_pending); showForm("pvForm", "pvCode"); return; }
+    enter(); if (d.phone_msg) setTimeout(() => sheet(d.phone_msg), 400);
+  }).then(d => { if (d && !d.ok && d.field) $("#su" + d.field[0].toUpperCase() + d.field.slice(1))?.focus(); });
+};
+$("#forgotBtn").onclick = () => { $("#fgId").value = $("#pwId").value; showForm("fgForm", "fgId"); };
+$$("[data-back]").forEach(b => b.onclick = () => setTab("pw"));
+$("#fgForm").onsubmit = e => {
+  e.preventDefault(); const id = normId($("#fgId").value); if (!id) { $("#loginErr").textContent = t("needId"); return; }
+  authCall($("#fgBtn"), "auth/forgot", { id }, d => { S.resetId = id; $("#rsSent").textContent = t("rsSentTo", d.to || ""); showForm("rsForm", "rsCode"); });
+};
+$("#rsForm").onsubmit = e => {
+  e.preventDefault();
+  authCall($("#rsBtn"), "auth/reset", { id: S.resetId, code: $("#rsCode").value, password: $("#rsPass").value }, d => { $("#rsPass").value = ""; $("#rsCode").value = ""; setSession(d); enter(); });
+};
+$("#pvForm").onsubmit = e => {
+  e.preventDefault();
+  authCall($("#pvBtn"), "account/phone/verify", { code: $("#pvCode").value }, d => { S.number = d.phone; store.set("number", S.number); toast(t("phoneLinked"), true); enter(); });
+};
+$("#pvSkip").onclick = () => enter();
+["#pvCode", "#rsCode", "#lvCode"].forEach(sel => $(sel).addEventListener("input", e => { e.target.value = e.target.value.replace(/\D/g, "").slice(0, 6); }));
 $("#numForm").onsubmit = async e => {
   e.preventDefault(); const n = $("#num").value.replace(/\D/g, "");
   if (n.length !== 10) { $("#loginErr").textContent = "10 digits"; return; }
@@ -138,8 +227,8 @@ $("#numForm").onsubmit = async e => {
     const d = await api("login/start", { method: "POST", json: { number: n } });
     if (!d.ok) { $("#loginErr").textContent = d.error || t("netErr"); return; }
     S.pendingNum = "91" + n; $("#codeSent").textContent = d.sent === false ? t("waitCode") : t("codeSentTo", "91" + n);
-    $("#numForm").hidden = true; $("#codeForm").hidden = false; setTimeout(() => $("#code").focus(), 200);
-  } catch { $("#loginErr").textContent = t("netErr"); } finally { $("#numBtn").disabled = false; }
+    showForm("codeForm", "code");
+  } catch (e) { $("#loginErr").textContent = e.message === "net" ? t("netBlockedT") : t("netErr"); } finally { $("#numBtn").disabled = false; }
 };
 $("#code").oninput = e => { e.target.value = e.target.value.replace(/\D/g, "").slice(0, 6); if (e.target.value.length === 6) $("#codeForm").requestSubmit(); };
 $("#codeForm").onsubmit = async e => {
@@ -147,13 +236,13 @@ $("#codeForm").onsubmit = async e => {
   try {
     const d = await api("login/verify", { method: "POST", json: { number: S.pendingNum, code: $("#code").value } });
     if (!d.ok) { $("#loginErr").textContent = d.error || t("netErr"); $("#code").value = ""; return; }
-    S.token = d.token; S.number = d.number; store.set("token", d.token); store.set("number", d.number); enter();
-  } catch { $("#loginErr").textContent = t("netErr"); } finally { $("#codeBtn").disabled = false; }
+    S.acct = null; setSession(d); enter();
+  } catch (e) { $("#loginErr").textContent = e.message === "net" ? t("netBlockedT") : t("netErr"); } finally { $("#codeBtn").disabled = false; }
 };
-$("#changeNum").onclick = showLogin;
+$("#changeNum").onclick = () => setTab("wa");
 function logout(silent) {
   if (!silent && S.token) api("logout", { method: "POST", json: {} }).catch(() => {});
-  S.token = ""; store.del("token"); store.del("chat"); $("#msgs").innerHTML = ""; closeDrawer(); showLogin();
+  S.token = ""; S.number = ""; S.acct = null; store.del("token"); store.del("number"); store.del("acct"); store.del("chat"); $("#msgs").innerHTML = ""; closeDrawer(); showLogin();
 }
 
 /* ---------- drawer + routing ---------- */
@@ -269,7 +358,7 @@ function schedule() {
     if (remTimers[r.at] || r.at < Date.now() - 60000) return;
     remTimers[r.at] = setTimeout(() => {
       chime(false); navigator.vibrate?.([200, 100, 200]); const msg = t("remFire", r.text); toast(msg, true);
-      try { if (Notification.permission === "granted") navigator.serviceWorker?.ready.then(reg => reg.showNotification(t("notifTitle"), { body: r.text, icon: "/icon-192.png" })); } catch {}
+      try { if (Notification.permission === "granted") navigator.serviceWorker?.ready.then(reg => reg.showNotification(t("notifTitle"), { body: r.text, icon: "icon-192.png" })); } catch {}
       store.set("rem", store.get("rem", []).filter(x => x.at !== r.at));
     }, Math.max(0, r.at - Date.now()));
   });
@@ -294,7 +383,7 @@ function typing(on) {
 function renderEmpty() {
   const m = $("#msgs"); m.innerHTML = "";
   const e = document.createElement("div"); e.className = "empty";
-  e.innerHTML = `<img src="/icon-192.png" alt=""><h2>${esc(t("emptyTitle"))}</h2><div class="muted">${esc(t("emptySub"))}</div><div class="chips">${["s1", "s2", "s3"].map(k => `<button class="chip">${esc(t(k))}</button>`).join("")}</div>`;
+  e.innerHTML = `<img src="icon-192.png" alt=""><h2>${esc(t("emptyTitle"))}</h2><div class="muted">${esc(t("emptySub"))}</div><div class="chips">${["s1", "s2", "s3"].map(k => `<button class="chip">${esc(t(k))}</button>`).join("")}</div>`;
   e.querySelectorAll(".chip").forEach(c => c.onclick = () => send(c.textContent));
   m.appendChild(e);
 }
@@ -579,7 +668,7 @@ async function orConnect() {
   const dig = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)));
   const ch = btoa(String.fromCharCode(...dig)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   store.set("orv", v);
-  location.href = "https://openrouter.ai/auth?" + new URLSearchParams({ callback_url: APP_URL + "/setup", code_challenge: ch, code_challenge_method: "S256" });
+  location.href = "https://openrouter.ai/auth?" + new URLSearchParams({ callback_url: location.host === new URL(APP_URL).host ? APP_URL + "/setup" : BASE + "?orcb=1", code_challenge: ch, code_challenge_method: "S256" });
 }
 async function orFinish() {
   const code = store.get("orcode", ""), v = store.get("orv", ""); if (!code || !v) { store.del("orcode"); return; }
@@ -626,6 +715,26 @@ $("#installBtn").onclick = async () => {
   else sheet(isIOS ? `${t("ios1")}\n${t("ios2")}\n${t("ios3")}` : isAndroid ? `${t("and1")}\n${t("and2")}` : `${t("pc1")}\n${t("pc2")}`);
 };
 
+/* ---------- account (email/phone + password users) ---------- */
+function renderAcct() {
+  const a = S.acct, card = $("#acctCard"); card.hidden = !a; if (!a) return;
+  $("#acctInfo").textContent = `${a.name} · ${a.email}`;
+  $("#phoneInfo").textContent = a.phone ? t("phoneOk", "+" + a.phone) : a.phone_pending ? t("phonePend", "+" + a.phone_pending) : t("phoneNone");
+  $("#lpForm").hidden = !!a.phone; if (a.phone) $("#lvForm").hidden = true;
+  if (!$("#lpPhone").value && a.phone_pending) $("#lpPhone").value = a.phone_pending.replace(/^91(?=\d{10}$)/, "");
+}
+async function acctCall(btn, path, json, onOk) {
+  $("#acctErr").textContent = ""; btn.disabled = true;
+  try { const d = await api(path, { method: "POST", json }); if (!d.ok) { $("#acctErr").textContent = d.error || t("netErr"); if (S.vf) speak($("#acctErr").textContent); return; } await onOk(d); }
+  catch (e) { if (e.message !== "login") $("#acctErr").textContent = e.message === "net" ? t("netBlockedT") : t("netErr"); }
+  finally { btn.disabled = false; }
+}
+$("#lpForm").onsubmit = e => { e.preventDefault(); acctCall($("#lpBtn"), "account/phone", { phone: $("#lpPhone").value.replace(/[^\d+]/g, "") }, d => { if (d.status === "linked") return; $("#phoneInfo").textContent = t("pvSentTo", d.to); $("#lvForm").hidden = false; $("#lvCode").focus(); }); };
+$("#lvForm").onsubmit = e => { e.preventDefault(); acctCall($("#lvBtn"), "account/phone/verify", { code: $("#lvCode").value }, d => { S.number = d.phone; S.acct = { ...S.acct, phone: d.phone, phone_pending: "" }; store.set("number", S.number); store.set("acct", S.acct); $("#lvCode").value = ""; applyLang(); toast(t("phoneLinked"), true); }); };
+$("#delOpen").onclick = () => { $("#delForm").hidden = !$("#delForm").hidden; if (!$("#delForm").hidden) $("#delPass").focus(); };
+$("#delForm").onsubmit = e => { e.preventDefault(); acctCall($("#delBtn"), "account/delete", { password: $("#delPass").value }, () => { $("#delPass").value = ""; $("#delForm").hidden = true; toast(t("deleted"), true); logout(true); }); };
+async function refreshMe() { try { const d = await api("me"); if (d.ok) { S.number = d.number || ""; S.acct = d.account || null; store.set("number", S.number); store.set("acct", S.acct); applyLang(); } } catch {} }
+
 /* ---------- settings ---------- */
 $$("#setLang button").forEach(b => b.onclick = () => { S.lang = b.dataset.v; store.set("lang", S.lang); applyLang(); loadConnect(); if (VA.r) vaListen(VA.state); });
 $$("#setTheme button").forEach(b => b.onclick = () => { S.theme = b.dataset.v; store.set("theme", S.theme); applyTheme(); });
@@ -636,14 +745,14 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyThe
 
 /* ---------- boot ---------- */
 function enter() {
-  $("#login").hidden = true; $("#main").hidden = false; $("#me").textContent = t("loggedIn", S.number); $("#drawerMe").textContent = "+" + S.number;
+  $("#login").hidden = true; $("#main").hidden = false; $("#me").textContent = t("loggedIn", whoAmI()); $("#drawerMe").textContent = whoAmI(); renderAcct(); refreshMe();
   loadHistory(); loadConnect(); loadKeys(); schedule(); cur = "";
   route(); setTimeout(() => $("#screen-title").focus({ preventScroll: true }), 50);
   if (store.get("orcode", "")) { go("setup"); orFinish(); }
   if (S.wake && SR) vaStart();
 }
 // OpenRouter PKCE callback lands on /setup?code=...
-if (location.pathname === "/setup") { const c = new URLSearchParams(location.search).get("code"); if (c) store.set("orcode", c); history.replaceState(null, "", "/#/setup"); }
+if (location.pathname.endsWith("/setup") || new URLSearchParams(location.search).has("orcb")) { const c = new URLSearchParams(location.search).get("code"); if (c) store.set("orcode", c); history.replaceState(null, "", BASE + "#/setup"); }
 applyTheme(); applyLang(); $("#setVoice").checked = S.voice; $("#setVF").checked = S.vf; $("#wakeToggle").checked = S.wake && !!SR; $("#wakeToggle").disabled = !SR; updateBtn(); setJob(null); setVState("idle");
-if (S.token) enter(); else showLogin();
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+if (S.token) { enter(); netCheck(); } else showLogin();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
