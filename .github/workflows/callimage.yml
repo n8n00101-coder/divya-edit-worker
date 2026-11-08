@@ -1,0 +1,26 @@
+name: callimage
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["voicecall/**"]
+permissions:
+  contents: read
+  packages: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: voicecall
+          push: true
+          platforms: linux/amd64
+          tags: ghcr.io/n8n00101-coder/divya-call:latest
+          labels: org.opencontainers.image.source=https://github.com/n8n00101-coder/divya-edit-worker
