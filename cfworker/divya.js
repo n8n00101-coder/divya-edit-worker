@@ -129,6 +129,8 @@ async function handle(env, m) {
   await env.KV.put(`seen:${m.id}`, "1", { expirationTtl: 86400 });
 
   const tx0 = (m.text?.body || "").toLowerCase();
+  if (/^\s*\/?connect\s*$/.test(tx0)) return connectMenu(env, user);
+  if (m.type === "interactive") { const id = m.interactive?.list_reply?.id || m.interactive?.button_reply?.id || ""; if (id.startsWith("conn:") && PROVIDERS[id.slice(5)]) return connectLink(env, user, id.slice(5)); }
   if (isOwner && /system prompt|full prompt|instructions paste|nee prompt|your prompt/.test(tx0)) return say(env, user, SYSTEM);
 
   if (m.type === "video" || (m.type === "document" && (m.document?.mime_type || "").startsWith("video"))) {
@@ -176,6 +178,72 @@ async function handle(env, m) {
   return say(env, user, "Ee type message inka ardham chesukolenu. Text, screenshot leda video pampu.");
 }
 
+
+// ---------- /connect: account linking via OAuth links ----------
+const PROVIDERS = {
+  youtube:   { title: "YouTube connect",   desc: "Videos upload cheyadaniki" },
+  google:    { title: "Google connect",    desc: "Gmail/Drive (basic profile)" },
+  instagram: { title: "Instagram connect", desc: "Reels post cheyadaniki" },
+  facebook:  { title: "Facebook connect",  desc: "Page lo post cheyadaniki" },
+  telegram:  { title: "Telegram connect",  desc: "Telegram lo kuda Divya" },
+};
+const GSCOPE = { youtube: "openid email https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly", google: "openid email profile" };
+const MSCOPE = { instagram: "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management", facebook: "pages_show_list,pages_manage_posts,pages_read_engagement" };
+
+async function connectMenu(env, user) {
+  const st = await Promise.all(Object.keys(PROVIDERS).map(async k => (await env.KV.get(`tok:${user}:${k}`)) ? "✅" : ""));
+  return wa(env, user, { type: "interactive", interactive: { type: "list",
+    header: { type: "text", text: "Connect" },
+    body: { text: "Edi connect cheyyalo select chey. Link vasthundi, Chrome lo open chesi login cheyyi, ayipothundi." },
+    action: { button: "Options", sections: [{ title: "Accounts", rows: Object.entries(PROVIDERS).map(([id, p], i) => ({ id: `conn:${id}`, title: (p.title + " " + st[i]).trim().slice(0, 24), description: p.desc })) }] } } });
+}
+
+async function connectLink(env, user, prov) {
+  const state = crypto.randomUUID().replace(/-/g, "");
+  await env.KV.put(`oauth:${state}`, JSON.stringify({ user, prov }), { expirationTtl: 900 });
+  const ready = (GSCOPE[prov] && env.GOOGLE_CLIENT_ID) || (MSCOPE[prov] && env.FB_APP_SECRET) || (prov === "telegram" && env.TG_BOT);
+  if (!ready) return say(env, user, `${PROVIDERS[prov].title}: inka setup lo undi (developer app keys add avthunnayi). Ready ayyaka /connect lo pani chesthundi.`);
+  if (prov === "telegram") return say(env, user, `Telegram connect: ee link open chesi Start nokku:\nhttps://t.me/${env.TG_BOT}?start=${state}`);
+  return say(env, user, `${PROVIDERS[prov].title}: ee link Chrome lo open chesi, nee account tho login chesi Allow nokku (15 min lo):\nhttps://divya.n8n00101.workers.dev/c/${state}`);
+}
+
+async function oauthRoutes(env, url) {
+  const base = "https://divya.n8n00101.workers.dev";
+  const page = (t) => new Response(`<!doctype html><meta name=viewport content="width=device-width"><body style="font-family:sans-serif;padding:24px;font-size:18px">${t}</body>`, { headers: { "content-type": "text/html; charset=utf-8" } });
+  if (url.pathname.startsWith("/c/")) {
+    const state = url.pathname.slice(3); const s = JSON.parse((await env.KV.get(`oauth:${state}`)) || "null");
+    if (!s) return page("Link expire ayyindi. WhatsApp lo malli /connect type cheyyi.");
+    if (GSCOPE[s.prov]) return Response.redirect("https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, redirect_uri: base + "/oauth/google", response_type: "code", scope: GSCOPE[s.prov], access_type: "offline", prompt: "consent select_account", state }), 302);
+    if (MSCOPE[s.prov]) return Response.redirect("https://www.facebook.com/v21.0/dialog/oauth?" + new URLSearchParams({ client_id: env.FB_APP_ID, redirect_uri: base + "/oauth/meta", scope: MSCOPE[s.prov], response_type: "code", state }), 302);
+    return page("Ee option inka ready ledu.");
+  }
+  if (url.pathname === "/oauth/google" || url.pathname === "/oauth/meta") {
+    const state = url.searchParams.get("state"), code = url.searchParams.get("code");
+    const s = JSON.parse((await env.KV.get(`oauth:${state}`)) || "null");
+    if (!s || !code) return page("Connect avvaledu (link expire leda cancel). WhatsApp lo malli /connect try cheyyi.");
+    await env.KV.delete(`oauth:${state}`);
+    let tok, who = "";
+    if (url.pathname === "/oauth/google") {
+      tok = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ code, client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, redirect_uri: base + "/oauth/google", grant_type: "authorization_code" }) })).json();
+      if (!tok.access_token) return page("Google connect fail: " + (tok.error_description || tok.error || "unknown"));
+      if (s.prov === "youtube") { const c = await (await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); who = c.items?.[0]?.snippet?.title ? `channel "${c.items[0].snippet.title}"` : "(ee account lo YouTube channel kanipinchaledu)"; }
+      else { const u = await (await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); who = u.email || ""; }
+    } else {
+      tok = await (await fetch(`${G}/oauth/access_token?` + new URLSearchParams({ client_id: env.FB_APP_ID, client_secret: env.FB_APP_SECRET, redirect_uri: base + "/oauth/meta", code }))).json();
+      if (!tok.access_token) return page("Meta connect fail: " + (tok.error?.message || "unknown"));
+      const ll = await (await fetch(`${G}/oauth/access_token?` + new URLSearchParams({ grant_type: "fb_exchange_token", client_id: env.FB_APP_ID, client_secret: env.FB_APP_SECRET, fb_exchange_token: tok.access_token }))).json();
+      if (ll.access_token) tok.access_token = ll.access_token;
+      const pg = await (await fetch(`${G}/me/accounts?fields=name,instagram_business_account{username}&access_token=${tok.access_token}`)).json();
+      const ig = (pg.data || []).map(p => p.instagram_business_account?.username).filter(Boolean);
+      who = s.prov === "instagram" ? (ig.length ? "@" + ig.join(", @") : "(Facebook Page ki link aina Instagram professional account kanipinchaledu)") : ((pg.data || []).map(p => p.name).join(", ") || "(Page kanipinchaledu)");
+    }
+    await env.KV.put(`tok:${s.user}:${s.prov}`, JSON.stringify({ ...tok, at: Date.now(), who }));
+    await say(env, s.user, `✅ ${PROVIDERS[s.prov].title.replace(" connect", "")} connect ayyindi ${who}. Post cheyyadaniki mundu prathi sari nee OK adugutha.`);
+    return page(`✅ Connect ayyindi ${who}. Ippudu WhatsApp ki tirigi vellu.`);
+  }
+  return null;
+}
+
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
@@ -203,12 +271,14 @@ export default {
     if (url.pathname === "/done" && req.method === "POST") {
       if (req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
       const { to, topic } = await req.json();
+      if (to) await env.KV.delete(`busy:${to}`);
       if (to && topic) {
         const t = JSON.parse((await env.KV.get(`topics:${to}`)) || "[]"); t.push(String(topic).slice(0, 80));
         await env.KV.put(`topics:${to}`, JSON.stringify(t.slice(-40)));
       }
       return Response.json({ ok: true });
     }
+    if (url.pathname.startsWith("/c/") || url.pathname.startsWith("/oauth/")) { const r = await oauthRoutes(env, url); if (r) return r; }
     if (url.pathname === "/health") return Response.json({ ok: true, name: "divya" });
     return new Response("Divya is awake.");
   },
