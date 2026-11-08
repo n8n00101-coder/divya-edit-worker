@@ -67,7 +67,8 @@ def groq_chat(messages):
 
 
 async def create_job(j, wa, note):
-    import doc as create
+    import create as _engines
+    create = _engines.engine_module()  # DIVYA_ENGINE=v3 -> doc3, default doc (v2)
     to = j["to"]
     try:
         res = None
@@ -84,7 +85,9 @@ async def create_job(j, wa, note):
             out = res["path"].replace(".mp4", "_wa2.mp4")
             subprocess_run(["ffmpeg", "-y", "-loglevel", "error", "-i", res["path"], "-b:v", "1900k", "-maxrate", "2000k", "-bufsize", "4000k", "-c:a", "aac", "-b:a", "128k", out])
             res["path"] = out
-        await wa.send_media(to, res["path"], "video", caption=f"🎬 {res['title']} ({int(res['duration'])}s, {res['lang']})\n\n{res.get('caption','')[:300]}")
+        qc = res.get("qc") or {}
+        qcline = "" if not qc else ("\nQC ✅" if qc.get("pass") else "\nQC weak: " + "; ".join(qc.get("weak", [])[:3])[:250])
+        await wa.send_media(to, res["path"], "video", caption=f"🎬 {res['title']} ({int(res['duration'])}s, {res['lang']})\n\n{res.get('caption','')[:300]}{qcline}")
         try:
             httpx.post(f"{WORKER}/done", json={"to": to, "topic": res["topic"]}, headers={"x-runner-key": KEY}, timeout=20)
         except Exception:
