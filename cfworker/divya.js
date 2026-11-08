@@ -154,6 +154,17 @@ async function handle(env, m) {
     return say(env, user, ans);
   }
 
+  if (m.type === "audio") {
+    const { buf, mime } = await media(env, m.audio.id);
+    const fd = new FormData();
+    fd.append("file", new Blob([buf], { type: mime || "audio/ogg" }), "voice.ogg");
+    fd.append("model", "whisper-large-v3");
+    const tr = await (await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${env.GROQ_KEY}` }, body: fd })).json().catch(() => ({}));
+    if (!tr.text || !tr.text.trim()) return say(env, user, "Voice note ardham kaaledu, malli pampu leda type cheyyi.");
+    m = { ...m, type: "text", text: { body: tr.text.trim() } };
+    await say(env, user, `🎙️ Vinnadi: "${tr.text.trim().slice(0, 300)}"`);
+  }
+
   if (m.type === "text") {
     const text = m.text.body.trim();
     if (/^edit\s*[:\-]/i.test(text)) {
