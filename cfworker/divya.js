@@ -255,7 +255,13 @@ async function oauthRoutes(env, url) {
   return null;
 }
 
+const CALL_URL = "https://n8n00101-divya-call.hf.space";
+
 export default {
+  // Cron keeps the free HF Space awake so calls are answered.
+  async scheduled(ev, env, ctx) {
+    ctx.waitUntil(fetch((env.CALL_URL || CALL_URL) + "/health").then(r => env.KV.put("dbg:callping", `${new Date().toISOString()} ${r.status}`, { expirationTtl: 86400 * 2 })).catch(() => {}));
+  },
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (url.pathname === "/webhook" && req.method === "GET") {
@@ -268,6 +274,16 @@ export default {
       const msgs = (body.entry || []).flatMap(e => (e.changes || []).flatMap(c => c.value?.messages || []));
       const fields = (body.entry || []).flatMap(e => (e.changes || []).map(c => c.field + (c.value?.statuses ? ":status" : "") + (c.value?.messages ? ":msg" : "")));
       ctx.waitUntil(env.KV.put("dbg:last", JSON.stringify({ t: new Date().toISOString(), fields, from: msgs.map(m => (m.from || "").slice(-4)), type: msgs.map(m => m.type) }), { expirationTtl: 86400 * 2 }));
+      // WhatsApp voice calls: forward "calls" webhooks to the Pipecat media server (HF Space).
+      const callChanges = (body.entry || []).flatMap(e => (e.changes || []).filter(c => c.field === "calls"));
+      if (callChanges.length && env.FORWARD_SECRET) {
+        ctx.waitUntil(fetch((env.CALL_URL || CALL_URL) + "/calls", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-divya-key": env.FORWARD_SECRET },
+          body: JSON.stringify(body),
+        }).then(r => env.KV.put("dbg:call", `${new Date().toISOString()} fwd ${r.status} ${callChanges.map(c => (c.value?.calls || []).map(x => x.event).join("+")).join(",")}`, { expirationTtl: 86400 * 2 }))
+          .catch(e => env.KV.put("dbg:call", `${new Date().toISOString()} fwd error ${String(e).slice(0, 200)}`, { expirationTtl: 86400 * 2 })));
+      }
       ctx.waitUntil(Promise.all(msgs.map(m => handle(env, m).catch(e => { console.log("err", String(e)); return env.KV.put("dbg:err", new Date().toISOString() + " " + String(e).slice(0, 300), { expirationTtl: 86400 * 2 }); }))));
       return new Response("ok");
     }
@@ -278,6 +294,11 @@ export default {
       const j = await env.KV.get(`job:${job}`);
       if (!j) return new Response("missing", { status: 404 });
       return Response.json({ ...JSON.parse(j), WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID });
+    }
+    // Call media server fetches WA/Groq creds here (shared FORWARD_SECRET).
+    if (url.pathname === "/callcreds" && req.method === "POST") {
+      if (!env.FORWARD_SECRET || req.headers.get("x-divya-key") !== env.FORWARD_SECRET) return new Response("no", { status: 403 });
+      return Response.json({ WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID, OWNERS: env.OWNERS, FRIENDS: env.FRIENDS || "917993610173" });
     }
     if (url.pathname === "/done" && req.method === "POST") {
       if (req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
