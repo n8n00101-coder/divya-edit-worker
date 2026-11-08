@@ -21,18 +21,28 @@ const T = {
     verifyPhoneT: "Phone verify", pvSentTo: n => `${n} ki WhatsApp lo 6 ankela code pampa.`, later: "Tarvatha", needId: "Email leda phone ivvu.", needPw: "Password ivvu.", triesLeft: n => ` (${n} tries migilayi)`,
     netBlockedT: "Divya server ki connect avvaledu.", netBlocked: "Nee network (ISP) *.workers.dev ni block chestundochu. Mobile data ↔ Wi-Fi marchi chudu, leda Private DNS (1.1.1.1 / dns.google) on cheyyi.", offline: "Internet ledu. Connection chusi malli try cheyyi.", retry: "Malli try cheyyi",
     account: "Account", phoneOk: n => `Phone: ${n} ✓ verified`, phoneNone: "Phone link avvaledu. Link chesthe phone tho login + password reset vasthayi.", phonePend: n => `Phone ${n}: inka verify avvaledu.`, sendCode: "Code pampu", phoneLinked: "Phone link ayyindi ✓", delAcct: "Account delete cheyyi", delWarn: "Nee account, login, app chat history delete avuthayi. Password tho confirm cheyyi.", delConfirm: "Delete confirm", deleted: "Account delete ayyindi.", getCode: "Code pampu", verify: "Login", codeHint: "Code raakapothe WhatsApp lo Divya ki \"login\" ani pampu.", changeNum: "Number marchu", codeSentTo: n => `+${n} ki WhatsApp lo code pampa.`, waitCode: "Code already pampa. WhatsApp chudu.",
+    sEdit: "Video edit", sProfile: "Profile", gEdit: "Video edit", tHome: "Home", tEdit: "Edit", tVoice: "Voice", tChat: "Chat", tSetup: "Setup", tabsLabel: "Main tabs", openProfile: "Profile open cheyyi",
+    editsLeftT: "Free edits migilinavi", notVerified: "verify kaaledu", quotaSub: (u, l) => `Ee nela ${u}/${l} vaadavu · 1st ki reset`, unlimited: "Unlimited", unlimitedSub: "Owner/friend — limit ledu",
+    editIntro: "Nee video upload cheyyi leda link ivvu. Nuvvu select chesina type ki taggattu Divya edit chesi isthundi.", yourVideo: "Nee video", srcUpload: "Upload", srcLink: "Link", pickVideo: "Video select cheyyi (24 MB varaku)", linkLabel: "Video link", linkPh: "Google Drive / YouTube / direct video link",
+    uploadHelp: "24 MB varaku direct upload. Pedda videos ki Link vaadu.", linkHelp: "Drive file ni 'Anyone with the link' ga share cheyyi. YouTube/Instagram links konni sarlu maa server nunchi download avvavu — appudu Drive link ivvu.",
+    videoType: "Video type", kLong: "Long video / Documentary", kLongSub: "Faceless · story flow, captions, music", kShort: "Faceless short", kShortSub: "9:16 · hook, fast cuts, pedda captions", kFace: "Face video", kFaceSub: "Talking head · pauses cut, zooms, captions",
+    editLang: "Captions bhasha", lenAuto: "Auto", lenFull: "Full length", notesLabel: "Extra cheppalsindi (optional)", notesPh: "ex: modati 10 seconds teesey, music thakkuva",
+    editBtn: "Edit start cheyyi", dlEdit: "Edit chesina video download", needKind: "Video type select cheyyi.", needSrc: "Video select cheyyi leda link ivvu.", tooBig: "Ee file 24 MB kante pedda. Link vaadu.", uploading: p => `Upload ${p}%`,
+    editsLine: (left, l) => l === null ? "Unlimited edits (owner/friend)" : `Ee nela ${left}/${l} free edits migilayi`,
+    jobQueued: "Edit queue lo undi", jobRunSub2: "Konchem time paduthundi. Ready ayyaka ikkade download vasthundi.", jobDoneSub2: "Download cheyyi (3 rojulu untundi).", jobFailSub2: "Ee edit nee free count lo lekka ledu. Link/file chusi malli try cheyyi.",
+    email: "Email", phone: "Phone", planL: "Plan", planFree: "Free", planPrem: "Premium (owner/friend)", waLogin: "WhatsApp login", f0: "Nelaki 10 video edits",
     openMenu: "Menu open cheyyi", closeMenu: "Menu close cheyyi", menu: "Main menu", heyDivya: "Hey Divya — matladu", quickActions: "Shortcuts",
-    sHome: "Home", sChat: "Chat", sCreate: "Video create", sVoice: "Voice assistant", sConnect: "Accounts connect", sSetup: "Server & API setup", sPlan: "Subscription", sDownload: "App download", sSettings: "Settings", logout: "Logout",
-    gChat: "Chat", gCreate: "Video", gVoice: "Voice", gConnect: "Connect", gSetup: "Server setup", gPlan: "Plan", gDownload: "Download", gSettings: "Settings",
+    sHome: "Home", sChat: "Chat", sVoice: "Voice assistant", sConnect: "Accounts connect", sSetup: "Server & API setup", sPlan: "Subscription", sDownload: "App download", sSettings: "Settings", logout: "Logout",
+    gChat: "Chat", gVoice: "Voice", gConnect: "Connect", gSetup: "Server setup", gPlan: "Plan", gDownload: "Download", gSettings: "Settings",
     screen: n => `${n} screen`,
     hello: h => h < 12 ? "నమస్కారం, good morning" : h < 17 ? "నమస్కారం, good afternoon" : "నమస్కారం, good evening", greetSub: "Ee roju em cheddam?", heySub: "Tap chesi matladu: call, WhatsApp, open, songs, reminders",
-    noJob: "Video emi ledu", noJobSub: "Create lo kotha video start cheyyi.",
+    noJob: "Edit emi ledu", noJobSub: "Edit tab lo nee video ivvu.",
     online: "Online", thinking: "Typing…", listening: "Vintunna…", releaseToSend: "Vadilithe pamputha", typeMsg: "Message…", holdMic: "Mic ni press chesi pattuko, matladu, vadilai.", holdToTalk: "Press chesi pattukoni matladu, leda message pampu", attachImage: "Image pampu",
     emptyTitle: "Hi, nenu Divya", emptySub: "Chat cheyyi, matladu, leda pani cheppu.", s1: "YouTube open cheyyi", s2: "Ippudu time entha?", s3: "Nuvvu em cheyagalavu?",
-    topicLabel: "Topic", topicPh: "Topic (khaali ga unte nene select chestha)", voiceLang: "Voice language", voice: "Voice", female: "Female", male: "Male", length: "Length", createBtn: "Video create cheyyi", createNote: "Video ready ayyaka WhatsApp ki vasthundi. Videos Pro feature.",
-    jobRun: "Video tayaru avuthondi", jobRunSub: "Konchem time paduthundi. Ready ayyaka WhatsApp lo pampistha.", jobDone: "Last video ready", jobDoneSub: "WhatsApp chudu.", jobFail: "Last video fail ayyindi", jobFailSub: "Malli try cheyyi.", started: "Start chesa! WhatsApp lo vasthundi.",
+    length: "Length",
+    jobRun: "Edit jarugutondi", jobRunSub: "Konchem time paduthundi. Ready ayyaka WhatsApp lo pampistha.", jobDone: "Edit ready ✓", jobDoneSub: "WhatsApp chudu.", jobFail: "Edit fail ayyindi", jobFailSub: "Malli try cheyyi.", started: "Edit start chesa!",
     tapToTalk: "Tap chesi matladu", vIdle: "Tap chesi matladu", vWake: "\"Hey Divya\" kosam vintunna…", vListen: "Vintunna… cheppu", vThink: "Alochistunna…", vSpeak: "Cheptunna…", vNoSR: "Ee browser lo always-listening ledu. Orb ni press chesi pattukoni matladu.",
-    wakeSub: "App screen meeda open unnantha sepu vintundi", freeTitle: "Free:", freeList: "calls, WhatsApp message, apps/sites open, songs, reminders, time, weather, chinna questions.", proTitle: "Pro:", proList: "videos, multi-step agent pani, long research, account automation.",
+    wakeSub: "App screen meeda open unnantha sepu vintundi", freeTitle: "Free:", freeList: "video edits (nelaki 10), calls, WhatsApp message, apps/sites open, songs, reminders, time, weather, chinna questions.", proTitle: "Pro:", proList: "unlimited edits, multi-step agent pani, long research, account automation.",
     voiceHonest: "Divya app open ga, screen meeda unnappude vintundi (web app background lo vinadu). Call/WhatsApp silent ga pampadu: dialer leda WhatsApp ni anni fill chesi open chestundi, nuvvu Call/Send nokkali. Voice recognition browser service (Chrome lo Google) dwara jarugutundi.",
     callBtn: n => `Call ${n}`, waBtn: "WhatsApp open cheyyi", openBtn: n => `${n} open cheyyi`, playBtn: "YouTube lo vinu", calBtn: "Google Calendar lo add cheyyi", subBtn: "Plans chudu", pickContact: "Contacts nunchi select", typeNumber: "Number type cheyyi",
     noNumber: n => `${n} number naa daggara ledu. "save ${n} 98xxxxxxxx" ani cheppu, leda contacts nunchi select cheyyi.`, askNumber: n => `${n} phone number?`, saved: (n, x) => `${n} number save chesa (+${x}). Ee phone lo matrame untundi.`,
@@ -47,9 +57,9 @@ const T = {
     guideStep: (n, d) => `${n} setup. ${d} Nenu page open chestha. Nee email tho login avvu, key create chesi copy cheyyi, tarvatha Divya ki tirigi raa.`, guideReturn: "Key copy chesava? Clipboard nunchi chustunna.", guidePaste: "Key ni box lo paste chesi Test & save nokku.", guideDone: "Anni steps ayyayi. Super!", guideNextQ: n => `Next: ${n}. Continue cheyyana?`,
     serverTitle: "Nee sontha server:", serverText: "Cloudflare token tho Divya nee account lo nee Worker deploy chestundi — tvaralo (prathi sari nee OK tho).", noPasswords: "Divya passwords save cheyyadu, accounts silent ga create cheyyadu, captchas bypass cheyyadu. Prathi provider lo login nuvve chestav.",
     d_openrouter: "Free AI models tho brain (backup).", d_groq: "Fast brain + voice-to-text.", d_gemini: "Images/screenshots chadavadaniki.", d_cloudflare: "Nee sontha server (Worker) kosam.", d_github: "Video machine (Actions) kosam.", d_huggingface: "AI models/voices kosam.",
-    planNow: (p, u, l) => `Nee plan: ${p === "premium" ? "Premium (owner/friend access)" : "Free"}. Ee roju videos: ${l === null ? `${u} (limit ledu)` : `${u}/${l}`}.`,
+    planNow: (p, u, l) => `Nee plan: ${p === "premium" ? "Premium (owner/friend access)" : "Free"}. Ee nela video edits: ${l === null ? `${u} (limit ledu)` : `${u}/${l}`}.`,
     freePlan: "Free", f1: "Voice commands: call, WhatsApp, open apps, songs, reminders, time, weather", f2: "Chat & chinna questions", f3: "Blind users kosam voice-first mode", f4: "Nee sontha API keys vaadochu",
-    p1: "Videos create (shared server lo roju ki 1 default)", p2: "Multi-step agent pani, long research", p3: "Account automation (post/upload — nee OK tho)", priceSoon: "Price: tvaralo", comingSoon: "Tvaralo vasthundi", noPayNote: "Ippudu payments levu. Pro ready ayyaka cheptham.",
+    p1: "Unlimited video edits", p2: "Multi-step agent pani, long research", p3: "Account automation (post/upload — nee OK tho)", priceSoon: "Price: tvaralo", comingSoon: "Tvaralo vasthundi", noPayNote: "Ippudu payments levu. Pro ready ayyaka cheptham.",
     installNow: "App install cheyyi", installed: "Divya ee device lo already app laaga install ayyindi ✓", canInstall: "Ee browser lo one-tap install undi.", cantPrompt: "Ee browser auto install chupinchadu — kinda steps follow avvu.", notApk: "Idi browser nunchi app laaga install avuthundi (PWA). Play Store APK kaadu.",
     and1: "Chrome lo ee page open cheyyi.", and2: "Paina \"App install cheyyi\" nokku, leda menu (⋮) → \"Install app\" / \"Add to Home screen\".", and3: "Home screen lo Divya icon vasthundi.",
     ios1: "Safari lo ee page open cheyyi.", ios2: "Share (□↑) nokku → \"Add to Home Screen\".", ios3: "\"Add\" nokku. Home screen nunchi open cheyyi.",
@@ -66,18 +76,28 @@ const T = {
     verifyPhoneT: "Verify phone", pvSentTo: n => `We sent a 6-digit code on WhatsApp to ${n}.`, later: "Later", needId: "Enter your email or phone.", needPw: "Enter your password.", triesLeft: n => ` (${n} tries left)`,
     netBlockedT: "Can't reach Divya's server.", netBlocked: "Your network (ISP) may be blocking *.workers.dev. Switch between mobile data and Wi-Fi, or turn on Private DNS (1.1.1.1 / dns.google).", offline: "You're offline. Check your connection and try again.", retry: "Try again",
     account: "Account", phoneOk: n => `Phone: ${n} ✓ verified`, phoneNone: "No phone linked. Link one to log in by phone and reset your password.", phonePend: n => `Phone ${n}: not verified yet.`, sendCode: "Send code", phoneLinked: "Phone linked ✓", delAcct: "Delete account", delWarn: "This deletes your account, login and app chat history. Confirm with your password.", delConfirm: "Confirm delete", deleted: "Account deleted.", getCode: "Send code", verify: "Log in", codeHint: "No code? Send \"login\" to Divya on WhatsApp.", changeNum: "Change number", codeSentTo: n => `Code sent on WhatsApp to +${n}.`, waitCode: "Code already sent. Check WhatsApp.",
+    sEdit: "Edit video", sProfile: "Profile", gEdit: "Edit video", tHome: "Home", tEdit: "Edit", tVoice: "Voice", tChat: "Chat", tSetup: "Setup", tabsLabel: "Main tabs", openProfile: "Open profile",
+    editsLeftT: "Free edits left", notVerified: "not verified", quotaSub: (u, l) => `${u} of ${l} used this month · resets on the 1st`, unlimited: "Unlimited", unlimitedSub: "Owner/friend — no limit",
+    editIntro: "Upload your video or paste its link. Divya edits it for the type you pick.", yourVideo: "Your video", srcUpload: "Upload", srcLink: "Link", pickVideo: "Choose a video (up to 24 MB)", linkLabel: "Video link", linkPh: "Google Drive / YouTube / direct video link",
+    uploadHelp: "Direct upload up to 24 MB. For bigger videos use Link.", linkHelp: "Share Drive files as 'Anyone with the link'. YouTube/Instagram links sometimes can't be downloaded by our server — use a Drive link then.",
+    videoType: "Video type", kLong: "Long video / Documentary", kLongSub: "Faceless · story flow, captions, music", kShort: "Faceless short", kShortSub: "9:16 · hook, fast cuts, big captions", kFace: "Face video", kFaceSub: "Talking head · cut pauses, zooms, captions",
+    editLang: "Captions language", lenAuto: "Auto", lenFull: "Full length", notesLabel: "Extra notes (optional)", notesPh: "e.g. cut the first 10 seconds, keep music low",
+    editBtn: "Start edit", dlEdit: "Download edited video", needKind: "Pick a video type.", needSrc: "Choose a video or paste a link.", tooBig: "This file is over 24 MB. Use a link.", uploading: p => `Uploading ${p}%`,
+    editsLine: (left, l) => l === null ? "Unlimited edits (owner/friend)" : `${left} of ${l} free edits left this month`,
+    jobQueued: "Edit is queued", jobRunSub2: "This takes a few minutes. The download appears here when it's ready.", jobDoneSub2: "Download it (kept for 3 days).", jobFailSub2: "This one didn't count toward your free edits. Check the link/file and try again.",
+    email: "Email", phone: "Phone", planL: "Plan", planFree: "Free", planPrem: "Premium (owner/friend)", waLogin: "WhatsApp login", f0: "10 video edits a month",
     openMenu: "Open menu", closeMenu: "Close menu", menu: "Main menu", heyDivya: "Hey Divya — talk", quickActions: "Shortcuts",
-    sHome: "Home", sChat: "Chat", sCreate: "Create video", sVoice: "Voice assistant", sConnect: "Connect accounts", sSetup: "Server & API setup", sPlan: "Subscription", sDownload: "Download app", sSettings: "Settings", logout: "Log out",
-    gChat: "Chat", gCreate: "Video", gVoice: "Voice", gConnect: "Connect", gSetup: "Server setup", gPlan: "Plan", gDownload: "Download", gSettings: "Settings",
+    sHome: "Home", sChat: "Chat", sVoice: "Voice assistant", sConnect: "Connect accounts", sSetup: "Server & API setup", sPlan: "Subscription", sDownload: "Download app", sSettings: "Settings", logout: "Log out",
+    gChat: "Chat", gVoice: "Voice", gConnect: "Connect", gSetup: "Server setup", gPlan: "Plan", gDownload: "Download", gSettings: "Settings",
     screen: n => `${n} screen`,
     hello: h => h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening", greetSub: "What shall we do today?", heySub: "Tap and speak: call, WhatsApp, open, songs, reminders",
-    noJob: "No video yet", noJobSub: "Start a new one in Create.",
+    noJob: "No edit yet", noJobSub: "Give Divya your video in the Edit tab.",
     online: "Online", thinking: "Typing…", listening: "Listening…", releaseToSend: "Release to send", typeMsg: "Message…", holdMic: "Press and hold the mic, speak, then let go.", holdToTalk: "Press and hold to talk, or send message", attachImage: "Send image",
     emptyTitle: "Hi, I'm Divya", emptySub: "Chat, talk, or give me a task.", s1: "Open YouTube", s2: "What time is it?", s3: "What can you do?",
-    topicLabel: "Topic", topicPh: "Topic (leave empty and I'll pick one)", voiceLang: "Voice language", voice: "Voice", female: "Female", male: "Male", length: "Length", createBtn: "Create video", createNote: "The video arrives on WhatsApp when it's ready. Videos are a Pro feature.",
-    jobRun: "Making your video", jobRunSub: "This takes a while. It'll arrive on WhatsApp.", jobDone: "Last video is ready", jobDoneSub: "Check WhatsApp.", jobFail: "Last video failed", jobFailSub: "Try again.", started: "Started! It'll arrive on WhatsApp.",
+    length: "Length",
+    jobRun: "Editing your video", jobRunSub: "This takes a few minutes.", jobDone: "Edit ready ✓", jobDoneSub: "Check WhatsApp.", jobFail: "Edit failed", jobFailSub: "Try again.", started: "Started! It'll arrive on WhatsApp.",
     tapToTalk: "Tap to talk", vIdle: "Tap to talk", vWake: "Listening for \"Hey Divya\"…", vListen: "Listening… go ahead", vThink: "Thinking…", vSpeak: "Speaking…", vNoSR: "Always-listening isn't supported in this browser. Press and hold the orb to talk.",
-    wakeSub: "Listens only while the app is open on screen", freeTitle: "Free:", freeList: "calls, WhatsApp messages, open apps/sites, songs, reminders, time, weather, short questions.", proTitle: "Pro:", proList: "videos, multi-step agent tasks, long research, account automation.",
+    wakeSub: "Listens only while the app is open on screen", freeTitle: "Free:", freeList: "video edits (10 a month), calls, WhatsApp messages, open apps/sites, songs, reminders, time, weather, short questions.", proTitle: "Pro:", proList: "unlimited edits, multi-step agent tasks, long research, account automation.",
     voiceHonest: "Divya listens only while the app is open on screen (a web app can't listen in the background). It can't call or send WhatsApp silently: it opens the dialer or WhatsApp with everything filled in, and you tap Call or Send. Speech recognition runs through the browser's service (Google in Chrome).",
     callBtn: n => `Call ${n}`, waBtn: "Open WhatsApp", openBtn: n => `Open ${n}`, playBtn: "Listen on YouTube", calBtn: "Add to Google Calendar", subBtn: "See plans", pickContact: "Pick from contacts", typeNumber: "Type number",
     noNumber: n => `I don't have ${n}'s number. Say "save ${n} 98xxxxxxxx", or pick from contacts.`, askNumber: n => `${n}'s phone number?`, saved: (n, x) => `Saved ${n} (+${x}). It stays on this phone only.`,
@@ -92,9 +112,9 @@ const T = {
     guideStep: (n, d) => `${n} setup. ${d} I'll open the page. Sign in with your email, create a key, copy it, then come back to Divya.`, guideReturn: "Did you copy the key? Checking the clipboard.", guidePaste: "Paste the key in the box and tap Test and save.", guideDone: "All steps are done. Great!", guideNextQ: n => `Next: ${n}. Continue?`,
     serverTitle: "Your own server:", serverText: "With your Cloudflare token, Divya will deploy your own Worker in your account — coming soon (with your OK each time).", noPasswords: "Divya never stores passwords, never creates accounts silently, and never bypasses captchas. You sign in to each provider yourself.",
     d_openrouter: "Brain with free AI models (backup).", d_groq: "Fast brain + speech-to-text.", d_gemini: "Reads images and screenshots.", d_cloudflare: "For your own server (Worker).", d_github: "For the video machine (Actions).", d_huggingface: "For AI models and voices.",
-    planNow: (p, u, l) => `Your plan: ${p === "premium" ? "Premium (owner/friend access)" : "Free"}. Videos today: ${l === null ? `${u} (no limit)` : `${u}/${l}`}.`,
+    planNow: (p, u, l) => `Your plan: ${p === "premium" ? "Premium (owner/friend access)" : "Free"}. Video edits this month: ${l === null ? `${u} (no limit)` : `${u}/${l}`}.`,
     freePlan: "Free", f1: "Voice commands: call, WhatsApp, open apps, songs, reminders, time, weather", f2: "Chat & short questions", f3: "Voice-first mode for blind users", f4: "Use your own API keys",
-    p1: "Create videos (1/day by default on the shared server)", p2: "Multi-step agent tasks, long research", p3: "Account automation (post/upload — with your OK)", priceSoon: "Price: soon", comingSoon: "Coming soon", noPayNote: "No payments yet. We'll tell you when Pro is ready.",
+    p1: "Unlimited video edits", p2: "Multi-step agent tasks, long research", p3: "Account automation (post/upload — with your OK)", priceSoon: "Price: soon", comingSoon: "Coming soon", noPayNote: "No payments yet. We'll tell you when Pro is ready.",
     installNow: "Install app", installed: "Divya is already installed as an app on this device ✓", canInstall: "One-tap install is available in this browser.", cantPrompt: "This browser doesn't show an install prompt — follow the steps below.", notApk: "This installs from your browser as an app (PWA). It's not a Play Store APK.",
     and1: "Open this page in Chrome.", and2: "Tap \"Install app\" above, or menu (⋮) → \"Install app\" / \"Add to Home screen\".", and3: "The Divya icon appears on your home screen.",
     ios1: "Open this page in Safari.", ios2: "Tap Share (□↑) → \"Add to Home Screen\".", ios3: "Tap \"Add\", then open Divya from your home screen.",
@@ -111,7 +131,7 @@ function applyLang() {
   $$("[data-tl]").forEach(e => e.setAttribute("aria-label", t(e.dataset.tl)));
   $$("#setLang button").forEach(b => { b.classList.toggle("on", b.dataset.v === S.lang); b.setAttribute("aria-checked", b.dataset.v === S.lang); });
   if ($("#msgs .empty")) renderEmpty();
-  if (S.token) { $("#me").textContent = t("loggedIn", whoAmI()); $("#drawerMe").textContent = whoAmI(); renderAcct(); }
+  if (S.token) { $("#me").textContent = t("loggedIn", whoAmI()); $("#drawerMe").textContent = whoAmI(); renderAcct(); renderAvatar(); if (cur === "profile") renderProfile(); if (S.quota) showQuota(S.quota.left, S.quota.limit, S.quota.used); }
   $("#greet").textContent = t("hello", new Date().getHours());
   if (cur) setTitle(cur);
   setVState(VA.state || "idle");
@@ -246,7 +266,7 @@ function logout(silent) {
 }
 
 /* ---------- drawer + routing ---------- */
-const ROUTES = ["home", "chat", "create", "voice", "connect", "setup", "plan", "download", "settings"];
+const ROUTES = ["home", "chat", "edit", "voice", "connect", "setup", "plan", "download", "settings", "profile"];
 let cur = "";
 function openDrawer() { $("#drawer").classList.add("open"); $("#drawer").inert = false; $("#drawerBg").hidden = false; $("#menuBtn").setAttribute("aria-expanded", "true"); $("#menuBtn").setAttribute("aria-label", t("closeMenu")); setTimeout(() => $("#drawer a[aria-current=page]")?.focus() || $("#drawer a")?.focus(), 60); }
 function closeDrawer(focusBack) { $("#drawer").classList.remove("open"); $("#drawer").inert = true; $("#drawerBg").hidden = true; $("#menuBtn").setAttribute("aria-expanded", "false"); $("#menuBtn").setAttribute("aria-label", t("openMenu")); if (focusBack) $("#menuBtn").focus(); }
@@ -258,18 +278,20 @@ $("#drawerLogout").onclick = () => logout(false);
 function setTitle(name) { const s = $("#s-" + name); $("#screen-title").textContent = t(s.dataset.title); document.title = `${t(s.dataset.title)} · Divya`; }
 function route() {
   if ($("#main").hidden) return;
-  let name = (location.hash.match(/^#\/(\w+)/) || [])[1]; if (!ROUTES.includes(name)) name = "home";
+  let name = (location.hash.match(/^#\/(\w+)/) || [])[1]; if (name === "create") name = "edit"; if (!ROUTES.includes(name)) name = "home";
   const first = !cur; if (name === cur) return; cur = name;
   $$("#screens .screen").forEach(s => s.classList.toggle("active", s.id === "s-" + name));
-  $$("#drawer a[data-r]").forEach(a => a.dataset.r === name ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  $$("#drawer a[data-r], #tabbar a[data-r]").forEach(a => a.dataset.r === name ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  name === "profile" ? $("#avatarBtn").setAttribute("aria-current", "page") : $("#avatarBtn").removeAttribute("aria-current");
   setTitle(name);
   if (!first) { $("#screen-title").focus({ preventScroll: true }); }
   announce(t("screen", t($("#s-" + name).dataset.title)));
   if (S.vf && !first && VA.state !== "speak") speak(t("screen", t($("#s-" + name).dataset.title)));
   if (name === "connect" || name === "settings") loadConnect();
-  if (name === "create" || name === "home") loadStatus();
+  if (name === "edit" || name === "home") loadStatus();
+  if (name === "profile") { renderProfile(); loadPlan(); loadConnect(); }
   if (name === "setup") { loadKeys(); loadConnect(); }
-  if (name === "plan") loadPlan();
+  if (name === "plan" || name === "home") loadPlan();
   if (name === "download") renderDownload();
   if (name === "chat") scrollDown();
 }
@@ -335,6 +357,7 @@ function planAction(a) {
   else if (a.type === "play") { const u = ytUrl(a.query || ""); out.buttons.push({ label: t("playBtn"), href: u }); out.auto = () => openUrl(u); }
   else if (a.type === "reminder") { addReminder(a.at, a.text); out.buttons.push({ label: t("calBtn"), href: calUrl(a.at, a.text), alt: true }); }
   else if (a.type === "subscribe") out.buttons.push({ label: t("subBtn"), href: "#/plan" });
+  else if (a.type === "route" && ROUTES.includes(a.to)) { out.buttons.push({ label: t(a.to === "edit" ? "sEdit" : "sHome"), href: "#/" + a.to }); out.auto = () => go(a.to); }
   return out;
 }
 function addContactButtons(out, a, alt) {
@@ -555,45 +578,103 @@ $("#wakeToggle").onchange = e => e.target.checked ? vaStart() : vaStop();
 $("#orbBtn").addEventListener("click", () => { if (!SR) return; if (VA.state === "listen") { vaKill(); setVState(vaIdleState()); if (VA.on) vaListen("wake"); } else vaOnce(); });
 holdable($("#orbBtn"), "voice", false);
 $("#heyBtn").onclick = () => { go("voice"); setTimeout(() => SR ? vaOnce() : toast(t("vNoSR"), true), 250); };
-$("#quickMic").onclick = () => { go("voice"); setTimeout(() => SR ? vaOnce() : toast(t("vNoSR"), true), 250); };
+$("#avatarBtn").onclick = () => go("profile");
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { vaKill(); if (VA.state !== "idle") setVState(vaIdleState()); }
   else if (S.token && !$("#main").hidden) { if (VA.on) vaListen("wake"); if (guide.id) guideReturn(); if (cur === "connect" || cur === "setup") loadConnect(); }
 });
 
-/* ---------- create ---------- */
+/* ---------- edit (the user's own video) ---------- */
 $$(".seg[data-name] button").forEach(b => b.onclick = () => { b.parentElement.querySelectorAll("button").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-checked", x === b); }); });
 $$(".seg button").forEach(b => b.setAttribute("aria-checked", b.classList.contains("on")));
-$("#createBtn").onclick = async () => {
-  const pick = n => $(`.seg[data-name=${n}] .on`).dataset.v;
-  $("#createBtn").disabled = true;
+const ED = { src: "upload", kind: "" };
+$$("#srcSeg button").forEach(b => { b.setAttribute("role", "radio"); b.onclick = () => { ED.src = b.dataset.v; $$("#srcSeg button").forEach(x => { x.classList.toggle("on", x === b); x.setAttribute("aria-checked", x === b); }); $("#srcUploadBox").hidden = ED.src !== "upload"; $("#srcLinkBox").hidden = ED.src !== "link"; $("#srcHelp").dataset.t = ED.src === "upload" ? "uploadHelp" : "linkHelp"; $("#srcHelp").textContent = t($("#srcHelp").dataset.t); if (ED.src === "link") $("#videoUrl").focus(); }; });
+$$("#kindSeg button").forEach(b => b.onclick = () => { ED.kind = b.dataset.v; $$("#kindSeg button").forEach(x => x.setAttribute("aria-checked", x === b)); });
+$("#kindSeg").addEventListener("keydown", e => { if (!/Arrow(Up|Down|Left|Right)/.test(e.key)) return; e.preventDefault(); const bs = $$("#kindSeg button"), i = Math.max(0, bs.findIndex(x => x.dataset.v === ED.kind)), n = bs[(i + (/Down|Right/.test(e.key) ? 1 : bs.length - 1)) % bs.length]; n.click(); n.focus(); });
+$("#videoFile").onchange = () => { const f = $("#videoFile").files[0]; $("#fileName").textContent = f ? `${f.name} · ${(f.size / 1048576).toFixed(1)} MB` : t("pickVideo"); $("#editErr").textContent = f && f.size > 24 * 1048576 ? t("tooBig") : ""; };
+function xhrUpload(path, form, onProg) {
+  return new Promise((res, rej) => {
+    const x = new XMLHttpRequest(); x.open("POST", API + "/" + path); x.setRequestHeader("authorization", "Bearer " + S.token);
+    x.upload.onprogress = e => e.lengthComputable && onProg(Math.round(e.loaded / e.total * 100));
+    x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch {} if (x.status === 401) { logout(true); return rej(new Error("login")); } res({ status: x.status, ...d }); };
+    x.onerror = () => { netState(false); rej(new Error("net")); }; x.send(form);
+  });
+}
+$("#editForm").onsubmit = async e => {
+  e.preventDefault(); const err = $("#editErr"); err.textContent = "";
+  const pick = n => $(`.seg[data-name=${n}] .on`).dataset.v, f = $("#videoFile").files[0], link = $("#videoUrl").value.trim();
+  if (ED.src === "upload" ? !f : !link) { err.textContent = t("needSrc"); return (ED.src === "upload" ? $("#videoFile") : $("#videoUrl")).focus(); }
+  if (ED.src === "upload" && f.size > 24 * 1048576) { err.textContent = t("tooBig"); return; }
+  if (!ED.kind) { err.textContent = t("needKind"); return $("#kindSeg button").focus(); }
+  const fields = { kind: ED.kind, language: pick("language"), length: pick("length"), notes: $("#editNotes").value.trim(), lang: S.lang };
+  $("#editBtn").disabled = true;
   try {
-    const d = await api("create", { method: "POST", json: { topic: $("#topic").value.trim(), language: pick("language"), voice: pick("voice"), length: pick("length") } });
-    if (d.ok) { toast(t("started")); $("#topic").value = ""; setJob("run"); setTimeout(loadStatus, 4000); }
-    else if (d.premium_required) sheet(d.error, [{ label: t("subBtn"), primary: true, fn: () => go("plan") }, { label: "OK" }]);
-    else { toast(d.error || t("netErr")); if (d.busy) setJob("run"); }
-  } catch (e) { if (e.message !== "login") toast(t("netErr")); }
-  $("#createBtn").disabled = false;
+    let d;
+    if (ED.src === "upload") {
+      const fd = new FormData(); Object.entries(fields).forEach(([k, v]) => fd.append(k, v)); fd.append("video", f, f.name);
+      $("#upProg").hidden = false; d = await xhrUpload("edit", fd, p => { $("#upBar").style.width = p + "%"; $("#editBtn").textContent = t("uploading", p); });
+    } else d = await api("edit", { method: "POST", json: { ...fields, url: link } });
+    if (d.ok) { toast(t("started"), true); $("#videoFile").value = ""; $("#fileName").textContent = t("pickVideo"); $("#videoUrl").value = ""; $("#editNotes").value = ""; setTimeout(loadStatus, 800); loadPlan(); }
+    else { err.textContent = d.error || t("netErr"); if (d.busy) loadStatus(); if (S.vf) speak(err.textContent); }
+  } catch (x) { if (x.message !== "login") err.textContent = x.message === "net" ? t("netBlockedT") : t("netErr"); }
+  finally { $("#editBtn").disabled = false; $("#editBtn").textContent = t("editBtn"); $("#upProg").hidden = true; $("#upBar").style.width = "0"; }
 };
-function setJob(kind, when) {
-  const title = kind ? t(kind === "run" ? "jobRun" : kind === "done" ? "jobDone" : "jobFail") : t("noJob");
-  const sub = kind ? t(kind === "run" ? "jobRunSub" : kind === "done" ? "jobDoneSub" : "jobFailSub") + (when ? " · " + when : "") : t("noJobSub");
+let lastJob = null;
+function setJob(kind, when, job) {
+  lastJob = job || null;
+  const title = kind ? t(kind === "queued" ? "jobQueued" : kind === "run" ? "jobRun" : kind === "done" ? "jobDone" : "jobFail") : t("noJob");
+  let sub = kind ? t(job ? (kind === "done" ? "jobDoneSub2" : kind === "fail" ? "jobFailSub2" : "jobRunSub2") : (kind === "done" ? "jobDoneSub" : kind === "fail" ? "jobFailSub" : "jobRunSub")) : t("noJobSub");
+  if (job && job.note && kind !== "done") sub = job.note + " · " + sub;
+  if (when) sub += " · " + when;
   const cls = "pulse" + (kind === "done" ? " done" : kind === "fail" ? " fail" : kind ? "" : " idle");
   $("#jobCard").hidden = !kind; $("#jobDot").className = cls; $("#jobTitle").textContent = title; $("#jobSub").textContent = sub;
   $("#homeJobDot").className = cls; $("#homeJobTitle").textContent = title; $("#homeJobSub").textContent = sub;
+  $("#dlBtn").hidden = !(job && job.has_result);
+}
+$("#dlBtn").onclick = async () => {
+  if (!lastJob) return; $("#dlBtn").disabled = true;
+  try {
+    const r = await apiFetch("result?job=" + lastJob.job, { headers: { authorization: "Bearer " + S.token } });
+    if (!r.ok) { toast(t("netErr"), true); return; }
+    const url = URL.createObjectURL(await r.blob()); const a = document.createElement("a"); a.href = url; a.download = `divya-edit-${lastJob.job}.mp4`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch { toast(t("netErr"), true); } finally { $("#dlBtn").disabled = false; }
+};
+function showQuota(left, limit, used) {
+  S.quota = { left, limit, used };
+  $("#homeQuotaNum").textContent = limit === null || limit === undefined ? "∞" : left;
+  $("#homeQuotaSub").textContent = limit === null || limit === undefined ? t("unlimitedSub") : t("quotaSub", used, limit);
+  $("#editQuota").textContent = t("editsLine", left, limit ?? null);
+  $("#profEdits").textContent = limit === null || limit === undefined ? t("unlimited") : `${left}/${limit}`;
 }
 let statusTimer;
 async function loadStatus() {
   clearTimeout(statusTimer);
   try {
     const d = await api("status"); if (!d.ok) return;
-    const r = d.runs?.[0]; const ago = ts => { const m = Math.round((Date.now() - new Date(ts)) / 60000); return m < 60 ? `${m} min` : `${Math.round(m / 60)} h`; };
-    if (d.busy || (r && r.status !== "completed")) setJob("run", r ? ago(r.created_at) : "");
+    if ("edits_limit" in d) showQuota(d.edits_left, d.edits_limit, d.edits_used);
+    const ago = ts => { const m = Math.max(0, Math.round((Date.now() - new Date(ts)) / 60000)); return m < 60 ? `${m} min` : `${Math.round(m / 60)} h`; };
+    const j = d.job, r = d.runs?.[0]; let active = false;
+    if (j) { const k = j.state === "done" ? "done" : j.state === "failed" ? "fail" : j.state === "queued" ? "queued" : "run"; active = k === "queued" || k === "run"; setJob(k, ago(j.upd || j.at), j); }
+    else if (d.busy || (r && r.status !== "completed")) { active = true; setJob("run", r ? ago(r.created_at) : ""); }
     else if (r) setJob(r.conclusion === "success" ? "done" : "fail", ago(r.updated_at));
-    else if (d.last) setJob("done"); else setJob(null);
-    if ((cur === "create" || cur === "home") && (d.busy || (r && r.status !== "completed"))) statusTimer = setTimeout(loadStatus, 15000);
+    else setJob(null);
+    if ((cur === "edit" || cur === "home") && active) statusTimer = setTimeout(loadStatus, 10000);
   } catch {}
 }
+/* ---------- profile ---------- */
+function initials() { const n = S.acct?.name || ""; return n ? n.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join("").toUpperCase() : ""; }
+function renderAvatar() { const i = initials(); ["#avatarTop", "#avatarBig"].forEach(sel => { const el = $(sel); if (i) el.textContent = i; else if (!el.querySelector("svg")) el.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>'; }); $("#avatarBtn").setAttribute("aria-label", t("openProfile") + (S.acct?.name ? ": " + S.acct.name : "")); }
+function renderProfile() {
+  renderAvatar(); const a = S.acct;
+  $("#profName").textContent = a?.name || (S.number ? "+" + S.number : "Divya");
+  $("#profSub").textContent = a ? (a.email || "") : t("waLogin");
+  $("#profEmail").textContent = a?.email || "—";
+  $("#profPhone").textContent = S.number ? "+" + S.number + " ✓" : a?.phone_pending ? "+" + a.phone_pending + " (" + t("notVerified") + ")" : "—";
+  $("#profPlan").textContent = S.plan === "premium" ? t("planPrem") : S.plan ? t("planFree") : "…";
+  if (S.quota) showQuota(S.quota.left, S.quota.limit, S.quota.used);
+  renderAcct();
+}
+$("#profLogout").onclick = () => logout(false);
 
 /* ---------- connect ---------- */
 const PDESC = { te: { youtube: "Videos upload cheyadaniki", google: "Gmail, Drive", instagram: "Reels post cheyadaniki", facebook: "Page lo post cheyadaniki", telegram: "Telegram lo kuda Divya" }, en: { youtube: "Upload videos", google: "Gmail, Drive", instagram: "Post Reels", facebook: "Post to your Page", telegram: "Divya on Telegram too" } };
@@ -606,7 +687,7 @@ async function connectLink(prov) {
 async function loadConnect() {
   try {
     const d = await api("connect"); if (!d.ok) return; connData = d.providers;
-    $("#connCount").textContent = `${d.providers.filter(p => p.connected).length}/${d.providers.length}`;
+    $("#connCount").textContent = $("#profConn").textContent = `${d.providers.filter(p => p.connected).length}/${d.providers.length}`;
     $("#provList").innerHTML = d.providers.map(p => `<div class="row"><div class="prov"><div class="pi" aria-hidden="true">${esc(p.name[0])}</div><div class="pt"><b>${esc(p.name)}</b><span class="muted small">${esc(p.connected ? (p.who || t("connectedP")) : (PDESC[S.lang]?.[p.id] || p.desc))}</span></div></div>
       ${p.connected ? `<span class="pill ok">✓ ${t("connectedP")}</span>` : p.ready ? `<button class="pill go" data-p="${p.id}" aria-label="${esc(t("connect") + " " + p.name)}">${t("connect")}</button>` : `<span class="pill wait">${t("soon")}</span>`}</div>`).join("");
     $$("#provList [data-p]").forEach(b => b.onclick = () => connectLink(b.dataset.p));
@@ -699,7 +780,7 @@ async function guideReturn() {
 }
 
 /* ---------- plan ---------- */
-async function loadPlan() { try { const d = await api("plan"); if (d.ok) $("#planNow").textContent = t("planNow", d.plan, d.used_today, d.videos_per_day); } catch {} }
+async function loadPlan() { try { const d = await api("plan"); if (d.ok) { S.plan = d.plan; $("#planNow").textContent = t("planNow", d.plan, d.edits_used, d.edits_limit); showQuota(d.edits_left, d.edits_limit, d.edits_used); if (cur === "profile") renderProfile(); } } catch {} }
 
 /* ---------- download / install ---------- */
 let deferred = null; const standalone = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone;
