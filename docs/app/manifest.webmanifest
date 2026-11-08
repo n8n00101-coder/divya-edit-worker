@@ -1,10 +1,10 @@
 {
   "name": "Divya",
   "short_name": "Divya",
-  "description": "Divya \u2014 your personal AI: Hey Divya voice assistant, chat, videos.",
-  "id": "/",
-  "start_url": "/?source=pwa",
-  "scope": "/",
+  "description": "Divya — your personal AI: Hey Divya voice assistant, chat, videos.",
+  "id": "./",
+  "start_url": "./?source=pwa",
+  "scope": "./",
   "display": "standalone",
   "display_override": [
     "window-controls-overlay",
@@ -19,19 +19,19 @@
   ],
   "icons": [
     {
-      "src": "/icon-192.png",
+      "src": "icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/maskable-512.png",
+      "src": "maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -40,20 +40,20 @@
   "shortcuts": [
     {
       "name": "Hey Divya",
-      "url": "/#/voice",
+      "url": "./#/voice",
       "icons": [
         {
-          "src": "/icon-192.png",
+          "src": "icon-192.png",
           "sizes": "192x192"
         }
       ]
     },
     {
       "name": "Chat",
-      "url": "/#/chat",
+      "url": "./#/chat",
       "icons": [
         {
-          "src": "/icon-192.png",
+          "src": "icon-192.png",
           "sizes": "192x192"
         }
       ]
