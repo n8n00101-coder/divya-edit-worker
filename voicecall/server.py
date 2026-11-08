@@ -46,14 +46,16 @@ async def ice_servers():
             headers={"Authorization": f"Bearer {ktok}"}, json={"ttl": 3600},
         ) as r:
             d = await r.json()
-        out = list(STUN)
-        for s in d.get("iceServers", []):
-            urls = [u for u in (s["urls"] if isinstance(s["urls"], list) else [s["urls"]]) if u.startswith("turn")]
-            # aiortc cannot use :53 ports reliably; keep 3478/443 variants
-            urls = [u for u in urls if ":53?" not in u and not u.endswith(":53")]
+        out = []
+        mode = os.getenv("TURN_TRANSPORTS", "tcp")  # tcp = TURN over TCP/TLS only (UDP looks blocked on host)
+        for srv in d.get("iceServers", []):
+            urls = srv["urls"] if isinstance(srv["urls"], list) else [srv["urls"]]
+            urls = [u for u in urls if u.startswith("turn") and (mode == "all" or "transport=tcp" in u)]
+            urls = [u for u in urls if ":53?" not in u]
             if urls:
-                out.append(IceServer(urls=urls, username=s.get("username"), credential=s.get("credential")))
-        return out
+                out.append(IceServer(urls=urls, username=srv.get("username"), credential=srv.get("credential")))
+        logger.info(f"TURN servers: {[u for x in out for u in (x.urls if isinstance(x.urls, list) else [x.urls])]}")
+        return out or STUN
     except Exception as e:
         logger.error(f"TURN creds failed: {e}")
         return STUN
