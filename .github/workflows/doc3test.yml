@@ -1,0 +1,43 @@
+name: doc3test
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Worker KV job id holding the test brief"
+        required: true
+      seconds:
+        description: "target length (s)"
+        default: "60"
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg > /dev/null
+          pip install -q httpx==0.27.2 numpy pillow edge-tts
+          python -c "from PIL import features; print('raqm', features.check('raqm'), features.version('raqm'))"
+      - name: Telugu shaping sample
+        run: python -c "from PIL import Image,ImageDraw,ImageFont; f=ImageFont.truetype('fonts/NotoSansTelugu.ttf',72,layout_engine=ImageFont.Layout.RAQM); im=Image.new('RGB',(1080,200),(20,20,20)); ImageDraw.Draw(im).text((40,40),'వాణిజ్య శ్రీ క్ష్మ కృష్ణ',font=f,fill='white',stroke_width=4,stroke_fill='black'); import os; os.makedirs('out',exist_ok=True); im.save('out/te_shaping_runner.png')"
+      - name: Render + QC (no WhatsApp)
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+          SECONDS_TARGET: ${{ inputs.seconds }}
+          PYTHONUNBUFFERED: "1"
+        run: python doc3test.py "${{ inputs.job }}"
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: doc3-${{ inputs.job }}
+          retention-days: 3
+          path: |
+            out/*.mp4
+            out/*.json
+            out/*.txt
+            out/*.png
+            out/qc_frames_r*/
