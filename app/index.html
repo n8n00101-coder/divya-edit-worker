@@ -7,14 +7,14 @@
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="description" content="Divya — your personal AI: voice assistant, chat, videos">
-<link rel="manifest" href="/manifest.webmanifest">
-<link rel="icon" href="/favicon.png" type="image/png">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Divya">
-<link rel="stylesheet" href="/app.css">
+<link rel="stylesheet" href="app.css">
 </head>
 <body>
 <a href="#screen-title" class="skip" data-t="skip"></a>
@@ -23,10 +23,31 @@
   <!-- LOGIN -->
   <section id="login" class="login" hidden aria-labelledby="loginTitle">
     <div class="login-card">
-      <img src="/icon-192.png" class="login-logo" alt="">
+      <img src="icon-192.png" class="login-logo" alt="">
       <h1 id="loginTitle" tabindex="-1">Divya</h1>
-      <p class="muted" data-t="loginSub"></p>
-      <form id="numForm" class="stack">
+      <p class="muted" id="loginSub" data-t="loginSub2"></p>
+      <div class="net-banner" id="netBanner" role="alert" hidden><b data-t="netBlockedT"></b><span class="nb-text"></span><button type="button" class="btn secondary" data-t="retry" data-retry></button></div>
+      <div class="seg auth-tabs" id="authTabs" role="tablist" data-tl="loginWays">
+        <button type="button" role="tab" id="tab-pw" data-v="pw" aria-controls="pwForm" data-t="tabLogin"></button>
+        <button type="button" role="tab" id="tab-su" data-v="su" aria-controls="suForm" data-t="tabSignup"></button>
+        <button type="button" role="tab" id="tab-wa" data-v="wa" aria-controls="numForm" data-t="tabWa"></button>
+      </div>
+      <form id="pwForm" class="stack auth-form" role="tabpanel" aria-labelledby="tab-pw" novalidate>
+        <label class="field tf"><span class="sr-only" data-t="idLabel"></span><input id="pwId" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" data-tp="idPh" required></label>
+        <label class="field tf"><span class="sr-only" data-t="pwLabel"></span><input id="pwPass" type="password" autocomplete="current-password" data-tp="pwLabel" required><button type="button" class="eye" data-tl="showPw" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></label>
+        <button class="btn primary" id="pwBtn" data-t="logIn"></button>
+        <button type="button" class="btn ghost" id="forgotBtn" data-t="forgot"></button>
+      </form>
+      <form id="suForm" class="stack auth-form" role="tabpanel" aria-labelledby="tab-su" hidden novalidate>
+        <label class="field tf"><span class="sr-only" data-t="nameLabel"></span><input id="suName" type="text" autocomplete="name" maxlength="60" data-tp="nameLabel" required></label>
+        <label class="field tf"><span class="sr-only" data-t="emailLabel"></span><input id="suEmail" type="email" autocomplete="email" autocapitalize="off" spellcheck="false" data-tp="emailLabel" required></label>
+        <label class="field tf"><span class="prefix" aria-hidden="true">+91</span><span class="sr-only" data-t="phoneLabel"></span><input id="suPhone" type="tel" inputmode="tel" autocomplete="tel-national" maxlength="16" data-tp="phoneLabel"></label>
+        <label class="field tf"><span class="sr-only" data-t="newPwLabel"></span><input id="suPass" type="password" autocomplete="new-password" minlength="8" data-tp="newPwLabel" required><button type="button" class="eye" data-tl="showPw" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></label>
+        <p class="muted small left" data-t="suHint"></p>
+        <button class="btn primary" id="suBtn" data-t="createAcct"></button>
+      </form>
+      <form id="numForm" class="stack auth-form" role="tabpanel" aria-labelledby="tab-wa" hidden>
+        <p class="muted small" data-t="loginSub"></p>
         <label class="field" for="num">
           <span class="prefix" aria-hidden="true">+91</span>
           <span class="sr-only" data-t="numLabel"></span>
@@ -34,7 +55,7 @@
         </label>
         <button class="btn primary" id="numBtn" data-t="getCode"></button>
       </form>
-      <form id="codeForm" class="stack" hidden>
+      <form id="codeForm" class="stack auth-form" hidden>
         <p class="muted small" id="codeSent" aria-live="polite"></p>
         <label for="code" class="sr-only" data-t="codeLabel"></label>
         <input id="code" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" required>
@@ -42,12 +63,36 @@
         <p class="muted small" data-t="codeHint"></p>
         <button type="button" class="btn ghost" id="changeNum" data-t="changeNum"></button>
       </form>
+      <form id="fgForm" class="stack auth-form" hidden novalidate>
+        <h2 class="h3" data-t="forgotT"></h2>
+        <p class="muted small" data-t="forgotSub"></p>
+        <label class="field tf"><span class="sr-only" data-t="idLabel"></span><input id="fgId" type="text" autocomplete="username" autocapitalize="off" spellcheck="false" data-tp="idPh" required></label>
+        <button class="btn primary" id="fgBtn" data-t="sendResetCode"></button>
+        <button type="button" class="btn ghost" data-back data-t="backLogin"></button>
+      </form>
+      <form id="rsForm" class="stack auth-form" hidden novalidate>
+        <p class="muted small" id="rsSent" aria-live="polite"></p>
+        <label for="rsCode" class="sr-only" data-t="codeLabel"></label>
+        <input id="rsCode" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" required>
+        <label class="field tf"><span class="sr-only" data-t="newPwLabel"></span><input id="rsPass" type="password" autocomplete="new-password" minlength="8" data-tp="newPwLabel" required><button type="button" class="eye" data-tl="showPw" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></label>
+        <button class="btn primary" id="rsBtn" data-t="setPw"></button>
+        <button type="button" class="btn ghost" data-back data-t="backLogin"></button>
+      </form>
+      <form id="pvForm" class="stack auth-form" hidden novalidate>
+        <h2 class="h3" data-t="verifyPhoneT"></h2>
+        <p class="muted small" id="pvSent" aria-live="polite"></p>
+        <label for="pvCode" class="sr-only" data-t="codeLabel"></label>
+        <input id="pvCode" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" required>
+        <button class="btn primary" id="pvBtn" data-t="verify"></button>
+        <button type="button" class="btn ghost" id="pvSkip" data-t="later"></button>
+      </form>
       <p class="err" id="loginErr" role="alert"></p>
     </div>
   </section>
 
   <!-- MAIN -->
   <div id="main" hidden>
+    <div class="net-banner in-app" id="netBanner2" role="alert" hidden><b data-t="netBlockedT"></b><span class="nb-text"></span><button type="button" class="btn secondary" data-t="retry" data-retry></button></div>
     <header class="appbar">
       <button class="icon-btn" id="menuBtn" aria-controls="drawer" aria-expanded="false" data-tl="openMenu">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
@@ -61,7 +106,7 @@
 
     <div class="drawer-bg" id="drawerBg" hidden></div>
     <nav id="drawer" class="drawer" data-tl="menu" inert>
-      <div class="drawer-head"><img src="/icon-192.png" alt=""><div><b>Divya</b><div class="muted small" id="drawerMe"></div></div></div>
+      <div class="drawer-head"><img src="icon-192.png" alt=""><div><b>Divya</b><div class="muted small" id="drawerMe"></div></div></div>
       <ul>
         <li><a href="#/home" data-r="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span data-t="sHome"></span></a></li>
         <li><a href="#/chat" data-r="chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg><span data-t="sChat"></span></a></li>
@@ -208,7 +253,7 @@
       <section id="s-download" class="screen" data-title="sDownload">
         <div class="scroll pad">
           <div class="card stack center">
-            <img src="/icon-192.png" alt="" class="dl-icon">
+            <img src="icon-192.png" alt="" class="dl-icon">
             <p id="dlStatus" aria-live="polite"></p>
             <button class="btn primary" id="installBtn" data-t="installNow"></button>
             <p class="muted small" data-t="notApk"></p>
@@ -222,6 +267,27 @@
       <!-- SETTINGS -->
       <section id="s-settings" class="screen" data-title="sSettings">
         <div class="scroll pad">
+          <div class="card stack acct-card" id="acctCard" hidden>
+            <h2 class="h3" data-t="account"></h2>
+            <p class="small" id="acctInfo"></p>
+            <p class="small" id="phoneInfo" aria-live="polite"></p>
+            <form id="lpForm" class="stack" novalidate>
+              <label class="field tf"><span class="prefix" aria-hidden="true">+91</span><span class="sr-only" data-t="phoneLabel"></span><input id="lpPhone" type="tel" inputmode="tel" autocomplete="tel-national" maxlength="16" data-tp="phoneLabel"></label>
+              <button class="btn primary" id="lpBtn" data-t="sendCode"></button>
+            </form>
+            <form id="lvForm" class="stack" hidden novalidate>
+              <label for="lvCode" class="sr-only" data-t="codeLabel"></label>
+              <input id="lvCode" class="code-input" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="••••••" required>
+              <button class="btn primary" id="lvBtn" data-t="verify"></button>
+            </form>
+            <p class="err" id="acctErr" role="alert"></p>
+            <button type="button" class="btn ghost" id="delOpen" data-t="delAcct"></button>
+            <form id="delForm" class="stack" hidden novalidate>
+              <p class="small" data-t="delWarn"></p>
+              <label class="field tf"><span class="sr-only" data-t="pwLabel"></span><input id="delPass" type="password" autocomplete="current-password" data-tp="pwLabel" required></label>
+              <button class="btn primary" id="delBtn" data-t="delConfirm"></button>
+            </form>
+          </div>
           <div class="list">
             <div class="row"><span id="lblSetLang" data-t="language"></span>
               <div class="seg small" id="setLang" role="radiogroup" aria-labelledby="lblSetLang"><button data-v="te">Telugu</button><button data-v="en">English</button></div></div>
@@ -244,6 +310,6 @@
   <div id="sr" class="sr-only" aria-live="polite"></div>
   <div id="sheet" class="sheet-bg" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetText"><p id="sheetText"></p><div class="sheet-btns" id="sheetBtns"></div></div></div>
 </div>
-<script src="/app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
