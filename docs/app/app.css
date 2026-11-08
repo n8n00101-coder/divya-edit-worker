@@ -24,8 +24,8 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 @media (min-width:920px){#app{border-left:1px solid var(--line);border-right:1px solid var(--line)}}
 
 /* login */
-.login{height:100%;display:flex;align-items:center;justify-content:center;padding:24px}
-.login-card{width:100%;max-width:380px;text-align:center;animation:rise .4s ease}
+.login{height:100%;display:flex;padding:24px;overflow-y:auto}
+.login-card{width:100%;max-width:380px;text-align:center;animation:rise .4s ease;margin:auto}
 .login-logo{width:76px;height:76px;border-radius:22px;border:1px solid var(--line)}
 .login h1{font-size:32px;margin:14px 0 4px;letter-spacing:-.5px}
 .login p{margin:0 0 20px}
@@ -211,3 +211,22 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 #screen-title:focus,#loginTitle:focus{outline:none}
 .step-h{flex-wrap:wrap}.step-h b{min-width:0}.step-h .pill{max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .step .keyrow{flex-wrap:wrap}.step .keyrow input{flex:1 1 100%}.step .keyrow .act-btn{flex:1;justify-content:center}
+/* auth: email/phone + password (v5) */
+.auth-tabs{margin:0 0 16px}
+.auth-tabs button{font-size:14px;padding:0 6px}
+.field.tf input{font-size:17px;letter-spacing:0}
+.field.tf input::placeholder{color:var(--muted);opacity:.85}
+.eye{width:44px;height:44px;margin-right:-10px;display:grid;place-items:center;color:var(--muted);border-radius:10px;flex:none}
+.eye[aria-pressed=true]{color:var(--text)}
+.eye svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.left{text-align:left}
+.login .h3{font-size:19px;margin:0}
+.login .stack p{margin:0}
+.net-banner{display:flex;flex-direction:column;gap:6px;text-align:left;border:1px solid var(--text);border-radius:14px;padding:12px 14px;margin:0 0 16px;background:var(--surface);font-size:14px;line-height:1.4}
+.net-banner .btn.secondary{margin:4px 0 0;min-height:44px}
+.net-banner.in-app{margin:8px 10px;flex:none}
+.net-banner[hidden]{display:none}
+.acct-card .h3{margin:0}
+.acct-card p{margin:0}
+.acct-card .err{margin-top:0}
+.acct-card .err:empty{display:none}
