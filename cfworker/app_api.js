@@ -30,7 +30,14 @@ async function appAuth(env, req) {
   const t = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
   if (!/^[a-f0-9]{48}$/.test(t)) return null;
   const n = await env.KV.get(`sess:${t}`);
-  return n ? { n, ...appAllowed(env, n) } : null;
+  if (!n) return null;
+  if (n.startsWith("a:")) { // email/phone + password account session: a:<uid>:<pwv>
+    const [, uid, pwv] = n.split(":"); const a = await acctGet(env, uid);
+    if (!a || String(a.pwv) !== pwv) return null;
+    const id = a.phone || `u_${uid}`; const al = a.phone ? appAllowed(env, a.phone) : { ok: false, owner: false };
+    return { n: id, ok: true, owner: al.owner, friend: al.ok && !al.owner, acct: a, tok: t };
+  }
+  return { n, ...appAllowed(env, n), tok: t };
 }
 async function appTalk(env, u, text, lang) {
   const h = await history(env, u.n); h.push({ role: "user", content: text });
@@ -75,11 +82,13 @@ async function appApi(req, env, url) {
     return appJson(req, { ok: true, token: t, number: n, owner: appAllowed(env, n).owner });
   }
   if (p === "health") return appJson(req, { ok: true });
+  if (p.startsWith("auth/") && req.method === "POST") return acctPublic(req, env, p, body);
   const u = await appAuth(env, req);
   if (!u || !u.ok) return appJson(req, { ok: false, error: "login" }, 401);
   const lang = body.lang === "en" || url.searchParams.get("lang") === "en" ? "en" : "te";
   if (p === "logout" && req.method === "POST") { await env.KV.delete(`sess:${(req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim()}`); return appJson(req, { ok: true }); }
-  if (p === "me") return appJson(req, { ok: true, number: u.n, owner: u.owner });
+  if (p === "me") { const a = u.acct; return appJson(req, { ok: true, number: a ? (a.phone || "") : u.n, owner: u.owner, premium: await isPremium(env, u.n), account: a ? { name: a.name, email: a.email, phone: a.phone || "", phone_pending: a.pphone || "" } : null }); }
+  if (p.startsWith("account/") && req.method === "POST") return acctPrivate(req, env, u, p, body);
   if (p === "plan") { const q = await vidQuota(env, u.n); const own = !!((await env.KV.get(`ukey:${u.n}:groq`)) || (await env.KV.get(`ukey:${u.n}:openrouter`))); const prem = await isPremium(env, u.n); return appJson(req, { ok: true, plan: prem ? "premium" : "free", premium: prem, videos_per_day: q.limit, used_today: q.used, unlimited: q.limit === null, brain: own ? "own" : "shared", video_backend: "shared", pro: "soon" }); }
   if (p === "assist" && req.method === "POST") return appJson(req, await appAssist(env, u, body, lang));
   if (p.startsWith("keys")) return appKeys(req, env, u, p, body, lang);
@@ -381,5 +390,154 @@ async function appAssist(env, u, body, lang) {
       return { ok: true, intent: "chat", free: !r.premium_required, ...r, ...(r.premium_required ? { action: { type: "subscribe" } } : {}) };
     }
   }
+}
+// ---- accounts: sign up / log in with email or phone + password (added 2026-11-08) ----
+// KV: acct:<uid> {uid,name,email,phone(verified),pphone(pending),pw,pwv,created}; em:<email> -> uid; ph:<digits> -> uid (verified only)
+// pv:<uid> phone-verify code, pwr:<uid> reset code (10 min, 5 tries); pwfail:<key>:<ip> failed logins (5 / 15 min); pcool:/phr: WhatsApp send limits.
+// Passwords: PBKDF2-SHA256, 100000 iterations (Workers max), 16-byte per-user salt. Never stored or logged in plaintext.
+const PW_ITER = 100000;
+const hexOf = u8 => [...u8].map(b => b.toString(16).padStart(2, "0")).join("");
+const hexTo = h => new Uint8Array((h.match(/../g) || []).map(x => parseInt(x, 16)));
+async function pwDerive(pw, salt, iter) {
+  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(pw), "PBKDF2", false, ["deriveBits"]);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: iter }, k, 256));
+}
+async function pwMake(pw) { const salt = crypto.getRandomValues(new Uint8Array(16)); return `pbkdf2-sha256$${PW_ITER}$${hexOf(salt)}$${hexOf(await pwDerive(pw, salt, PW_ITER))}`; }
+async function pwCheck(pw, stored) {
+  const [alg, it, salt, hash] = String(stored || "").split("$"); if (alg !== "pbkdf2-sha256") return false;
+  const a = await pwDerive(pw, hexTo(salt), parseInt(it, 10)), b = hexTo(hash);
+  if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i]; return d === 0;
+}
+const acctGet = async (env, uid) => uid ? JSON.parse((await env.KV.get(`acct:${uid}`)) || "null") : null;
+const acctPut = (env, a) => env.KV.put(`acct:${a.uid}`, JSON.stringify(a));
+const normEmail = s => { const e = String(s || "").trim().toLowerCase(); return /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/.test(e) ? e : ""; };
+function normPhone(s) { const n = appNum(s); return /^\d{11,15}$/.test(n) ? n : ""; }
+async function acctFind(env, ident) {
+  const e = normEmail(ident); if (e) return acctGet(env, await env.KV.get(`em:${e}`));
+  const n = normPhone(ident); if (n) return acctGet(env, await env.KV.get(`ph:${n}`)); // only VERIFIED phones are indexed
+  return null;
+}
+async function newSession(env, a) {
+  const t = hexOf(crypto.getRandomValues(new Uint8Array(24)));
+  await env.KV.put(`sess:${t}`, `a:${a.uid}:${a.pwv}`, { expirationTtl: 86400 * 30 });
+  return t;
+}
+const mask = n => n ? `+${n.slice(0, 2)} ••••• ${n.slice(-3)}` : "";
+// The test WhatsApp number only reaches verified recipients (OWNERS + FRIENDS). Set var WA_LIVE=1 after going live, or WA_TEST_RECIPIENTS to a list.
+function waReachable(env, n) {
+  if (env.WA_LIVE === "1") return true;
+  return (env.WA_TEST_RECIPIENTS || `${env.OWNERS || ""},${env.FRIENDS || "917993610173"}`).split(",").map(s => s.trim()).filter(Boolean).includes(n);
+}
+async function sendPhoneCode(env, uid, phone, kind, en) {
+  if (!waReachable(env, phone)) return { ok: false, status: "unreachable", error: en ? "WhatsApp can't send a code to this number yet: Divya's WhatsApp is in test mode and only reaches approved numbers. Your account works with email + password; the phone will link once WhatsApp is live." : "Ee number ki WhatsApp code pampalenu: Divya WhatsApp ippudu test mode lo undi, approved numbers ki maatrame vellutundi. Email + password tho account panichestundi; WhatsApp live ayyaka phone link avuthundi." };
+  if (await env.KV.get(`pcool:${phone}`)) return { ok: false, status: "cooldown", error: en ? "A code was just sent. Wait 60 seconds." : "Code ippude pampa. 60 seconds aagu." };
+  const hk = `phr:${phone}`, hc = parseInt((await env.KV.get(hk)) || "0", 10);
+  if (hc >= 5) return { ok: false, status: "limit", error: en ? "Too many codes for this number. Try again in an hour." : "Ee number ki chala codes pampa. Gantha tarvatha try cheyyi." };
+  await env.KV.put(`pcool:${phone}`, "1", { expirationTtl: 60 }); await env.KV.put(hk, String(hc + 1), { expirationTtl: 3600 });
+  const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
+  const key = kind === "reset" ? `pwr:${uid}` : `pv:${uid}`;
+  await env.KV.put(key, JSON.stringify({ phone, code, tries: 0 }), { expirationTtl: 600 });
+  const msg = kind === "reset" ? `🔐 Divya password reset code: ${code}\n10 min lo expire avuthundi. Meeru adagakapothe ignore cheyyandi.` : `🔐 Divya phone verify code: ${code}\n10 min lo expire avuthundi. Evvariki share cheyyaku.`;
+  const r = await say(env, phone, msg).catch(() => null);
+  if (!r || !r.ok) { await env.KV.delete(key); return { ok: false, status: "unreachable", error: en ? "WhatsApp couldn't deliver the code to this number (test mode reaches only approved numbers)." : "WhatsApp ee number ki code pampaledu (test mode lo approved numbers ki maatrame)." }; }
+  return { ok: true, status: "sent", to: mask(phone) };
+}
+async function codeCheck(env, key, code) {
+  const o = JSON.parse((await env.KV.get(key)) || "null"); if (!o) return { ok: false, expired: true };
+  if (o.code !== String(code || "").replace(/\D/g, "")) { o.tries++; if (o.tries >= 5) await env.KV.delete(key); else await env.KV.put(key, JSON.stringify(o), { expirationTtl: 600 }); return { ok: false }; }
+  await env.KV.delete(key); return { ok: true, phone: o.phone };
+}
+function pwBad(pw, en) { pw = String(pw || ""); if (pw.length < 8) return en ? "Password needs at least 8 characters." : "Password kanisam 8 characters undali."; if (pw.length > 128) return en ? "Password is too long." : "Password chala podavu."; return ""; }
+async function failGet(env, k) { return JSON.parse((await env.KV.get(k)) || "null") || { c: 0, t0: Date.now() }; }
+async function failAdd(env, k, f) { f.c++; const left = Math.max(60, Math.ceil((f.t0 + 900000 - Date.now()) / 1000)); await env.KV.put(k, JSON.stringify(f), { expirationTtl: left }); }
+async function acctPublic(req, env, p, body) {
+  const en = body.lang === "en", ip = req.headers.get("cf-connecting-ip") || "0";
+  if (p === "auth/signup") {
+    const name = String(body.name || "").trim().replace(/\s+/g, " ").slice(0, 60), email = normEmail(body.email), raw = String(body.phone || "").trim();
+    const phone = raw ? normPhone(raw) : "";
+    if (!name) return appJson(req, { ok: false, field: "name", error: en ? "Enter your name." : "Nee peru ivvu." }, 400);
+    if (!email) return appJson(req, { ok: false, field: "email", error: en ? "Enter a valid email." : "Sariaina email ivvu." }, 400);
+    if (raw && !phone) return appJson(req, { ok: false, field: "phone", error: en ? "Enter a valid phone number." : "Sariaina phone number ivvu." }, 400);
+    const bad = pwBad(body.password, en); if (bad) return appJson(req, { ok: false, field: "password", error: bad }, 400);
+    const sk = `suip:${ip}`, sc = parseInt((await env.KV.get(sk)) || "0", 10);
+    if (sc >= 10) return appJson(req, { ok: false, error: en ? "Too many sign-ups from this network. Try later." : "Ee network nunchi chala sign-ups. Tarvatha try cheyyi." }, 429);
+    if (await env.KV.get(`em:${email}`)) return appJson(req, { ok: false, field: "email", error: en ? "This email already has an account. Log in instead." : "Ee email tho account already undi. Login cheyyi." }, 409);
+    await env.KV.put(sk, String(sc + 1), { expirationTtl: 3600 });
+    const a = { uid: hexOf(crypto.getRandomValues(new Uint8Array(12))), name, email, phone: "", pphone: phone, pw: await pwMake(String(body.password)), pwv: 1, created: Date.now() };
+    await acctPut(env, a); await env.KV.put(`em:${email}`, a.uid);
+    const token = await newSession(env, a);
+    let phone_status = "none", phone_msg = "";
+    if (phone) {
+      if (await env.KV.get(`ph:${phone}`)) { phone_status = "taken"; phone_msg = en ? "This phone is already linked to another account." : "Ee phone inkoka account ki link ayyi undi."; }
+      else { const r = await sendPhoneCode(env, a.uid, phone, "verify", en); phone_status = r.status; phone_msg = r.error || ""; }
+    }
+    return appJson(req, { ok: true, token, number: "", owner: false, account: { name, email, phone: "", phone_pending: phone }, phone_status, phone_msg });
+  }
+  if (p === "auth/login") {
+    const ident = String(body.id || "").trim(), a = await acctFind(env, ident);
+    const fk = `pwfail:${a ? a.uid : "x" + (normEmail(ident) || normPhone(ident) || "bad")}:${ip}`, f = await failGet(env, fk);
+    if (f.c >= 5) { const m = Math.max(1, Math.ceil((f.t0 + 900000 - Date.now()) / 60000)); return appJson(req, { ok: false, locked: true, retry_min: m, error: en ? `Too many wrong tries. Try again in ${m} min, or reset your password.` : `Chala sarlu tappu password. ${m} min tarvatha try cheyyi, leda password reset cheyyi.` }, 429); }
+    if (!a || !(await pwCheck(String(body.password || ""), a.pw))) { await failAdd(env, fk, f); return appJson(req, { ok: false, tries_left: Math.max(0, 5 - f.c), error: en ? "Wrong email/phone or password." : "Email/phone leda password tappu." }, 401); }
+    await env.KV.delete(fk);
+    const token = await newSession(env, a);
+    return appJson(req, { ok: true, token, number: a.phone || "", owner: a.phone ? appAllowed(env, a.phone).owner : false, account: { name: a.name, email: a.email, phone: a.phone || "", phone_pending: a.pphone || "" } });
+  }
+  if (p === "auth/forgot") {
+    const a = await acctFind(env, String(body.id || ""));
+    if (!a) return appJson(req, { ok: false, error: en ? "No account found with that email or verified phone." : "Aa email/verified phone tho account ledu." }, 404);
+    if (!a.phone) return appJson(req, { ok: false, no_phone: true, error: en ? "This account has no verified phone, so the password can't be reset by WhatsApp. Ask the Divya owner for help." : "Ee account ki verified phone ledu, kabatti WhatsApp tho reset avvadu. Divya owner ni adugu." }, 400);
+    const r = await sendPhoneCode(env, a.uid, a.phone, "reset", en);
+    return appJson(req, { ok: r.ok, sent: r.ok, to: r.to || mask(a.phone), status: r.status, error: r.error }, r.ok || r.status === "cooldown" ? 200 : 400);
+  }
+  if (p === "auth/reset") {
+    const a = await acctFind(env, String(body.id || ""));
+    if (!a || !a.phone) return appJson(req, { ok: false, error: en ? "Reset not possible for this account." : "Ee account ki reset kudaradu." }, 400);
+    const bad = pwBad(body.password, en); if (bad) return appJson(req, { ok: false, field: "password", error: bad }, 400);
+    const c = await codeCheck(env, `pwr:${a.uid}`, body.code);
+    if (!c.ok) return appJson(req, { ok: false, error: c.expired ? (en ? "Code expired. Ask for a new one." : "Code expire ayyindi. Kotha code adugu.") : (en ? "Wrong code." : "Code tappu.") }, 400);
+    a.pw = await pwMake(String(body.password)); a.pwv = (a.pwv || 1) + 1; await acctPut(env, a); // old sessions stop working
+    await env.KV.delete(`pwfail:${a.uid}:${req.headers.get("cf-connecting-ip") || "0"}`);
+    return appJson(req, { ok: true, token: await newSession(env, a), number: a.phone, owner: appAllowed(env, a.phone).owner });
+  }
+  return appJson(req, { ok: false, error: "not found" }, 404);
+}
+async function acctPrivate(req, env, u, p, body) {
+  const en = body.lang === "en", a = u.acct;
+  if (!a) return appJson(req, { ok: false, error: en ? "This login has no email account. Sign up first." : "Ee login ki email account ledu. Mundu sign up cheyyi." }, 400);
+  if (p === "account/phone") {
+    const phone = normPhone(body.phone); if (!phone) return appJson(req, { ok: false, error: en ? "Enter a valid phone number." : "Sariaina phone number ivvu." }, 400);
+    const other = await env.KV.get(`ph:${phone}`);
+    if (other && other !== a.uid) return appJson(req, { ok: false, error: en ? "This phone is already linked to another account." : "Ee phone inkoka account ki link ayyi undi." }, 409);
+    if (phone === a.phone) return appJson(req, { ok: true, status: "linked" });
+    a.pphone = phone; await acctPut(env, a);
+    const r = await sendPhoneCode(env, a.uid, phone, "verify", en);
+    return appJson(req, { ok: r.ok, ...r }, r.ok || r.status === "cooldown" ? 200 : 400);
+  }
+  if (p === "account/phone/verify") {
+    const c = await codeCheck(env, `pv:${a.uid}`, body.code);
+    if (!c.ok) return appJson(req, { ok: false, error: c.expired ? (en ? "Code expired. Ask for a new one." : "Code expire ayyindi. Kotha code adugu.") : (en ? "Wrong code." : "Code tappu.") }, 400);
+    const other = await env.KV.get(`ph:${c.phone}`);
+    if (other && other !== a.uid) return appJson(req, { ok: false, error: en ? "This phone is already linked to another account." : "Ee phone inkoka account ki link ayyi undi." }, 409);
+    if (a.phone && a.phone !== c.phone) await env.KV.delete(`ph:${a.phone}`);
+    a.phone = c.phone; a.pphone = ""; await acctPut(env, a); await env.KV.put(`ph:${c.phone}`, a.uid);
+    const al = appAllowed(env, c.phone);
+    return appJson(req, { ok: true, phone: c.phone, owner: al.owner, premium: await isPremium(env, c.phone) });
+  }
+  if (p === "account/password") {
+    if (!(await pwCheck(String(body.old || ""), a.pw))) return appJson(req, { ok: false, error: en ? "Current password is wrong." : "Ippati password tappu." }, 401);
+    const bad = pwBad(body.password, en); if (bad) return appJson(req, { ok: false, error: bad }, 400);
+    a.pw = await pwMake(String(body.password)); a.pwv = (a.pwv || 1) + 1; await acctPut(env, a);
+    return appJson(req, { ok: true, token: await newSession(env, a) });
+  }
+  if (p === "account/delete") {
+    if (!(await pwCheck(String(body.password || ""), a.pw))) return appJson(req, { ok: false, error: en ? "Password is wrong." : "Password tappu." }, 401);
+    const id = `u_${a.uid}`;
+    const keys = [`acct:${a.uid}`, `em:${a.email}`, `pv:${a.uid}`, `pwr:${a.uid}`, `sess:${u.tok}`, `h:${id}`, `appjob:${id}`, `tier:${id}`];
+    if (a.phone && (await env.KV.get(`ph:${a.phone}`)) === a.uid) keys.push(`ph:${a.phone}`);
+    for (const pr of Object.keys(KEYPROV)) keys.push(`ukey:${id}:${pr}`);
+    await Promise.all(keys.map(k => env.KV.delete(k)));
+    return appJson(req, { ok: true, deleted: true }); // WhatsApp history of a linked phone (h:<number>) is kept: it belongs to the WhatsApp chat
+  }
+  return appJson(req, { ok: false, error: "not found" }, 404);
 }
 // ===== DIVYA APP API — end =====
