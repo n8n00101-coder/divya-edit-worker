@@ -1,0 +1,33 @@
+name: selfdev
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Divya selfdev job id"
+        required: true
+concurrency:
+  group: selfdev
+  cancel-in-progress: false
+permissions:
+  contents: write
+jobs:
+  selfdev:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Tools
+        run: pip install -q httpx==0.27.2 pyyaml
+      - name: Self change
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          PYTHONUNBUFFERED: "1"
+        run: python selfdev.py "${{ inputs.job }}"
