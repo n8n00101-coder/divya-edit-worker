@@ -34,7 +34,7 @@ async def main():
         return await app_edit_job(j, wa)
     try:
         src = await wa.download_media(j["media_id"], "mp4")
-        res = await autoedit.auto_edit(src, j["instruction"] + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR + HARK_AESTHETIC, notify=note)
+        res = await autoedit.auto_edit(src, j["instruction"] + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR + HARK_AESTHETIC + HARK_NEAT, notify=note)
         size = os.path.getsize(res["path"]) / 1e6
         if size > 15.5:
             out = res["path"].replace(".mp4", "_wa.mp4")
@@ -241,8 +241,23 @@ THEORY = (
 )
 
 
-# R49 (v25): Hark's aesthetic variety (2026-11-10, ~/workspace/styles/HARK-AESTHETIC-VARIETY.md).
-# One design system per TOPIC MOOD — never one fixed style for every video.
+# R50 (v26): neat edits — Ajju's verdict on v25 (2026-11-10): the videos show no
+# change, nothing creative, and do not look like edits at all. The pawn, the zoom,
+# and generic untimed effects are the defects. Hark was asked the same questions
+# (thread 1a1c64a60e80fbe6); these rules are the fix until his reply arrives.
+HARK_NEAT = (
+    " Hark neat-edit rules (use for every video): NEVER a fixed mascot/character in"
+    " every scene — the pawn/chess-soldier is REMOVED; every visual must be the"
+    " topic's own idea, never a stock mascot. Camera moves are SUBTLE — max 3% zoom,"
+    " small drift; nothing may leave the safe area or go outside the screen; the"
+    " background must not visibly zoom. Effects are TOPIC-RELATED and VOICE-TIMED:"
+    " the icon/effect/label pops on the exact spoken keyword (from the TTS word"
+    " timings), never at a fixed scene time; a different effect per scene, never the"
+    " same animation in every video. An edit must look neat and careful — if it looks"
+    " like 'someone asked, so I made something', it is not ready."
+)
+
+
 HARK_AESTHETIC = (
     " Hark aesthetic variety (use for every video): the TOPIC MOOD picks the design system,"
     " then vary inside it (accent, font pair, transition set) from a seed of the title so no"
@@ -336,7 +351,7 @@ async def app_edit_job(j, wa):
         print("source", round(os.path.getsize(src) / 1e6, 1), "MB")
         app_state("running", "Edit plan chestunna…")
         tpl = str(j.get("template") or "dark-explainer")
-        instruction = j["instruction"] + f" Style template: {tpl} (see video-kit/render.py TEMPLATES)." + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR + HARK_AESTHETIC
+        instruction = j["instruction"] + f" Style template: {tpl} (see video-kit/render.py TEMPLATES)." + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR + HARK_AESTHETIC + HARK_NEAT
         res = await autoedit.auto_edit(src, instruction, notify=note)
         if j.get("sfx"):
             res["path"] = mix_sfx(res["path"], str(j["sfx"]))
