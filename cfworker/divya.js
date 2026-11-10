@@ -131,16 +131,56 @@ async function startEdit(env, user, mediaId, instruction) {
   return say(env, user, `Edit machine start avvaledu (GitHub ${r.status}). Owner ki report chesa.`);
 }
 
+// v23: deterministic topic extraction. The brain sometimes emits topic AUTO
+// even when the user GAVE a topic — a question ("Why do we see lightning
+// before we hear thunder?") IS a topic, not "no topic". Extract it from the
+// user's message so the runner never renders a random topic on a given one.
+// Returns null when there is genuinely no topic (AUTO stays, Divya picks).
+function extractTopic(text) {
+  let t = String(text || "");
+  // "make/create a video on X" / "about X" / "X gurinchi" -> X is the topic.
+  let m = t.match(/\b(?:on|about)\s+([^.?!]+)/i);
+  if (m) { const s = m[1].trim().replace(/[?!.]+$/, "").trim(); if (s.length >= 4 && s.length <= 140) return s; }
+  m = t.match(/([^.?!]+?)\s+gurinchi/i);
+  if (m) { let s = m[1].trim().replace(/^(cheppu|cheppandi|tell|explain|about)\b[,\s]*/i, "").replace(/\b(video|reel|short)\b/gi, " ").replace(/\s+/g, " ").trim(); if (s.length >= 4 && s.length <= 140) return s; }
+  // Drop the order clause only (never the topic): "Make a 30s faceless short",
+  // "short cheyyi", "video cheyyi".
+  t = t.replace(/\b(make|create)\s+(a\s+)?(30s|60s)?\s*(faceless\s+)?(video|reel|short)\b[^,;.!?]*[,.]?/gi, " ");
+  t = t.replace(/\b(video|reel|short)\s+(cheyyi|cheyu|chey|create|make|chesko)\b[^.?!]*/gi, " ");
+  t = t.replace(/\b(faceless|english|telugu|hindi|voice|male|female|30s|60s|9:16|16:9|video|reel|short|cheppu|gurinchi)\b/gi, " ");
+  t = t.replace(/[,;]+/g, " ").replace(/\s+/g, " ").trim();
+  const s2 = t.match(/^[^.?!]+[?!.]?/);
+  let s = (s2 ? s2[0] : t).trim().replace(/[?!.]+$/, "").trim();
+  if (s.length < 4 || s.length > 140) return null;
+  if (/^(video|reel|short|edit|create|make)$/i.test(s)) return null;
+  return s;
+}
+
 async function startCreate(env, user, brief) {
   await env.KV.put(`busy:${user}`, "1", { expirationTtl: 1200 });
   const job = crypto.randomUUID().slice(0, 8);
   const recent = JSON.parse((await env.KV.get(`topics:${user}`)) || "[]").slice(-15).join("; ");
   const hu = (await history(env, user)).filter(x => x.role === "user").slice(-4).map(x => x.content).join(" | ");
   const ctx = hu ? `\nOwner's recent messages (romanized Telugu): ${hu}` : "";
+  // v23: if the brief's topic is AUTO, the user may still have given a topic
+  // in their latest message (a question counts). Substitute it deterministically
+  // so the History title AND the render brief carry the real topic.
+  let fixed = String(brief || "AUTO");
+  const isAuto = /^AUTO\b/i.test(fixed) || /\btopic\s*:?\s*AUTO\b/i.test(fixed);
+  if (isAuto) {
+    const lastMsg = (await history(env, user)).filter(x => x.role === "user").slice(-1)[0]?.content || "";
+    const tp = extractTopic(lastMsg);
+    if (tp) fixed = fixed === "AUTO" || /^AUTO\b/i.test(fixed) ? `topic: ${tp}, ` + fixed.replace(/^AUTO\b,?\s*/i, "") : fixed.replace(/\btopic\s*:?\s*AUTO\b/i, `topic: ${tp}`);
+  }
+  // v23: duration hard constraint — the runner made 0:44 for a 30s request.
+  const durS = (fixed.match(/\b(\d+)\s?s\b/i) || [])[1];
+  const durM = (fixed.match(/\b(\d+)\s?min\b/i) || [])[1];
+  const durLine = durS ? ` FINAL VIDEO LENGTH: exactly ${durS} seconds (±2s) — do not make it longer or shorter.` : durM ? ` FINAL VIDEO LENGTH: exactly ${durM} minutes (±30s) — do not make it longer or shorter.` : "";
+  brief = fixed;
   // R44: tobacco/gutka/smoking = HEALTH, never tech — the render brief carries
   // the classification so the video itself treats it as health.
   const healthHint = /tobacco|gutka|smoking|paan|alcohol|drugs|hookah|cigarette|beedi|bidi|nicotine/i.test(brief || "") ? " HEALTH TOPIC (never tech): use WHO / MoHFW / NTCP / ICMR / CDC sources; effects from Hark's health table (cancer, heart, lungs, addiction); faceless, no smoking glamor." : "";
-  await env.KV.put(`job:${job}`, JSON.stringify({ mode: "create", brief: (brief === "AUTO" ? "AUTO" : brief) + healthHint + ctx, recent, to: user }), { expirationTtl: 86400 });
+  await env.KV.put(`job:${job}`, JSON.stringify({ mode: "create", brief: (brief === "AUTO" ? "AUTO" : brief) + durLine + healthHint + ctx, recent, to: user }), { expirationTtl: 86400 });
   const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/edit.yml/dispatches`, {
     method: "POST",
     headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" },
