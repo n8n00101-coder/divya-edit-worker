@@ -59,10 +59,27 @@ def state(st, note=""):
 
 
 # ---------------------------------------------------------------- LLM
-GROQ_MODELS = ["openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905", "qwen/qwen3-32b", "llama-3.3-70b-versatile"]
+# R7 fix (2026-11-09): read the LIVE Groq /models list — never hardcode model ids.
+# The old list contained dead ids (llama-3.3-70b-versatile) that 404'd and broke self-change.
+GROQ_MODELS = ["openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905", "qwen/qwen3-32b"]  # fallback only
 
 
-def llm(system, user, max_tokens=8000):
+def live_groq_models():
+    """Live model ids from Groq, newest-first, chat models only. Falls back to GROQ_MODELS."""
+    try:
+        for key in GROQ_KEYS:
+            r = httpx.get("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=30)
+            if r.status_code == 200:
+                ids = [m["id"] for m in r.json().get("data", []) if "id" in m]
+                chat = [i for i in ids if not any(x in i for x in ("whisper", "tts", "embed", "guard", "vision", "playai", "distil"))]
+                if chat:
+                    return chat
+    except Exception:
+        pass
+    return list(GROQ_MODELS)
+
+
+def llm(system, user, max_tokens=2000):
     last = ""
     if GEMINI:
         for m in ("gemini-2.5-pro", "gemini-2.5-flash"):
@@ -77,8 +94,9 @@ def llm(system, user, max_tokens=8000):
                 last = f"gemini {r.status_code}"
             except Exception as e:
                 last = f"gemini {type(e).__name__}"
+    models = live_groq_models()
     for key in GROQ_KEYS:
-        for m in GROQ_MODELS:
+        for m in models:
             try:
                 r = httpx.post("https://api.groq.com/openai/v1/chat/completions", headers={"Authorization": f"Bearer {key}"},
                                json={"model": m, "temperature": 0.2, "max_tokens": max_tokens,
