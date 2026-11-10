@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "divya-v19";
+const APP_V = "divya-v20";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -32,7 +32,7 @@ const T = {
     uploadHelp: "24 MB varaku direct upload. Pedda videos ki Link vaadu.", linkHelp: "Drive file ni 'Anyone with the link' ga share cheyyi. YouTube/Instagram links konni sarlu maa server nunchi download avvavu — appudu Drive link ivvu.",
     videoType: "Video type", kLong: "Long video / Documentary", kLongSub: "Faceless · story flow, captions, music", kShort: "Faceless short", kShortSub: "9:16 · hook, fast cuts, pedda captions", kFace: "Face video", kFaceSub: "Talking head · pauses cut, zooms, captions",
     editLang: "Captions bhasha", lenAuto: "Auto", lenFull: "Full length", notesLabel: "Extra cheppalsindi (optional)", notesPh: "ex: modati 10 seconds teesey, music thakkuva",
-    editBtn: "Edit start cheyyi", dlEdit: "Edit chesina video download", needKind: "Video type select cheyyi.", needSrc: "Video select cheyyi leda link ivvu.", tooBig: "Ee file 24 MB kante pedda. 24 MB lopu video attach cheyyi.", uploading: p => `Upload ${p}%`,
+    editBtn: "Edit start cheyyi", dlEdit: "Edit chesina video download", needKind: "Video type select cheyyi.", needSrc: "Topic cheppu — Divya video create chesthundi.", tooBig: "Ee file 24 MB kante pedda. 24 MB lopu video attach cheyyi.", uploading: p => `Upload ${p}%`,
     editsLine: (left, l) => l === null ? "Unlimited shorts (owner/friend)" : `Ee varam ${left}/${l} free shorts migilayi`,
     jobQueued: "Edit queue lo undi", jobRunSub2: "Konchem time paduthundi. Ready ayyaka ikkade download vasthundi.", jobDoneSub2: "Download cheyyi (3 rojulu untundi).", jobFailSub2: "Ee edit nee free count lo lekka ledu. Link/file chusi malli try cheyyi.",
     email: "Email", phone: "Phone", planL: "Plan", planFree: "Free", planPrem: "Premium (owner/friend)", waLogin: "WhatsApp login", f0: "Varam ki 5 shorts (free)",
@@ -41,7 +41,7 @@ const T = {
     gChat: "Chat", gVoice: "Voice", gConnect: "Connect", gSetup: "Server setup", gPlan: "Plan", gDownload: "Download", gSettings: "Settings",
     screen: n => `${n} screen`,
     hello: h => h < 12 ? "నమస్కారం, good morning" : h < 17 ? "నమస్కారం, good afternoon" : "నమస్కారం, good evening", greetSub: "Ee roju em cheddam?", heySub: "Tap chesi matladu: call, WhatsApp, open, songs, reminders",
-    noJob: "Edit emi ledu", noJobSub: "Chat lo nee video attach cheyyi.",
+    noJob: "Edit emi ledu", noJobSub: "Chat lo topic cheppu — Divya video create chesthundi.",
     online: "Online", thinking: "Typing…", listening: "Vintunna…", releaseToSend: "Vadilithe pamputha", typeMsg: "Message…", bubblePh: "Divya tho matladu…", holdMic: "Mic ni press chesi pattuko, matladu, vadilai.", holdToTalk: "Press chesi pattukoni matladu, leda message pampu", attachImage: "Image / video pampu",
     emptyTitle: "Hi, nenu Divya", emptySub: "Chat cheyyi, matladu, leda pani cheppu.", s1: "YouTube open cheyyi", s2: "Ippudu time entha?", s3: "Nuvvu em cheyagalavu?",
     length: "Length",
@@ -89,7 +89,7 @@ const T = {
     uploadHelp: "Direct upload up to 24 MB. For bigger videos use Link.", linkHelp: "Share Drive files as 'Anyone with the link'. YouTube/Instagram links sometimes can't be downloaded by our server — use a Drive link then.",
     videoType: "Video type", kLong: "Long video / Documentary", kLongSub: "Faceless · story flow, captions, music", kShort: "Faceless short", kShortSub: "9:16 · hook, fast cuts, big captions", kFace: "Face video", kFaceSub: "Talking head · cut pauses, zooms, captions",
     editLang: "Captions language", lenAuto: "Auto", lenFull: "Full length", notesLabel: "Extra notes (optional)", notesPh: "e.g. cut the first 10 seconds, keep music low",
-    editBtn: "Start edit", dlEdit: "Download edited video", needKind: "Pick a video type.", needSrc: "Choose a video or paste a link.", tooBig: "This file is over 24 MB. Attach a video under 24 MB.", uploading: p => `Uploading ${p}%`,
+    editBtn: "Start edit", dlEdit: "Download edited video", needKind: "Pick a video type.", needSrc: "Tell me a topic — Divya creates the video.", tooBig: "This file is over 24 MB. Attach a video under 24 MB.", uploading: p => `Uploading ${p}%`,
     editsLine: (left, l) => l === null ? "Unlimited shorts (owner/friend)" : `${left} of ${l} free shorts left this week`,
     jobQueued: "Edit is queued", jobRunSub2: "This takes a few minutes. The download appears here when it's ready.", jobDoneSub2: "Download it (kept for 3 days).", jobFailSub2: "This one didn't count toward your free edits. Check the link/file and try again.",
     email: "Email", phone: "Phone", planL: "Plan", planFree: "Free", planPrem: "Premium (owner/friend)", waLogin: "WhatsApp login", f0: "5 free shorts a week",
@@ -98,7 +98,7 @@ const T = {
     gChat: "Chat", gVoice: "Voice", gConnect: "Connect", gSetup: "Server setup", gPlan: "Plan", gDownload: "Download", gSettings: "Settings",
     screen: n => `${n} screen`,
     hello: h => h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening", greetSub: "What shall we do today?", heySub: "Tap and speak: call, WhatsApp, open, songs, reminders",
-    noJob: "No edit yet", noJobSub: "Attach your video in chat.",
+    noJob: "No edit yet", noJobSub: "Tell me a topic in chat — Divya creates the video.",
     online: "Online", thinking: "Typing…", listening: "Listening…", releaseToSend: "Release to send", typeMsg: "Message…", bubblePh: "Chat with Divya…", holdMic: "Press and hold the mic, speak, then let go.", holdToTalk: "Press and hold to talk, or send message", attachImage: "Send image or video",
     emptyTitle: "Hi, I'm Divya", emptySub: "Chat, talk, or give me a task.", s1: "Open YouTube", s2: "What time is it?", s3: "What can you do?",
     length: "Length",
@@ -140,14 +140,14 @@ const T = {
     sEdit: "वीडियो एडिट", sProfile: "प्रोफ़ाइल", gEdit: "वीडियो एडिट", tHome: "होम", tEdit: "एडिट", tVoice: "वॉइस", tChat: "चैट", tSetup: "सेटअप", tPlan: "प्लान", tabsLabel: "मुख्य टैब", openProfile: "प्रोफ़ाइल खोलें",
     editsLeftT: "फ्री शॉर्ट्स बचे", notVerified: "वेरीफ़ाई नहीं हुआ", quotaSub: (u, l) => `इस हफ़्ते ${u}/${l} शॉर्ट्स इस्तेमाल किए · सोमवार को रीसेट`, unlimited: "अनलिमिटेड", unlimitedSub: "ओनर/दोस्त — कोई लिमिट नहीं",
     editIntro: "अपना वीडियो अपलोड करें या लिंक दें। आप जिस टाइप को चुनेंगे, Divya उसी हिसाब से एडिट करके देगी।", yourVideo: "आपका वीडियो", srcUpload: "अपलोड", srcLink: "लिंक", pickVideo: "वीडियो चुनें (24 MB तक)", linkLabel: "वीडियो लिंक", linkPh: "Google Drive / YouTube / डायरेक्ट वीडियो लिंक", uploadHelp: "24 MB तक डायरेक्ट अपलोड। बड़े वीडियो के लिए Link इस्तेमाल करें।", linkHelp: "Drive फ़ाइल को 'Anyone with the link' करके शेयर करें। YouTube/Instagram लिंक कभी-कभी हमारे सर्वर से डाउनलोड नहीं होते — तब Drive लिंक दें।",
-    videoType: "वीडियो टाइप", kLong: "लॉन्ग वीडियो / डॉक्यूमेंट्री", kLongSub: "फ़ेसलेस · स्टोरी फ़्लो, कैप्शन, म्यूज़िक", kShort: "फ़ेसलेस शॉर्ट", kShortSub: "9:16 · हुक, तेज़ कट्स, बड़े कैप्शन", kFace: "फ़ेस वीडियो", kFaceSub: "टॉकिंग हेड · पॉज़ कट, ज़ूम, कैप्शन", editLang: "कैप्शन भाषा", lenAuto: "ऑटो", lenFull: "पूरी लंबाई", notesLabel: "अतिरिक्त नोट्स (वैकल्पिक)", notesPh: "जैसे: पहले 10 सेकंड काटें, म्यूज़िक कम रखें", editBtn: "एडिट शुरू करें", dlEdit: "एडिट किया वीडियो डाउनलोड करें", needKind: "वीडियो टाइप चुनें।", needSrc: "वीडियो चुनें या लिंक दें।", tooBig: "यह फ़ाइल 24 MB से बड़ी है। 24 MB से छोटी वीडियो अटैच करें।", uploading: p => `अपलोड हो रहा है ${p}%`,
+    videoType: "वीडियो टाइप", kLong: "लॉन्ग वीडियो / डॉक्यूमेंट्री", kLongSub: "फ़ेसलेस · स्टोरी फ़्लो, कैप्शन, म्यूज़िक", kShort: "फ़ेसलेस शॉर्ट", kShortSub: "9:16 · हुक, तेज़ कट्स, बड़े कैप्शन", kFace: "फ़ेस वीडियो", kFaceSub: "टॉकिंग हेड · पॉज़ कट, ज़ूम, कैप्शन", editLang: "कैप्शन भाषा", lenAuto: "ऑटो", lenFull: "पूरी लंबाई", notesLabel: "अतिरिक्त नोट्स (वैकल्पिक)", notesPh: "जैसे: पहले 10 सेकंड काटें, म्यूज़िक कम रखें", editBtn: "एडिट शुरू करें", dlEdit: "एडिट किया वीडियो डाउनलोड करें", needKind: "वीडियो टाइप चुनें।", needSrc: "टॉपिक बताओ — दिव्या वीडियो बना देगी।", tooBig: "यह फ़ाइल 24 MB से बड़ी है। 24 MB से छोटी वीडियो अटैच करें।", uploading: p => `अपलोड हो रहा है ${p}%`,
     editsLine: (left, l) => l === null ? "अनलिमिटेड शॉर्ट्स (ओनर/दोस्त)" : `इस हफ़्ते ${left}/${l} फ्री शॉर्ट्स बचे`,
     jobQueued: "एडिट कतार में है", jobRunSub2: "थोड़ा समय लगेगा। तैयार होने पर डाउनलोड यहीं मिलेगा।", jobDoneSub2: "डाउनलोड करें (3 दिन तक रहेगा)।", jobFailSub2: "यह एडिट आपके फ्री काउंट में नहीं गिना गया। लिंक/फ़ाइल देखकर फिर कोशिश करें।",
     email: "ईमेल", phone: "फ़ोन", planL: "प्लान", planFree: "फ्री", planPrem: "प्रीमियम (ओनर/दोस्त)", waLogin: "WhatsApp लॉग इन", f0: "हफ़्ते में 5 शॉर्ट्स (फ्री)",
     openMenu: "मेनू खोलें", closeMenu: "मेनू बंद करें", menu: "मुख्य मेनू", heyDivya: "हे Divya — बोलिए", quickActions: "शॉर्टकट", sHome: "होम", sChat: "चैट", sVoice: "वॉइस असिस्टेंट", sConnect: "अकाउंट कनेक्ट", sSetup: "सर्वर और API सेटअप", sPlan: "सब्सक्रिप्शन", sDownload: "ऐप डाउनलोड", sSettings: "सेटिंग्स", logout: "लॉग आउट", gChat: "चैट", gVoice: "वॉइस", gConnect: "कनेक्ट", gSetup: "सर्वर सेटअप", gPlan: "प्लान", gDownload: "डाउनलोड", gSettings: "सेटिंग्स",
     screen: n => `${n} स्क्रीन`,
     hello: h => h < 12 ? "नमस्ते, good morning" : h < 17 ? "नमस्ते, good afternoon" : "नमस्ते, good evening", greetSub: "आज क्या करें?", heySub: "टैप करके बोलें: कॉल, WhatsApp, खोलें, गाने, रिमाइंडर",
-    noJob: "कोई एडिट नहीं है", noJobSub: "चैट में अपना वीडियो अटैच करें।", online: "ऑनलाइन", thinking: "टाइप कर रही है…", listening: "सुन रही हूँ…", releaseToSend: "छोड़ने पर भेजा जाएगा", typeMsg: "मैसेज…", bubblePh: "Divya se baat karo…", holdMic: "माइक दबाकर रखें, बोलें, फिर छोड़ें।", holdToTalk: "दबाकर रखें और बोलें, या मैसेज भेजें", attachImage: "इमेज / वीडियो भेजें", emptyTitle: "नमस्ते, मैं Divya हूँ", emptySub: "चैट करें, बोलें, या काम बताएँ।", s1: "YouTube खोलें", s2: "अभी समय क्या है?", s3: "तुम क्या-क्या कर सकती हो?",
+    noJob: "कोई एडिट नहीं है", noJobSub: "चैट में टॉपिक बताओ — दिव्या वीडियो बना देगी।", online: "ऑनलाइन", thinking: "टाइप कर रही है…", listening: "सुन रही हूँ…", releaseToSend: "छोड़ने पर भेजा जाएगा", typeMsg: "मैसेज…", bubblePh: "Divya se baat karo…", holdMic: "माइक दबाकर रखें, बोलें, फिर छोड़ें।", holdToTalk: "दबाकर रखें और बोलें, या मैसेज भेजें", attachImage: "इमेज / वीडियो भेजें", emptyTitle: "नमस्ते, मैं Divya हूँ", emptySub: "चैट करें, बोलें, या काम बताएँ।", s1: "YouTube खोलें", s2: "अभी समय क्या है?", s3: "तुम क्या-क्या कर सकती हो?",
     length: "लंबाई", jobRun: "एडिट हो रहा है", jobRunSub: "थोड़ा समय लगेगा। तैयार होने पर यहीं भेजूँगी।", jobDone: "एडिट तैयार ✓", jobDoneSub: "Chat में देखें।", jobFail: "एडिट फ़ेल हो गया", jobFailSub: "फिर कोशिश करें।", started: "वीडियो शुरू कर दिया! तैयार होने पर यहीं भेजूँगी।", tapToTalk: "टैप करके बोलें", vIdle: "टैप करके बोलें", vWake: "\"Hey Divya\" के लिए सुन रही हूँ…", vListen: "सुन रही हूँ… बोलिए", vThink: "सोच रही हूँ…", vSpeak: "बोल रही हूँ…", vNoSR: "इस ब्राउज़र में हमेशा-सुनना नहीं है। बोलने के लिए ऑर्ब को दबाकर रखें।", wakeSub: "सिर्फ़ जब ऐप स्क्रीन पर खुला हो, तब सुनती है",
     freeTitle: "फ्री:", freeList: "हफ़्ते में 5 शॉर्ट्स (फ्री), कॉल, WhatsApp मैसेज, ऐप्स/साइट खोलना, गाने, रिमाइंडर, समय, मौसम, छोटे सवाल।", proTitle: "प्रो:", proList: "अनलिमिटेड शॉर्ट्स, मल्टी-स्टेप एजेंट काम, लंबी रिसर्च, अकाउंट ऑटोमेशन।",
     voiceHonest: "Divya सिर्फ़ जब ऐप खुला हो और स्क्रीन पर हो, तब सुनती है (वेब ऐप बैकग्राउंड में नहीं सुनता)। कॉल/WhatsApp चुपचाप नहीं भेज सकती: डायलर या WhatsApp सब कुछ भरकर खोलती है, आप Call/Send दबाते हैं। वॉइस पहचान ब्राउज़र की सर्विस (Chrome में Google) से होती है।",
@@ -183,14 +183,14 @@ const T = {
     sEdit: "Video edit", sProfile: "Profile", gEdit: "Video edit", tHome: "Home", tEdit: "Edit", tVoice: "Voice", tChat: "Chat", tSetup: "Setup", tPlan: "Plan", tabsLabel: "Main tabs", openProfile: "Profile kholo",
     editsLeftT: "Free shorts bache", notVerified: "verify nahi hua", quotaSub: (u, l) => `Is hafte ${u}/${l} shorts use kiye · Monday ko reset`, unlimited: "Unlimited", unlimitedSub: "Owner/friend — koi limit nahi",
     editIntro: "Apna video upload karo ya link do. Aap jis type ko chunenge, Divya usi hisab se edit karke degi.", yourVideo: "Aapka video", srcUpload: "Upload", srcLink: "Link", pickVideo: "Video chuno (24 MB tak)", linkLabel: "Video link", linkPh: "Google Drive / YouTube / direct video link", uploadHelp: "24 MB tak direct upload. Bade videos ke liye Link use karo.", linkHelp: "Drive file ko 'Anyone with the link' karke share karo. YouTube/Instagram link kabhi-kabhi hamare server se download nahi hote — tab Drive link do.",
-    videoType: "Video type", kLong: "Long video / Documentary", kLongSub: "Faceless · story flow, captions, music", kShort: "Faceless short", kShortSub: "9:16 · hook, fast cuts, bade captions", kFace: "Face video", kFaceSub: "Talking head · pause cut, zooms, captions", editLang: "Captions bhasha", lenAuto: "Auto", lenFull: "Full length", notesLabel: "Extra notes (optional)", notesPh: "jaise: pehle 10 second kaato, music kam rakho", editBtn: "Edit shuru karo", dlEdit: "Edit kiya video download karo", needKind: "Video type chuno.", needSrc: "Video chuno ya link do.", tooBig: "Ye file 24 MB se badi hai. 24 MB se chhoti video attach karo.", uploading: p => `Upload ho raha hai ${p}%`,
+    videoType: "Video type", kLong: "Long video / Documentary", kLongSub: "Faceless · story flow, captions, music", kShort: "Faceless short", kShortSub: "9:16 · hook, fast cuts, bade captions", kFace: "Face video", kFaceSub: "Talking head · pause cut, zooms, captions", editLang: "Captions bhasha", lenAuto: "Auto", lenFull: "Full length", notesLabel: "Extra notes (optional)", notesPh: "jaise: pehle 10 second kaato, music kam rakho", editBtn: "Edit shuru karo", dlEdit: "Edit kiya video download karo", needKind: "Video type chuno.", needSrc: "Topic batao — Divya video bana degi.", tooBig: "Ye file 24 MB se badi hai. 24 MB se chhoti video attach karo.", uploading: p => `Upload ho raha hai ${p}%`,
     editsLine: (left, l) => l === null ? "Unlimited shorts (owner/friend)" : `Is hafte ${left}/${l} free shorts bache`,
     jobQueued: "Edit queue me hai", jobRunSub2: "Thoda time lagega. Ready hone par download yahin milega.", jobDoneSub2: "Download karo (3 din tak rahega).", jobFailSub2: "Ye edit aapke free count me nahi gina gaya. Link/file dekh kar phir try karo.",
     email: "Email", phone: "Phone", planL: "Plan", planFree: "Free", planPrem: "Premium (owner/friend)", waLogin: "WhatsApp log in", f0: "Hafte me 5 shorts (free)",
     openMenu: "Menu kholo", closeMenu: "Menu band karo", menu: "Main menu", heyDivya: "Hey Divya — bolo", quickActions: "Shortcuts", sHome: "Home", sChat: "Chat", sVoice: "Voice assistant", sConnect: "Accounts connect", sSetup: "Server & API setup", sPlan: "Subscription", sDownload: "App download", sSettings: "Settings", logout: "Log out", gChat: "Chat", gVoice: "Voice", gConnect: "Connect", gSetup: "Server setup", gPlan: "Plan", gDownload: "Download", gSettings: "Settings",
     screen: n => `${n} screen`,
     hello: h => h < 12 ? "Namaste, good morning" : h < 17 ? "Namaste, good afternoon" : "Namaste, good evening", greetSub: "Aaj kya karein?", heySub: "Tap karke bolo: call, WhatsApp, open, gaane, reminders",
-    noJob: "Koi edit nahi hai", noJobSub: "Chat me apna video attach karo.", online: "Online", thinking: "Typing…", listening: "Sun rahi hoon…", releaseToSend: "Chhodne par bheja jayega", typeMsg: "Message…", bubblePh: "Divya se baat karo…", holdMic: "Mic dabakar rakho, bolo, phir chhodo.", holdToTalk: "Dabakar rakho aur bolo, ya message bhejo", attachImage: "Image / video bhejo", emptyTitle: "Namaste, main Divya hoon", emptySub: "Chat karo, bolo, ya kaam batao.", s1: "YouTube kholo", s2: "Abhi time kya hai?", s3: "Tum kya-kya kar sakti ho?",
+    noJob: "Koi edit nahi hai", noJobSub: "Chat me topic batao — Divya video bana degi.", online: "Online", thinking: "Typing…", listening: "Sun rahi hoon…", releaseToSend: "Chhodne par bheja jayega", typeMsg: "Message…", bubblePh: "Divya se baat karo…", holdMic: "Mic dabakar rakho, bolo, phir chhodo.", holdToTalk: "Dabakar rakho aur bolo, ya message bhejo", attachImage: "Image / video bhejo", emptyTitle: "Namaste, main Divya hoon", emptySub: "Chat karo, bolo, ya kaam batao.", s1: "YouTube kholo", s2: "Abhi time kya hai?", s3: "Tum kya-kya kar sakti ho?",
     length: "Length", jobRun: "Edit ho raha hai", jobRunSub: "Thoda time lagega. Ready hone par yahin bhejungi.", jobDone: "Edit ready ✓", jobDoneSub: "Chat me dekho.", jobFail: "Edit fail ho gaya", jobFailSub: "Phir try karo.", started: "Video shuru kar diya! Ready hone par yahin bhejungi.", tapToTalk: "Tap karke bolo", vIdle: "Tap karke bolo", vWake: "\"Hey Divya\" ke liye sun rahi hoon…", vListen: "Sun rahi hoon… bolo", vThink: "Soch rahi hoon…", vSpeak: "Bol rahi hoon…", vNoSR: "Is browser me always-listening nahi hai. Bolne ke liye orb ko dabakar rakho.", wakeSub: "Sirf jab app screen par khula ho, tab sunti hai",
     freeTitle: "Free:", freeList: "Hafte me 5 shorts (free), calls, WhatsApp message, apps/sites open, gaane, reminders, time, weather, chhote sawaal.", proTitle: "Pro:", proList: "unlimited shorts, multi-step agent kaam, long research, account automation.",
     voiceHonest: "Divya sirf jab app khula ho aur screen par ho, tab sunti hai (web app background me nahi sunta). Call/WhatsApp chupchaap nahi bhej sakti: dialer ya WhatsApp sab kuch bharkar kholti hai, aap Call/Send dabate hain. Voice pehchan browser ki service (Chrome me Google) se hoti hai.",
@@ -233,7 +233,6 @@ function applyLang() {
   renderSteps();
   showVoiceName();
   if (voiceListEl() && !voiceListEl().hidden) renderVoiceList();
-  renderTplCards();
 }
 function applyTheme() {
   document.documentElement.dataset.theme = S.theme;
@@ -709,18 +708,18 @@ async function assist(text) {
   return d;
 }
 /* R40: chat-first video — a video attached in chat rides with the message as
-   [[EDITVIDEO: <staged job>]] (server strips it); a picked template rides as
-   [[TPL: <id>]]. The user only ever sees their own words. */
-let pendingVideo = null, pendingTpl = null;
+   [[EDITVIDEO: <staged job>]] (server strips it). The user only ever sees
+   their own words. R47: template picking removed — Divya chooses the
+   aesthetic itself. */
+let pendingVideo = null;
 function showChip() {
   const c = $("#attachChip"); if (!c) return;
   const parts = [];
   if (pendingVideo) parts.push("\uD83D\uDCCE " + pendingVideo.name);
-  if (pendingTpl) { const tm = TEMPLATES_UI.find(x => x.id === pendingTpl); if (tm) parts.push("Style: " + tm.name); }
   if (!parts.length) { c.hidden = true; return; }
   $("#attachChipTxt").textContent = parts.join(" \u00b7 "); c.hidden = false;
 }
-$("#attachChipX").onclick = () => { pendingVideo = null; pendingTpl = null; showChip(); updateBtn(); };
+$("#attachChipX").onclick = () => { pendingVideo = null; showChip(); updateBtn(); };
 let busy = false;
 async function send(text) {
   text = (text || "").trim();
@@ -729,16 +728,13 @@ async function send(text) {
   busy = true; bubble("user", text); $("#input").value = ""; autoGrow(); updateBtn(); typing(true);
   let serverText = text;
   if (pendingVideo) serverText += `\n[[EDITVIDEO: ${pendingVideo.job}]]`;
-  if (pendingTpl) serverText += `\n[[TPL: ${pendingTpl}]]`;
-  pendingVideo = null; pendingTpl = null; showChip();
+  pendingVideo = null; showChip();
   try {
     const d = await assist(serverText);
     let reply = String(d.reply || "");
-    const showTpl = reply.includes("[[TEMPLATES]]");
     reply = reply.replace(/\[\[TEMPLATES\]\]/g, "").trim();
     if (!d.ok && !reply) { typing(false); bubble("bot", d.error || t("netErr")); }
     else { const p = await runAction(d.action, true); typing(false); bubble("bot", reply + (p.say ? "\n" + p.say : ""), { buttons: p.buttons }); if (S.vf) speak(reply + (p.say ? " " + p.say : "")); if (d.video_started) { toast(t("started")); if (d.video_num != null && d.video_job) pollChatVideo(d.video_num, d.video_job); } }
-    if (showTpl) { const tr = $("#tplRow"); if (tr) { tr.hidden = false; renderTplCards(); } }
   } catch (e) { typing(false); if (e.message !== "login") bubble("sys", t("netErr")); }
   busy = false; saveChat();
 }
@@ -930,30 +926,8 @@ document.addEventListener("visibilitychange", () => {
 });
 
 /* ---------- templates: visual cards (R25) — same palette as video-kit/render.py ---------- */
-const TEMPLATES_UI = [
-  { id: "dark-explainer", name: "Dark Explainer", bg: "#161617", accent: "#FFD21F", text: "#F5F5F5", lookTe: "Nalla background, pasupu highlights, bold captions", lookEn: "Dark background, yellow highlights, bold captions" },
-  { id: "neon-grid", name: "Neon Grid", bg: "#080A18", accent: "#00FFC8", text: "#F0FFFA", lookTe: "Neon green grid, tech/data look", lookEn: "Neon green grid, tech/data look" },
-  { id: "retro-paper", name: "Retro Paper", bg: "#EFEBE4", accent: "#FFC800", text: "#282018", lookTe: "Cream paper, warm old look", lookEn: "Cream paper, warm vintage look" },
-  { id: "spotlight-stage", name: "Spotlight Stage", bg: "#0C0C10", accent: "#FFFFFF", text: "#FFFFFF", lookTe: "Nalla stage, white spotlight, drama", lookEn: "Black stage, white spotlight, drama" },
-  { id: "data-teal", name: "Data Teal", bg: "#062A2E", accent: "#2DD4BF", text: "#E6FFFA", lookTe: "Deep teal, clean charts, numbers", lookEn: "Deep teal, clean charts and numbers" },
-  { id: "crimson-story", name: "Crimson Story", bg: "#1C080C", accent: "#EB3C3C", text: "#FAEBEB", lookTe: "Dark red, emotional story", lookEn: "Dark red, emotional story feel" },
-  { id: "minimal-black", name: "Minimal Black", bg: "#000000", accent: "#FFFFFF", text: "#FFFFFF", lookTe: "Pure black, white text, simple", lookEn: "Pure black, white text, minimal" },
-  { id: "collage-pop", name: "Collage Pop", bg: "#FFF0C8", accent: "#FF5078", text: "#14141E", lookTe: "Bright collage, pink pop, fun", lookEn: "Bright collage, pink pop, fun" },
-  { id: "blueprint", name: "Blueprint", bg: "#103060", accent: "#FFFFFF", text: "#DCEBFF", lookTe: "Blue blueprint, white lines", lookEn: "Blue blueprint, white lines, plan look" },
-  { id: "swiss-bold", name: "Swiss Bold", bg: "#FFFFFF", accent: "#E60000", text: "#0A0A0A", lookTe: "White, red bold, clean style", lookEn: "White, red bold, clean Swiss style" },
-  { id: "cinema-dossier", name: "Cinema Dossier", bg: "#181410", accent: "#D2AA5A", text: "#F0E6D2", lookTe: "Warm brown, gold, cinema look", lookEn: "Warm brown, gold, cinema file look" },
-  { id: "india-data", name: "India Data", bg: "#FFF3E0", accent: "#FF9933", text: "#281E14", lookTe: "Warm cream, saffron, India data", lookEn: "Warm cream, saffron, India data look" },
-];
-let selTpl = "dark-explainer";
-function renderTplCards() {
-  const el = $("#tplCards"); if (!el) return;
-  const look = t => S.lang === "en" ? t.lookEn : (S.lang === "hi" || S.lang === "hi-Latn") ? t.lookEn : t.lookTe;
-  el.innerHTML = TEMPLATES_UI.map(t => `<button type="button" class="tpl-card${t.id === selTpl ? " on" : ""}" data-tpl="${t.id}" role="radio" aria-checked="${t.id === selTpl}">
-    <span class="tpl-prev" style="background:${t.bg};color:${t.text}"><span class="tpl-accent" style="background:${t.accent}"></span><span class="tpl-sample">Aa</span></span>
-    <span class="tpl-name">${t.name}</span><span class="muted small">${look(t)}</span></button>`).join("");
-  el.querySelectorAll("[data-tpl]").forEach(b => b.onclick = () => { selTpl = b.dataset.tpl; pendingTpl = b.dataset.tpl; renderTplCards(); const tr = $("#tplRow"); if (tr) tr.hidden = true; showChip(); });
-}
-renderTplCards();
+/* R47: template cards removed — Divya chooses the aesthetic itself, the user
+   never picks a template. (TEMPLATES_UI / renderTplCards deleted.) */
 
 /* ---------- video history (R22) ---------- */
 async function watchJob(job) {
