@@ -31,18 +31,22 @@ LOOKS = {
     "A": {"name": "science", "top": (8, 24, 48), "bot": (6, 60, 70),
           "accents": [(60, 200, 230), (255, 180, 60)], "font": "anton", "chapter": "fig",
           "ease": "smooth", "motion": "push", "bg": "gradient",
+          "motion_personality": "smooth glides", "transition_family": "zoom through the diagram",
           "desc": "deep navy to teal gradient, cyan/amber accent, thin line diagrams, animated plots, clean sans — lightning, physics, how-things-work"},
     "B": {"name": "myth", "top": (10, 10, 10), "bot": (24, 24, 24),
           "accents": [(255, 40, 40), (255, 210, 0)], "font": "anton", "chapter": "stamp",
           "ease": "hard", "motion": "cut", "bg": "flat",
+          "motion_personality": "snappy pops", "transition_family": "hard cut + stamp slam",
           "desc": "high-contrast black and white, one hot red or yellow accent, huge bold condensed type, hard cuts, stamp/strike-through — myths, warnings, versus"},
     "C": {"name": "story", "top": (40, 30, 20), "bot": (24, 18, 12),
           "accents": [(250, 230, 200), (230, 120, 50), (60, 170, 160)], "font": "serif", "chapter": "none",
           "ease": "slow", "motion": "push", "bg": "warm",
+          "motion_personality": "slow push-ins", "transition_family": "paper tear / fade",
           "desc": "warm film grain, soft vignette, serif/elegant type, slow push-ins, cream/orange/teal grade, minimal text — movies, history, emotion"},
     "D": {"name": "tech", "top": (12, 14, 28), "bot": (8, 10, 22),
           "accents": [(60, 255, 140), (170, 100, 255)], "font": "anton", "chapter": "counter",
           "ease": "snappy", "motion": "whip", "bg": "grid",
+          "motion_personality": "snappy easing", "transition_family": "screen swipe / coin flip",
           "desc": "light or dark glassy UI, neon green/violet accent, big animated numbers, bar/line charts, grid backgrounds, snappy easing — stats, AI, finance"},
 }
 _LOOK_WORDS = {
@@ -111,8 +115,12 @@ Owner request: """ % C.VISUALS
 def plan(brief, chat, recent=""):
     # v25: the TOPIC MOOD picks the design system (A/B/C/D) FIRST, so the LLM
     # designs every scene for that look — never one fixed style.
+    # v27 (Hark kit style plan): the look also carries a motion personality +
+    # transition family from the topic mood, so the motion differs per video too.
     look = pick_look(brief, recent)
-    look_line = f"DESIGN LOOK {look} ({LOOKS[look]['name']}): {LOOKS[look]['desc']}."
+    look_line = (f"DESIGN LOOK {look} ({LOOKS[look]['name']}): {LOOKS[look]['desc']}. "
+                 f"Motion personality: {LOOKS[look]['motion_personality']}. "
+                 f"Transition family: {LOOKS[look]['transition_family']}.")
     raw = chat([{"role": "system", "content": "You output strict JSON only."},
                 {"role": "user", "content": PLAN.replace("{recent}", recent or "none").replace("{look}", look_line) + (brief or "AUTO")}])
     p = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
@@ -129,9 +137,12 @@ def plan(brief, chat, recent=""):
     p["lang"] = p.get("lang") if p.get("lang") in ("en", "te", "hi") else "te"
     p["title"] = re.sub(r"[^A-Z0-9 %!?'&-]", "", str(p.get("title", "")).upper())[:26] or "WATCH THIS"
     # v25: the look + a title seed (so no two videos match inside a look).
+    # v27: the style plan (motion personality + transition family) rides with it.
     p["look"] = look
     p["seed"] = look_seed(p["title"], brief)
     p["accent"] = LOOKS[look]["accents"][p["seed"] % len(LOOKS[look]["accents"])]
+    p["motion_personality"] = LOOKS[look]["motion_personality"]
+    p["transition_family"] = LOOKS[look]["transition_family"]
     return p
 
 
@@ -282,96 +293,109 @@ def character(im, mood, t, acc):
     put(im, pawn(tuple(int(c * 0.9 + 25) for c in acc)), x, by, 0.55, rot, sx, sy)
 
 def label(d, text, t, acc, idx, look=None):
-    # v25: font + easing per look; C (story) is minimal — smaller, elegant serif.
-    k = ease_look(look, (t - 0.12) / 0.38)
-    if k <= 0: return
+    # v27 (Hark kit headline()): word-by-word ease-out-back pops, 0.09s stagger.
+    # Each word pops in like the kit's headline; the underline grows after.
+    words = text.split()
     size = 104 if look == "C" else 132
-    f = look_font(look, int(size * max(k, 0.15)))
-    w = d.textlength(text, font=f); x = (W - w) / 2 + (6 * math.sin(t * 60) if t < 0.5 and idx % 3 == 1 else 0)
-    d.text((x + 6, 1196), text, font=f, fill=(0, 0, 0))
-    d.text((x, 1190), text, font=f, fill=acc if idx % 2 == 0 else (250, 245, 235))
-    ul = ease((t - 0.35) / 0.4) * w
-    d.rectangle([(W - w) / 2, 1350, (W - w) / 2 + ul, 1360], fill=acc)
+    f = look_font(look, size)
+    widths = [d.textlength(w + " ", font=f) for w in words]
+    total = sum(widths) - d.textlength(" ", font=f)
+    x = (W - total) / 2
+    for k, w in enumerate(words):
+        p = C.pop((t - 0.05 - k * 0.09) / 0.3)
+        a = int(255 * clamp((t - 0.05 - k * 0.09) / 0.12))
+        if a > 0:
+            fs = look_font(look, int(size * (0.6 + 0.4 * p)))
+            cxw = x + d.textlength(w, font=f) / 2
+            d.text((cxw + 6, 1196), w, font=fs, fill=(0, 0, 0, int(a * 0.7)), anchor="mm")
+            d.text((cxw, 1190), w, font=fs, fill=(acc if idx % 2 == 0 else (250, 245, 235)) + (a,), anchor="mm")
+        x += widths[k]
+    ul = ease((t - 0.35) / 0.4) * total
+    if ul > 0:
+        d.rectangle([(W - total) / 2, 1350, (W - total) / 2 + ul, 1360], fill=acc)
 
 
 def header(d, p, idx, n, t, sc_d, acc, look=None):
     # v25: chapter cards vary by look — A "FIG 01" diagram label, B rotated STAMP,
     # C drops the chapter labels entirely (minimal), D a big NUMBER counter.
+    # v27 (Hark kit safe box): content inside 8% left/right — x starts at 120
+    # (11%) so it stays inside 8% even after the max 1.035 content-layer zoom.
     ch = LOOKS.get(look, {}).get("chapter", "fig")
+    seg = (W - 240) / n
+    def progress():
+        for i in range(n):
+            x0 = 120 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
+            d.rectangle([x0, 150, x0 + seg - 8, 156], fill=(60, 60, 70))
+            if fill: d.rectangle([x0, 150, x0 + (seg - 8) * fill, 156], fill=acc)
     if ch == "none":
         f = C.font(30)
-        d.text((70, 92), p["title"][:26], font=f, fill=(225, 225, 230))
+        d.text((120, 92), p["title"][:26], font=f, fill=(225, 225, 230))
         return
     if ch == "stamp":
         f = C.font(34)
-        box = (70, 84, 190, 132)
+        box = (120, 84, 240, 132)
         d.rectangle(box, outline=acc, width=5)
-        d.text((88, 92), f"{idx + 1:02d}", font=f, fill=acc)
-        d.text((220, 92), p["title"][:26], font=f, fill=(225, 225, 230))
-        seg = (W - 140) / n
-        for i in range(n):
-            x0 = 70 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
-            d.rectangle([x0, 150, x0 + seg - 8, 156], fill=(60, 60, 70))
-            if fill: d.rectangle([x0, 150, x0 + (seg - 8) * fill, 156], fill=acc)
+        d.text((138, 92), f"{idx + 1:02d}", font=f, fill=acc)
+        d.text((270, 92), p["title"][:26], font=f, fill=(225, 225, 230))
+        progress()
         return
     if ch == "counter":
         f = anton(64)
-        d.text((70, 74), f"{idx + 1:02d}", font=f, fill=acc)
-        d.text((170, 92), p["title"][:26], font=C.font(34), fill=(225, 225, 230))
-        seg = (W - 140) / n
-        for i in range(n):
-            x0 = 70 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
-            d.rectangle([x0, 150, x0 + seg - 8, 156], fill=(60, 60, 70))
-            if fill: d.rectangle([x0, 150, x0 + (seg - 8) * fill, 156], fill=acc)
+        d.text((120, 74), f"{idx + 1:02d}", font=f, fill=acc)
+        d.text((220, 92), p["title"][:26], font=C.font(34), fill=(225, 225, 230))
+        progress()
         return
     # fig (A, default): "FIG 01" + a thin diagram tick
     f = C.font(34)
-    d.text((70, 92), f"FIG {idx + 1:02d}", font=f, fill=acc)
-    d.line([(200, 108), (240, 108)], fill=acc, width=4); d.ellipse([236, 104, 244, 112], fill=acc)
-    d.text((260, 92), p["title"][:26], font=f, fill=(225, 225, 230))
-    seg = (W - 140) / n
-    for i in range(n):
-        x0 = 70 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
-        d.rectangle([x0, 150, x0 + seg - 8, 156], fill=(60, 60, 70))
-        if fill: d.rectangle([x0, 150, x0 + (seg - 8) * fill, 156], fill=acc)
+    d.text((120, 92), f"FIG {idx + 1:02d}", font=f, fill=acc)
+    d.line([(250, 108), (290, 108)], fill=acc, width=4); d.ellipse([286, 104, 294, 112], fill=acc)
+    d.text((310, 92), p["title"][:26], font=f, fill=(225, 225, 230))
+    progress()
 
 def scene_frame(p, idx, t):
     sc = p["scenes"][idx]; n = len(p["scenes"]); mood = sc["mood"]
     # v25: the look + title seed drive the palette, chapter card, layout and move.
     look = p.get("look", "A"); seed = p.get("seed", 0)
     acc = tuple(p.get("accent") or LOOKS[look]["accents"][0])
-    im = background(mood, look)
+    # v27 (Hark kit): LAYER SPLIT — the background is FIXED and never scales/zooms.
+    # Content (bokeh, header, visual, label, cold-open title) is drawn on a
+    # transparent layer; the camera push-in applies ONLY to that layer, then the
+    # layer is composited onto the background. This is the fix for Ajju's
+    # "background colour zooms" complaint — Divya's old camera cropped the WHOLE
+    # frame (bg + content), so the bg zoomed and content went outside the screen.
+    bg = background(mood, look).convert("RGBA")
+    lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     for (x, y, r, sp) in PART:
         yy = (y - t * sp - idx * 140) % (H + 200) - 100
-        b = bokeh(acc, r); im.paste(b, (int(x + 20 * math.sin(t + r)), int(yy)), b)
-    d = ImageDraw.Draw(im)
+        b = bokeh(acc, r); lay.paste(b, (int(x + 20 * math.sin(t + r)), int(yy)), b)
+    d = ImageDraw.Draw(lay, "RGBA")
     header(d, p, idx, n, t, sc["d"], acc, look)
     # v25: layout rotates per scene — standard, full-bleed visual + small caption,
     # centered big word, split screen (visual top, label + divider bottom).
     # v26: voice-timed effects — the visual + label pop when the scene's KEY WORD is
     # spoken (Hark: the word, its icon and its pop land on the same frame).
-    # pop_t = offset (s) of the first content word inside the scene's voice-over.
+    # pop_t = offset (s) of the hit word inside the scene's voice-over.
     pt = max(0.0, t - float(sc.get("pop_t", 0.0) or 0.0))
     layout = (idx + seed) % 4
     if layout == 1:  # full-bleed
-        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), pt, cy=900, acc=acc)
+        C.draw_visual(d, lay, sc["visual"], sc.get("value", ""), pt, cy=900, acc=acc)
         label(d, sc["label"], pt, acc, idx, look)
     elif layout == 2:  # centered big word, visual small below
         label(d, sc["label"], pt, acc, idx, look)
-        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), pt, cy=1500, acc=acc)
+        C.draw_visual(d, lay, sc["visual"], sc.get("value", ""), pt, cy=1500, acc=acc)
     elif layout == 3:  # split
-        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), pt, cy=650, acc=acc)
+        C.draw_visual(d, lay, sc["visual"], sc.get("value", ""), pt, cy=650, acc=acc)
         d.rectangle([(120, 1080), (W - 120, 1088)], fill=acc)
         label(d, sc["label"], pt, acc, idx, look)
     else:  # standard
-        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), pt, cy=800, acc=acc)
+        C.draw_visual(d, lay, sc["visual"], sc.get("value", ""), pt, cy=800, acc=acc)
         label(d, sc["label"], pt, acc, idx, look)
     # v26: the pawn character is REMOVED — Ajju calls it 'ah chess board shipai';
     # a fixed mascot in every scene of every video is not an edit, and it has
     # nothing to do with the topic. Scenes now carry only the topic's own visuals.
     if idx == 0 and t < 2.4:  # cold-open title
         k = ease(t / 0.5) * (1 - ease((t - 1.9) / 0.5))
-        ov = Image.new("L", (W, H), 0); ImageDraw.Draw(ov).rectangle([0, 0, W, H], fill=int(150 * k)); im.paste((0, 0, 0), (0, 0), ov)
+        d.rectangle([0, 0, W, H], fill=(0, 0, 0, int(150 * k)))
         txt = p["title"]; words = txt.split(); lines = [" ".join(words[:max(1, len(words) // 2)]), " ".join(words[max(1, len(words) // 2):])]
         lines = [l for l in lines if l]
         fs = 150
@@ -379,30 +403,22 @@ def scene_frame(p, idx, t):
         f = look_font(look, fs)
         for li, ln in enumerate(lines):
             w = d.textlength(ln, font=f); d.text(((W - w) / 2, 700 + li * 190 + 40 * (1 - k)), ln, font=f, fill=acc if li else (255, 255, 255))
-    # v25: a different camera move every scene (push-in, pan, parallax, whip).
-    moves = ["push", "pan", "zoomout", "whip", "drift"]
-    return camera(im, idx, t, sc["d"], mood, moves[(idx + seed) % len(moves)])
+    # v27: camera is a push-in ONLY on the content layer (kit rule); no move on
+    # scenes under 1.5s. The transitions carry the variety between scenes.
+    if sc["d"] >= 1.5:
+        lay = camera(lay, idx, t, sc["d"], mood)
+    return Image.alpha_composite(bg, lay).convert("RGB")
 
 def camera(im, idx, t, d, mood, move="push"):
-    # v26: SUBTLE moves only (Hark: slow 3% zoom). The old 7.5% push-in + 28px
-    # drift cropped the frame so the background zoomed and content went OUTSIDE
-    # the screen (Ajju's verdict). Max zoom is now 3% and drift is small, so
-    # nothing leaves the safe area.
-    z, dx, dy = 1.0, 0.0, 0.0
-    q = eio(t / max(d, 0.1))
-    if move == "push":  # slow 3% push-in
-        z = 1.0 + 0.03 * q; dx = (1 if idx % 2 else -1) * 10 * q
-    elif move == "pan":  # gentle horizontal pan
-        z = 1.015; dx = -16 + 32 * q
-    elif move == "zoomout":  # start 3% in, ease out to the full frame
-        z = 1.03 - 0.03 * q; dx = (1 if idx % 2 else -1) * 6 * q
-    elif move == "whip":  # quick pan, still inside the frame
-        z = 1.02; dx = -28 + 56 * clamp(t / max(d, 0.1) * 1.6)
-    else:  # drift: slow diagonal
-        z = 1.01 + 0.015 * q; dx = 10 * q; dy = 8 * q
+    # v27 (Hark kit): push-in ONLY on the content layer (1.00 -> 1.035 smoothstep).
+    # The kit uses a slow push-in on every scene and lets the TRANSITIONS carry the
+    # variety — pan/whip/drift moves shift wide visuals (VS cards, bars) off the
+    # screen, which is exactly Ajju's complaint. The background is a separate fixed
+    # image and never scales/zooms. Works on RGB or RGBA.
+    z = 1.0 + 0.035 * eio(t / max(d, 0.1))
     sx = sy = 0
     if mood in ("tense", "excited") and t < 0.45: sx, sy = random.uniform(-14, 14), random.uniform(-14, 14)
-    cw, ch = W / z, H / z; x0 = (W - cw) / 2 + dx + sx; y0 = (H - ch) / 2 + dy + sy
+    cw, ch = W / z, H / z; x0 = (W - cw) / 2 + sx; y0 = (H - ch) / 2 + sy
     return im.crop((int(x0), int(y0), int(x0 + cw), int(y0 + ch))).resize((W, H), Image.BILINEAR)
 
 def outro(p, t):
@@ -558,20 +574,47 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     for i, s in enumerate(p["scenes"]):
         a = f"{wd}/vo{i}.mp3"; s["words"] = await tts(s["vo"], voice, s["mood"], a)
         s["audio"] = a; s["adur"] = dur(a); s["d"] = s["adur"] + gap
-    # v26: voice-timed effects — pop_t = offset (s) of the first content word
-    # inside the scene's voice-over. scene_frame pops the visual + label at
-    # that moment, so the word, its icon and its pop land on the same frame.
+    # v27 (Hark kit): hit-word timing — ONE hit word per sentence, priority =
+    # number > topic noun > contrast/shock word. The visual lands 80 ms BEFORE
+    # the word starts (ears lag eyes); the SFX pop lands exactly on the word.
+    # pop_t = word.start - 0.08 (clamped >= 0).
     _STOP = {"a", "an", "the", "is", "are", "was", "were", "it", "its", "this", "that",
              "and", "or", "but", "so", "to", "of", "in", "on", "for", "with", "you", "your",
              "we", "our", "i", "me", "my", "he", "she", "they", "do", "does", "did", "can",
              "will", "would", "not", "no", "yes", "if", "when", "why", "how", "what"}
+    _SHOCK = {"but", "never", "only", "not", "no", "stop", "secret", "shocking", "surprise",
+              "hidden", "truth", "lie", "fake", "real", "actually", "exactly", "nobody", "everyone"}
+    _NUMWORDS = {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+                 "eleven", "twelve", "twenty", "thirty", "fifty", "hundred", "thousand", "million",
+                 "billion", "percent", "half", "double", "triple", "zero"}
+    _TOPIC = {w.strip().lower().strip(".,!?\"'") for w in str(p.get("title", "")).split()
+              if len(w.strip().strip(".,!?\"'")) > 3}
     for s in p["scenes"]:
-        pop_t = 0.0
-        for (o, _d, w) in (s.get("words") or []):
-            ww = str(w).strip().lower().strip(".,!?\"'")
-            if len(ww) > 3 and ww not in _STOP:
-                pop_t = float(o); break
-        s["pop_t"] = pop_t
+        words = [(float(o), str(w).strip().lower().strip(".,!?\"'")) for (o, _d, w) in (s.get("words") or [])]
+        # the scene's label is the punch keyword the LLM chose for this scene —
+        # the hit word should match it (e.g. label "MYTH 1" -> vo word "myth").
+        _LABEL = {w.strip().lower() for w in str(s.get("label", "")).split() if len(w.strip()) > 1}
+        hit = None
+        for (o, ww) in words:  # 1. a number (digit, or a spelled-out number word)
+            if any(c.isdigit() for c in ww) or ww in _NUMWORDS:
+                hit = o; break
+        if hit is None:
+            for (o, ww) in words:  # 2. a word from the scene's label
+                if ww in _LABEL:
+                    hit = o; break
+        if hit is None:
+            for (o, ww) in words:  # 3. a topic noun (a word from the title)
+                if ww in _TOPIC and ww not in _STOP:
+                    hit = o; break
+        if hit is None:
+            for (o, ww) in words:  # 4. a contrast/shock word
+                if ww in _SHOCK:
+                    hit = o; break
+        if hit is None:  # fallback: first content word
+            for (o, ww) in words:
+                if len(ww) > 3 and ww not in _STOP:
+                    hit = o; break
+        s["pop_t"] = max(0.0, float(hit or 0.0) - 0.08)
     starts, t = [], 0.4  # 0.4 s pre-roll for the boom
     for s in p["scenes"]: starts.append(t); t += s["d"]
     p["starts"] = starts; p["voice_end"] = t; total = t + OUTRO

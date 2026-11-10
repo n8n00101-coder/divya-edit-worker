@@ -34,7 +34,7 @@ async def main():
         return await app_edit_job(j, wa)
     try:
         src = await wa.download_media(j["media_id"], "mp4")
-        res = await autoedit.auto_edit(src, j["instruction"] + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR + HARK_AESTHETIC + HARK_NEAT, notify=note)
+        res = await autoedit.auto_edit(src, j["instruction"] + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR + HARK_AESTHETIC + HARK_NEAT + HARK_DIRECTOR, notify=note)
         size = os.path.getsize(res["path"]) / 1e6
         if size > 15.5:
             out = res["path"].replace(".mp4", "_wa.mp4")
@@ -241,6 +241,25 @@ THEORY = (
 )
 
 
+# R51 (v27): Hark's creative-director prompt (from Blind's kit,
+# ~/workspace/hark-kit/DIVYA_PIPELINE_v26.md — the exact method/code that produced
+# the phantom-vibration video). The LLM must think fresh per topic, never fill a template.
+HARK_DIRECTOR = (
+    " Creative-director rules (Hark's kit): You are a short-video editor. You never fill"
+    " a template. For every topic you think fresh: (1) Find the surprising angle and a"
+    " hook under 8 words. (2) Write one sentence per scene. For each sentence choose ONE"
+    " word that deserves an effect: a number first, then the topic noun, then a contrast"
+    " word. No other word gets an effect. (3) Choose a visual that shows the literal"
+    " meaning of that sentence. Never use a mascot or the same character across scenes."
+    " (4) Choose a style from the topic's mood, different from your last 5 videos."
+    " Transitions must use an object from the topic. (5) Less is neat: one idea per"
+    " scene, two accent colors, one font pair, nothing on screen the voice does not"
+    " mention. (6) After render, look at the frames like a strict human editor. If"
+    " anything is cut at the edge, overlapping, busy, late, or off-topic, fix it before"
+    " you send."
+)
+
+
 # R50 (v26): neat edits — Ajju's verdict on v25 (2026-11-10): the videos show no
 # change, nothing creative, and do not look like edits at all. The pawn, the zoom,
 # and generic untimed effects are the defects. Hark was asked the same questions
@@ -351,7 +370,7 @@ async def app_edit_job(j, wa):
         print("source", round(os.path.getsize(src) / 1e6, 1), "MB")
         app_state("running", "Edit plan chestunna…")
         tpl = str(j.get("template") or "dark-explainer")
-        instruction = j["instruction"] + f" Style template: {tpl} (see video-kit/render.py TEMPLATES)." + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR + HARK_AESTHETIC + HARK_NEAT
+        instruction = j["instruction"] + f" Style template: {tpl} (see video-kit/render.py TEMPLATES)." + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR + HARK_AESTHETIC + HARK_NEAT + HARK_DIRECTOR
         res = await autoedit.auto_edit(src, instruction, notify=note)
         if j.get("sfx"):
             res["path"] = mix_sfx(res["path"], str(j["sfx"]))
