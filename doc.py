@@ -97,6 +97,10 @@ visuals and chapter style all follow it. A science: graph/clock/counter/bar visu
 B myth/safety: warning/versus/check visuals, stamp chapter cards, huge bold labels.
 C story/cinema: heart/check visuals, minimal text, NO chapter labels, elegant labels.
 D tech/data: counter/bar/graph/list visuals, big number chapter cards, animated numbers.
+New visuals (v28, Hark kit): dot_grid/donut for a percentage of people, gauge for a level,
+toggle for on/off, phone_buzz for phone notifications, stick_figure for a person/feeling,
+quote_card for a quote, arrows_steps for a process, checklist for steps, document for a
+report, polaroid for a memory, icon_row for a set of items, bar_compare for two numbers.
 Language: follow the owner. If they ask for English voice/voice-over -> lang "en" (vo in English). Telugu -> "te" (vo in Telugu script).
 Hindi -> "hi". If they say nothing about language, use "te".
 Length: honour any duration they ask (e.g. "1 min" = 60 s). Default 50-60 s. English speaks ~2.5 words/s, Telugu ~1.8 words/s:
@@ -106,7 +110,9 @@ rhetorical questions, a surprising fact or tension in the first line (hook), the
 call to follow at the end. Use commas, "..." and dashes for natural pauses. No emojis, no hashtags in vo. Vary the mood per scene to
 build an emotional arc. Each visual must literally show the line's idea (battery=energy, chat=messages/people, graph=growth or fall,
 clock=time, calendar=days, warning=danger/mistake, check=right way, versus=comparison, counter=a number, list=steps, heart=love/health,
-bar=progress).
+bar=progress, dot_grid/donut=a percentage of people, gauge=a level, toggle=on/off, phone_buzz=phone notifications,
+stick_figure=a person/feeling, quote_card=a quote, arrows_steps=a process, checklist=steps, document=a report,
+polaroid=a memory, icon_row=a set of items, bar_compare=two numbers compared).
 If no clear topic is given ("nuvve select chesko", "any", "AUTO", empty) choose a fresh high-retention topic yourself (psychology,
 history mysteries, science facts, money habits, health, tech, motivation). Avoid these recent topics: {recent}.
 Owner request: """ % C.VISUALS
@@ -594,20 +600,24 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         # the scene's label is the punch keyword the LLM chose for this scene —
         # the hit word should match it (e.g. label "MYTH 1" -> vo word "myth").
         _LABEL = {w.strip().lower() for w in str(s.get("label", "")).split() if len(w.strip()) > 1}
+        # v28: search only the FIRST 60% of the words — a hit word at the end of
+        # the sentence (e.g. "repeat" as the last word) would hide the visual and
+        # the label for most of the scene. An early hit word keeps the scene alive.
+        early = words[:max(1, int(len(words) * 0.6) + 1)]
         hit = None
-        for (o, ww) in words:  # 1. a number (digit, or a spelled-out number word)
+        for (o, ww) in early:  # 1. a number (digit, or a spelled-out number word)
             if any(c.isdigit() for c in ww) or ww in _NUMWORDS:
                 hit = o; break
         if hit is None:
-            for (o, ww) in words:  # 2. a word from the scene's label
+            for (o, ww) in early:  # 2. a word from the scene's label
                 if ww in _LABEL:
                     hit = o; break
         if hit is None:
-            for (o, ww) in words:  # 3. a topic noun (a word from the title)
+            for (o, ww) in early:  # 3. a topic noun (a word from the title)
                 if ww in _TOPIC and ww not in _STOP:
                     hit = o; break
         if hit is None:
-            for (o, ww) in words:  # 4. a contrast/shock word
+            for (o, ww) in early:  # 4. a contrast/shock word
                 if ww in _SHOCK:
                     hit = o; break
         if hit is None:  # fallback: first content word

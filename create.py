@@ -8,7 +8,9 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 W, H, FPS = 1080, 1920, 30
 BG, RED, WHITE, GREEN, YEL, GREY = (12, 12, 14), (235, 50, 60), (240, 240, 240), (60, 210, 120), (250, 205, 60), (90, 90, 100)
-VISUALS = ["counter", "bar", "chat", "check", "warning", "graph", "clock", "heart", "battery", "calendar", "list", "versus"]
+VISUALS = ["counter", "bar", "chat", "check", "warning", "graph", "clock", "heart", "battery", "calendar", "list", "versus",
+           "dot_grid", "donut", "gauge", "toggle", "phone_buzz", "stick_figure", "quote_card", "arrows_steps",
+           "checklist", "document", "polaroid", "icon_row", "bar_compare"]
 FONTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 VOICES = {"male": "te-IN-MohanNeural", "female": "te-IN-ShrutiNeural"}
 # Engine switch for create mode: env DIVYA_ENGINE=v3 -> doc3.py (engine v3), anything else -> doc.py (v2, default).
@@ -34,7 +36,10 @@ Return ONLY JSON: {"title": "<2-5 word English banner, caps>", "voice": "male|fe
 "label": "<1-3 word ENGLISH punch label, caps>", "visual": "<one of %s>", "value": "<short number or word for the visual, e.g. 80%%, 7, NO>"}]}
 Rules: 6-9 scenes. Scene 1 = strong hook question. Last scene = takeaway + follow call. Each visual must literally show the line's idea
 (battery for energy, chat for messages/relationships, graph for growth, clock for time, calendar for days, warning for mistakes,
-check for good habits, versus for comparisons, counter for numbers, list for steps, heart for love/health, bar for progress).
+check for good habits, versus for comparisons, counter for numbers, list for steps, heart for love/health, bar for progress,
+dot_grid for a percentage of people, donut for a percentage ring, gauge for a level/meter, toggle for on/off, phone_buzz for phone
+notifications, stick_figure for a person/feeling, quote_card for a quote, arrows_steps for a process, checklist for a to-do,
+document for a report/study, polaroid for a memory/photo, icon_row for a set of items, bar_compare for two numbers compared).
 If the owner did not give a clear topic (e.g. "nuvve select chesko", "any topic", empty), YOU pick one fresh, high-retention
 topic for a Telugu faceless channel (psychology, relationships, money habits, health hacks, motivation, tech tips, facts) — avoid
 these recent topics: {recent}. Also add "topic": "<the topic you chose>" to the JSON.
@@ -108,6 +113,15 @@ def center_text(d, y, text, f, fill):
 
 
 def rrect(d, box, r, **kw):
+    # v28: PIL's rounded_rectangle draws an inner rect at (x0+r+1, y0, x1-r-1, y1),
+    # so the radius must be <= (width-2)/2 (not width/2) — a pop animation starting
+    # at scale ~0 would otherwise raise ValueError. Too small for rounding: plain rect.
+    x0, y0, x1, y1 = box
+    if x1 <= x0 or y1 <= y0: return
+    r = max(0, min(r, (x1 - x0 - 2) / 2, (y1 - y0 - 2) / 2))
+    if r <= 0:
+        d.rectangle(box, **kw)
+        return
     d.rounded_rectangle(box, r, **kw)
 
 
@@ -200,6 +214,126 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None):
         center_text(d, cy - 50, "VS", font(90), YEL)
         d.text((230 - 300 * (1 - k), cy - 40), "✗", font=font(100), fill=acc)
         d.text((720 + 300 * (1 - k), cy - 40), "✓", font=font(100), fill=WHITE)
+    # ---- v28 (Hark kit visual library): the kit's 18 visual types, grown from the
+    # 12. Each one draws the LITERAL idea of the sentence (never a mascot).
+    elif kind == "dot_grid":  # a percentage as 100 dots filling up (kit s3: 89%)
+        n = num_of(value, 89); shown = int(100 * a)
+        center_text(d, cy - 380, f"{n}%", font(120), acc)
+        for i in range(100):
+            r, c = divmod(i, 10); x = cx - 225 + c * 50; y = cy - 200 + r * 50
+            if i >= shown: break
+            rad = 15 * pop((t - i * 0.006) / 0.3)
+            if rad <= 0: continue
+            d.ellipse([x - rad, y - rad, x + rad, y + rad], fill=acc if i < n else GREY)
+    elif kind == "donut":  # a ring that fills to N% (kit s5: 96x ring)
+        n = num_of(value, 75); R = 220
+        d.ellipse([cx - R, cy - R, cx + R, cy + R], outline=GREY, width=28)
+        ang = 360 * (n / 100) * a
+        if ang > 1: d.arc([cx - R, cy - R, cx + R, cy + R], -90, -90 + ang, fill=acc, width=28)
+        center_text(d, cy - 60, f"{int(n * a)}{'%' if '%' in value else ''}", font(140), acc)
+    elif kind == "gauge":  # a semicircular gauge with a needle
+        n = num_of(value, 60); R = 280
+        d.arc([cx - R, cy - R, cx + R, cy + R], 180, 360, fill=GREY, width=24)
+        ang = 180 + 180 * (n / 100) * a
+        if ang > 181: d.arc([cx - R, cy - R, cx + R, cy + R], 180, ang, fill=acc, width=24)
+        na = math.radians(ang)
+        d.line([(cx, cy), (cx + (R - 40) * math.cos(na), cy + (R - 40) * math.sin(na))], fill=WHITE, width=12)
+        d.ellipse([cx - 20, cy - 20, cx + 20, cy + 20], fill=WHITE)
+        center_text(d, cy + 60, f"{int(n * a)}%", font(90), acc)
+    elif kind == "toggle":  # an on/off switch (value ON/OFF/YES/NO)
+        on = (value or "").strip().lower() in ("on", "yes", "true", "1", "y")
+        x0, x1, y0, y1 = cx - 260, cx + 260, cy - 110, cy + 110
+        rrect(d, (x0, y0, x1, y1), 100, fill=acc if on else (70, 70, 80))
+        # the knob slides to the right for ON, stays left for OFF
+        target = (x1 - 110) if on else (x0 + 110)
+        kx = (x0 + 110) + (target - (x0 + 110)) * ease(t / 0.6)
+        d.ellipse([kx - 95, cy - 95, kx + 95, cy + 95], fill=WHITE)
+        center_text(d, cy + 180, "ON" if on else "OFF", font(90), acc if on else GREY)
+    elif kind == "phone_buzz":  # a phone with vibration arcs (kit s0)
+        sh = 8 * math.sin(t * 40) if t < 1.5 else 0
+        w, h = 300, 560
+        rrect(d, (cx - w / 2 + sh, cy - h / 2, cx + w / 2 + sh, cy + h / 2), 40, fill=(235, 235, 235))
+        rrect(d, (cx - w / 2 + 20 + sh, cy - h / 2 + 50, cx + w / 2 - 20 + sh, cy + h / 2 - 60), 16, fill=(28, 28, 32))
+        d.ellipse([cx - 18 + sh, cy + h / 2 - 46, cx + 18 + sh, cy + h / 2 - 14], fill=(150, 150, 150))
+        for k in range(3):  # radiating arcs, growing with time
+            r = 200 + ((t * 1.2 - k * 0.3) % 1) * 110
+            d.arc([cx - r, cy - r, cx + r, cy + r], -50, 50, fill=acc, width=8)
+            d.arc([cx - r, cy - r, cx + r, cy + r], 130, 230, fill=acc, width=8)
+    elif kind == "stick_figure":  # a simple person (feeling / habit / action)
+        k = pop(t / 0.5); s = max(k, 0.01)
+        d.ellipse([cx - 50 * s, cy - 300 * s, cx + 50 * s, cy - 200 * s], fill=WHITE)
+        rrect(d, [cx - 55 * s, cy - 190 * s, cx + 55 * s, cy + 20 * s], 25, fill=WHITE)
+        d.rectangle([cx - 50 * s, cy + 20 * s, cx - 12 * s, cy + 200 * s], fill=WHITE)
+        d.rectangle([cx + 12 * s, cy + 20 * s, cx + 50 * s, cy + 200 * s], fill=WHITE)
+        if "phone" in (value or "").lower():  # arm raised, holding a phone
+            d.line([(cx + 50 * s, cy - 160 * s), (cx + 110 * s, cy - 90 * s), (cx + 70 * s, cy - 130 * s)], fill=WHITE, width=28, joint="curve")
+            rrect(d, [cx + 40 * s, cy - 210 * s, cx + 110 * s, cy - 110 * s], 10, fill=acc)
+            d.rectangle([cx - 95 * s, cy - 170 * s, cx - 55 * s, cy + 10 * s], fill=WHITE)
+        else:  # arms down
+            d.rectangle([cx - 95 * s, cy - 170 * s, cx - 55 * s, cy + 10 * s], fill=WHITE)
+            d.rectangle([cx + 55 * s, cy - 170 * s, cx + 95 * s, cy + 10 * s], fill=WHITE)
+    elif kind == "quote_card":  # a big quote mark + the key word in a card
+        k = pop(t / 0.5)
+        x0, y0, x1, y1 = cx - 380, cy - 220, cx + 380, cy + 220
+        rrect(d, (x0, y0, x1, y1), 24, fill=(30, 30, 36), outline=acc, width=6)
+        d.text((x0 + 40, y0 + 20), "“", font=font(200), fill=acc)
+        center_text(d, cy - 40, (value or "TRUTH")[:12], font(90), WHITE)
+    elif kind == "arrows_steps":  # a process: numbered steps with arrows
+        n = max(2, min(3, num_of(value, 3)))
+        for i in range(n):
+            k = ease((t - i * 0.3) / 0.3)
+            if k <= 0: continue
+            x0 = 140 + i * 300; y0 = cy - 100
+            rrect(d, (x0, y0, x0 + 220, y0 + 200), 24, fill=acc if i == n - 1 else (45, 45, 52))
+            d.text((x0 + 110, y0 + 100), str(i + 1), font=font(90), fill=WHITE, anchor="mm")
+            if i < n - 1:
+                d.polygon([(x0 + 240, cy), (x0 + 280, cy - 25), (x0 + 280, cy + 25)], fill=acc)
+    elif kind == "checklist":  # a checklist: boxes that get ticked one by one
+        for i in range(3):
+            k = ease((t - i * 0.3) / 0.3)
+            if k <= 0: continue
+            y = cy - 240 + i * 180
+            rrect(d, (200, y, 300, y + 100), 16, outline=acc, width=6)
+            if k > 0.7:
+                d.line([(215, y + 50), (245, y + 80), (290, y + 20)], fill=GREEN, width=12, joint="curve")
+            rrect(d, (340, y + 25, 340 + 540 * k, y + 75), 12, fill=(70, 70, 80))
+    elif kind == "document":  # a paper/report with lines + a seal
+        k = pop(t / 0.5)
+        x0, y0, x1, y1 = cx - 260, cy - 300, cx + 260, cy + 300
+        rrect(d, (x0, y0, x1, y1), 20, fill=(240, 240, 235))
+        d.rectangle([x0 + 40, y0 + 50, x1 - 40, y0 + 80], fill=acc)
+        for i in range(5):
+            kk = ease((t - 0.2 - i * 0.15) / 0.3)
+            if kk <= 0: continue
+            w = (x1 - x0 - 80) * (0.9 if i % 2 == 0 else 0.7) * kk
+            d.rectangle([x0 + 40, y0 + 130 + i * 70, x0 + 40 + w, y0 + 150 + i * 70], fill=(120, 120, 120))
+        d.ellipse([x1 - 140, y1 - 140, x1 - 40, y1 - 40], outline=acc, width=6)
+        d.text((x1 - 90, y1 - 90), "✓", font=font(70), fill=acc, anchor="mm")
+    elif kind == "polaroid":  # a photo frame with a caption
+        k = pop(t / 0.5)
+        x0, y0, x1, y1 = cx - 280, cy - 320, cx + 280, cy + 320
+        rrect(d, (x0, y0, x1, y1), 16, fill=(245, 245, 240))
+        d.rectangle([x0 + 30, y0 + 30, x1 - 30, y1 - 130], fill=(40, 40, 48))
+        d.ellipse([cx - 60, y0 + 90, cx + 60, y0 + 210], fill=acc)
+        d.polygon([(x0 + 30, y1 - 130), (cx - 40, y1 - 260), (cx + 60, y1 - 130)], fill=GREEN)
+        center_text(d, y1 - 70, (value or "MEMORY")[:10], font(48), (60, 60, 60))
+    elif kind == "icon_row":  # a row of numbered icons
+        n = max(2, min(4, num_of(value, 3)))
+        for i in range(n):
+            k = pop((t - i * 0.25) / 0.4)
+            if k <= 0: continue
+            x = cx - (n - 1) * 130 + i * 260; r = 90 * k
+            d.ellipse([x - r, cy - r, x + r, cy + r], fill=acc if i % 2 == 0 else (45, 45, 52))
+            d.text((x, cy), str(i + 1), font=font(80), fill=WHITE, anchor="mm")
+    elif kind == "bar_compare":  # two bars side by side (comparison of two numbers)
+        nums = [int(x) for x in re.findall(r"\d+", value or "")]
+        a1 = nums[0] if len(nums) > 0 else 70
+        a2 = nums[1] if len(nums) > 1 else 40
+        p1 = (a1 / 100) * a; p2 = (a2 / 100) * a
+        d.text((140, cy - 260), f"{a1}", font=font(80), fill=acc)
+        rrect(d, (140, cy - 160, 140 + (W - 280) * min(p1, 1), cy - 60), 16, fill=acc)
+        d.text((140, cy + 20), f"{a2}", font=font(80), fill=GREY)
+        rrect(d, (140, cy + 120, 140 + (W - 280) * min(p2, 1), cy + 220), 16, fill=GREY)
 
 
 def frame(p, idx, sc, t, total_sc):
