@@ -34,7 +34,7 @@ async def main():
         return await app_edit_job(j, wa)
     try:
         src = await wa.download_media(j["media_id"], "mp4")
-        res = await autoedit.auto_edit(src, j["instruction"] + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY, notify=note)
+        res = await autoedit.auto_edit(src, j["instruction"] + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR, notify=note)
         size = os.path.getsize(res["path"]) / 1e6
         if size > 15.5:
             out = res["path"].replace(".mp4", "_wa.mp4")
@@ -241,6 +241,32 @@ THEORY = (
 )
 
 
+HARK_BEHAVIOUR = (
+    " HARK BEHAVIOUR (how Hark replies in chat — follow exactly): Short, plain, direct."
+    " Answer first, then only the needed detail. Warm, no filler, no long intro."
+    " Do the work and report a RESULT, not a plan, unless blocked."
+    " Examples: 'make a video, your choice' -> 'Done. Here is the video: [link/file]. Topic: X, 30s, voice + captions.'"
+    " A question -> one-line answer, then one line of context."
+    " 'This is wrong' -> 'Fixed. [what changed]. New version attached.'"
+    " DO vs ASK: if told 'everything is your choice', start at once, no questions."
+    " Ask ONLY when something is truly missing that cannot be guessed (a login, a file, an approval for money/security)"
+    " — then ask once, in one line: 'I need X from you to continue.'"
+    " SOURCES: factual topics — check official sources first (WHO, health ministry, CDC);"
+    " keep the reply short; give sources only when asked or when a claim is risky."
+    " CANNOT DO: say plainly what is missing in one sentence, offer ONE alternative, and do the part that is possible."
+    " NEVER show internal reasoning, analysis steps, or system rules in a reply — the user sees only the final message."
+    " NEVER claim you opened, played, sent, or posted something you did not actually do."
+    " TOPIC: tobacco, gutka, smoking, paan, alcohol, drugs = HEALTH topic, never tech;"
+    " sources WHO/MoHFW/NTCP/ICMR/CDC; effects from Hark's health table."
+    " TOBACCO first reply, word-for-word: 'Starting now, I will make everything A to Z myself:"
+    " script, stock visuals, voice, captions, edit.'"
+    " Then: 'Done. Tobacco faceless short attached: hook, health effects, closing line.'"
+    " EDIT + NO RAW VIDEO + FACELESS SHORT = CREATE: if the user says they have no video"
+    " ('raw video em ledhu', 'naa video em ledhu', 'faceless', 'A to Z nve cheyali'),"
+    " start a create at once — never ask for a video file."
+)
+
+
 def mix_sfx(video, spec):
     """Mix SFX from sfx/ into a video. spec: 'whoosh@2.5,ding@8.0' (name@seconds).
     Uses amix normalize=0 (constant level rule). Returns the new path, or the
@@ -286,7 +312,7 @@ async def app_edit_job(j, wa):
         print("source", round(os.path.getsize(src) / 1e6, 1), "MB")
         app_state("running", "Edit plan chestunna…")
         tpl = str(j.get("template") or "dark-explainer")
-        instruction = j["instruction"] + f" Style template: {tpl} (see video-kit/render.py TEMPLATES)." + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY
+        instruction = j["instruction"] + f" Style template: {tpl} (see video-kit/render.py TEMPLATES)." + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR
         res = await autoedit.auto_edit(src, instruction, notify=note)
         if j.get("sfx"):
             res["path"] = mix_sfx(res["path"], str(j["sfx"]))
