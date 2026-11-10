@@ -34,7 +34,7 @@ async def main():
         return await app_edit_job(j, wa)
     try:
         src = await wa.download_media(j["media_id"], "mp4")
-        res = await autoedit.auto_edit(src, j["instruction"] + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR, notify=note)
+        res = await autoedit.auto_edit(src, j["instruction"] + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR + HARK_AESTHETIC, notify=note)
         size = os.path.getsize(res["path"]) / 1e6
         if size > 15.5:
             out = res["path"].replace(".mp4", "_wa.mp4")
@@ -241,6 +241,30 @@ THEORY = (
 )
 
 
+# R49 (v25): Hark's aesthetic variety (2026-11-10, ~/workspace/styles/HARK-AESTHETIC-VARIETY.md).
+# One design system per TOPIC MOOD — never one fixed style for every video.
+HARK_AESTHETIC = (
+    " Hark aesthetic variety (use for every video): the TOPIC MOOD picks the design system,"
+    " then vary inside it (accent, font pair, transition set) from a seed of the title so no"
+    " two videos match. Never pick fresh at random, never a template. Keep constant only:"
+    " 9:16 safe margins, big readable captions, one idea per scene, one accent colour at a time."
+    " FOUR LOOKS — A Science/Explainer: deep navy to teal gradient, cyan/amber accent, thin line"
+    " diagrams, animated plots, clean sans (lightning, physics, how-things-work)."
+    " B Myth/Debate/Safety: high-contrast black and white, one hot red or yellow accent, huge bold"
+    " condensed type, hard cuts, stamp/strike-through (myths, warnings, versus)."
+    " C Story/Culture/Cinema: warm film grain, soft vignette, serif/elegant type, slow push-ins,"
+    " cream/orange/teal grade, minimal text (movies, history, emotion)."
+    " D Tech/Money/Data: light or dark glassy UI, neon green/violet accent, big animated numbers,"
+    " bar/line charts, grid backgrounds, snappy easing (stats, AI, finance)."
+    " NEVER use the same look as the previous video on the channel. Chapter cards vary:"
+    " drop CH 01/02 labels in C, a number counter in D, a stamp in B, a diagram label in A."
+    " Layouts vary per scene: full-bleed visual + small caption, split screen, centered big word,"
+    " lower-third. Every scene gets a different camera move (push-in, pan, parallax, whip);"
+    " change the visual every 2-3 seconds, add a subtle zoom or drift on every still, animate text"
+    " in with a different easing per look. Visuals must illustrate the actual idea, not stock icons."
+)
+
+
 HARK_BEHAVIOUR = (
     " HARK BEHAVIOUR (how Hark replies in chat — follow exactly): Short, plain, direct."
     " Answer first, then only the needed detail. Warm, no filler, no long intro."
@@ -312,7 +336,7 @@ async def app_edit_job(j, wa):
         print("source", round(os.path.getsize(src) / 1e6, 1), "MB")
         app_state("running", "Edit plan chestunna…")
         tpl = str(j.get("template") or "dark-explainer")
-        instruction = j["instruction"] + f" Style template: {tpl} (see video-kit/render.py TEMPLATES)." + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR
+        instruction = j["instruction"] + f" Style template: {tpl} (see video-kit/render.py TEMPLATES)." + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR + HARK_AESTHETIC
         res = await autoedit.auto_edit(src, instruction, notify=note)
         if j.get("sfx"):
             res["path"] = mix_sfx(res["path"], str(j["sfx"]))
@@ -446,6 +470,7 @@ async def create_job(j, wa, note):
         for attempt in range(2):
             try:
                 res = await create.make_video(j.get("brief", ""), groq_chat, notify=note, recent=j.get("recent", ""))
+                print("look", res.get("plan", {}).get("look"), res.get("plan", {}).get("accent"))
                 break
             except (ValueError, KeyError) as e:  # bad plan JSON -> retry once
                 if attempt:
