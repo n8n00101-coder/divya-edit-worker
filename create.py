@@ -41,12 +41,37 @@ these recent topics: {recent}. Also add "topic": "<the topic you chose>" to the 
 Topic/brief from owner: """ % VISUALS
 
 
+def target_seconds(brief):
+    # v24: the brief carries "FINAL VIDEO LENGTH: exactly N seconds (±2s)"
+    # (v23 startCreate). Parse it so the plan is built to fit — the LLM ignored
+    # the text constraint and made 44s for a 30s request (video 5).
+    m = re.search(r"FINAL VIDEO LENGTH:\s*exactly\s*(\d+)\s*seconds", brief or "")
+    if m:
+        return int(m.group(1))
+    m = re.search(r"(\d+)\s*min", brief or "")
+    if m:
+        return int(m.group(1)) * 60
+    m = re.search(r"(\d+)\s*s\b", brief or "")
+    if m:
+        return int(m.group(1))
+    return 30
+
+
 def plan(brief, chat, recent=""):
+    target = target_seconds(brief)
+    # ~4.5s per scene (VO ~18 words max at ~150 wpm + a beat). Cap the scene
+    # count so the video fits the target instead of running long.
+    max_scenes = max(4, min(9, round(target / 4.5)))
+    prompt = PLAN_PROMPT.replace("25-45 seconds", f"exactly {target} seconds").replace("Rules: 6-9 scenes.", f"Rules: {max_scenes} scenes (no more).")
     raw = chat([{"role": "system", "content": "You output strict JSON only."},
-                {"role": "user", "content": PLAN_PROMPT.replace("{recent}", recent or "none") + (brief or "(none - you choose)")}])
+                {"role": "user", "content": prompt.replace("{recent}", recent or "none") + (brief or "(none - you choose)")}])
     m = re.search(r"\{[\s\S]*\}", raw)
     p = json.loads(m.group(0))
-    sc = [s for s in p.get("scenes", []) if s.get("vo")][:10]
+    sc = [s for s in p.get("scenes", []) if s.get("vo")]
+    # Keep the hook (scene 1) and the takeaway/CTA (last scene); drop middle
+    # scenes when the plan runs long.
+    if len(sc) > max_scenes:
+        sc = sc[:max_scenes - 1] + [sc[-1]]
     for s in sc:
         if s.get("visual") not in VISUALS:
             s["visual"] = random.choice(VISUALS)
