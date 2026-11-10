@@ -1,0 +1,32 @@
+name: divya-setup
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Setup job id (KV setupjob:<job>)"
+        required: true
+        type: string
+      provider:
+        description: "Provider id (groq, openrouter, gemini)"
+        required: true
+        type: string
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install browser + deps
+        run: |
+          pip install -q playwright httpx faster-whisper
+          playwright install --with-deps chromium
+      - name: Run setup driver
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+          JOB: ${{ inputs.job }}
+          PROVIDER: ${{ inputs.provider }}
+        run: python setup.py
