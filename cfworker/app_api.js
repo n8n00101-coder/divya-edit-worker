@@ -141,6 +141,14 @@ async function appTalk(env, u, text, lang, voiceId) {
   // topic plans are answered here; everything else falls through to the brain.
   const upFlow = await chatUpload(env, u, text, lang);
   if (upFlow) { const a2 = upFlow.reply; h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h); return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" }; }
+  // v24: a bare approval ("cheyu") with NO pending upload must never reach the
+  // brain — it invents a success ("Uploaded successfully") for an upload that
+  // never happened. Answer structurally instead.
+  if (/^(cheyu|cheyyi|chey|yes|ok|sare|avunu|haa|upload cheyu|post cheyu|cheyandi|cheyyandi)\s*[.!?]*$/i.test(text.trim())) {
+    const a3 = lang === "en" ? "No upload is waiting right now. Say \"upload video 1 to YouTube\" to start one." : "Ippudu upload emi wait cheyatledhu. \"upload video 1 to YouTube\" ani cheppu, appudu start chestha.";
+    h.push({ role: "assistant", content: a3 }); await remember(env, u.n, h);
+    return { reply: a3, video_started: false, premium_required: false, brain: u.via || "shared" };
+  }
   // R46: the old EDIT-only branch asked the user to attach a video — deleted.
   // Any video order without a user-supplied video falls through to the brain
   // and becomes a create from scratch (isNoVideoEditOrder + the reply guard).
@@ -310,8 +318,11 @@ async function chatUpload(env, u, text, lang) {
   const en = lang === "en";
   const pend = JSON.parse((await env.KV.get(`uppend:${u.n}`)) || "null");
   if (pend && UPLOAD_OK_RX.test(low)) {
-    await env.KV.delete(`uppend:${u.n}`);
-    return { reply: await runUpload(env, u, pend, lang) };
+    // v24: keep the pending upload when the upload FAILS, so "cheyu" retries it
+    // instead of the brain inventing a success. Delete only on full success.
+    const res = await runUpload(env, u, pend, lang);
+    if (res.ok) await env.KV.delete(`uppend:${u.n}`);
+    return { reply: res.reply };
   }
   if (!/(upload|post)/i.test(low) || !/video/.test(low)) return null;
   const numM = low.match(/video\s*(\d+)/);
@@ -334,15 +345,18 @@ async function chatUpload(env, u, text, lang) {
 }
 async function runUpload(env, u, pend, lang) {
   const out = [];
+  let allOk = true;
   if (pend.targets.includes("yt")) {
     const r = await doPostYoutube(env, u.n, { job: pend.job, title: pend.copy.yt_title, description: pend.copy.yt_description, tags: pend.copy.yt_tags.join(","), privacy: pend.privacy });
+    if (!r.ok) allOk = false;
     out.push(r.ok ? `YouTube ✓ ${r.url}` : `YouTube ✗ ${r.error || ""}`);
   }
   if (pend.targets.includes("ig")) {
     const r = await doPostInstagram(env, u.n, { job: pend.job, caption: pend.copy.ig_caption + (pend.copy.ig_hashtags.length ? "\n" + pend.copy.ig_hashtags.join(" ") : "") });
+    if (!r.ok && !r.pending) allOk = false;
     out.push(r.ok ? `Instagram ✓ ${r.url}` : r.pending ? `Instagram: processing (container ${r.container}) — konchem sepu tarvatha status check chestha.` : `Instagram ✗ ${r.error || ""}`);
   }
-  return out.join("\n");
+  return { ok: allOk, reply: out.join("\n") };
 }
 // R24: reference-video blueprint — built ONLY from the user's description (and a
 // link/title when given). Groq vision is dead, so Divya NEVER claims to have watched
@@ -455,7 +469,9 @@ async function appApi(req, env, url) {
   if (p === "result") return appResult(req, env, u, url);
   if (p === "videos") {
     const list = await histList(env, u.n, 20);
-    return appJson(req, { ok: true, videos: list.map(e => ({ n: e.n, title: e.title, topic: e.topic, kind: e.kind, lang: e.lang, length: e.length, at: e.at, state: e.state, name: e.name, template: e.template, has_result: !!e.has_result, yt: e.yt, ig: e.ig })) });
+    // v24: the History list renders data-watch="${v.job}" — the map MUST carry
+    // job, or every Watch/Download fetches result?job=undefined and 404s.
+    return appJson(req, { ok: true, videos: list.map(e => ({ n: e.n, job: e.job, title: e.title, topic: e.topic, kind: e.kind, lang: e.lang, length: e.length, at: e.at, state: e.state, name: e.name, template: e.template, has_result: !!e.has_result, yt: e.yt, ig: e.ig })) });
   }
   if (p.startsWith("videos/")) {
     const num = parseInt(p.slice(7), 10);
@@ -1336,10 +1352,12 @@ async function appSetupUser(req, env, u, p, body, lang) {
   if (p === "setup/status") {
     const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     const consent = JSON.parse((await env.KV.get(`setupconsent:${u.n}`)) || "null");
-    if (!chain) return { ok: true, active: false, consent: !!consent };
-    const cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
     const keys = {};
     for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${u.n}:${id}`)) keys[id] = true;
+    // v24: when the chain is gone, report the recorded outcome (done/failed)
+    // so the app can show it instead of the mini-box vanishing silently.
+    if (!chain) { const fin = JSON.parse((await env.KV.get(`setupdone:${u.n}`)) || "null"); return { ok: true, active: false, consent: !!consent, finished: fin, keys }; }
+    const cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
     return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys };
   }
   if (p === "setup/start" && req.method === "POST") {
@@ -1391,7 +1409,9 @@ async function setupStartNext(env, n) {
   const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
   if (!chain) return { ok: false, error: "no chain" };
   const nextId = chain.providers.find(id => !chain.done.includes(id));
-  if (!nextId) { await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
+  // v24: record the outcome before deleting the chain — otherwise the app has
+  // nothing to show when the setup ends (the mini-box just vanished).
+  if (!nextId) { await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: "done", done: chain.done, at: Date.now() }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
   const job = setupJobId();
   const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
   await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
@@ -1416,7 +1436,7 @@ async function appSetupRunner(req, env, p, url, body) {
       const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null");
       if (chain && chain.current === job) { chain.done.push(rec.provider); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await setupStartNext(env, rec.user); }
     }
-    if (state === "failed" || state === "stopped") { const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null"); if (chain && chain.current === job) await env.KV.delete(`setupchain:${rec.user}`); }
+    if (state === "failed" || state === "stopped") { const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null"); if (chain && chain.current === job) { await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state, done: chain.done, provider: rec.provider, note: rec.note || "", at: Date.now() }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${rec.user}`); } }
     return Response.json({ ok: true });
   }
   if (p === "setup/runner/key" && req.method === "POST") {

@@ -31,8 +31,25 @@ def progress(state, step="", note="", url=""):
 
 
 def get_job():
-    r = httpx.get(f"{WORKER}/api/setup/runner/job", params={"job": JOB}, headers=H, timeout=20)
-    return r.json().get("job", {})
+    # v24: a failed job fetch must be LOUD, not a silent "no job record".
+    # (The one-tap run 42813523727 exited 0 in ~6s having done nothing.)
+    try:
+        r = httpx.get(f"{WORKER}/api/setup/runner/job", params={"job": JOB}, headers=H, timeout=20)
+    except Exception as e:
+        print(f"SETUP FAIL: get_job request failed: {e}", flush=True)
+        raise SystemExit(1)
+    if r.status_code != 200:
+        print(f"SETUP FAIL: get_job HTTP {r.status_code}: {r.text[:300]}", flush=True)
+        raise SystemExit(1)
+    try:
+        j = r.json().get("job", {})
+    except Exception:
+        print(f"SETUP FAIL: get_job bad JSON: {r.text[:300]}", flush=True)
+        raise SystemExit(1)
+    if not j or not j.get("provider"):
+        print(f"SETUP FAIL: no job record for {JOB} (provider missing)", flush=True)
+        raise SystemExit(1)
+    return j
 
 
 def check_stop():
@@ -259,10 +276,9 @@ FLOWS = {
 
 
 def main():
+    # v24: get_job() raises SystemExit(1) on any failure (loud + non-zero),
+    # so a bad job fetch can never look like a successful run again.
     job = get_job()
-    if not job or not job.get("provider"):
-        print("no job record")
-        return
     cfg = FLOWS.get(job["provider"])
     if not cfg:
         progress("failed", "start", "Ee provider ki flow ledu.", "")

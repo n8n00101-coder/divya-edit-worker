@@ -452,6 +452,21 @@ async def create_job(j, wa, note):
                     raise
         size = os.path.getsize(res["path"]) / 1e6
         print("video", res["path"], round(size, 2), "MB", res.get("duration"))
+        # v24 duration backstop: the brief's hard length was ignored (video 5 =
+        # 44.46s for a 30s request). Trim to the target so the delivered video
+        # is never longer than asked (±2s).
+        try:
+            _bm = re.search(r"FINAL VIDEO LENGTH:\s*exactly\s*(\d+)\s*seconds", j.get("brief", "") or "")
+            _target = int(_bm.group(1)) if _bm else None
+        except Exception:
+            _target = None
+        if _target and float(res.get("duration") or 0) > _target + 2:
+            _trim = res["path"].replace(".mp4", "_trim.mp4")
+            subprocess_run(["ffmpeg", "-y", "-loglevel", "error", "-i", res["path"], "-t", str(_target), "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-c:a", "aac", "-b:a", "128k", _trim])
+            res["path"] = _trim
+            res["duration"] = _target
+            size = os.path.getsize(res["path"]) / 1e6
+            print("trimmed to", _target, "s")
         if size > 15.5:
             out = res["path"].replace(".mp4", "_wa2.mp4")
             subprocess_run(["ffmpeg", "-y", "-loglevel", "error", "-i", res["path"], "-b:v", "1900k", "-maxrate", "2000k", "-bufsize", "4000k", "-c:a", "aac", "-b:a", "128k", out])

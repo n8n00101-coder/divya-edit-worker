@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "divya-v23";
+const APP_V = "divya-v24";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -540,9 +540,17 @@ function warmVoices() {
 /* ---------- voice picker UI (Settings) ---------- */
 const voiceListEl = () => $("#voiceList");
 $("#voiceRow") && ($("#voiceRow").onclick = () => { const el = voiceListEl(); if (!el) return; renderVoiceList(); el.hidden = !el.hidden; });
-voiceListEl() && voiceListEl().addEventListener("click", e => {
+voiceListEl() && voiceListEl().addEventListener("click", async e => {
   const play = e.target.closest("[data-play]");
-  if (play) { speak(t("voiceSample"), voiceById(play.dataset.play)); return; }
+  // v24: the Sample button must show it is playing, and say so plainly when
+  // it cannot play (the test saw a silent tap with no feedback at all).
+  if (play) {
+    const label = play.textContent; play.textContent = "⏸"; play.disabled = true;
+    const ok = await speak(t("voiceSample"), voiceById(play.dataset.play));
+    play.textContent = label; play.disabled = false;
+    if (!ok) toast(t("voiceLoadFail"), true);
+    return;
+  }
   const sel = e.target.closest("[data-vid]");
   if (sel) { S.voiceId = sel.dataset.vid; store.set("voiceId", S.voiceId); showVoiceName(); renderVoiceList(); speak(t("voiceSample")); }
 });
@@ -827,7 +835,23 @@ async function pollSetup() {
     let d = null;
     try { d = await api("setup/status"); } catch {}
     if (!d || !d.ok) return;
-    if (!d.active) { clearInterval(setupPoll); setupPoll = null; return; }
+    if (!d.active) {
+      clearInterval(setupPoll); setupPoll = null;
+      // v24: the setup ended — show the final state (done/failed) as a chat
+      // message so it survives redraws, instead of the box just vanishing.
+      if (d.finished && setupBoxEl && document.body.contains(setupBoxEl)) {
+        const f = d.finished;
+        const doneKeys = (f.done || []).filter(id => d.keys && d.keys[id]);
+        const title = f.state === "done" ? t("setupDone") : t("setupFailed");
+        const line = f.state === "done"
+          ? `${title} — ${doneKeys.length ? "✓ " + doneKeys.join(", ") : (f.done || []).join(", ")}`
+          : `${title} — ${(f.done || []).join(", ")}${f.provider ? " (" + f.provider + ": " + (f.note || "") + ")" : ""}`;
+        setupBoxEl.innerHTML = `<b>${esc(title)}</b><div>${esc(line)}</div>`;
+        bubble("bot", line); saveChat();
+        setupBoxEl = null;
+      }
+      return;
+    }
     renderSetupBox(d);
   };
   tick();
@@ -1333,13 +1357,14 @@ $("#bubbleClose").onclick = bubbleClose;
 (function () {
   const box = $("#bubble"), btn = $("#bubbleBtn"), head = document.querySelector(".bubble-head");
   if (!box || !btn) return;
-  // R31: clamp on restore/drag/resize/rotation — at least 40px of the button must
-  // always stay on screen. Stale saved positions (pre-v9, other viewport/rotation)
-  // are pulled back into view instead of restoring off-screen.
+  // R31: clamp on restore/drag/resize/rotation — the button must stay FULLY
+  // visible and ABOVE the tabbar/composer (140px zone at the bottom).
+  // v24: the old maxY (innerHeight-40) let the button slide under the tabbar,
+  // where it was invisible and untappable until a reload.
   function clampPos(x, y) {
     const w = box.offsetWidth || 56, h = box.offsetHeight || 56;
-    const minX = 40 - w, maxX = Math.max(minX, innerWidth - 40);
-    const minY = 40 - h, maxY = Math.max(minY, innerHeight - 40);
+    const minX = 8, maxX = Math.max(minX, innerWidth - w - 8);
+    const minY = 8, maxY = Math.max(minY, innerHeight - h - 140);
     return { x: Math.max(minX, Math.min(x, maxX)), y: Math.max(minY, Math.min(y, maxY)) };
   }
   function applyPos(x, y) { const p = clampPos(x, y); box.style.left = p.x + "px"; box.style.top = p.y + "px"; box.style.right = "auto"; box.style.bottom = "auto"; return p; }
@@ -1362,10 +1387,10 @@ $("#bubbleClose").onclick = bubbleClose;
     if (!drag.moved) return;
     const w = box.offsetWidth, h = box.offsetHeight;
     // R27: the open sheet must never cover the chat composer — clamp its bottom edge
-    // to stay 140px above the viewport bottom (tabbar + composer). The closed button
-    // may go anywhere; the composer (z-index:70) still wins taps over it.
-    const open = !$("#bubblePanel").hidden;
-    const minBottom = open ? 140 : 8;
+    // to stay 140px above the viewport bottom (tabbar + composer). v24: the closed
+    // button gets the same 140px floor — the old 8px floor let it slide under the
+    // tabbar, invisible and untappable until a reload.
+    const minBottom = 140;
     let left = drag.left + dx, top = drag.top + dy;
     left = Math.max(8, Math.min(left, innerWidth - w - 8));
     top = Math.max(8, Math.min(top, innerHeight - h - minBottom));
