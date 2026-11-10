@@ -23,13 +23,13 @@ login = '  if (/^\\s*\\/?(login|app login|app code)\\s*$/.test(tx0)) { if (await
 if "app login|app code" not in src:
     anchor = re.search(r"  if \(/\^\\s\*\\/\?connect\\s\*\$/\.test\(tx0\)\)[^\n]*\n", src)
     src = src[:anchor.end()] + login + src[anchor.end():]
-# WhatsApp create path: same daily video quota as the app (owners exempt)
+# WhatsApp create path: same token cost as the app (owners exempt)
 wa_busy = '    if (go && await env.KV.get(`busy:${user}`)) { ans = "Okka video already tayaru avuthondi. Adi vachaka next di start chestha."; go = false; }\n'
-wa_q = '    if (go && !(await vidQuota(env, user)).ok) { ans = quotaMsg("te"); go = false; }\n'
+wa_q = '    if (go) { const tk = await tokSpend(env, user, videoCost(parseMins(mm && mm[1]))); if (!tk.ok) { ans = tokMsg("te", tk); go = false; } }\n'
 if wa_q not in src:
     i = src.index(wa_busy) + len(wa_busy); src = src[:i] + wa_q + src[i:]
-wa_go = '    if (go) return startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO");\n'
+wa_go = '    if (go) { return startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO"); }\n'
 if wa_go in src:
-    src = src.replace(wa_go, '    if (go) { await vidCount(env, user); return startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO"); }\n')
+    src = src.replace(wa_go, '    if (go) { return startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO"); }\n')
 open(sys.argv[3], "w", encoding="utf-8").write(src)
 print("merged", len(src))

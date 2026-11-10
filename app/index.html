@@ -27,6 +27,8 @@
       <h1 id="loginTitle" tabindex="-1">Divya</h1>
       <p class="muted" id="loginSub" data-t="loginSub2"></p>
       <div class="net-banner" id="netBanner" role="alert" hidden><b data-t="netBlockedT"></b><span class="nb-text"></span><button type="button" class="btn secondary" data-t="retry" data-retry></button></div>
+      <button class="btn primary" id="loginGoogleBtn" type="button"><span data-t="googleRow"></span></button>
+      <p class="muted small center" data-t="orLoginPw"></p>
       <div class="seg auth-tabs" id="authTabs" role="tablist" data-tl="loginWays">
         <button type="button" role="tab" id="tab-pw" data-v="pw" aria-controls="pwForm" data-t="tabLogin"></button>
         <button type="button" role="tab" id="tab-su" data-v="su" aria-controls="suForm" data-t="tabSignup"></button>
@@ -45,6 +47,7 @@
         <label class="field tf"><span class="sr-only" data-t="newPwLabel"></span><input id="suPass" type="password" autocomplete="new-password" minlength="8" data-tp="newPwLabel" required><button type="button" class="eye" data-tl="showPw" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg></button></label>
         <p class="muted small left" data-t="suHint"></p>
         <button class="btn primary" id="suBtn" data-t="createAcct"></button>
+        <button type="button" class="btn ghost" id="suVoiceBtn">🎙️ <span data-t="voiceSignup"></span></button>
       </form>
       <form id="numForm" class="stack auth-form" role="tabpanel" aria-labelledby="tab-wa" hidden>
         <p class="muted small" data-t="loginSub"></p>
@@ -107,7 +110,7 @@
       <ul>
         <li><a href="#/home" data-r="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span data-t="sHome"></span></a></li>
         <li><a href="#/chat" data-r="chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg><span data-t="sChat"></span></a></li>
-        <li><a href="#/edit" data-r="edit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v16M18 4v16M6 8h12M6 16h12"/><path d="m10 10.5 4 1.5-4 1.5z"/></svg><span data-t="sEdit"></span></a></li>
+        <li><a href="#/history" data-r="history"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4"/></svg><span data-t="sHistory"></span></a></li>
         <li><a href="#/voice" data-r="voice"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg><span data-t="sVoice"></span></a></li>
         <li><a href="#/connect" data-r="connect"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span data-t="sConnect"></span></a></li>
         <li><a href="#/setup" data-r="setup"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><span data-t="sSetup"></span></a></li>
@@ -128,10 +131,10 @@
             <span class="hey-orb" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg></span>
             <span class="hey-txt"><b>Hey Divya</b><span class="muted small" data-t="heySub"></span></span>
           </button>
-          <a class="card quota" id="homeQuota" href="#/edit"><span class="q-num" id="homeQuotaNum">–</span><span class="q-txt"><b data-t="editsLeftT"></b><span class="muted small" id="homeQuotaSub"></span></span><span class="q-go" aria-hidden="true">›</span></a>
+          <a class="card quota" id="homeQuota" href="#/chat"><span class="q-num" id="homeQuotaNum">–</span><span class="q-txt"><b data-t="editsLeftT"></b><span class="muted small" id="homeQuotaSub"></span></span><span class="q-go" aria-hidden="true">›</span></a>
           <ul class="grid" data-tl="quickActions">
             <li><a href="#/chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg><span data-t="gChat"></span></a></li>
-            <li><a href="#/edit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v16M18 4v16M6 8h12M6 16h12"/><path d="m10 10.5 4 1.5-4 1.5z"/></svg><span data-t="gEdit"></span></a></li>
+            <li><a href="#/history"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4"/></svg><span data-t="gHistory"></span></a></li>
             <li><a href="#/voice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12h2M6 8v8M10 5v14M14 8v8M18 10v4M22 12h0"/></svg><span data-t="gVoice"></span></a></li>
             <li><a href="#/connect"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span data-t="gConnect"></span></a></li>
             <li><a href="#/setup"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><span data-t="gSetup"></span></a></li>
@@ -148,60 +151,39 @@
       <!-- CHAT -->
       <section id="s-chat" class="screen" data-title="sChat">
         <div id="msgs" class="msgs" role="log" aria-live="polite"></div>
+        <div id="tplRow" class="tpl-row" hidden>
+          <div class="seg-label" id="lblTpl" data-t="templateLabel"></div>
+          <div id="tplCards" class="tpl-grid" role="radiogroup" aria-labelledby="lblTpl"></div>
+        </div>
         <div class="composer-wrap">
+          <div id="attachChip" class="attach-chip" hidden><span id="attachChipTxt"></span><button type="button" id="attachChipX" aria-label="Remove">×</button></div>
           <div id="recBar" class="rec-bar" hidden><span class="dot" aria-hidden="true"></span><span id="recTime">0:00</span><span class="muted small" data-t="releaseToSend"></span></div>
           <form id="composer" class="composer">
             <button type="button" class="icon-btn" id="attach" data-tl="attachImage">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/><path d="M19 17v6M16 20h6"/></svg>
             </button>
-            <input type="file" id="file" accept="image/*" hidden>
+            <input type="file" id="file" accept="image/*,video/*" hidden>
             <label for="input" class="sr-only" data-t="typeMsg"></label>
             <textarea id="input" rows="1" data-tp="typeMsg"></textarea>
             <button type="button" class="send-btn mic" id="micSend" data-tl="holdToTalk">
               <svg class="i-mic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg>
               <svg class="i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
             </button>
+            <!-- R32: separate always-visible send button next to the mic — the send
+                 affordance must never depend on a class that may never flip. -->
+            <button type="button" class="send-btn send" id="chatSend" aria-label="Send">
+              <svg class="i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
+            </button>
           </form>
         </div>
       </section>
 
-      <!-- EDIT -->
-      <section id="s-edit" class="screen" data-title="sEdit">
+      <!-- HISTORY (R22: video 1, 2, 3... — upload happens in chat, no Post page) -->
+      <section id="s-history" class="screen" data-title="sHistory">
         <div class="scroll pad">
-          <p class="muted small" data-t="editIntro"></p>
-          <form id="editForm" class="card stack" novalidate>
-            <div class="seg-label" id="lblSrc" data-t="yourVideo"></div>
-            <div class="seg" id="srcSeg" role="radiogroup" aria-labelledby="lblSrc"><button type="button" data-v="upload" class="on" data-t="srcUpload"></button><button type="button" data-v="link" data-t="srcLink"></button></div>
-            <div id="srcUploadBox" class="stack">
-              <label class="file-pick" for="videoFile"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M5 20h14"/></svg><span id="fileName" data-t="pickVideo"></span></label>
-              <input type="file" id="videoFile" accept="video/*" class="sr-only">
-            </div>
-            <div id="srcLinkBox" class="stack" hidden>
-              <label for="videoUrl" class="sr-only" data-t="linkLabel"></label>
-              <input id="videoUrl" type="url" inputmode="url" class="big-input" autocapitalize="off" spellcheck="false" data-tp="linkPh">
-            </div>
-            <p class="muted small" id="srcHelp" data-t="uploadHelp"></p>
-            <div class="seg-label" id="lblKind" data-t="videoType"></div>
-            <div class="kinds" id="kindSeg" role="radiogroup" aria-labelledby="lblKind">
-              <button type="button" data-v="long" role="radio" aria-checked="false"><b data-t="kLong"></b><span class="muted small" data-t="kLongSub"></span></button>
-              <button type="button" data-v="short" role="radio" aria-checked="false"><b data-t="kShort"></b><span class="muted small" data-t="kShortSub"></span></button>
-              <button type="button" data-v="face" role="radio" aria-checked="false"><b data-t="kFace"></b><span class="muted small" data-t="kFaceSub"></span></button>
-            </div>
-            <div class="seg-label" id="lblLang" data-t="editLang"></div>
-            <div class="seg" data-name="language" role="radiogroup" aria-labelledby="lblLang"><button type="button" data-v="Telugu" class="on">Telugu</button><button type="button" data-v="English">English</button><button type="button" data-v="Hindi">Hindi</button></div>
-            <div class="seg-label" id="lblLen" data-t="length"></div>
-            <div class="seg wrap" data-name="length" role="radiogroup" aria-labelledby="lblLen"><button type="button" data-v="auto" class="on" data-t="lenAuto"></button><button type="button" data-v="30s">30s</button><button type="button" data-v="60s">60s</button><button type="button" data-v="3m">3 min</button><button type="button" data-v="10m">10 min</button><button type="button" data-v="full" data-t="lenFull"></button></div>
-            <label for="editNotes" class="seg-label" data-t="notesLabel"></label>
-            <textarea id="editNotes" rows="2" class="big-input" maxlength="600" data-tp="notesPh"></textarea>
-            <p class="small" id="editQuota" aria-live="polite"></p>
-            <button class="btn primary" id="editBtn" data-t="editBtn"></button>
-            <div class="progress" id="upProg" hidden><span id="upBar"></span></div>
-            <p class="err" id="editErr" role="alert"></p>
-          </form>
-          <div class="card" id="jobCard" hidden aria-live="polite">
-            <div class="job-row"><span class="pulse" id="jobDot" aria-hidden="true"></span><div><b id="jobTitle"></b><div class="muted small" id="jobSub"></div></div></div>
-            <button class="btn primary full" id="dlBtn" hidden data-t="dlEdit"></button>
-          </div>
+          <p class="muted small" data-t="histIntro"></p>
+          <div id="histList" class="stack" aria-live="polite"></div>
+          <p class="muted" id="histEmpty" data-t="histEmpty" hidden></p>
         </div>
       </section>
 
@@ -212,12 +194,14 @@
             <span class="orb" id="orb" data-state="idle" aria-hidden="true"><i></i><i></i><i></i><b></b></span>
           </button>
           <p class="v-state" id="vState" aria-live="assertive"></p>
+          <span id="wakeDot" class="wake-dot" hidden aria-hidden="true"></span>
           <p class="v-heard" id="vHeard" aria-live="polite"></p>
           <p class="v-reply" id="vReply" aria-live="polite"></p>
           <div class="v-actions" id="vActions"></div>
           <div class="list">
             <div class="row"><label for="wakeToggle"><span>Hey Divya · <span lang="te">హే దివ్య</span></span><br><span class="muted small" data-t="wakeSub"></span></label>
               <span class="switch"><input type="checkbox" id="wakeToggle" role="switch"><span aria-hidden="true"></span></span></div>
+            <a class="row link" href="#/settings"><span data-t="voicePick"></span><span class="muted r"><span class="voiceName"></span> ›</span></a>
           </div>
           <div class="card note small">
             <p><b data-t="freeTitle"></b> <span data-t="freeList"></span></p>
@@ -257,11 +241,13 @@
             <h2 data-t="freePlan"></h2>
             <ul class="ticks"><li data-t="f0"></li><li data-t="f1"></li><li data-t="f2"></li><li data-t="f3"></li><li data-t="f4"></li></ul>
           </div>
-          <div class="card plan pro">
-            <h2>Pro <span class="pill wait" data-t="soon"></span></h2>
-            <ul class="ticks"><li data-t="p1"></li><li data-t="p2"></li><li data-t="p3"></li></ul>
-            <p><b data-t="priceSoon"></b></p>
-            <button class="btn primary" disabled data-t="comingSoon"></button>
+          <div class="card" id="planList"></div>
+          <div class="card" id="refCard">
+            <h2 data-t="inviteTitle"></h2>
+            <p class="muted small" data-t="inviteSub"></p>
+            <p><b id="refCode"></b> <button class="btn" id="refCopy" data-t="copy"></button></p>
+            <div class="bubble-input"><input id="refInput" type="text" maxlength="6" placeholder="DV0000" aria-label="Referral code"><button id="refRedeemBtn" class="btn primary" data-t="redeem"></button></div>
+            <p class="muted small" id="refStatus"></p>
           </div>
           <p class="muted small center" data-t="noPayNote"></p>
         </div>
@@ -293,7 +279,7 @@
             <div class="row"><span data-t="email"></span><span class="muted r" id="profEmail"></span></div>
             <div class="row"><span data-t="phone"></span><span class="muted r" id="profPhone"></span></div>
             <a class="row link" href="#/plan"><span data-t="planL"></span><span class="muted r"><span id="profPlan"></span> ›</span></a>
-            <a class="row link" href="#/edit"><span data-t="editsLeftT"></span><span class="muted r"><span id="profEdits"></span> ›</span></a>
+            <a class="row link" href="#/chat"><span data-t="editsLeftT"></span><span class="muted r"><span id="profEdits"></span> ›</span></a>
             <a class="row link" href="#/connect"><span data-t="connected"></span><span class="muted r"><span id="profConn"></span> ›</span></a>
           </div>
           <div class="card stack acct-card" id="acctCard" hidden>
@@ -326,15 +312,21 @@
         <div class="scroll pad">
           <div class="list">
             <div class="row"><span id="lblSetLang" data-t="language"></span>
-              <div class="seg small" id="setLang" role="radiogroup" aria-labelledby="lblSetLang"><button data-v="te">Telugu</button><button data-v="en">English</button></div></div>
+              <div class="seg small" id="setLang" role="radiogroup" aria-labelledby="lblSetLang"><button data-v="te">Telugu</button><button data-v="en">English</button><button data-v="hi">हिन्दी</button><button data-v="hi-Latn">Hinglish</button></div></div>
             <div class="row"><label for="setVoice"><span data-t="voiceReplies"></span><br><span class="muted small" data-t="voiceRepliesSub"></span></label>
               <span class="switch"><input type="checkbox" id="setVoice" role="switch"><span aria-hidden="true"></span></span></div>
             <div class="row"><label for="setVF"><span data-t="voiceFirst"></span><br><span class="muted small" data-t="voiceFirstSub"></span></label>
               <span class="switch"><input type="checkbox" id="setVF" role="switch"><span aria-hidden="true"></span></span></div>
+            <div class="row"><label for="setBlind"><span data-t="blindMode"></span><br><span class="muted small" data-t="blindModeSub"></span></label>
+              <span class="switch"><input type="checkbox" id="setBlind" role="switch"><span aria-hidden="true"></span></span></div>
+            <button class="row link" id="voiceRow"><span data-t="voicePick"></span><span class="muted r"><span class="voiceName"></span> ›</span></button>
+            <div id="voiceList" class="card stack" hidden></div>
+            <button class="row link" id="updRow"><span data-t="updCheck"></span><span class="muted r">›</span></button>
             <div class="row"><span id="lblTheme" data-t="theme"></span>
               <div class="seg small" id="setTheme" role="radiogroup" aria-labelledby="lblTheme"><button data-v="auto" data-t="auto"></button><button data-v="light" data-t="light"></button><button data-v="dark" data-t="dark"></button></div></div>
             <a class="row link" href="#/connect"><span data-t="connected"></span><span class="muted"><span id="connCount"></span> ›</span></a>
             <button class="row link danger" id="logout"><span data-t="logout"></span></button>
+            <button class="row link danger" id="delDataBtn"><span data-t="delData"></span></button>
           </div>
           <p class="muted small center" id="me"></p>
         </div>
@@ -342,17 +334,28 @@
     </main>
     <nav class="tabbar" id="tabbar" data-tl="tabsLabel">
       <a href="#/home" data-r="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span data-t="tHome"></span></a>
-      <a href="#/edit" data-r="edit"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4v16M18 4v16M6 8h12M6 16h12"/><path d="m10 10.5 4 1.5-4 1.5z"/></svg><span data-t="tEdit"></span></a>
       <a href="#/voice" data-r="voice" class="tab-voice"><span class="tv-orb"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg></span><span data-t="tVoice"></span></a>
       <a href="#/chat" data-r="chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg><span data-t="tChat"></span></a>
-      <a href="#/setup" data-r="setup"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><span data-t="tSetup"></span></a>
+      <a href="#/plan" data-r="plan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/></svg><span data-t="tPlan"></span></a>
     </nav>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <!-- App update banner: shown when a newer sw.js version is detected, so a phone
+       can never stay stuck on a stale cached shell (black screen / missing templates). -->
+  <div id="updBanner" class="upd-banner" role="alert" hidden><span id="updText"></span><button type="button" class="btn primary" id="updRefreshBtn" data-t="updRefresh"></button></div>
+  <div id="bubble" class="bubble" hidden>
+    <div id="bubblePanel" class="bubble-panel" hidden>
+      <div class="bubble-head"><b>Divya</b><button id="bubbleClose" aria-label="Close">✕</button></div>
+      <div id="bubbleLog" class="bubble-log" aria-live="polite"></div>
+      <div class="bubble-input"><input id="bubbleText" type="text" data-tp="bubblePh" aria-label="Message Divya"><button id="bubbleSend" class="btn primary">➤</button></div>
+    </div>
+    <button id="bubbleBtn" class="bubble-btn" aria-label="Divya chat">💬</button>
+  </div>
   <div id="sr" class="sr-only" aria-live="polite"></div>
   <div id="sheet" class="sheet-bg" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetText"><p id="sheetText"></p><div class="sheet-btns" id="sheetBtns"></div></div></div>
 </div>
+<script src="voices-kokoro.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
