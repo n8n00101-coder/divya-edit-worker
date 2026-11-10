@@ -747,6 +747,7 @@ async function appApi(req, env, url) {
   if (p === "health") return appJson(req, { ok: true });
   if (p.startsWith("auth/") && req.method === "POST") return acctPublic(req, env, p, body);
   if (p.startsWith("runner/")) return appRunner(req, env, p, url, body);
+  if (p.startsWith("setup/runner/")) return appSetupRunner(req, env, p, url, body);
   const u = await appAuth(env, req);
   if (!u || !u.ok) return appJson(req, { ok: false, error: "login" }, 401);
   const lang = body.lang === "en" || url.searchParams.get("lang") === "en" ? "en" : "te";
@@ -755,6 +756,7 @@ async function appApi(req, env, url) {
   if (p.startsWith("account/") && req.method === "POST") return acctPrivate(req, env, u, p, body);
   if (p === "plan") { const bal = await tokBalance(env, u.n); const own = !!((await env.KV.get(`ukey:${u.n}:groq`)) || (await env.KV.get(`ukey:${u.n}:openrouter`))); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = !!(await env.KV.get(`planvoice:${u.n}`).catch(() => null)); return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, edits_limit: Math.floor(TOK.WEEKLY_FREE / TOK.PER_MIN), edits_used: Math.floor(bal.weekSpent / TOK.PER_MIN), edits_left: bal.videosWeek, period: "week", unlimited: bal.unlimited, brain: own ? "own" : "shared", video_backend: "shared", pro: "soon" }); }
   if (p === "assist" && req.method === "POST") return appJson(req, await appAssist(env, u, body, lang));
+  if (p.startsWith("setup/")) return appJson(req, await appSetupUser(req, env, u, p, body, lang));
   if (p.startsWith("keys")) return appKeys(req, env, u, p, body, lang);
   if (p === "history") return appJson(req, { ok: true, messages: (await history(env, u.n)).map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })) });
   if (p === "chat" && req.method === "POST") {
@@ -1653,6 +1655,124 @@ async function appRunner(req, env, p, url, body) {
     const e2 = ref ? await histGet(env, ref.n, ref.num) : null;
     if (e2) { e2.state = "done"; e2.size = b.byteLength; e2.has_result = true; e2.note = String(url.searchParams.get("note") || "").slice(0, 300); await histPut(env, ref.n, e2); }
     await env.KV.delete(`busy:${n}`); await env.KV.delete(`upl:${job}`);
+    return Response.json({ ok: true });
+  }
+  return new Response("not found", { status: 404 });
+}
+// ===== R48: one-tap setup + Muse-style background browser =====
+// One allow covers the whole chain (accounts + API keys + captchas + server).
+// The background browser is the GitHub runner + Playwright headless Chromium
+// (free on public repos). The Worker dispatches setup.yml; the runner drives
+// the signup/key flows and posts progress + keys back. The chat mini-box
+// polls setup/status. Captchas: audio challenge solved on-device by the
+// runner (faster-whisper); image challenge pauses for Take Control (no
+// vision). Never a third-party captcha service, never silent.
+const SETUP_PROVIDERS = {
+  groq: { name: "Groq", site: "console.groq.com", url: "https://console.groq.com/signup", flow: "email" },
+  openrouter: { name: "OpenRouter", site: "openrouter.ai", url: "https://openrouter.ai/sign-up", flow: "email" },
+  gemini: { name: "Gemini (Google AI Studio)", site: "aistudio.google.com", url: "https://aistudio.google.com/", flow: "google" },
+  cloudflare: { name: "Cloudflare (server)", site: "dash.cloudflare.com", url: "https://dash.cloudflare.com/sign-up", flow: "token" },
+};
+function setupJobId() { return [...crypto.getRandomValues(new Uint8Array(10))].map(b => b.toString(16).padStart(2, "0")).join(""); }
+function setupPass() { const c = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#"; const r = crypto.getRandomValues(new Uint8Array(16)); return [...r].map(b => c[b % c.length]).join(""); }
+async function setupDispatch(env, job, provider) {
+  const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/setup.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs: { job, provider } }) }).catch(() => null);
+  return !!r && r.status === 204;
+}
+async function appSetupUser(req, env, u, p, body, lang) {
+  const en = lang === "en";
+  if (p === "setup/status") {
+    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    const consent = JSON.parse((await env.KV.get(`setupconsent:${u.n}`)) || "null");
+    if (!chain) return { ok: true, active: false, consent: !!consent };
+    const cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
+    const keys = {};
+    for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${u.n}:${id}`)) keys[id] = true;
+    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys };
+  }
+  if (p === "setup/start" && req.method === "POST") {
+    if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
+    const email = String(body.email || (u.acct && u.acct.email) || "").trim().slice(0, 120);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: en ? "Give an email for the new accounts." : "Kotha accounts kosam oka email ivvu." };
+    const ids = (Array.isArray(body.providers) ? body.providers : ["groq", "openrouter", "gemini"]).filter(id => SETUP_PROVIDERS[id]);
+    if (!ids.length) return { ok: false, error: "no provider" };
+    // One allow: the user tapped "set up everything" — consent covers accounts,
+    // API keys, captchas and the server step for this whole run.
+    await env.KV.put(`setupconsent:${u.n}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ids }), { expirationTtl: 86400 * 7 });
+    const chain = { providers: ids, done: [], current: null, email, pass: setupPass(), at: Date.now() };
+    await env.KV.put(`setupchain:${u.n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+    const next = await setupStartNext(env, u.n);
+    if (!next.ok) return next;
+    return { ok: true, job: next.job, provider: next.provider };
+  }
+  if (p === "setup/stop" && req.method === "POST") {
+    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    if (chain && chain.current) { const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null"); if (j) { j.state = "stopped"; j.upd = Date.now(); await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 }); } }
+    await env.KV.delete(`setupchain:${u.n}`);
+    return { ok: true };
+  }
+  if (p === "setup/pause" && req.method === "POST") {
+    // Take Control: pause the background browser at the current step. The
+    // runner polls the job state and waits while it is "paused".
+    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    if (!chain || !chain.current) return { ok: false, error: "no job" };
+    const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
+    if (!j) return { ok: false, error: "no job" };
+    j.state = "paused"; j.upd = Date.now();
+    await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
+    return { ok: true };
+  }
+  if (p === "setup/continue" && req.method === "POST") {
+    // Resume after a pause (email verified / Google signed in by hand). The
+    // runner polls the job state and resumes when it flips to "running".
+    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    if (!chain || !chain.current) return { ok: false, error: "no job" };
+    const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
+    if (!j) return { ok: false, error: "no job" };
+    j.state = "running"; j.note = ""; j.upd = Date.now();
+    await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
+    return { ok: true };
+  }
+  return { ok: false, error: "not found" };
+}
+async function setupStartNext(env, n) {
+  const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
+  if (!chain) return { ok: false, error: "no chain" };
+  const nextId = chain.providers.find(id => !chain.done.includes(id));
+  if (!nextId) { await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
+  const job = setupJobId();
+  const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
+  await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+  chain.current = job;
+  await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+  const ok = await setupDispatch(env, job, nextId);
+  if (!ok) { await env.KV.delete(`setupjob:${job}`); return { ok: false, error: "dispatch failed" }; }
+  return { ok: true, job, provider: nextId };
+}
+async function appSetupRunner(req, env, p, url, body) {
+  if (!env.RUNNER_KEY || req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
+  const job = String(url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, "");
+  const rec = job ? JSON.parse((await env.KV.get(`setupjob:${job}`)) || "null") : null;
+  if (!rec) return new Response("missing", { status: 404 });
+  if (p === "setup/runner/job") return Response.json({ ok: true, job: rec });
+  if (p === "setup/runner/progress" && req.method === "POST") {
+    const state = ["queued", "running", "paused", "done", "failed", "stopped"].includes(body.state) ? body.state : "running";
+    rec.state = state; rec.step = String(body.step || rec.step || "").slice(0, 80); rec.note = String(body.note || "").slice(0, 300); rec.url = String(body.url || rec.url || "").slice(0, 500); rec.upd = Date.now();
+    await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    // Chain: provider done → auto-start the next one with the same consent.
+    if (state === "done") {
+      const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null");
+      if (chain && chain.current === job) { chain.done.push(rec.provider); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await setupStartNext(env, rec.user); }
+    }
+    if (state === "failed" || state === "stopped") { const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null"); if (chain && chain.current === job) await env.KV.delete(`setupchain:${rec.user}`); }
+    return Response.json({ ok: true });
+  }
+  if (p === "setup/runner/key" && req.method === "POST") {
+    const key = String(body.key || "").trim();
+    if (key.length < 10 || key.length > 500) return new Response("bad key", { status: 400 });
+    // Stored as the user's own key (same ukey: slot the Plan tab reads).
+    // Never returned in chat and never logged — only the owner can use it.
+    await env.KV.put(`ukey:${rec.user}:${rec.provider}`, key);
     return Response.json({ ok: true });
   }
   return new Response("not found", { status: 404 });
