@@ -22,6 +22,62 @@ MOODS = {  # top, bottom, accent, (rate, pitch)
     "excited": ((60, 30, 8), (10, 5, 3), (255, 170, 40), ("+9%", "+3Hz")),
     "mystery": ((34, 16, 52), (6, 4, 12), (175, 95, 255), ("-6%", "-3Hz")),
 }
+# v25 (R49, Hark aesthetic variety — ~/workspace/styles/HARK-AESTHETIC-VARIETY.md):
+# one design system per TOPIC MOOD, never one fixed style. The topic picks the look
+# (A-D); the title seed varies accent/font/layout inside it; the previous video's
+# look is never repeated. Constants only: 9:16 safe margins, big readable captions,
+# one idea per scene, one accent colour at a time.
+LOOKS = {
+    "A": {"name": "science", "top": (8, 24, 48), "bot": (6, 60, 70),
+          "accents": [(60, 200, 230), (255, 180, 60)], "font": "anton", "chapter": "fig",
+          "ease": "smooth", "motion": "push", "bg": "gradient",
+          "desc": "deep navy to teal gradient, cyan/amber accent, thin line diagrams, animated plots, clean sans — lightning, physics, how-things-work"},
+    "B": {"name": "myth", "top": (10, 10, 10), "bot": (24, 24, 24),
+          "accents": [(255, 40, 40), (255, 210, 0)], "font": "anton", "chapter": "stamp",
+          "ease": "hard", "motion": "cut", "bg": "flat",
+          "desc": "high-contrast black and white, one hot red or yellow accent, huge bold condensed type, hard cuts, stamp/strike-through — myths, warnings, versus"},
+    "C": {"name": "story", "top": (40, 30, 20), "bot": (24, 18, 12),
+          "accents": [(250, 230, 200), (230, 120, 50), (60, 170, 160)], "font": "serif", "chapter": "none",
+          "ease": "slow", "motion": "push", "bg": "warm",
+          "desc": "warm film grain, soft vignette, serif/elegant type, slow push-ins, cream/orange/teal grade, minimal text — movies, history, emotion"},
+    "D": {"name": "tech", "top": (12, 14, 28), "bot": (8, 10, 22),
+          "accents": [(60, 255, 140), (170, 100, 255)], "font": "anton", "chapter": "counter",
+          "ease": "snappy", "motion": "whip", "bg": "grid",
+          "desc": "light or dark glassy UI, neon green/violet accent, big animated numbers, bar/line charts, grid backgrounds, snappy easing — stats, AI, finance"},
+}
+_LOOK_WORDS = {
+    "A": ["lightning", "thunder", "physics", "science", "how", "why", "earth", "space", "atom", "energy", "water", "rain", "magnet", "gravity", "biology", "brain", "body", "experiment", "plant", "animal", "sky", "sun", "moon", "weather", "electric", "sound", "light", "ocean", "volcano"],
+    "B": ["myth", "myths", "safety", "warning", "danger", "scam", "lie", "lies", "truth", "vs", "versus", "debate", "ban", "never", "don't", "mistake", "wrong", "fact", "fake", "car", "seat belt", "belt", "helmet", "rule", "law", "court", "tobacco", "gutka", "smoking", "alcohol", "drugs", "effects", "risk", "risks", "health"],
+    "C": ["story", "movie", "cinema", "history", "culture", "emotion", "love", "king", "queen", "war", "ancient", "legend", "film", "song", "festival", "hero", "empire", "temple", "village", "family", "mother", "father", "kingdom", "princess", "poet", "dance"],
+    "D": ["ai", "tech", "money", "finance", "data", "stat", "app", "phone", "computer", "robot", "crypto", "stock", "price", "users", "percent", "growth", "startup", "internet", "software", "code", "digital", "online", "bank", "rupee", "dollar", "salary", "job", "business"],
+}
+
+
+def pick_look(brief, recent=""):
+    """Topic mood -> design system (A/B/C/D). Never the previous video's look:
+    the previous look is derived from the last topic in `recent` (the Worker passes
+    the last 15 topics, most recent last). Deterministic — never random."""
+    import zlib
+    text = (brief or "").lower()
+    scores = {k: sum(1 for w in words if w in text) for k, words in _LOOK_WORDS.items()}
+    best = max(LOOKS, key=lambda k: scores[k])  # ties -> A (first), the safe default
+    prev = None
+    if recent:
+        last = [s.strip() for s in str(recent).split(";") if s.strip()]
+        if last:
+            pt = last[-1].lower()
+            ps = {k: sum(1 for w in words if w in pt) for k, words in _LOOK_WORDS.items()}
+            if max(ps.values()) > 0:
+                prev = max(ps, key=lambda k: ps[k])
+    if prev and best == prev:
+        order = ["A", "B", "C", "D"]
+        best = order[(order.index(best) + 1) % 4]
+    return best
+
+
+def look_seed(title, brief=""):
+    import zlib
+    return zlib.crc32((str(title or "") + "|" + str(brief or "")).encode()) & 0x7FFFFFFF
 VOICES = {("en", "male"): "en-US-AndrewMultilingualNeural", ("en", "female"): "en-US-AvaMultilingualNeural",
           ("te", "male"): "te-IN-MohanNeural", ("te", "female"): "te-IN-ShrutiNeural",
           ("hi", "male"): "hi-IN-MadhurNeural", ("hi", "female"): "hi-IN-SwaraNeural"}
@@ -32,6 +88,11 @@ Return ONLY JSON:
  "caption": "<post caption with 3-5 hashtags>",
  "scenes": [{"vo": "...", "label": "<1-3 word ENGLISH punch label, caps>", "mood": "calm|tense|hopeful|sad|excited|mystery",
              "visual": "<one of %s>", "value": "<short number/word for the visual>"}]}
+DESIGN LOOK (v25, Hark aesthetic variety): {look} — design every scene for this look: palette, background,
+visuals and chapter style all follow it. A science: graph/clock/counter/bar visuals, diagram labels.
+B myth/safety: warning/versus/check visuals, stamp chapter cards, huge bold labels.
+C story/cinema: heart/check visuals, minimal text, NO chapter labels, elegant labels.
+D tech/data: counter/bar/graph/list visuals, big number chapter cards, animated numbers.
 Language: follow the owner. If they ask for English voice/voice-over -> lang "en" (vo in English). Telugu -> "te" (vo in Telugu script).
 Hindi -> "hi". If they say nothing about language, use "te".
 Length: honour any duration they ask (e.g. "1 min" = 60 s). Default 50-60 s. English speaks ~2.5 words/s, Telugu ~1.8 words/s:
@@ -48,8 +109,12 @@ Owner request: """ % C.VISUALS
 
 
 def plan(brief, chat, recent=""):
+    # v25: the TOPIC MOOD picks the design system (A/B/C/D) FIRST, so the LLM
+    # designs every scene for that look — never one fixed style.
+    look = pick_look(brief, recent)
+    look_line = f"DESIGN LOOK {look} ({LOOKS[look]['name']}): {LOOKS[look]['desc']}."
     raw = chat([{"role": "system", "content": "You output strict JSON only."},
-                {"role": "user", "content": PLAN.replace("{recent}", recent or "none") + (brief or "AUTO")}])
+                {"role": "user", "content": PLAN.replace("{recent}", recent or "none").replace("{look}", look_line) + (brief or "AUTO")}])
     p = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
     sc = [s for s in p.get("scenes", []) if str(s.get("vo", "")).strip()][:16]
     if len(sc) < 4:
@@ -63,6 +128,10 @@ def plan(brief, chat, recent=""):
     p["scenes"] = sc
     p["lang"] = p.get("lang") if p.get("lang") in ("en", "te", "hi") else "te"
     p["title"] = re.sub(r"[^A-Z0-9 %!?'&-]", "", str(p.get("title", "")).upper())[:26] or "WATCH THIS"
+    # v25: the look + a title seed (so no two videos match inside a look).
+    p["look"] = look
+    p["seed"] = look_seed(p["title"], brief)
+    p["accent"] = LOOKS[look]["accents"][p["seed"] % len(LOOKS[look]["accents"])]
     return p
 
 
@@ -99,19 +168,68 @@ def anton(s):
     if s not in _fc: _fc[s] = ImageFont.truetype(os.path.join(FONTS, "Anton-Regular.ttf"), s)
     return _fc[s]
 
+_ser = {}
+def serif(s):
+    # v25: look C (story/cinema) uses a serif/elegant face. System DejaVu Serif
+    # on the runner; falls back to Anton when it is missing.
+    s = max(8, int(s))
+    if s not in _ser:
+        for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+                  "/usr/share/fonts/dejavu/DejaVuSerif-Bold.ttf"]:
+            if os.path.exists(p):
+                _ser[s] = ImageFont.truetype(p, s); break
+        else:
+            _ser[s] = anton(s)
+    return _ser[s]
+
+
+def look_font(look, s):
+    return serif(s) if LOOKS.get(look, {}).get("font") == "serif" else anton(s)
+
+
+def ease_look(look, x):
+    # v25: animate text in with a different easing per look.
+    k = LOOKS.get(look, {}).get("ease", "smooth")
+    if k == "hard": return clamp(x * 1.5)
+    if k == "slow": return eio(clamp(x * 0.8))
+    if k == "snappy": return C.pop(x)
+    return eio(x)
+
+
 _bg = {}
-def background(mood):
-    if mood not in _bg:
+def background(mood, look=None):
+    # v25: the LOOK sets the base gradient (the mood still tints the glow +
+    # drives the voice). B = flat near-black; C = warm grade + grain; D = grid.
+    key = (mood, look)
+    if key not in _bg:
         top, bot, acc, _ = MOODS[mood]
+        if look and look in LOOKS:
+            top, bot = LOOKS[look]["top"], LOOKS[look]["bot"]
+            acc = LOOKS[look]["accents"][0]
         a = np.linspace(0, 1, H)[:, None, None]
         g = (np.array(top)[None, None] * (1 - a) + np.array(bot)[None, None] * a) * np.ones((1, W, 1))
         yy, xx = np.mgrid[0:H, 0:W]
         glow = np.exp(-(((xx - W / 2) / 520) ** 2 + ((yy - 860) / 620) ** 2))[..., None]
         g = g + glow * np.array(acc)[None, None] * 0.22
         im = Image.fromarray(np.clip(g, 0, 255).astype(np.uint8)); d = ImageDraw.Draw(im)
-        for y in range(0, H, 6): d.line([(0, y), (W, y)], fill=tuple(int(c * 0.93) for c in im.getpixel((5, y))))  # scanlines
-        _bg[mood] = im
-    return _bg[mood].copy()
+        if look == "D":  # glassy grid
+            for x in range(0, W, 90): d.line([(x, 0), (x, H)], fill=(22, 26, 44))
+            for y in range(0, H, 90): d.line([(0, y), (W, y)], fill=(22, 26, 44))
+        elif look == "C":  # warm film grain (subtle, not noisy)
+            rng = np.random.RandomState(11)
+            noise = rng.randint(-6, 7, size=(H // 6, W // 6, 1)).repeat(6, 0).repeat(6, 1)[:H, :W]
+            g2 = np.clip(np.asarray(im).astype(int) + noise, 0, 255).astype(np.uint8)
+            im = Image.fromarray(g2); d = ImageDraw.Draw(im)
+            # soft vignette: darken the corners
+            vig = np.zeros((H, W, 1))
+            yy2, xx2 = np.mgrid[0:H, 0:W]
+            r2 = ((xx2 - W / 2) / (W / 2)) ** 2 + ((yy2 - H / 2) / (H / 2)) ** 2
+            vig = np.clip(1 - 0.28 * np.clip(r2 - 0.55, 0, 1), 0, 1)[..., None]
+            im = Image.fromarray(np.clip(np.asarray(im).astype(float) * vig, 0, 255).astype(np.uint8)); d = ImageDraw.Draw(im)
+        else:
+            for y in range(0, H, 6): d.line([(0, y), (W, y)], fill=tuple(int(c * 0.93) for c in im.getpixel((5, y))))  # scanlines
+        _bg[key] = im
+    return _bg[key].copy()
 
 _bok = {}
 def bokeh(col, r):
@@ -163,20 +281,54 @@ def character(im, mood, t, acc):
     else: sy = 1 + 0.025 * math.sin(t * 3)
     put(im, pawn(tuple(int(c * 0.9 + 25) for c in acc)), x, by, 0.55, rot, sx, sy)
 
-def label(d, text, t, acc, idx):
-    k = C.pop((t - 0.12) / 0.38)
+def label(d, text, t, acc, idx, look=None):
+    # v25: font + easing per look; C (story) is minimal — smaller, elegant serif.
+    k = ease_look(look, (t - 0.12) / 0.38)
     if k <= 0: return
-    f = anton(int(132 * max(k, 0.15)))
+    size = 104 if look == "C" else 132
+    f = look_font(look, int(size * max(k, 0.15)))
     w = d.textlength(text, font=f); x = (W - w) / 2 + (6 * math.sin(t * 60) if t < 0.5 and idx % 3 == 1 else 0)
     d.text((x + 6, 1196), text, font=f, fill=(0, 0, 0))
     d.text((x, 1190), text, font=f, fill=acc if idx % 2 == 0 else (250, 245, 235))
     ul = ease((t - 0.35) / 0.4) * w
     d.rectangle([(W - w) / 2, 1350, (W - w) / 2 + ul, 1360], fill=acc)
 
-def header(d, p, idx, n, t, sc_d, acc):
+
+def header(d, p, idx, n, t, sc_d, acc, look=None):
+    # v25: chapter cards vary by look — A "FIG 01" diagram label, B rotated STAMP,
+    # C drops the chapter labels entirely (minimal), D a big NUMBER counter.
+    ch = LOOKS.get(look, {}).get("chapter", "fig")
+    if ch == "none":
+        f = C.font(30)
+        d.text((70, 92), p["title"][:26], font=f, fill=(225, 225, 230))
+        return
+    if ch == "stamp":
+        f = C.font(34)
+        box = (70, 84, 190, 132)
+        d.rectangle(box, outline=acc, width=5)
+        d.text((88, 92), f"{idx + 1:02d}", font=f, fill=acc)
+        d.text((220, 92), p["title"][:26], font=f, fill=(225, 225, 230))
+        seg = (W - 140) / n
+        for i in range(n):
+            x0 = 70 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
+            d.rectangle([x0, 150, x0 + seg - 8, 156], fill=(60, 60, 70))
+            if fill: d.rectangle([x0, 150, x0 + (seg - 8) * fill, 156], fill=acc)
+        return
+    if ch == "counter":
+        f = anton(64)
+        d.text((70, 74), f"{idx + 1:02d}", font=f, fill=acc)
+        d.text((170, 92), p["title"][:26], font=C.font(34), fill=(225, 225, 230))
+        seg = (W - 140) / n
+        for i in range(n):
+            x0 = 70 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
+            d.rectangle([x0, 150, x0 + seg - 8, 156], fill=(60, 60, 70))
+            if fill: d.rectangle([x0, 150, x0 + (seg - 8) * fill, 156], fill=acc)
+        return
+    # fig (A, default): "FIG 01" + a thin diagram tick
     f = C.font(34)
-    d.text((70, 92), f"CH {idx + 1:02d}", font=f, fill=acc)
-    d.text((220, 92), p["title"][:26], font=f, fill=(225, 225, 230))
+    d.text((70, 92), f"FIG {idx + 1:02d}", font=f, fill=acc)
+    d.line([(200, 108), (240, 108)], fill=acc, width=4); d.ellipse([236, 104, 244, 112], fill=acc)
+    d.text((260, 92), p["title"][:26], font=f, fill=(225, 225, 230))
     seg = (W - 140) / n
     for i in range(n):
         x0 = 70 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
@@ -184,37 +336,72 @@ def header(d, p, idx, n, t, sc_d, acc):
         if fill: d.rectangle([x0, 150, x0 + (seg - 8) * fill, 156], fill=acc)
 
 def scene_frame(p, idx, t):
-    sc = p["scenes"][idx]; n = len(p["scenes"]); mood = sc["mood"]; acc = MOODS[mood][2]
-    im = background(mood)
+    sc = p["scenes"][idx]; n = len(p["scenes"]); mood = sc["mood"]
+    # v25: the look + title seed drive the palette, chapter card, layout and move.
+    look = p.get("look", "A"); seed = p.get("seed", 0)
+    acc = tuple(p.get("accent") or LOOKS[look]["accents"][0])
+    im = background(mood, look)
     for (x, y, r, sp) in PART:
         yy = (y - t * sp - idx * 140) % (H + 200) - 100
         b = bokeh(acc, r); im.paste(b, (int(x + 20 * math.sin(t + r)), int(yy)), b)
     d = ImageDraw.Draw(im)
-    header(d, p, idx, n, t, sc["d"], acc)
-    C.draw_visual(d, im, sc["visual"], sc.get("value", ""), t, cy=800)
-    label(d, sc["label"], t, acc, idx)
+    header(d, p, idx, n, t, sc["d"], acc, look)
+    # v25: layout rotates per scene — standard, full-bleed visual + small caption,
+    # centered big word, split screen (visual top, label + divider bottom).
+    layout = (idx + seed) % 4
+    if layout == 1:  # full-bleed
+        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), t, cy=900, acc=acc)
+        label(d, sc["label"], t, acc, idx, look)
+    elif layout == 2:  # centered big word, visual small below
+        label(d, sc["label"], t, acc, idx, look)
+        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), t, cy=1500, acc=acc)
+    elif layout == 3:  # split
+        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), t, cy=650, acc=acc)
+        d.rectangle([(120, 1080), (W - 120, 1088)], fill=acc)
+        label(d, sc["label"], t, acc, idx, look)
+    else:  # standard
+        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), t, cy=800, acc=acc)
+        label(d, sc["label"], t, acc, idx, look)
     character(im, mood, t, acc)
     if idx == 0 and t < 2.4:  # cold-open title
         k = ease(t / 0.5) * (1 - ease((t - 1.9) / 0.5))
         ov = Image.new("L", (W, H), 0); ImageDraw.Draw(ov).rectangle([0, 0, W, H], fill=int(150 * k)); im.paste((0, 0, 0), (0, 0), ov)
-        f = anton(150); txt = p["title"]; words = txt.split(); lines = [" ".join(words[:max(1, len(words) // 2)]), " ".join(words[max(1, len(words) // 2):])]
+        txt = p["title"]; words = txt.split(); lines = [" ".join(words[:max(1, len(words) // 2)]), " ".join(words[max(1, len(words) // 2):])]
         lines = [l for l in lines if l]
         fs = 150
-        while fs > 60 and max(d.textlength(l, font=anton(fs)) for l in lines) > W - 120: fs -= 8
-        f = anton(fs)
+        while fs > 60 and max(d.textlength(l, font=look_font(look, fs)) for l in lines) > W - 120: fs -= 8
+        f = look_font(look, fs)
         for li, ln in enumerate(lines):
             w = d.textlength(ln, font=f); d.text(((W - w) / 2, 700 + li * 190 + 40 * (1 - k)), ln, font=f, fill=acc if li else (255, 255, 255))
-    return camera(im, idx, t, sc["d"], mood)
+    # v25: a different camera move every scene (push-in, pan, parallax, whip).
+    moves = ["push", "pan", "zoomout", "whip", "drift"]
+    return camera(im, idx, t, sc["d"], mood, moves[(idx + seed) % len(moves)])
 
-def camera(im, idx, t, d, mood):
-    z = 1.0 + 0.075 * eio(t / max(d, 0.1)); dx = (1 if idx % 2 else -1) * 28 * eio(t / max(d, 0.1))
+def camera(im, idx, t, d, mood, move="push"):
+    # v25: a DIFFERENT camera move per scene (Hark: push-in, pan, parallax, whip).
+    # move is chosen per scene in scene_frame from (idx + seed).
+    z, dx, dy = 1.0, 0.0, 0.0
+    q = eio(t / max(d, 0.1))
+    if move == "push":  # slow push-in (A, C)
+        z = 1.0 + 0.075 * q; dx = (1 if idx % 2 else -1) * 28 * q
+    elif move == "pan":  # horizontal pan
+        z = 1.03; dx = -50 + 100 * q
+    elif move == "zoomout":  # start close, ease out
+        z = 1.09 - 0.09 * q; dx = (1 if idx % 2 else -1) * 14 * q
+    elif move == "whip":  # fast pan (B, D hard cuts)
+        z = 1.04; dx = -90 + 180 * clamp(t / max(d, 0.1) * 1.6)
+    else:  # drift: slow diagonal (parallax feel)
+        z = 1.02 + 0.04 * q; dx = 22 * q; dy = 16 * q
     sx = sy = 0
     if mood in ("tense", "excited") and t < 0.45: sx, sy = random.uniform(-14, 14), random.uniform(-14, 14)
-    cw, ch = W / z, H / z; x0 = (W - cw) / 2 + dx + sx; y0 = (H - ch) / 2 + sy
+    cw, ch = W / z, H / z; x0 = (W - cw) / 2 + dx + sx; y0 = (H - ch) / 2 + dy + sy
     return im.crop((int(x0), int(y0), int(x0 + cw), int(y0 + ch))).resize((W, H), Image.BILINEAR)
 
 def outro(p, t):
-    acc = MOODS[p["scenes"][-1]["mood"]][2]; im = background(p["scenes"][-1]["mood"]); d = ImageDraw.Draw(im)
+    # v25: outro uses the video's look accent, not the last scene's mood accent.
+    acc = tuple(p.get("accent") or MOODS[p["scenes"][-1]["mood"]][2])
+    im = background(p["scenes"][-1]["mood"], p.get("look"))
+    d = ImageDraw.Draw(im)
     k = C.pop(t / 0.5); f = anton(int(140 * max(k, 0.2)))
     for li, (ln, col) in enumerate([("FOLLOW", (255, 255, 255)), ("FOR MORE", acc)]):
         w = d.textlength(ln, font=f); d.text(((W - w) / 2, 640 + li * 180), ln, font=f, fill=col)

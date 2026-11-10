@@ -115,21 +115,23 @@ def num_of(v, default=7):
     m = re.search(r"\d+", v or ""); return int(m.group(0)) if m else default
 
 
-def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880):
+def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None):
+    # v25: optional accent (the look's accent) — defaults to RED for the old engine.
+    acc = acc or RED
     a = ease(t / 0.8)
     if kind == "counter":
         n = num_of(value, 100); cur = int(n * a)
-        f = font(220); center_text(d, cy - 140, f"{cur}{'%' if '%' in value else ''}", f, RED)
+        f = font(220); center_text(d, cy - 140, f"{cur}{'%' if '%' in value else ''}", f, acc)
     elif kind == "bar":
         p = num_of(value, 80) / 100 * a
         rrect(d, (140, cy - 50, W - 140, cy + 50), 20, outline=WHITE, width=5)
-        rrect(d, (155, cy - 35, 155 + (W - 310) * min(p, 1), cy + 35), 14, fill=RED)
+        rrect(d, (155, cy - 35, 155 + (W - 310) * min(p, 1), cy + 35), 14, fill=acc)
         center_text(d, cy + 80, f"{int(p*100)}%", font(64), WHITE)
     elif kind == "battery":
         p = max(0.05, 1 - 0.85 * a) if not value or "%" not in value else num_of(value) / 100
         rrect(d, (290, cy - 160, 790, cy + 160), 30, outline=WHITE, width=8)
         d.rectangle((790, cy - 50, 830, cy + 50), fill=WHITE)
-        col = GREEN if p > 0.5 else YEL if p > 0.2 else RED
+        col = GREEN if p > 0.5 else YEL if p > 0.2 else acc
         rrect(d, (310, cy - 140, 310 + 460 * p, cy + 140), 18, fill=col)
     elif kind == "chat":
         bubbles = [("left", 0.0), ("right", 0.35), ("left", 0.7)]
@@ -138,7 +140,7 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880):
             if k <= 0: continue
             y = cy - 260 + i * 190; w = 520 * k
             x0 = 120 if side == "left" else W - 120 - w
-            rrect(d, (x0, y, x0 + w, y + 140), 40, fill=(45, 45, 52) if side == "left" else RED)
+            rrect(d, (x0, y, x0 + w, y + 140), 40, fill=(45, 45, 52) if side == "left" else acc)
             if k > 0.9:
                 for j in range(3):
                     d.ellipse((x0 + 60 + j * 60, y + 55, x0 + 90 + j * 60, y + 85), fill=WHITE)
@@ -155,48 +157,48 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880):
             d.line(seg[:-1] + [end] if q >= 0.5 else [pts[0], end], fill=WHITE, width=40, joint="curve")
     elif kind == "warning":
         k = pop(t / 0.5); s = 260 * k; sh = 8 * math.sin(t * 40) if t < 0.9 else 0
-        d.polygon([(cx + sh, cy - s), (cx - s * 1.1 + sh, cy + s * 0.8), (cx + s * 1.1 + sh, cy + s * 0.8)], fill=RED)
+        d.polygon([(cx + sh, cy - s), (cx - s * 1.1 + sh, cy + s * 0.8), (cx + s * 1.1 + sh, cy + s * 0.8)], fill=acc)
         if k > 0.8: center_text(d, cy - 110, "!", font(240), WHITE)
     elif kind == "graph":
         pts = [(140 + i * 100, cy + 220 - (i ** 1.6) * 22 - random.Random(i).randint(0, 40)) for i in range(9)]
         n = min(len(pts), max(2, int(len(pts) * a) + 1))
         d.line([(140, cy + 260), (W - 140, cy + 260)], fill=GREY, width=4); d.line([(140, cy - 300), (140, cy + 260)], fill=GREY, width=4)
-        d.line(pts[:n], fill=GREEN if "down" not in (value or "").lower() else RED, width=14, joint="curve")
+        d.line(pts[:n], fill=GREEN if "down" not in (value or "").lower() else acc, width=14, joint="curve")
         x, y = pts[n - 1]; d.ellipse((x - 20, y - 20, x + 20, y + 20), fill=WHITE)
     elif kind == "clock":
         r = 260; d.ellipse((cx - r, cy - r, cx + r, cy + r), outline=WHITE, width=12)
         for i in range(12):
             an = i * math.pi / 6; d.line([(cx + 220 * math.cos(an), cy + 220 * math.sin(an)), (cx + 240 * math.cos(an), cy + 240 * math.sin(an))], fill=GREY, width=8)
-        an = -math.pi / 2 + t * 4; d.line([(cx, cy), (cx + 200 * math.cos(an), cy + 200 * math.sin(an))], fill=RED, width=14)
+        an = -math.pi / 2 + t * 4; d.line([(cx, cy), (cx + 200 * math.cos(an), cy + 200 * math.sin(an))], fill=acc, width=14)
         an2 = -math.pi / 2 + t * 0.4; d.line([(cx, cy), (cx + 130 * math.cos(an2), cy + 130 * math.sin(an2))], fill=WHITE, width=18)
     elif kind == "heart":
         s = 1 + 0.08 * math.sin(t * 9)
         pts = [(cx + 16 * math.sin(u) ** 3 * 14 * s, cy - (13 * math.cos(u) - 5 * math.cos(2 * u) - 2 * math.cos(3 * u) - math.cos(4 * u)) * 14 * s) for u in np.linspace(0, 2 * math.pi, 120)]
-        d.polygon(pts, fill=RED)
+        d.polygon(pts, fill=acc)
         ys = cy + 320; xs = np.linspace(140, W - 140, 60)
         line = [(x, ys - (90 if abs(x - (140 + (t * 500) % 800)) < 25 else 0)) for x in xs]
         d.line(line, fill=GREEN, width=8)
     elif kind == "calendar":
-        rrect(d, (200, cy - 280, 880, cy + 300), 30, fill=(30, 30, 36)); d.rectangle((200, cy - 280, 880, cy - 170), fill=RED)
+        rrect(d, (200, cy - 280, 880, cy + 300), 30, fill=(30, 30, 36)); d.rectangle((200, cy - 280, 880, cy - 170), fill=acc)
         n = num_of(value, 7); shown = int(min(28, 28 * a))
         for i in range(28):
             x = 240 + (i % 7) * 90; y = cy - 140 + (i // 7) * 100
-            col = RED if i < min(n, shown) else GREY
+            col = acc if i < min(n, shown) else GREY
             d.rectangle((x, y, x + 60, y + 60), outline=col, width=5)
-            if i < min(n, shown): d.line([(x + 8, y + 8), (x + 52, y + 52)], fill=RED, width=6)
+            if i < min(n, shown): d.line([(x + 8, y + 8), (x + 52, y + 52)], fill=acc, width=6)
     elif kind == "list":
         for i in range(4):
             k = ease((t - i * 0.25) / 0.3)
             if k <= 0: continue
             y = cy - 260 + i * 150
-            d.text((180 - 60 * (1 - k), y), f"[{i+1:02d}]", font=font(56), fill=RED)
+            d.text((180 - 60 * (1 - k), y), f"[{i+1:02d}]", font=font(56), fill=acc)
             rrect(d, (360, y + 10, 360 + 520 * k, y + 50), 12, fill=(70, 70, 80))
     elif kind == "versus":
         k = ease(t / 0.6)
         rrect(d, (100 - 300 * (1 - k), cy - 220, 500 - 300 * (1 - k), cy + 220), 30, fill=(45, 45, 52))
-        rrect(d, (580 + 300 * (1 - k), cy - 220, 980 + 300 * (1 - k), cy + 220), 30, fill=RED)
+        rrect(d, (580 + 300 * (1 - k), cy - 220, 980 + 300 * (1 - k), cy + 220), 30, fill=acc)
         center_text(d, cy - 50, "VS", font(90), YEL)
-        d.text((230 - 300 * (1 - k), cy - 40), "✗", font=font(100), fill=RED)
+        d.text((230 - 300 * (1 - k), cy - 40), "✗", font=font(100), fill=acc)
         d.text((720 + 300 * (1 - k), cy - 40), "✓", font=font(100), fill=WHITE)
 
 
