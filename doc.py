@@ -3,11 +3,14 @@ LLM story plan (hook -> context -> twist -> payoff -> CTA, per-scene mood) -> hu
 (English Andrew/Ava multilingual or Telugu Mohan/Shruti) with per-mood rate/pitch -> animated scenes
 (mood palettes, bokeh, 3D-shaded character, animated objects, kinetic labels) -> camera push/pan/shake ->
 6 transition kinds -> procedural cinematic music + whoosh/boom SFX, ducked under voice -> word-timed karaoke
-captions (libass) -> film grade (vignette + grain). Rendered in parallel processes. Free, CPU only."""
+captions (libass) -> film grade (vignette + grain). Rendered in parallel processes. Free, CPU only.
+v29: Hark's effects.py (Blind) — 14 ENTER, 11 EMPHASIS, 12 TRANSITIONS, picked by the hit word's meaning, max 2x per video."""
 import asyncio, json, math, multiprocessing as mp, os, random, re, subprocess, tempfile, wave
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import create as C
+import effects as FX  # v29: Hark's effects library (Blind, divya-v26-effects.zip) — 14 ENTER, 11 EMPHASIS, 12 TRANSITIONS, 10 easings
+
 
 W, H, FPS = 1080, 1920, 30
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -32,29 +35,68 @@ LOOKS = {
           "accents": [(60, 200, 230), (255, 180, 60)], "font": "anton", "chapter": "fig",
           "ease": "smooth", "motion": "push", "bg": "gradient",
           "motion_personality": "smooth glides", "transition_family": "zoom through the diagram",
+          # v29 (Hark's effects.py): the look's transition TAG picks from FX.TRANSITIONS;
+          # the camera moves are for narrow visuals only (WIDE_VISUALS get push-in).
+          "fx_tag": "space", "moves": ["push", "pan", "drift"],
           "desc": "deep navy to teal gradient, cyan/amber accent, thin line diagrams, animated plots, clean sans — lightning, physics, how-things-work"},
     "B": {"name": "myth", "top": (10, 10, 10), "bot": (24, 24, 24),
           "accents": [(255, 40, 40), (255, 210, 0)], "font": "anton", "chapter": "stamp",
           "ease": "hard", "motion": "cut", "bg": "flat",
           "motion_personality": "snappy pops", "transition_family": "hard cut + stamp slam",
+          "fx_tag": "warning", "moves": ["push", "whip"],
           "desc": "high-contrast black and white, one hot red or yellow accent, huge bold condensed type, hard cuts, stamp/strike-through — myths, warnings, versus"},
     "C": {"name": "story", "top": (40, 30, 20), "bot": (24, 18, 12),
           "accents": [(250, 230, 200), (230, 120, 50), (60, 170, 160)], "font": "serif", "chapter": "none",
           "ease": "slow", "motion": "push", "bg": "warm",
           "motion_personality": "slow push-ins", "transition_family": "paper tear / fade",
+          "fx_tag": "history", "moves": ["push", "drift"],
           "desc": "warm film grain, soft vignette, serif/elegant type, slow push-ins, cream/orange/teal grade, minimal text — movies, history, emotion"},
     "D": {"name": "tech", "top": (12, 14, 28), "bot": (8, 10, 22),
           "accents": [(60, 255, 140), (170, 100, 255)], "font": "anton", "chapter": "counter",
           "ease": "snappy", "motion": "whip", "bg": "grid",
           "motion_personality": "snappy easing", "transition_family": "screen swipe / coin flip",
+          "fx_tag": "tech", "moves": ["push", "pan", "whip"],
           "desc": "light or dark glassy UI, neon green/violet accent, big animated numbers, bar/line charts, grid backgrounds, snappy easing — stats, AI, finance"},
 }
+# v29: visuals that extend to the frame edges — only a centered push-in is safe
+# for them (a pan/whip would push them off-screen, Ajju's complaint). Narrow,
+# centered visuals can take any camera move.
+WIDE_VISUALS = {"versus", "bar", "bar_compare", "graph", "list", "checklist",
+                "arrows_steps", "dot_grid", "calendar", "chat", "battery"}
+# v29: FX enter/emphasis effects that transform a whole RGBA layer (L, t, st).
+# typewriter/draw_on_line/stagger draw their own content, so they are not used
+# as layer effects here. The rest are chosen by the scene's hit_type tag.
+FX_LAYER_ENTER = ["fade_in", "pop_in", "slide_in", "rise_in", "drop_in",
+                  "zoom_in_blur", "wipe_in", "iris_in", "spin_in", "flip_in", "glitch_in"]
+FX_LAYER_EMPHASIS = ["punch", "shake", "pulse", "wiggle", "glow"]
 _LOOK_WORDS = {
     "A": ["lightning", "thunder", "physics", "science", "how", "why", "earth", "space", "atom", "energy", "water", "rain", "magnet", "gravity", "biology", "brain", "body", "experiment", "plant", "animal", "sky", "sun", "moon", "weather", "electric", "sound", "light", "ocean", "volcano"],
     "B": ["myth", "myths", "safety", "warning", "danger", "scam", "lie", "lies", "truth", "vs", "versus", "debate", "ban", "never", "don't", "mistake", "wrong", "fact", "fake", "car", "seat belt", "belt", "helmet", "rule", "law", "court", "tobacco", "gutka", "smoking", "alcohol", "drugs", "effects", "risk", "risks", "health"],
     "C": ["story", "movie", "cinema", "history", "culture", "emotion", "love", "king", "queen", "war", "ancient", "legend", "film", "song", "festival", "hero", "empire", "temple", "village", "family", "mother", "father", "kingdom", "princess", "poet", "dance"],
     "D": ["ai", "tech", "money", "finance", "data", "stat", "app", "phone", "computer", "robot", "crypto", "stock", "price", "users", "percent", "growth", "startup", "internet", "software", "code", "digital", "online", "bank", "rupee", "dollar", "salary", "job", "business"],
 }
+
+
+def hit_type_of(s):
+    # v29 (EFFECTS_GUIDE.md section 1): the hit word's MEANING picks the effect.
+    # Derived from the scene's label + value + voice-over (no TTS timings needed
+    # here — the timing itself still comes from the word timestamps in make_video).
+    txt = (str(s.get("label", "")) + " " + str(s.get("vo", ""))).lower()
+    val = str(s.get("value", ""))
+    if "%" in val or "%" in txt: return "percent"
+    if any(c.isdigit() for c in val): return "number"
+    if any(w in txt for w in ("danger", "warning", "risk", "scam", "fake", "poison", "kill")): return "warning"
+    if any(w in txt for w in ("but", "never", "only", "stop", "wrong", "lie", "myth")): return "shock"
+    if any(w in txt for w in ("first", "second", "third", "three things", "three ways", "steps")): return "list"
+    if any(w in txt for w in (" vs ", "versus", " than ", "better")): return "compare"
+    if any(w in txt for w in ("rise", "grow", "increase", "more", "higher", "up")): return "growth"
+    if any(w in txt for w in ("fall", "drop", "down", "less", "lower", "crash")): return "drop"
+    if any(w in txt for w in ("clock", "time", "year", "history", "ancient", "ago")): return "time"
+    if any(w in txt for w in ("money", "rupee", "price", "cost", "salary", "pay", "bank")): return "money"
+    if any(w in txt for w in ("health", "body", "heart", "brain", "sleep", "food")): return "health"
+    if any(w in txt for w in ("space", "lightning", "science", "sky", "star", "planet")): return "space"
+    if any(w in txt for w in ("funny", "laugh", "joke")): return "funny"
+    return "calm"
 
 
 def pick_look(brief, recent="", recent_styles=None):
@@ -170,6 +212,23 @@ def plan(brief, chat, recent="", recent_styles=None):
     p["accent"] = LOOKS[look]["accents"][p["seed"] % len(LOOKS[look]["accents"])]
     p["motion_personality"] = LOOKS[look]["motion_personality"]
     p["transition_family"] = LOOKS[look]["transition_family"]
+    # v29 (Hark's effects.py + EFFECTS_GUIDE.md): the effect for each scene is
+    # CHOSEN ONCE HERE, from the hit word's meaning — never the same pop on
+    # every scene. FX.pick() blocks any effect used more than 2x in one video,
+    # so the motion actually varies. The choices ride in the plan; scene_frame
+    # only applies them (deterministic per frame).
+    used = {}
+    enter_l = {k: v for k, v in FX.ENTER.items() if k in FX_LAYER_ENTER}
+    emph_l = {k: v for k, v in FX.EMPHASIS.items() if k in FX_LAYER_EMPHASIS}
+    for s in sc:
+        s["hit_type"] = hit_type_of(s)
+        s["enter"] = FX.pick(enter_l, [s["hit_type"]], used)
+        s["emphasis"] = FX.pick(emph_l, [s["hit_type"]], used)
+        s["label_enter"] = FX.pick(enter_l, [s["hit_type"]], used)
+    # one transition per scene boundary, from the look's topic tag (guide s2)
+    tag = LOOKS[look].get("fx_tag", "calm")
+    p["transitions"] = [FX.pick(FX.TRANSITIONS, [tag], used) for _ in range(max(0, len(sc) - 1))]
+    p["fx_used"] = used
     return p
 
 
@@ -397,26 +456,46 @@ def scene_frame(p, idx, t):
         b = bokeh(acc, r); lay.paste(b, (int(x + 20 * math.sin(t + r)), int(yy)), b)
     d = ImageDraw.Draw(lay, "RGBA")
     header(d, p, idx, n, t, sc["d"], acc, look)
-    # v25: layout rotates per scene — standard, full-bleed visual + small caption,
-    # centered big word, split screen (visual top, label + divider bottom).
-    # v26: voice-timed effects — the visual + label pop when the scene's KEY WORD is
-    # spoken (Hark: the word, its icon and its pop land on the same frame).
-    # pop_t = offset (s) of the hit word inside the scene's voice-over.
+    # v29 (Hark's effects.py): the visual and the label are drawn on SEPARATE
+    # layers, each given its own ENTER effect (chosen in plan() from the hit
+    # word's meaning) + an EMPHASIS on the hit word, then composited onto the
+    # content layer. This is the fix for "the same old effect on every scene":
+    # the motion now comes from Hark's library, picked by meaning, max 2x/video.
     pt = max(0.0, t - float(sc.get("pop_t", 0.0) or 0.0))
     layout = (idx + seed) % 4
+    vlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    vd = ImageDraw.Draw(vlay, "RGBA")
+    llay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(llay, "RGBA")
     if layout == 1:  # full-bleed
-        C.draw_visual(d, lay, sc["visual"], sc.get("value", ""), pt, cy=900, acc=acc)
-        label(d, sc["label"], pt, acc, idx, look)
+        C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=900, acc=acc)
+        label(ld, sc["label"], pt, acc, idx, look)
     elif layout == 2:  # centered big word, visual small below
-        label(d, sc["label"], pt, acc, idx, look)
-        C.draw_visual(d, lay, sc["visual"], sc.get("value", ""), pt, cy=1500, acc=acc)
+        label(ld, sc["label"], pt, acc, idx, look)
+        C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=1500, acc=acc)
     elif layout == 3:  # split
-        C.draw_visual(d, lay, sc["visual"], sc.get("value", ""), pt, cy=650, acc=acc)
+        C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=650, acc=acc)
         d.rectangle([(120, 1080), (W - 120, 1088)], fill=acc)
-        label(d, sc["label"], pt, acc, idx, look)
+        label(ld, sc["label"], pt, acc, idx, look)
     else:  # standard
-        C.draw_visual(d, lay, sc["visual"], sc.get("value", ""), pt, cy=800, acc=acc)
-        label(d, sc["label"], pt, acc, idx, look)
+        C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=800, acc=acc)
+        label(ld, sc["label"], pt, acc, idx, look)
+    enter = sc.get("enter") or "pop_in"
+    emph = sc.get("emphasis") or "punch"
+    label_enter = sc.get("label_enter") or "pop_in"
+    if enter in FX_LAYER_ENTER:
+        vlay = getattr(FX, enter)(vlay, pt, 0)
+    if emph in FX_LAYER_EMPHASIS:
+        # pulse is continuous (its 3rd arg is period, not the hit time) — the
+        # other emphasis effects take (L, t, at) with at = the hit word time.
+        if emph == "pulse":
+            vlay = FX.pulse(vlay, pt)
+        else:
+            vlay = getattr(FX, emph)(vlay, pt, 0)
+    if label_enter in FX_LAYER_ENTER:
+        llay = getattr(FX, label_enter)(llay, pt, 0)
+    lay.alpha_composite(vlay)
+    lay.alpha_composite(llay)
     # v26: the pawn character is REMOVED — Ajju calls it 'ah chess board shipai';
     # a fixed mascot in every scene of every video is not an edit, and it has
     # nothing to do with the topic. Scenes now carry only the topic's own visuals.
@@ -430,22 +509,41 @@ def scene_frame(p, idx, t):
         f = look_font(look, fs)
         for li, ln in enumerate(lines):
             w = d.textlength(ln, font=f); d.text(((W - w) / 2, 700 + li * 190 + 40 * (1 - k)), ln, font=f, fill=acc if li else (255, 255, 255))
-    # v27: camera is a push-in ONLY on the content layer (kit rule); no move on
-    # scenes under 1.5s. The transitions carry the variety between scenes.
+    # v29: the camera move VARIES per scene — but only for NARROW, centered
+    # visuals. Wide visuals (VS cards, bars, graphs) extend to the frame edges,
+    # so a pan/whip would push them off-screen (Ajju's complaint); they get a
+    # centered push-in only. No move on scenes under 1.5s.
     if sc["d"] >= 1.5:
-        lay = camera(lay, idx, t, sc["d"], mood)
+        if sc.get("visual") in WIDE_VISUALS:
+            move = "push"
+        else:
+            moves = LOOKS[look].get("moves", ["push"])
+            move = moves[(idx + seed) % len(moves)]
+        lay = camera(lay, idx, t, sc["d"], mood, move)
     return Image.alpha_composite(bg, lay).convert("RGB")
 
 def camera(im, idx, t, d, mood, move="push"):
-    # v27 (Hark kit): push-in ONLY on the content layer (1.00 -> 1.035 smoothstep).
-    # The kit uses a slow push-in on every scene and lets the TRANSITIONS carry the
-    # variety — pan/whip/drift moves shift wide visuals (VS cards, bars) off the
-    # screen, which is exactly Ajju's complaint. The background is a separate fixed
-    # image and never scales/zooms. Works on RGB or RGBA.
-    z = 1.0 + 0.035 * eio(t / max(d, 0.1))
+    # v29: the camera move VARIES per scene (push / pan / whip / drift / parallax),
+    # chosen by the look + scene seed. v27 cut it to push-in only because pan/whip
+    # pushed WIDE visuals off-screen — the fix is in scene_frame, which only
+    # allows a move for NARROW, centered visuals (WIDE_VISUALS get push-in only).
+    # The background is a separate fixed image and never scales/zooms.
+    # Works on RGB or RGBA.
+    z, dx, dy = 1.0, 0.0, 0.0
+    q = eio(t / max(d, 0.1))
+    if move == "push":  # slow 3.5% push-in (kit render.py: z = 1 + 0.035 * lt / D)
+        z = 1.0 + 0.035 * q
+    elif move == "pan":  # gentle horizontal pan
+        z = 1.015; dx = -16 + 32 * q
+    elif move == "whip":  # quick pan, still inside the frame
+        z = 1.02; dx = -28 + 56 * clamp(t / max(d, 0.1) * 1.6)
+    elif move == "drift":  # slow diagonal
+        z = 1.01 + 0.015 * q; dx = 10 * q; dy = 8 * q
+    elif move == "parallax":  # zoom + opposite horizontal shift (reads as depth vs the fixed bg)
+        z = 1.0 + 0.02 * q; dx = 18 - 36 * q
     sx = sy = 0
     if mood in ("tense", "excited") and t < 0.45: sx, sy = random.uniform(-14, 14), random.uniform(-14, 14)
-    cw, ch = W / z, H / z; x0 = (W - cw) / 2 + sx; y0 = (H - ch) / 2 + sy
+    cw, ch = W / z, H / z; x0 = (W - cw) / 2 + dx + sx; y0 = (H - ch) / 2 + dy + sy
     return im.crop((int(x0), int(y0), int(x0 + cw), int(y0 + ch))).resize((W, H), Image.BILINEAR)
 
 def outro(p, t):
@@ -459,42 +557,31 @@ def outro(p, t):
         w = d.textlength(ln, font=f); d.text(((W - w) / 2, 640 + li * 180), ln, font=f, fill=col)
     return im
 
-def transition(a, b, p, kind, acc):
-    p = eio(p)
-    if kind == 0:
-        m = Image.new("L", (W, H), 0); r = p * 1250; ImageDraw.Draw(m).ellipse([W / 2 - r, H / 2 - r, W / 2 + r, H / 2 + r], fill=255)
-        return Image.composite(b, a, m)
-    if kind == 1:
-        o = Image.new("RGB", (W, H)); x = int(p * W); o.paste(a, (-x, 0)); o.paste(b, (W - x, 0)); return o
-    if kind == 2:
-        m = Image.new("L", (W, H), 0); dd = ImageDraw.Draw(m); x = -W + p * W * 2.4
-        dd.polygon([(-300, H), (x - 300, H), (x + 600, 0), (-300, 0)], fill=255); o = Image.composite(b, a, m)
-        ImageDraw.Draw(o).polygon([(x - 300, H), (x - 230, H), (x + 670, 0), (x + 600, 0)], fill=acc); return o
-    if kind == 3:
-        src, z = (a, 1 + p * 3) if p < 0.5 else (b, 4 - p * 3)
-        cw, ch = W / z, H / z; im = src.crop((int(W / 2 - cw / 2), int(H / 2 - ch / 2), int(W / 2 + cw / 2), int(H / 2 + ch / 2))).resize((W, H))
-        return Image.blend(im, Image.new("RGB", (W, H), (255, 255, 255)), (1 - abs(p - 0.5) * 2) * 0.75)
-    if kind == 4:
-        m = Image.new("L", (W, H), 0); dd = ImageDraw.Draw(m)
-        for i in range(9): dd.rectangle([0, i * H / 9, W, i * H / 9 + H / 9 * p], fill=255)
-        return Image.composite(b, a, m)
-    src = np.array(a if p < 0.5 else b); rng = random.Random(int(p * 100))  # glitch slices + RGB split
-    for _ in range(9):
-        y = rng.randint(0, H - 80); h = rng.randint(20, 120); src[y:y + h] = np.roll(src[y:y + h], rng.randint(-160, 160), axis=1)
-    src[:, :, 0] = np.roll(src[:, :, 0], 14, axis=1); src[:, :, 2] = np.roll(src[:, :, 2], -14, axis=1)
-    return Image.fromarray(src)
+def transition(a, b, p, name, acc):
+    # v29: Hark's 12 transitions (effects.py TRANSITIONS) replace the old 6-kind
+    # cycle. The transition NAME is chosen in plan() from the look's topic tag
+    # (guide s2: phone->screen_swipe, tech->glitch, space->zoom_through,
+    # money->coin_flip, health->heartbeat, history->paper_tear...), max 2x/video.
+    # FX's transition functions take (A, B, p) and return an RGB frame.
+    fn = FX.TRANSITIONS.get(name, (FX.tr_crossfade, []))[0]
+    return fn(a, b, clamp(p))
 
 def frame_at(p, T):
     st = p["starts"]; n = len(st); end = p["voice_end"]
     if T >= end: return outro(p, T - end)
     i = max([k for k in range(n) if st[k] <= T] or [0]); loc = max(0.0, T - st[i])
     nxt = st[i + 1] if i + 1 < n else end
+    # v29: the transition NAME comes from p["transitions"] (chosen in plan()
+    # from the look's topic tag); the outro uses a crossfade.
+    trs = p.get("transitions") or []
+    def tname(j):
+        return trs[j] if 0 <= j < len(trs) else "crossfade"
     if i + 1 < n and nxt - T < TR / 2:
-        return transition(scene_frame(p, i, loc), scene_frame(p, i + 1, 0), (T - (nxt - TR / 2)) / TR, (i + 1) % 6, MOODS[p["scenes"][i + 1]["mood"]][2])
+        return transition(scene_frame(p, i, loc), scene_frame(p, i + 1, 0), (T - (nxt - TR / 2)) / TR, tname(i), MOODS[p["scenes"][i + 1]["mood"]][2])
     if i > 0 and loc < TR / 2:
-        return transition(scene_frame(p, i - 1, T - st[i - 1]), scene_frame(p, i, loc), (loc + TR / 2) / TR, i % 6, MOODS[p["scenes"][i]["mood"]][2])
+        return transition(scene_frame(p, i - 1, T - st[i - 1]), scene_frame(p, i, loc), (loc + TR / 2) / TR, tname(i - 1), MOODS[p["scenes"][i]["mood"]][2])
     if i + 1 >= n and end - T < TR / 2:
-        return transition(scene_frame(p, i, loc), outro(p, 0), (T - (end - TR / 2)) / TR, 3, (255, 255, 255))
+        return transition(scene_frame(p, i, loc), outro(p, 0), (T - (end - TR / 2)) / TR, "crossfade", (255, 255, 255))
     return scene_frame(p, i, loc)
 
 _P = None
