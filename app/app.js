@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "divya-v21";
+const APP_V = "divya-v22";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -73,6 +73,7 @@ const T = {
     inviteTitle: "Friends ni invite cheyyi", inviteSub: "Okkaru join aithe iddariki 10 lakh tokens (10 shorts leda 1× 10-min video). Pool tokens expire avvavu.", copy: "Copy", redeem: "Redeem", inviteStatus: (i, e) => `${i} invites · ${e} tokens vachayi`, tokSub: (w, p, v, d) => `Week lo ${fmtTok(w)} tokens migilayi · pool ${fmtTok(p)} · ${v} shorts · reset ${d}`, voiceAddOn: m => `Voice assistant add-on ₹${m}/nela`, voiceSignup: "Voice tho signup cheyyi", capDone: "Captcha solve chesa ✓", capNo: "Sare, solve cheyaledu.", capAskShot: "Captcha screenshot pampu, nenu chadivi answer cheptha.", blindHello: "Blind Mode on. Anni voice tho cheptha. Em cheyyali?",
     netErr: "Network problem. Malli try cheyyi.", micDenied: "Mic permission ivvu (browser settings lo).", noRec: "Ee browser lo voice record avvadu.", loggedIn: n => `${n} tho login`, orDone: "OpenRouter connect ayyindi ✓", orFail: "OpenRouter connect avvaledu.",
     voicePick: "Voice (Divya gonthu)", voiceLoading: "Voices load avthunnayi… (modati sari ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices load avvaledhu — internet check chesi malli try cheyyi. Ippudu system voice tho matladthunna.", voiceNoVoice: "Voice play avvaledhu — Kokoro load avvaledhu, phone lo voice kuda ledu. Internet check cheyyi.", voiceSample: "Hi, nenu Divya. Ee voice tho matladutha.", vChild: "Pillalu", vTeen: "Teenage", vAdult: "30–60", vElder: "60+ peddalu", vFemale: "Female", vMale: "Male", gsAsk: "Free AI setup cheyala? Allow cheyala vadha? Avunu ani cheppu, leda vadhu ani cheppu.", gsDeclined: "Sare, setup cheyaledu. Setup screen lo eppudaina start cheyochu.", gsStopped: "Sare, ikkada aapesthunna. Setup screen lo continue cheyochu.", gsVerifyAsk: "Verification mail vachindhi. Link open cheyala?", sPost: "YouTube post", postIntro: "Edit chesina video ni YouTube lo post cheyyi. Title, description, tags ivvu, schedule kuda set cheyochu.", postVideo: "Video (job id leda link)", postJobPh: "Job id leda video link", postTitle: "Title", postDesc: "Description", postTags: "Tags (comma tho)", postTagsPh: "divya, ai, video", postPrivacy: "Privacy", postSchedule: "Schedule (optional)", postThumb: "Thumbnail (optional)", postBtn: "YouTube lo post cheyyi", postDone: "Post ayyindi ✓", postViews: "Views", postLikes: "Likes", postComments: "Comments", postNeedVideo: "Video job id leda link ivvu.", sHistory: "Naa videos", gHistory: "Naa videos", histIntro: "Edit ayina videos — video 1, video 2 ani numbers. Upload cheyataniki chat lo 'upload video 1' ani cheppu.", histEmpty: "Inka videos levu. Chat lo video attach cheyyi.", histWatch: "Chudu / Download", histUpload: "Upload cheyu", histDone: "Ready", histFail: "Fail ayyindi", histEditing: "Edit avthondi",
+    setupOneTap: "Anni okka tap lo setup cheyyi", setupConsent: "Okka allow — Divya accounts create chesi, API keys theeskoni, captchas solve chesi, server setup chesthundi. Background lo, screen meedha kanipinchadhu.", setupNeedEmail: "Kotha accounts kosam email kavali — Profile lo email set cheyyi.", setupOpen: "Browser lo open cheyyi", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "Setup ayyindhi ✓", setupRunning: "Setup nadusthundhi…", setupPaused: "Pause ayyindhi — Continue nokku leda Take Control cheyyi.", setupFailed: "Setup fail ayyindhi.",
   },
   en: {
     skip: "Skip to content", numLabel: "WhatsApp number", codeLabel: "6-digit code",
@@ -130,6 +131,7 @@ const T = {
     inviteTitle: "Invite friends", inviteSub: "When a friend joins, both get 1,000,000 tokens (10 shorts or 1× 10-minute video). Pool tokens never expire.", copy: "Copy", redeem: "Redeem", inviteStatus: (i, e) => `${i} invites · ${e} tokens earned`, tokSub: (w, p, v, d) => `${fmtTok(w)} tokens left this week · pool ${fmtTok(p)} · ${v} shorts · resets ${d}`, voiceAddOn: m => `Voice assistant add-on ₹${m}/month`, voiceSignup: "Sign up by voice", capDone: "Captcha solved ✓", capNo: "OK, not solving.", capAskShot: "Send a screenshot of the captcha and I'll read the answer.", blindHello: "Blind Mode on. I'll say everything aloud. What shall we do?",
     netErr: "Network problem. Try again.", micDenied: "Allow microphone access in browser settings.", noRec: "Voice recording isn't supported in this browser.", loggedIn: n => `Logged in as ${n}`, orDone: "OpenRouter connected ✓", orFail: "OpenRouter didn't connect.",
     voicePick: "Voice (Divya's voice)", voiceLoading: "Loading voices… (first time ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices failed to load — check your internet and try again. Using the phone voice for now.", voiceNoVoice: "Voice could not play — Kokoro did not load and the phone has no voice. Check your internet.", voiceSample: "Hi, I'm Divya. I'll speak in this voice.", vChild: "Child", vTeen: "Teenage", vAdult: "Age 30–60", vElder: "Aged 60+", vFemale: "Female", vMale: "Male", gsAsk: "Shall I set up free AI for you? Say allow, or no.", gsDeclined: "OK, no setup. You can start it anytime from the Setup screen.", gsStopped: "OK, stopping here. You can continue from the Setup screen.", gsVerifyAsk: "The verification mail is here. Shall I open the link?", sPost: "Post to YouTube", postIntro: "Post your edited video to YouTube. Add a title, description and tags — you can also schedule it.", postVideo: "Video (job id or link)", postJobPh: "Job id or video link", postTitle: "Title", postDesc: "Description", postTags: "Tags (comma-separated)", postTagsPh: "divya, ai, video", postPrivacy: "Privacy", postSchedule: "Schedule (optional)", postThumb: "Thumbnail (optional)", postBtn: "Post to YouTube", postDone: "Posted ✓", postViews: "Views", postLikes: "Likes", postComments: "Comments", postNeedVideo: "Give a video job id or link.", sHistory: "My videos", gHistory: "My videos", histIntro: "Edited videos — numbered video 1, video 2. To upload, say 'upload video 1' in chat.", histEmpty: "No videos yet. Attach a video in chat.", histWatch: "Watch / Download", histUpload: "Upload", histDone: "Ready", histFail: "Failed", histEditing: "Editing",
+    setupOneTap: "Set up everything with one tap", setupConsent: "One allow — Divya creates the accounts, takes the API keys, solves captchas and sets up the server. In the background, nothing shows on screen.", setupNeedEmail: "An email is needed for the new accounts — set it in Profile.", setupOpen: "Open in browser", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "Setup done ✓", setupRunning: "Setup running…", setupPaused: "Paused — tap Continue or Take control.", setupFailed: "Setup failed.",
   },
   hi: {
     skip: "सामग्री पर जाएँ", numLabel: "WhatsApp नंबर", codeLabel: "6 अंकों का कोड", loginSub: "अपना WhatsApp नंबर डालें। कोड WhatsApp पर आएगा।", loginSub2: "आपकी निजी AI। लॉग इन करें या नया अकाउंट बनाएँ।", loginWays: "लॉग इन करने के तरीके", tabLogin: "लॉग इन", tabSignup: "साइन अप", tabWa: "WhatsApp कोड", idLabel: "ईमेल या फ़ोन नंबर", idPh: "ईमेल या फ़ोन नंबर", pwLabel: "पासवर्ड", newPwLabel: "पासवर्ड (कम से कम 8)", nameLabel: "आपका नाम", emailLabel: "ईमेल", phoneLabel: "फ़ोन (WhatsApp) — वैकल्पिक", showPw: "पासवर्ड दिखाएँ", logIn: "लॉग इन", forgot: "पासवर्ड भूल गए?", createAcct: "अकाउंट बनाएँ", suHint: "फ़ोन WhatsApp कोड से वेरीफ़ाई होने के बाद ही लिंक होगा। नए अकाउंट Free प्लान पर शुरू होते हैं।",
@@ -173,6 +175,7 @@ const T = {
     inviteTitle: "दोस्तों को इन्वाइट करें", inviteSub: "एक दोस्त के जॉइन करने पर दोनों को 10 लाख टोकन मिलते हैं (10 शॉर्ट्स या 1× 10 मिनट का वीडियो)। पूल टोकन कभी एक्सपायर नहीं होते।", copy: "कॉपी करें", redeem: "रिडीम करें", inviteStatus: (i, e) => `${i} इन्वाइट · ${e} टोकन मिले`, tokSub: (w, p, v, d) => `इस हफ़्ते ${fmtTok(w)} टोकन बचे · पूल ${fmtTok(p)} · ${v} शॉर्ट्स · रीसेट ${d}`, voiceAddOn: m => `वॉइस असिस्टेंट ऐड-ऑन ₹${m}/महीना`, voiceSignup: "वॉइस से साइन अप करें", capDone: "कैप्चा सॉल्व हो गया ✓", capNo: "ठीक है, सॉल्व नहीं किया।", capAskShot: "कैप्चा का स्क्रीनशॉट भेजें, मैं पढ़कर जवाब बताऊँगी।", blindHello: "ब्लाइंड मोड ऑन। सब कुछ वॉइस से बताऊँगी। क्या करना है?",
     netErr: "नेटवर्क प्रॉब्लम। फिर कोशिश करें।", micDenied: "माइक परमिशन दें (ब्राउज़र सेटिंग्स में)।", noRec: "इस ब्राउज़र में वॉइस रिकॉर्ड नहीं होती।", loggedIn: n => `${n} से लॉग इन`, orDone: "OpenRouter कनेक्ट हो गया ✓", orFail: "OpenRouter कनेक्ट नहीं हुआ।",
     voicePick: "वॉइस (Divya की आवाज़)", voiceLoading: "Voices load ho rahi hain… (pehli baar ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices load nahi hui — internet check karke phir try karo. Abhi phone voice se bol rahi hoon.", voiceNoVoice: "Voice play nahi hui — Kokoro load nahi hua, phone me voice bhi nahi hai. Internet check karo.", voiceSample: "नमस्ते, मैं Divya हूँ। मैं इसी आवाज़ में बोलूँगी।", vChild: "बच्चे", vTeen: "टीनएज", vAdult: "30–60", vElder: "60+ बुज़ुर्ग", vFemale: "महिला", vMale: "पुरुष", gsAsk: "क्या मैं आपके लिए फ्री AI सेटअप करूँ? Allow कहें, या नहीं।", gsDeclined: "ठीक है, सेटअप नहीं किया। Setup स्क्रीन से कभी भी शुरू कर सकते हैं।", gsStopped: "ठीक है, यहीं रुक रही हूँ। Setup स्क्रीन से जारी रख सकते हैं।", gsVerifyAsk: "वेरिफ़िकेशन मेल आ गया है। क्या लिंक खोलूँ?", sPost: "YouTube पोस्ट", postIntro: "एडिट किया वीडियो YouTube पर पोस्ट करें। टाइटल, डिस्क्रिप्शन और टैग दें — शेड्यूल भी कर सकते हैं।", postVideo: "वीडियो (job id या लिंक)", postJobPh: "Job id या वीडियो लिंक", postTitle: "टाइटल", postDesc: "डिस्क्रिप्शन", postTags: "टैग (कॉमा से अलग करें)", postTagsPh: "divya, ai, video", postPrivacy: "प्राइवेसी", postSchedule: "शेड्यूल (वैकल्पिक)", postThumb: "थंबनेल (वैकल्पिक)", postBtn: "YouTube पर पोस्ट करें", postDone: "पोस्ट हो गया ✓", postViews: "व्यूज़", postLikes: "लाइक्स", postComments: "कमेंट्स", postNeedVideo: "वीडियो job id या लिंक दें।", sHistory: "Mere videos", gHistory: "Mere videos", histIntro: "Edit kiye videos — video 1, video 2 number se. Upload ke liye chat me 'upload video 1' kaho.", histEmpty: "Abhi koi video nahi hai. Chat me video attach karo.", histWatch: "Dekho / Download", histUpload: "Upload karo", histDone: "Ready", histFail: "Fail ho gaya", histEditing: "Edit ho raha hai",
+    setupOneTap: "सब कुछ एक टैप में सेटअप करो", setupConsent: "एक अलाउ — दिव्या अकाउंट बनाएगी, API कीज़ लेगी, कैप्चा सॉल्व करेगी और सर्वर सेटअप करेगी। बैकग्राउंड में, स्क्रीन पर कुछ नहीं दिखेगा।", setupNeedEmail: "नए अकाउंट के लिए ईमेल चाहिए — प्रोफ़ाइल में ईमेल सेट करो।", setupOpen: "ब्राउज़र में खोलो", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "सेटअप हो गया ✓", setupRunning: "सेटअप चल रहा है…", setupPaused: "रुका हुआ है — Continue दबाओ या Take control करो।", setupFailed: "सेटअप फ़ेल हो गया।",
   },
   "hi-Latn": {
     skip: "Content par jao", numLabel: "WhatsApp number", codeLabel: "6 digit ka code", loginSub: "Apna WhatsApp number dalo. Code WhatsApp par aayega.", loginSub2: "Aapki personal AI. Log in karo ya naya account banao.", loginWays: "Log in karne ke tareeke", tabLogin: "Log in", tabSignup: "Sign up", tabWa: "WhatsApp code", idLabel: "Email ya phone number", idPh: "Email ya phone number", pwLabel: "Password", newPwLabel: "Password (kam se kam 8)", nameLabel: "Aapka naam", emailLabel: "Email", phoneLabel: "Phone (WhatsApp) — optional", showPw: "Password dikhao", logIn: "Log in", forgot: "Password bhool gaye?", createAcct: "Account banao", suHint: "Phone WhatsApp code se verify hone ke baad hi link hoga. Naye accounts Free plan par shuru hote hain.",
@@ -216,6 +219,7 @@ const T = {
     inviteTitle: "Doston ko invite karo", inviteSub: "Ek dost ke join karne par dono ko 10 lakh tokens milte hain (10 shorts ya 1× 10 minute ka video). Pool tokens kabhi expire nahi hote.", copy: "Copy", redeem: "Redeem", inviteStatus: (i, e) => `${i} invites · ${e} tokens mile`, tokSub: (w, p, v, d) => `Is hafte ${fmtTok(w)} tokens bache · pool ${fmtTok(p)} · ${v} shorts · reset ${d}`, voiceAddOn: m => `Voice assistant add-on ₹${m}/mahina`, voiceSignup: "Voice se sign up karo", capDone: "Captcha solve ho gaya ✓", capNo: "Theek hai, solve nahi kiya.", capAskShot: "Captcha ka screenshot bhejo, main padhkar jawab bataungi.", blindHello: "Blind Mode on. Sab kuch voice se bataungi. Kya karna hai?",
     netErr: "Network problem. Phir try karo.", micDenied: "Mic permission do (browser settings me).", noRec: "Is browser me voice record nahi hoti.", loggedIn: n => `${n} se log in`, orDone: "OpenRouter connect ho gaya ✓", orFail: "OpenRouter connect nahi hua.",
     voicePick: "Voice (Divya ki awaaz)", voiceLoading: "Voices load ho rahi hain… (pehli baar ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices load nahi hui — internet check karke phir try karo. Abhi phone voice se bol rahi hoon.", voiceNoVoice: "Voice play nahi hui — Kokoro load nahi hua, phone me voice bhi nahi hai. Internet check karo.", voiceSample: "Namaste, main Divya hoon. Main isi awaaz me bolungi.", vChild: "Bachche", vTeen: "Teenage", vAdult: "30–60", vElder: "60+ buzurg", vFemale: "Mahila", vMale: "Purush", gsAsk: "Kya main aapke liye free AI setup karoon? Allow kaho, ya nahi.", gsDeclined: "Theek hai, setup nahi kiya. Setup screen se kabhi bhi shuru kar sakte hain.", gsStopped: "Theek hai, yahin ruk rahi hoon. Setup screen se jaari rakh sakte hain.", gsVerifyAsk: "Verification mail aa gaya hai. Kya link kholoon?", sPost: "YouTube post", postIntro: "Edit kiya video YouTube par post karo. Title, description aur tags do — schedule bhi kar sakte ho.", postVideo: "Video (job id ya link)", postJobPh: "Job id ya video link", postTitle: "Title", postDesc: "Description", postTags: "Tags (comma se alag karo)", postTagsPh: "divya, ai, video", postPrivacy: "Privacy", postSchedule: "Schedule (optional)", postThumb: "Thumbnail (optional)", postBtn: "YouTube par post karo", postDone: "Post ho gaya ✓", postViews: "Views", postLikes: "Likes", postComments: "Comments", postNeedVideo: "Video job id ya link do.", sHistory: "Mere videos", gHistory: "Mere videos", histIntro: "Edit kiye videos — video 1, video 2 number se. Upload ke liye chat me 'upload video 1' kaho.", histEmpty: "Abhi koi video nahi hai. Chat me video attach karo.", histWatch: "Dekho / Download", histUpload: "Upload karo", histDone: "Ready", histFail: "Fail ho gaya", histEditing: "Edit ho raha hai",
+    setupOneTap: "Sab kuch ek tap me setup karo", setupConsent: "Ek allow — Divya accounts banayegi, API keys legi, captcha solve karegi aur server setup karegi. Background me, screen par kuch nahi dikhega.", setupNeedEmail: "Naye accounts ke liye email chahiye — Profile me email set karo.", setupOpen: "Browser me kholo", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "Setup ho gaya ✓", setupRunning: "Setup chal raha hai…", setupPaused: "Ruka hua hai — Continue dabao ya Take control karo.", setupFailed: "Setup fail ho gaya.",
   },
 };
 const t = (k, ...a) => { const v = (T[S.lang] || T.te)[k]; return typeof v === "function" ? v(...a) : v ?? k; };
@@ -391,7 +395,7 @@ function route() {
   if (name === "history") loadVideos();
   if (name === "plan" || name === "home") loadPlan();
   if (name === "download") renderDownload();
-  if (name === "chat") scrollDown();
+  if (name === "chat") { scrollDown(); pollSetup(); /* R48: restore the setup mini-box if a setup is running */ }
 }
 window.addEventListener("hashchange", route);
 const go = name => { location.hash = "#/" + name; };
@@ -770,6 +774,66 @@ async function pollChatVideo(num, job) {
   tick();
   chatPoll = setInterval(tick, 10000);
 }
+/* R48: one-tap setup + Muse-style background browser mini-box in chat. */
+let setupPoll = null, setupBoxEl = null;
+async function startOneTapSetup() {
+  const btn = $("#oneTapBtn"); if (btn) btn.disabled = true;
+  try {
+    let email = "";
+    try { const me = await api("me"); email = (me.account && me.account.email) || ""; } catch {}
+    if (!email) { toast(t("setupNeedEmail"), true); return; }
+    const d = await api("setup/start", { method: "POST", json: { email, providers: ["groq", "openrouter", "gemini"] } });
+    if (!d.ok) { toast(d.error || t("netErr"), true); return; }
+    location.hash = "#/chat";
+    bubble("bot", t("setupRunning"));
+    pollSetup();
+  } finally { if (btn) btn.disabled = false; }
+}
+function renderSetupBox(st) {
+  if (!st || !st.current) return;
+  const c = st.current;
+  if (!setupBoxEl || !document.body.contains(setupBoxEl)) {
+    $("#msgs .empty")?.remove();
+    setupBoxEl = document.createElement("div");
+    setupBoxEl.className = "msg bot setup-box";
+    $("#msgs").appendChild(setupBoxEl);
+  }
+  const done = c.state === "done";
+  const failed = c.state === "failed" || c.state === "stopped";
+  const paused = c.state === "paused";
+  const title = done ? t("setupDone") : failed ? t("setupFailed") : paused ? t("setupPaused") : t("setupRunning");
+  const provs = (st.providers || []).join(" → ");
+  setupBoxEl.innerHTML = `<b>${esc(title)}</b><div class="muted small">${esc(c.site || "")} · ${esc(c.step || "")}</div>` +
+    (c.note ? `<div>${esc(c.note)}</div>` : "") +
+    `<div class="muted small">${esc(provs)}${st.done && st.done.length ? " · ✓ " + st.done.join(", ") : ""}</div>` +
+    `<div class="act"><button class="pill" data-a="open">${esc(t("setupOpen"))}</button>` +
+    (paused ? `<button class="pill" data-a="continue">${esc(t("setupContinue"))}</button>` : "") +
+    `<button class="pill" data-a="take">${esc(t("setupTake"))}</button>` +
+    `<button class="pill" data-a="stop">${esc(t("setupStop"))}</button></div>`;
+  setupBoxEl.querySelector('[data-a="open"]').onclick = () => { if (c.url) window.open(c.url, "_blank"); };
+  const take = setupBoxEl.querySelector('[data-a="take"]');
+  if (take) take.onclick = async () => { await api("setup/pause", { method: "POST", json: {} }); if (c.url) window.open(c.url, "_blank"); pollSetup(); };
+  const stop = setupBoxEl.querySelector('[data-a="stop"]');
+  if (stop) stop.onclick = async () => { await api("setup/stop", { method: "POST", json: {} }); pollSetup(); };
+  const cont = setupBoxEl.querySelector('[data-a="continue"]');
+  if (cont) cont.onclick = async () => { await api("setup/continue", { method: "POST", json: {} }); pollSetup(); };
+  scrollDown();
+}
+async function pollSetup() {
+  if (setupPoll) clearInterval(setupPoll);
+  let tries = 0;
+  const tick = async () => {
+    if (++tries > 360) { clearInterval(setupPoll); setupPoll = null; return; } // 30 min
+    let d = null;
+    try { d = await api("setup/status"); } catch {}
+    if (!d || !d.ok) return;
+    if (!d.active) { clearInterval(setupPoll); setupPoll = null; return; }
+    renderSetupBox(d);
+  };
+  tick();
+  setupPoll = setInterval(tick, 5000);
+}
+$("#oneTapBtn").onclick = () => startOneTapSetup();
 const input = $("#input");
 function autoGrow() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 140) + "px"; }
 function updateBtn() { $("#chatSend").disabled = !input.value.trim() && !pendingVideo; }

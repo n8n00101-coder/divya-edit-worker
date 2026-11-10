@@ -272,6 +272,11 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .prof-head{display:flex;align-items:center;gap:16px;margin:6px 0 18px}
 .prof-head h2{margin:0;font-size:22px;letter-spacing:-.3px;overflow-wrap:anywhere}
 .row .r{text-align:right;overflow-wrap:anywhere;min-width:0}
+/* R48: setup mini-box in chat (Muse-style background browser card) — small,
+   shows the background setup progress + Open in browser / Stop / Take control. */
+.setup-box{border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--surface)}
+.setup-box .act{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.setup-box .pill{border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:999px;padding:8px 14px;font-size:14px;cursor:pointer}
 /* floating mini-chat bubble (Phase 1) + Blind Mode */
 /* R27: small draggable button, default above the chat composer + tabbar (bottom:150px),
    never overlapping the send button; the composer (z-index:70) always wins taps over the bubble (60). */
