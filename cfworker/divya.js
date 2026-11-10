@@ -402,6 +402,9 @@ function isCreateOrder(text) {
   if (/(naa\s+video\s*ni|ee\s+video\s*ni|upload\s*chesa(nu)?|link\s*pampanu|nenu\s*pampina|nenu\s*upload)/i.test(t)) return false;
   if (/(em\s*ledhu|ledhu|ledu|nee\s*istam|nuvve|motham\s*nve|scratch|starting\s*nundi|last\s*varaku|kotha\s+video)/i.test(t)) return true;
   if (/\b(video|reel|short)\b.{0,60}(cheyu|cheyyi|chey|create|make|chesko)\b/i.test(t)) return true;
+  // v21: English puts the verb FIRST ("Make a 30s short") — the pattern above
+  // only matched verb-after-noun (Telugu order) and swallowed English orders.
+  if (/\b(cheyu|cheyyi|chey|create|make|chesko)\b.{0,60}\b(video|reel|short)\b/i.test(t)) return true;
   return false;
 }
 // R44: "edit + no raw video + faceless short" = CREATE, never "video file kavali".
@@ -710,7 +713,7 @@ function chatFirst(text) {
   if (/\[\[\s*EDITVIDEO:/.test(text)) return true;
   if (/(upload|post)\s+(video\s*)?\d+/.test(t)) return true;
   if (/video\s*\d+\s*(ni\s*)?(youtube|instagram|insta|both|renditlo)/.test(t)) return true;
-  if (/\b(video|reel|short)\b.{0,80}(cheyu|cheyyi|chey|make|create|gurinchi|about)/i.test(text) && !/(upload|post)/i.test(t)) return true;
+  if ((/\b(video|reel|short)\b.{0,80}(cheyu|cheyyi|chey|make|create|gurinchi|about)/i.test(text) || /\b(make|create|cheyu|cheyyi|chey)\b.{0,80}\b(video|reel|short)\b/i.test(text)) && !/(upload|post)/i.test(t)) return true;
   if (/(reference|ref( |-)?video|ee video laaga|ilanti video|ilaanti video)/i.test(t)) return true;
   if (/(styles|templates)/i.test(t) && /(chupinchu|choopinchu|show|list|cheppu|chudu)/i.test(t)) return true;
   return false;
@@ -1303,7 +1306,10 @@ async function appAssist(env, u, body, lang) {
   // style lists, reference blueprints and topic plans are never hijacked by the
   // edit-tab redirect below.
   if (chatFirst(text)) { const r = await appTalk(env, u, text, lang, body.voiceId); return { ok: true, intent: "chat", free: true, ...r }; }
-  if (/\b(edit|video|videos|reel|reels|short|shorts)\b|వీడియో|రీల్|ఎడిట్/i.test(text) && !/\b(play|song|paata|pata)\b/i.test(text)) { const r = editHint(lang); const h = await history(env, u.n); h.push({ role: "user", content: text }, { role: "assistant", content: r }); await remember(env, u.n, h); return { ok: true, intent: "edit", free: true, reply: r }; }
+  // v21: never swallow a create order here — "Make a 30s short" contains "short"
+  // and used to get the edit hint instead of a video. Genuine how-to questions
+  // (no order verb) still get the hint.
+  if (/\b(edit|video|videos|reel|reels|short|shorts)\b|వీడియో|రీల్|ఎడిట్/i.test(text) && !/\b(play|song|paata|pata)\b/i.test(text) && !isCreateOrder(text) && !isNoVideoEditOrder(text)) { const r = editHint(lang); const h = await history(env, u.n); h.push({ role: "user", content: text }, { role: "assistant", content: r }); await remember(env, u.n, h); return { ok: true, intent: "edit", free: true, reply: r }; }
   let it = ruleIntent(text);
   if (!it && (ACTION_RX.test(text) || PREMIUM_RX.test(text))) it = await llmIntent(env, u.n, text);
   if (!it) it = { intent: "chat" };
