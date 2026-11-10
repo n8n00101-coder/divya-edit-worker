@@ -57,25 +57,45 @@ _LOOK_WORDS = {
 }
 
 
-def pick_look(brief, recent=""):
-    """Topic mood -> design system (A/B/C/D). Never the previous video's look:
-    the previous look is derived from the last topic in `recent` (the Worker passes
-    the last 15 topics, most recent last). Deterministic — never random."""
+def pick_look(brief, recent="", recent_styles=None):
+    """Topic mood -> design system (A/B/C/D). Never repeats the last 5 videos'
+    looks: the Worker stores each finished video's look in KV (styles:<user>,
+    most recent last) and passes the last 5 here as `recent_styles`. The kit's
+    rule — the style plan must differ from the last 5 (palette + motion +
+    transition). Deterministic — never random."""
     import zlib
     text = (brief or "").lower()
     scores = {k: sum(1 for w in words if w in text) for k, words in _LOOK_WORDS.items()}
     best = max(LOOKS, key=lambda k: scores[k])  # ties -> A (first), the safe default
-    prev = None
+    if recent_styles:
+        used = [s for s in (recent_styles or []) if s in LOOKS][-5:]
+        if best in used:
+            # prefer a look NOT used in the last 5 (by keyword score);
+            # if all 4 are used, take the least recently used one.
+            unused = [k for k in LOOKS if k not in used]
+            if unused:
+                best = max(unused, key=lambda k: scores[k])
+            else:
+                last_seen = {k: max([i for i, s in enumerate(used) if s == k], default=-1) for k in LOOKS}
+                best = min(LOOKS, key=lambda k: last_seen[k])
+        return best
+    # Fallback (no KV styles yet): derive the look of each of the last 5 topics
+    # from the topic words (same keyword scoring) and avoid all of them. The
+    # Worker passes the last 15 topics in `recent`, most recent last.
+    used = []
     if recent:
-        last = [s.strip() for s in str(recent).split(";") if s.strip()]
-        if last:
-            pt = last[-1].lower()
-            ps = {k: sum(1 for w in words if w in pt) for k, words in _LOOK_WORDS.items()}
+        last = [s.strip() for s in str(recent).split(";") if s.strip()][-5:]
+        for tp in last:
+            ps = {k: sum(1 for w in words if w in tp.lower()) for k, words in _LOOK_WORDS.items()}
             if max(ps.values()) > 0:
-                prev = max(ps, key=lambda k: ps[k])
-    if prev and best == prev:
-        order = ["A", "B", "C", "D"]
-        best = order[(order.index(best) + 1) % 4]
+                used.append(max(ps, key=lambda k: ps[k]))
+    if used and best in used:
+        unused = [k for k in LOOKS if k not in used]
+        if unused:
+            best = max(unused, key=lambda k: scores[k])
+        else:
+            last_seen = {k: max([i for i, s in enumerate(used) if s == k], default=-1) for k in LOOKS}
+            best = min(LOOKS, key=lambda k: last_seen[k])
     return best
 
 
@@ -118,12 +138,13 @@ history mysteries, science facts, money habits, health, tech, motivation). Avoid
 Owner request: """ % C.VISUALS
 
 
-def plan(brief, chat, recent=""):
+def plan(brief, chat, recent="", recent_styles=None):
     # v25: the TOPIC MOOD picks the design system (A/B/C/D) FIRST, so the LLM
     # designs every scene for that look — never one fixed style.
     # v27 (Hark kit style plan): the look also carries a motion personality +
     # transition family from the topic mood, so the motion differs per video too.
-    look = pick_look(brief, recent)
+    # v28: recent_styles (the last 5 looks, from KV) keeps the look from repeating.
+    look = pick_look(brief, recent, recent_styles)
     look_line = (f"DESIGN LOOK {look} ({LOOKS[look]['name']}): {LOOKS[look]['desc']}. "
                  f"Motion personality: {LOOKS[look]['motion_personality']}. "
                  f"Transition family: {LOOKS[look]['transition_family']}.")
@@ -570,10 +591,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 # ---------------- main ----------------
-async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None):
+async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None):
     global _P
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
-    p = plan(brief, chat, recent)
+    p = plan(brief, chat, recent, recent_styles)
     voice = VOICES.get((p["lang"], p.get("voice", "male")), VOICES[(p["lang"], "male")])
     if notify: await notify(f"Script ready: {p['title']} ({len(p['scenes'])} scenes, {p['lang']}). Voice, animation, music chestunna.")
     gap = 0.32

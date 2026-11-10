@@ -503,7 +503,12 @@ async def create_job(j, wa, note):
         res = None
         for attempt in range(2):
             try:
-                res = await create.make_video(j.get("brief", ""), groq_chat, notify=note, recent=j.get("recent", ""))
+                # v28: the last 5 looks (from KV, via the job) so the look never
+                # repeats — only the v2 engine (doc.py, pick_look) takes it.
+                kw = {"recent": j.get("recent", "")}
+                if hasattr(create, "pick_look"):
+                    kw["recent_styles"] = j.get("recent_styles") or []
+                res = await create.make_video(j.get("brief", ""), groq_chat, notify=note, **kw)
                 print("look", res.get("plan", {}).get("look"), res.get("plan", {}).get("accent"))
                 break
             except (ValueError, KeyError) as e:  # bad plan JSON -> retry once
@@ -543,7 +548,12 @@ async def create_job(j, wa, note):
             qcline += "\nFlaws: " + "; ".join(gate_flaws)[:250]
         try:
             up = fit_size(res["path"], 23)
-            rr = httpx.post(f"{WORKER}/api/runner/result", params={"job": JOB, "note": f"{res.get('summary', '')[:200]}"[:290]}, content=open(up, "rb").read(), headers={"x-runner-key": KEY, "content-type": "video/mp4"}, timeout=300)
+            # v28: report the chosen style (look + motion + transition) so the
+            # Worker stores it in KV (styles:<user>) for the next video's no-repeat.
+            _pl = res.get("plan", {}) or {}
+            rr = httpx.post(f"{WORKER}/api/runner/result", params={"job": JOB, "note": f"{res.get('summary', '')[:200]}"[:290],
+                            "look": str(_pl.get("look", "")), "motion": str(_pl.get("motion_personality", "")),
+                            "transition": str(_pl.get("transition_family", ""))}, content=open(up, "rb").read(), headers={"x-runner-key": KEY, "content-type": "video/mp4"}, timeout=300)
             print("result upload", rr.status_code)
         except Exception as e:
             print("result upload failed", str(e)[:200])
