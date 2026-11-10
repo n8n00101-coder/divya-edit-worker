@@ -348,21 +348,27 @@ def scene_frame(p, idx, t):
     header(d, p, idx, n, t, sc["d"], acc, look)
     # v25: layout rotates per scene — standard, full-bleed visual + small caption,
     # centered big word, split screen (visual top, label + divider bottom).
+    # v26: voice-timed effects — the visual + label pop when the scene's KEY WORD is
+    # spoken (Hark: the word, its icon and its pop land on the same frame).
+    # pop_t = offset (s) of the first content word inside the scene's voice-over.
+    pt = max(0.0, t - float(sc.get("pop_t", 0.0) or 0.0))
     layout = (idx + seed) % 4
     if layout == 1:  # full-bleed
-        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), t, cy=900, acc=acc)
-        label(d, sc["label"], t, acc, idx, look)
+        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), pt, cy=900, acc=acc)
+        label(d, sc["label"], pt, acc, idx, look)
     elif layout == 2:  # centered big word, visual small below
-        label(d, sc["label"], t, acc, idx, look)
-        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), t, cy=1500, acc=acc)
+        label(d, sc["label"], pt, acc, idx, look)
+        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), pt, cy=1500, acc=acc)
     elif layout == 3:  # split
-        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), t, cy=650, acc=acc)
+        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), pt, cy=650, acc=acc)
         d.rectangle([(120, 1080), (W - 120, 1088)], fill=acc)
-        label(d, sc["label"], t, acc, idx, look)
+        label(d, sc["label"], pt, acc, idx, look)
     else:  # standard
-        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), t, cy=800, acc=acc)
-        label(d, sc["label"], t, acc, idx, look)
-    character(im, mood, t, acc)
+        C.draw_visual(d, im, sc["visual"], sc.get("value", ""), pt, cy=800, acc=acc)
+        label(d, sc["label"], pt, acc, idx, look)
+    # v26: the pawn character is REMOVED — Ajju calls it 'ah chess board shipai';
+    # a fixed mascot in every scene of every video is not an edit, and it has
+    # nothing to do with the topic. Scenes now carry only the topic's own visuals.
     if idx == 0 and t < 2.4:  # cold-open title
         k = ease(t / 0.5) * (1 - ease((t - 1.9) / 0.5))
         ov = Image.new("L", (W, H), 0); ImageDraw.Draw(ov).rectangle([0, 0, W, H], fill=int(150 * k)); im.paste((0, 0, 0), (0, 0), ov)
@@ -378,20 +384,22 @@ def scene_frame(p, idx, t):
     return camera(im, idx, t, sc["d"], mood, moves[(idx + seed) % len(moves)])
 
 def camera(im, idx, t, d, mood, move="push"):
-    # v25: a DIFFERENT camera move per scene (Hark: push-in, pan, parallax, whip).
-    # move is chosen per scene in scene_frame from (idx + seed).
+    # v26: SUBTLE moves only (Hark: slow 3% zoom). The old 7.5% push-in + 28px
+    # drift cropped the frame so the background zoomed and content went OUTSIDE
+    # the screen (Ajju's verdict). Max zoom is now 3% and drift is small, so
+    # nothing leaves the safe area.
     z, dx, dy = 1.0, 0.0, 0.0
     q = eio(t / max(d, 0.1))
-    if move == "push":  # slow push-in (A, C)
-        z = 1.0 + 0.075 * q; dx = (1 if idx % 2 else -1) * 28 * q
-    elif move == "pan":  # horizontal pan
-        z = 1.03; dx = -50 + 100 * q
-    elif move == "zoomout":  # start close, ease out
-        z = 1.09 - 0.09 * q; dx = (1 if idx % 2 else -1) * 14 * q
-    elif move == "whip":  # fast pan (B, D hard cuts)
-        z = 1.04; dx = -90 + 180 * clamp(t / max(d, 0.1) * 1.6)
-    else:  # drift: slow diagonal (parallax feel)
-        z = 1.02 + 0.04 * q; dx = 22 * q; dy = 16 * q
+    if move == "push":  # slow 3% push-in
+        z = 1.0 + 0.03 * q; dx = (1 if idx % 2 else -1) * 10 * q
+    elif move == "pan":  # gentle horizontal pan
+        z = 1.015; dx = -16 + 32 * q
+    elif move == "zoomout":  # start 3% in, ease out to the full frame
+        z = 1.03 - 0.03 * q; dx = (1 if idx % 2 else -1) * 6 * q
+    elif move == "whip":  # quick pan, still inside the frame
+        z = 1.02; dx = -28 + 56 * clamp(t / max(d, 0.1) * 1.6)
+    else:  # drift: slow diagonal
+        z = 1.01 + 0.015 * q; dx = 10 * q; dy = 8 * q
     sx = sy = 0
     if mood in ("tense", "excited") and t < 0.45: sx, sy = random.uniform(-14, 14), random.uniform(-14, 14)
     cw, ch = W / z, H / z; x0 = (W - cw) / 2 + dx + sx; y0 = (H - ch) / 2 + dy + sy
@@ -399,13 +407,13 @@ def camera(im, idx, t, d, mood, move="push"):
 
 def outro(p, t):
     # v25: outro uses the video's look accent, not the last scene's mood accent.
+    # v26: no pawn here either (see scene_frame).
     acc = tuple(p.get("accent") or MOODS[p["scenes"][-1]["mood"]][2])
     im = background(p["scenes"][-1]["mood"], p.get("look"))
     d = ImageDraw.Draw(im)
     k = C.pop(t / 0.5); f = anton(int(140 * max(k, 0.2)))
     for li, (ln, col) in enumerate([("FOLLOW", (255, 255, 255)), ("FOR MORE", acc)]):
         w = d.textlength(ln, font=f); d.text(((W - w) / 2, 640 + li * 180), ln, font=f, fill=col)
-    character(im, "excited", t, acc)
     return im
 
 def transition(a, b, p, kind, acc):
@@ -550,6 +558,20 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     for i, s in enumerate(p["scenes"]):
         a = f"{wd}/vo{i}.mp3"; s["words"] = await tts(s["vo"], voice, s["mood"], a)
         s["audio"] = a; s["adur"] = dur(a); s["d"] = s["adur"] + gap
+    # v26: voice-timed effects — pop_t = offset (s) of the first content word
+    # inside the scene's voice-over. scene_frame pops the visual + label at
+    # that moment, so the word, its icon and its pop land on the same frame.
+    _STOP = {"a", "an", "the", "is", "are", "was", "were", "it", "its", "this", "that",
+             "and", "or", "but", "so", "to", "of", "in", "on", "for", "with", "you", "your",
+             "we", "our", "i", "me", "my", "he", "she", "they", "do", "does", "did", "can",
+             "will", "would", "not", "no", "yes", "if", "when", "why", "how", "what"}
+    for s in p["scenes"]:
+        pop_t = 0.0
+        for (o, _d, w) in (s.get("words") or []):
+            ww = str(w).strip().lower().strip(".,!?\"'")
+            if len(ww) > 3 and ww not in _STOP:
+                pop_t = float(o); break
+        s["pop_t"] = pop_t
     starts, t = [], 0.4  # 0.4 s pre-roll for the boom
     for s in p["scenes"]: starts.append(t); t += s["d"]
     p["starts"] = starts; p["voice_end"] = t; total = t + OUTRO
