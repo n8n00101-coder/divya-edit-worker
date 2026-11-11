@@ -442,7 +442,9 @@ function renderVoiceList() {
   el.innerHTML = `<p class="muted small voice-note" id="voiceStatus">${voiceStatusText()}</p>` +
     // v37: when Kokoro failed, say so and offer a retry — the old list just
     // sat there while every sample silently played the one phone voice.
-    (kst.state === "failed" ? `<button class="btn secondary" id="voiceRetry" type="button">${esc(t("voiceRetry"))}</button><p class="muted small voice-note">${esc(t("voiceRetryNote"))}</p>` : "") +
+    // v39: append the REAL reason (kokoroStatus().short) so a failure is
+    // diagnosable instead of the generic "check your internet".
+    (kst.state === "failed" ? `<button class="btn secondary" id="voiceRetry" type="button">${esc(t("voiceRetry"))}</button><p class="muted small voice-note">${esc(t("voiceRetryNote"))}${kst.short ? " " + esc(kst.short) + "." : ""}</p>` : "") +
     group("F") + group("M");
   const retry = $("#voiceRetry");
   if (retry) retry.onclick = () => {
@@ -578,7 +580,7 @@ voiceListEl() && voiceListEl().addEventListener("click", async e => {
     const ok = await speak(t("voiceSample"), voiceById(play.dataset.play), { waitMs: 120000 });
     play.textContent = label; play.disabled = false;
     const last = speak.last || {};
-    if (!ok) toast(t("voiceLoadFail"), true);
+    if (!ok) toast(t(last.engine === "none" ? "voiceNoVoice" : "voiceLoadFail"), true);
     else if (last.engine === "system") toast(t("voicePlayedSystem", last.label || ""), true);
     return;
   }
@@ -587,7 +589,7 @@ voiceListEl() && voiceListEl().addEventListener("click", async e => {
     S.voiceId = sel.dataset.vid; store.set("voiceId", S.voiceId); showVoiceName(); renderVoiceList();
     const ok = await speak(t("voiceSample"), undefined, { waitMs: 120000 });
     const last = speak.last || {};
-    if (!ok) toast(t("voiceLoadFail"), true);
+    if (!ok) toast(t(last.engine === "none" ? "voiceNoVoice" : "voiceLoadFail"), true);
     else if (last.engine === "system") toast(t("voicePlayedSystem", last.label || ""), true);
   }
 });
