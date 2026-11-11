@@ -1935,7 +1935,155 @@ async function setupFinalize(env, n, done) {
   try { if (!(await env.KV.get(`joined:${n}`))) await env.KV.put(`joined:${n}`, String(Date.now())); } catch {}
   const keys = {};
   for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${n}:${id}`)) keys[id] = true;
-  return { referralCode: code, weeklyFree: TOK.WEEKLY_FREE, weekEnds: istWeekEnd(), keys };
+  // v39 Phase 2: an autonomous run logs what it did, so the user can see
+  // it (Setup screen auto-log). The chain is still in KV here —
+  // setupStartNext deletes it only after finalize returns.
+  let auto = false;
+  try {
+    const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
+    if (chain && chain.auto) {
+      auto = true;
+      for (const id of (chain.done || [])) if (keys[id]) await autoLogAppend(env, n, { provider: id, action: "key-added", why: (chain.why && chain.why[id]) || "key missing — auto-provisioned", result: "ok" });
+      for (const id of (chain.failed || [])) await autoLogAppend(env, n, { provider: id, action: "still-missing", why: (chain.why && chain.why[id]) || "auto-provision failed", result: "failed" });
+      if (!(chain.done || []).length && !(chain.failed || []).length) await autoLogAppend(env, n, { provider: "", action: "no-key", why: "auto-provision finished with no key", result: "failed" });
+    }
+  } catch {}
+  return { referralCode: code, weeklyFree: TOK.WEEKLY_FREE, weekEnds: istWeekEnd(), keys, auto };
+}
+// ===== v39 Phase 2: autonomous self-monitoring + self-provisioning =====
+// Ajju (2026-11-11): Divya itself must figure out, on its own, whether
+// the API keys are there and whether they are enough for the user's usage
+// — and when they are not, think "I need more API keys from free models"
+// and create them itself, in the background, inside the one-tap allow.
+// Loop: (a) key-health check (present? valid? rate-limited?), (b) usage
+// analysis (weekly token spend vs allowance), (c) auto-provision the
+// missing/invalid providers through the same setup chain, (d) every
+// action logged to a visible auto-log (when / which provider / why /
+// result) the Setup screen shows. Triggers: opportunistically on
+// setup/status (throttled to one check per user per 6h), the scheduled
+// handler (when a cron is configured), and setup/autocheck (manual/test).
+// Never without consent on file; never while a run is already active;
+// a provider that failed auto-provision is not retried for 24h.
+const AUTO_PROVIDERS = ["groq", "openrouter", "gemini"];
+const AUTO_CHECK_MIN_MS = 6 * 60 * 60 * 1000;
+const AUTO_FAIL_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const AUTO_LOG_MAX = 20;
+const AUTO_PROBE = {
+  groq: "https://api.groq.com/openai/v1/models",
+  openrouter: "https://openrouter.ai/api/v1/models",
+  gemini: "https://generativelanguage.googleapis.com/v1beta/models",
+};
+async function autoProbeKey(provider, key) {
+  // One cheap read-only probe, same endpoints the runner's test_key uses.
+  // Returns {valid, limited}: limited = key works but the free tier is
+  // rate-limiting right now (still counts as a key, never auto-replaced
+  // on its own — only missing/invalid keys trigger provisioning).
+  try {
+    const url = provider === "gemini" ? AUTO_PROBE.gemini + "?key=" + encodeURIComponent(key) : AUTO_PROBE[provider];
+    const headers = provider === "gemini" ? {} : { Authorization: "Bearer " + key };
+    const r = await fetch(url, { headers, signal: AbortSignal.timeout(10000) }).catch(() => null);
+    if (!r) return { valid: false, limited: false, error: "no response" };
+    if (r.status === 429) return { valid: true, limited: true };
+    return { valid: r.status === 200, limited: false };
+  } catch { return { valid: false, limited: false, error: "probe failed" }; }
+}
+async function keyHealthCheck(env, n) {
+  const health = {};
+  for (const id of AUTO_PROVIDERS) {
+    const key = await openKey(env, n, id);
+    if (!key) { health[id] = { present: false, valid: false, status: "missing" }; continue; }
+    const probe = await autoProbeKey(id, key);
+    health[id] = { present: true, valid: probe.valid, limited: !!probe.limited, status: probe.valid ? (probe.limited ? "limited" : "ok") : "invalid" };
+  }
+  return health;
+}
+async function usageAnalysis(env, n, health) {
+  const bal = await tokBalance(env, n).catch(() => null);
+  const weekSpent = bal ? bal.weekSpent : 0;
+  const week = bal ? bal.week : TOK.WEEKLY_FREE;
+  const usagePct = week > 0 ? Math.round((weekSpent / week) * 100) : 0;
+  const missing = AUTO_PROVIDERS.filter(id => health[id].status === "missing");
+  const invalid = AUTO_PROVIDERS.filter(id => health[id].status === "invalid");
+  const limited = AUTO_PROVIDERS.filter(id => health[id].status === "limited");
+  return { weekSpent, weekLeft: bal ? bal.weekLeft : 0, videosWeek: bal ? bal.videosWeek : 0, usagePct,
+    unlimited: !!(bal && bal.unlimited), missing, invalid, limited,
+    enough: missing.length === 0 && invalid.length === 0 };
+}
+async function autoLogRead(env, n) {
+  try { return JSON.parse((await env.KV.get(`setupauto:${n}`)) || "[]"); } catch { return []; }
+}
+async function autoLogAppend(env, n, entry) {
+  try {
+    const log = await autoLogRead(env, n);
+    log.unshift({ at: Date.now(), ...entry });
+    await env.KV.put(`setupauto:${n}`, JSON.stringify(log.slice(0, AUTO_LOG_MAX)), { expirationTtl: 86400 * 30 });
+  } catch {}
+}
+async function maybeAutoCheck(env, n, email, force) {
+  // Returns the verdict. Throttled (6h) unless force (test/manual).
+  // Never provisions without consent on file, never during an active run.
+  const now = Date.now();
+  const last = parseInt((await env.KV.get(`setupautolast:${n}`)) || "0", 10) || 0;
+  if (!force && now - last < AUTO_CHECK_MIN_MS) return { checked: false, reason: "throttled" };
+  await env.KV.put(`setupautolast:${n}`, String(now), { expirationTtl: 86400 * 2 });
+  const consent = JSON.parse((await env.KV.get(`setupconsent:${n}`)) || "null");
+  if (!consent) {
+    await autoLogAppend(env, n, { provider: "", action: "skipped", why: "one-tap allow expired or missing — needs one tap in Setup", result: "needs-consent" });
+    return { checked: true, action: "needs-consent" };
+  }
+  const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
+  if (chain) return { checked: true, action: "already-running" };
+  const health = await keyHealthCheck(env, n);
+  const usage = await usageAnalysis(env, n, health);
+  const log = await autoLogRead(env, n);
+  const failedRecently = id => log.some(e => e.provider === id && e.result === "failed" && now - (e.at || 0) < AUTO_FAIL_COOLDOWN_MS);
+  const whyFor = id => {
+    const base = health[id].status === "missing" ? `${SETUP_PROVIDERS[id].name} key ledu` : `${SETUP_PROVIDERS[id].name} key pani cheyyatledhu (invalid)`;
+    return usage.usagePct >= 50 ? `${base} — usage ${usage.usagePct}% of weekly allowance, keys saripovu` : base;
+  };
+  const candidates = [...usage.missing, ...usage.invalid].filter(id => !failedRecently(id));
+  const skippedCool = [...usage.missing, ...usage.invalid].filter(id => failedRecently(id));
+  if (!candidates.length) {
+    // Nothing to provision. Log only what the user should see: a state
+    // change, or usage pressing against the free tiers with no free
+    // provider left to add (honest limit — Divya cannot invent a 4th
+    // free provider).
+    if (usage.usagePct >= 90 && usage.enough && !usage.unlimited) {
+      await autoLogAppend(env, n, { provider: "", action: "checked", why: `usage ${usage.usagePct}% of weekly allowance — anni free providers already set up, inka free keys levu`, result: "maxed" });
+    }
+    return { checked: true, action: "none", health, usage, skippedCool };
+  }
+  const em = String(email || consent.email || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+    await autoLogAppend(env, n, { provider: candidates[0], action: "skipped", why: "no email on file for the new accounts", result: "needs-email" });
+    return { checked: true, action: "needs-email", health, usage };
+  }
+  const why = {};
+  for (const id of candidates) why[id] = whyFor(id);
+  const autoChain = { providers: candidates, done: [], failed: [], current: null, email: em, pass: setupPass(), at: now, auto: true, why };
+  await env.KV.put(`setupchain:${n}`, JSON.stringify(autoChain), { expirationTtl: 86400 * 7 });
+  const next = await setupStartNext(env, n);
+  if (!next.ok) {
+    await env.KV.delete(`setupchain:${n}`);
+    await autoLogAppend(env, n, { provider: candidates[0], action: "dispatch-failed", why: `auto-provision start avvaledu: ${next.error || "dispatch failed"}`, result: "failed" });
+    return { checked: true, action: "dispatch-failed", health, usage, error: next.error };
+  }
+  for (const id of candidates) await autoLogAppend(env, n, { provider: id, action: "provisioning", why: why[id], result: "started" });
+  return { checked: true, action: "provisioning", providers: candidates, why, health, usage, skippedCool };
+}
+async function autoCheckAll(env) {
+  // Scheduled path (needs a cron trigger configured — none is set today):
+  // run the autonomous check for every user with a one-tap allow on file.
+  try {
+    const list = await env.KV.list({ prefix: "setupconsent:" });
+    for (const k of (list.keys || [])) {
+      const n = k.name.slice("setupconsent:".length);
+      try {
+        const consent = JSON.parse((await env.KV.get(k.name)) || "null");
+        if (consent && consent.email) await maybeAutoCheck(env, n, consent.email, false);
+      } catch {}
+    }
+  } catch {}
 }
 async function appSetupUser(req, env, u, p, body, lang) {
   const en = lang === "en";
@@ -1958,7 +2106,8 @@ async function appSetupUser(req, env, u, p, body, lang) {
       const stalled = await setupWatchdog(env, u.n, chain);
       if (stalled) {
         const state = setupStateFor(null, null, stalled, keys);
-        return { ok: true, active: false, consent: !!consent, finished: stalled, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang) };
+        const autoLog = await autoLogRead(env, u.n);
+        return { ok: true, active: false, consent: !!consent, finished: stalled, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), autoLog: autoLog.slice(0, 10) };
       }
       chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     }
@@ -1967,7 +2116,13 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (!chain) {
       const fin = JSON.parse((await env.KV.get(`setupdone:${u.n}`)) || "null");
       const state = setupStateFor(null, null, fin, keys);
-      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang) };
+      // v39 Phase 2: opportunistic autonomous check (throttled to one
+      // check per user per 6h, never while a run is active). Best-effort
+      // — a failure here never breaks setup/status.
+      let auto = null;
+      try { auto = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", false); } catch {}
+      const autoLog = await autoLogRead(env, u.n);
+      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
     }
     const cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
     const state = setupStateFor(chain, cur, null, keys);
@@ -1975,7 +2130,8 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // the page to open + the one plain line. The app renders this instead
     // of a bare "Setup running…". Additive field; older app builds ignore it.
     const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang) } : null;
-    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys, needsSetup, sharedFallback, state, steps: setupSteps(chain, cur, null, keys, lang), action };
+    const autoLog = await autoLogRead(env, u.n);
+    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys, needsSetup, sharedFallback, state, steps: setupSteps(chain, cur, null, keys, lang), action, autoLog: autoLog.slice(0, 10) };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
@@ -2042,6 +2198,15 @@ async function appSetupUser(req, env, u, p, body, lang) {
     j.state = "running"; j.note = ""; j.pauseReason = ""; j.resumedAt = Date.now(); j.upd = Date.now();
     await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
     return { ok: true };
+  }
+  if (p === "setup/autocheck" && req.method === "POST") {
+    // v39 Phase 2: run the autonomous key-health + usage check now and
+    // return the verdict (checked / action / providers / why). force=true
+    // bypasses the 6h throttle (test/manual trigger); consent, active-run
+    // and 24h-failure-cooldown rules still apply.
+    const verdict = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", !!body.force).catch(e => ({ checked: false, error: String(e).slice(0, 200) }));
+    const autoLog = await autoLogRead(env, u.n);
+    return { ok: true, ...verdict, autoLog: autoLog.slice(0, 10) };
   }
   return { ok: false, error: "not found" };
 }
@@ -2144,6 +2309,11 @@ export default {
   // Optional cron ping of the call server (no cron set: SnapDeploy free hours are limited).
   async scheduled(ev, env, ctx) {
     ctx.waitUntil(fetch((env.CALL_URL || CALL_URL) + "/health").then(r => env.KV.put("dbg:callping", `${new Date().toISOString()} ${r.status}`, { expirationTtl: 86400 * 2 })).catch(() => {}));
+    // v39 Phase 2: autonomous key-health + usage check for every user with
+    // a one-tap allow on file (throttled inside maybeAutoCheck). Fires only
+    // when a cron trigger is configured — until then the setup/status
+    // opportunistic trigger is the live path.
+    ctx.waitUntil(autoCheckAll(env).catch(() => {}));
   },
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
