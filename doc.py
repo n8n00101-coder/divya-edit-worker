@@ -310,7 +310,7 @@ PLAN = """You are a top YouTube documentary-shorts writer and director. Plan ONE
 Return ONLY JSON:
 {"topic": "...", "title": "<2-5 word English title, caps>", "lang": "en|te|hi", "voice": "male|female",
  "caption": "<post caption with 3-5 hashtags>",
- "end_question": "<one short question to the viewers for the 1 s end card, e.g. 'Would you quit gutka?'>",
+ "end_question": "<one short question to the viewers for the 1 s end card, e.g. 'Did you know this?'>",
  "scenes": [{"vo": "...", "label": "<1-3 word ENGLISH punch label, caps>", "mood": "calm|tense|hopeful|sad|excited|mystery",
              "visual": "<one of %s>", "value": "<short number/word for the visual>",
              "source": "<short official source for the fact/number, e.g. WHO 2023, Govt of India 2012, Harvard 2020, or empty>"}]}
@@ -1885,6 +1885,16 @@ def frame_qc(p, video_path, wd=None):
                 continue
             _nolabel = sc.get("visual") == "stamp"
             _gf, _gw = _qc_geometry(_vb, _lb, bool(sc.get("source")), expect_label=not _nolabel, src_bb=_sb)
+            # A word-timed build-in (counter, donut, stamp...) is EMPTY until
+            # its hit word is spoken — that is the design (the visual lands
+            # on the word, Blind A6), not a defect. So at the early check
+            # (0.5 s), a missing visual is only a flaw if the hit word
+            # (pop_t) has already passed. At mid/late it is always a flaw.
+            if _tt == 0.5:
+                _pop = float(sc.get("pop_t", 0.0) or 0.0)
+                _is_buildin = (sc.get("_effect_choice") or {}).get("vis") == "build_in"
+                if _is_buildin and _pop > 0.5:
+                    _gf = [f for f in _gf if "visual missing/empty" not in f]
             flaws += [f"scene {i + 1} @{_tt:.1f}s: {f}" for f in _gf]
             warnings += [f"scene {i + 1} @{_tt:.1f}s: {w}" for w in _gw]
         # (d) the typewriter invariant (whole words only, never a partial word).
