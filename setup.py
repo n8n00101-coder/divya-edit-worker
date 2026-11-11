@@ -389,25 +389,87 @@ def maybe_sms(page, job):
         return None
 
 
+def tick_consent(page):
+    """Tick the form's consent checkbox (e.g. OpenRouter's 'I agree to the
+    Terms' legalAccepted box) before submitting. A signup submit without
+    it is silently rejected client-side. Only consent-named boxes, or any
+    visible checkbox in the auth form — the one-tap allow covers creating
+    the account, ToS acceptance included. Returns True if one was ticked."""
+    try:
+        for sel in ("input[name*='legal' i]", "input[name*='terms' i]", "input[name*='agree' i]",
+                    "input[id*='legal' i]", "input[type='checkbox']"):
+            loc = page.locator(sel)
+            for i in range(min(loc.count(), 3)):
+                el = loc.nth(i)
+                try:
+                    if el.is_visible() and not el.is_checked():
+                        el.check(timeout=3000)
+                        return True
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return False
+
+
 def fill(page, selectors, value, timeout=8000):
+    """Fill the first VISIBLE match (same hidden-first-match trap as click)."""
     for sel in selectors:
         try:
-            loc = page.locator(sel).first
-            if loc.count():
-                loc.fill(value, timeout=timeout)
-                return True
+            loc = page.locator(sel)
+            for i in range(min(loc.count(), 5)):
+                el = loc.nth(i)
+                try:
+                    if el.is_visible():
+                        el.fill(value, timeout=timeout)
+                        return True
+                except Exception:
+                    continue
         except Exception:
             pass
     return False
 
 
+def click_submit(page):
+    """Click the AUTH FORM's own submit button — the form holding the email
+    field. Text matching alone is unsafe ('Sign up' is also the header nav
+    button; 'Continue' also matches Groq's 'Continue with Google'), and
+    the first type=submit in DOM order may belong to another form (the
+    header search). Falls back to the old text/type list if no form found."""
+    try:
+        form = page.locator("form:has(input[type='email']), form:has(input[name*='email' i]), form:has(input[type='password'])").first
+        if form.count():
+            for sel in ("button[type='submit']", "button:has-text('Continue')",
+                        "button:has-text('Sign up')", "button:has-text('Create account')"):
+                loc = form.locator(sel)
+                for i in range(min(loc.count(), 3)):
+                    el = loc.nth(i)
+                    try:
+                        if el.is_visible():
+                            el.click(timeout=8000)
+                            return True
+                    except Exception:
+                        continue
+    except Exception:
+        pass
+    return click(page, ["button:has-text('Continue')", "button[type='submit']"])
+
+
 def click(page, selectors, timeout=8000):
+    """Click the first VISIBLE match (v39 C7e): .first may be a hidden
+    button (OpenRouter has two type=submit buttons; the first in DOM order
+    is not the form's Continue)."""
     for sel in selectors:
         try:
-            loc = page.locator(sel).first
-            if loc.count():
-                loc.click(timeout=timeout)
-                return True
+            loc = page.locator(sel)
+            for i in range(min(loc.count(), 5)):
+                el = loc.nth(i)
+                try:
+                    if el.is_visible():
+                        el.click(timeout=timeout)
+                        return True
+                except Exception:
+                    continue
         except Exception:
             pass
     return False
@@ -424,6 +486,45 @@ def extract_key(page, patterns):
     except Exception:
         pass
     return None
+
+
+def _submit_error(page):
+    """Visible form/server error text after a submit, if any (e.g.
+    OpenRouter's 'Temporary email services are not supported'). Lets the
+    run fail with the provider's own words instead of a generic 'key not
+    found' two steps later."""
+    # Providers like Clerk render field errors in plain spans
+    # with no error class/role — scan the visible body text for error
+    # phrases and return the sentence around the match. render field errors in plain spans
+    # with no error class/role — scan the visible body text for error
+    # phrases and return the sentence around the match.
+    try:
+        txt = page.inner_text("body") or ""
+        low = txt.lower()
+        for phrase in ("not supported", "already exists", "already registered",
+                       "invalid email", "invalid password", "incorrect password",
+                       "something went wrong", "is required", "must be at least"):
+            i = low.find(phrase)
+            if i >= 0:
+                start = max(0, txt.rfind(". ", 0, i) + 2 if txt.rfind(". ", 0, i) >= 0 else max(0, i - 60))
+                return txt[start:i + 140].strip()[:200]
+    except Exception:
+        pass
+    try:
+        for sel in ("[role='alert']", "[class*='error' i]", "[class*='invalid' i]"):
+            loc = page.locator(sel)
+            for i in range(min(loc.count(), 3)):
+                el = loc.nth(i)
+                try:
+                    if el.is_visible():
+                        t = (el.inner_text() or "").strip()
+                        if t:
+                            return t[:200]
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    return ""
 
 
 def _page_says(page, needles):
@@ -813,7 +914,7 @@ def flow_email_signup(page, job, cfg):
     elif mode == "email-first":
         if not fill(page, _AUTH_EMAIL, email):
             return _fail(f"{name} signup form lo email field kanipinchaledu (step: signup form). Take Control tho try cheyyi.")
-        click(page, ["button[type='submit']", "button:has-text('Continue')", "button:has-text('Sign up')", "button:has-text('Create account')"])
+        click(page, ["button:has-text('Continue')", "button:has-text('Sign up')", "button:has-text('Create account')", "button[type='submit']"])
         page.wait_for_timeout(3000)
         maybe_captcha(page)
         if check_stop():
@@ -842,7 +943,8 @@ def flow_email_signup(page, job, cfg):
         elif mode2 in ("email-password", "email-first"):
             if not fill(page, _AUTH_PASS, password):
                 return _fail(f"{name} signup form lo password field kanipinchaledu (step: signup form). Take Control tho try cheyyi.")
-            click(page, ["button[type='submit']", "button:has-text('Continue')", "button:has-text('Sign up')", "button:has-text('Create account')"])
+            tick_consent(page)
+            click_submit(page)
             page.wait_for_timeout(4000)
         # mode2 == "unknown": no auth form any more — proceed to key creation.
     elif mode == "email-password":
@@ -850,13 +952,23 @@ def flow_email_signup(page, job, cfg):
         ok = fill(page, _AUTH_PASS, password) and ok
         if not ok:
             return _fail(f"{name} signup form kanipinchaledu — site layout marindhi (step: signup form). Take Control tho try cheyyi.")
-        click(page, ["button[type='submit']", "button:has-text('Sign up')", "button:has-text('Create account')", "button:has-text('Continue')"])
+        tick_consent(page)
+        click_submit(page)
         page.wait_for_timeout(4000)
         maybe_captcha(page)
         if check_stop():
             return _stopped()
     # else mode == "unknown": the auth form vanished (already signed in,
     # or a redirect) — proceed; the steps below fail clearly if not.
+    # A visible submit error (e.g. OpenRouter rejecting a temporary-email
+    # domain) fails here with the provider's own words — never silently
+    # proceed to key creation, where it would surface as a generic miss.
+    # Give the server response a moment to render first (the error shows
+    # ~5s after submit; the branch waited only ~4s).
+    page.wait_for_timeout(2500)
+    err = _submit_error(page)
+    if err:
+        return _fail(f"{cfg['name']} signup error: {err} (step: signup form).")
     # The account may already exist: the page says so instead of signing
     # up. First try signing in with the job's password (an auto-provision
     # run reuses the sealed setup password, so this usually just works).
@@ -955,7 +1067,7 @@ def flow_cloudflare(page, job, cfg):
     ok = fill(page, ["input[type='password']", "input[name='password']"], password) and ok
     if not ok:
         return _fail("Cloudflare signup form kanipinchaledu — dashboard layout marindhi (step: signup form). Take Control tho try cheyyi.")
-    click(page, ["button[type='submit']", "button:has-text('Sign up')", "button:has-text('Create account')", "button:has-text('Continue')"])
+    click(page, ["button:has-text('Sign up')", "button:has-text('Create account')", "button:has-text('Continue')", "button[type='submit']"])
     page.wait_for_timeout(4000)
     maybe_captcha(page)
     if check_stop():
