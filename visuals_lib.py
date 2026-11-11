@@ -102,12 +102,35 @@ def _proj(lon, lat, box=(90, 260, 630, 1000), lon0=67.5, lon1=98.0, lat0=7.5, la
 
 @reg("india_map", ["map", "india", "country", "ban", "law", "places", "geography"])
 def vis_india_map(t, st=0, d=1.2, pins=(("Delhi", 77.2, 28.6),), accent=Y, land=(58, 66, 84), outline=WHITE, label="INDIA"):
-    """Outline draws on, land fills, pins drop one by one."""
+    """Outline draws on, land fills, pins drop one by one. v35 (Ajju: the
+    India map read as a very low-level edit — just a thin white outline,
+    because the old fill was a flat dark slate (58,66,84) that faded in late
+    and was almost the same as the dark background). Now: a soft accent glow
+    behind the map, a rich vertical accent gradient filling it from the
+    start (light on top, deep at the bottom), and a thicker outline. The
+    map box (90..630, 260..1000) stays inside the safe frame (57..662,
+    128..1152); the glow blur (18) keeps the halo in-frame too."""
     L = _L(); dr = ImageDraw.Draw(L); q = _p(t, st, d)
     pts = [_proj(*p) for p in INDIA]; n = len(pts)
-    if q > .45: dr.polygon(pts, fill=land+(int(255*_oe((q-.45)/.3)),))
+    _fa = _oe(_c((q - .08) / .35)) if q > .08 else 0.0
+    if _fa > 0:
+        # Glow: the polygon in accent, blurred, behind the fill.
+        _glow = _L(); ImageDraw.Draw(_glow).polygon(pts, fill=accent + (110,))
+        L.alpha_composite(_glow.filter(ImageFilter.GaussianBlur(18)))
+        # Gradient fill: light accent -> deep accent, clipped to the polygon.
+        _bx0, _bx1 = int(min(p[0] for p in pts)), int(max(p[0] for p in pts))
+        _by0, _by1 = int(min(p[1] for p in pts)), int(max(p[1] for p in pts))
+        _bw, _bh = max(1, _bx1 - _bx0), max(1, _by1 - _by0)
+        _top = np.array([min(255, int(v + (255 - v) * .45)) for v in accent], dtype=np.float32)
+        _bot = np.array([int(v * .45) for v in accent], dtype=np.float32)
+        _yy = np.linspace(0, 1, _bh)[:, None, None]
+        _g = (_top * (1 - _yy) + _bot * _yy).astype(np.uint8)
+        _gi = Image.fromarray(np.repeat(_g, _bw, axis=1), "RGB").convert("RGBA")
+        _mask = Image.new("L", (_bw, _bh), 0)
+        ImageDraw.Draw(_mask).polygon([(x - _bx0, y - _by0) for x, y in pts], fill=int(255 * _fa))
+        L.paste(_gi, (_bx0, _by0), _mask)
     k = int(n*_oe(min(1, q/.5)))+1                      # draw-on outline
-    dr.line(pts[:k]+([pts[0]] if k > n else []), fill=outline+(255,), width=4, joint="curve")
+    dr.line(pts[:k]+([pts[0]] if k > n else []), fill=outline+(255,), width=8, joint="curve")
     f = _font(30, "small")
     for i, (name, lon, lat) in enumerate(pins):
         pq = _p(t, st+d*.6+i*.25, .35)
@@ -132,11 +155,16 @@ def vis_world_dots(t, st=0, d=1.5, hot=((77, 22), (-100, 40), (10, 50)), accent=
             if not inside: continue
             x = x0+(lon+180)/360*(x1-x0); y = y0+(75-lat)/130*(y1-y0)
             if (x-x0)/(x1-x0) > q*1.2: continue
-            dr.ellipse((x-3, y-3, x+3, y+3), fill=(200, 205, 220, 170))
+            # v35 richness: brighter, more solid dots (the old pale grey
+            # (200,205,220,170) read as flat/low-level).
+            dr.ellipse((x-4, y-4, x+4, y+4), fill=(228, 232, 242, 215))
     for i, (lon, lat) in enumerate(hot):
         hq = _p(t, st+d*.7+i*.2, .5)
         if hq <= 0: continue
         x = x0+(lon+180)/360*(x1-x0); y = y0+(75-lat)/130*(y1-y0); r = 8+28*((t*1.2+i*.3) % 1)
+        # v35 richness: a soft accent glow behind each hot spot.
+        _hg = _L(); ImageDraw.Draw(_hg).ellipse((x-34, y-34, x+34, y+34), fill=accent+(70,))
+        L.alpha_composite(_hg.filter(ImageFilter.GaussianBlur(14)))
         dr.ellipse((x-r, y-r, x+r, y+r), outline=accent+(int(200*(1-((t*1.2+i*.3) % 1))),), width=3)
         dr.ellipse((x-8, y-8, x+8, y+8), fill=accent+(255,))
     return L
