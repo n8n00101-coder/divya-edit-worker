@@ -30,7 +30,7 @@ W, H, FPS = 1080, 1920, 30
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONTS = os.path.join(HERE, "fonts")
 TR = 0.36  # transition length (s)
-OUTRO = 2.2
+OUTRO = 1.0  # v36 (Blind E4): the end card is 1 s (was 2.2)
 MOODS = {  # top, bottom, accent, (rate, pitch)
     "calm": ((16, 30, 52), (4, 8, 16), (90, 170, 255), ("-3%", "-1Hz")),
     "tense": ((52, 12, 16), (8, 3, 5), (235, 50, 60), ("+3%", "-3Hz")),
@@ -310,6 +310,7 @@ PLAN = """You are a top YouTube documentary-shorts writer and director. Plan ONE
 Return ONLY JSON:
 {"topic": "...", "title": "<2-5 word English title, caps>", "lang": "en|te|hi", "voice": "male|female",
  "caption": "<post caption with 3-5 hashtags>",
+ "end_question": "<one short question to the viewers for the 1 s end card, e.g. 'Would you quit gutka?'>",
  "scenes": [{"vo": "...", "label": "<1-3 word ENGLISH punch label, caps>", "mood": "calm|tense|hopeful|sad|excited|mystery",
              "visual": "<one of %s>", "value": "<short number/word for the visual>",
              "source": "<short official source for the fact/number, e.g. WHO 2023, Govt of India 2012, Harvard 2020, or empty>"}]}
@@ -407,6 +408,9 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
     raw = chat([{"role": "system", "content": "You output strict JSON only."},
                 {"role": "user", "content": PLAN.replace("{recent}", recent or "none").replace("{look}", look_line) + (brief or "AUTO")}])
     p = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
+    # v36 (Blind E4): the end card needs a question; default if the LLM omits it.
+    if not str(p.get("end_question", "")).strip():
+        p["end_question"] = "Did you know this?"
     sc = [s for s in p.get("scenes", []) if str(s.get("vo", "")).strip()][:16]
     if len(sc) < 4:
         raise ValueError("plan too short")
@@ -517,6 +521,12 @@ async def tts(text, voice, mood, out):
     rate, pitch = MOODS[mood][3]
     if voice == "en-US-ChristopherNeural":  # v32 (M12, Mark): calm, deep
         rate, pitch = "-8%", "-4Hz"
+    elif voice in ("en-US-AvaMultilingualNeural", "te-IN-ShrutiNeural", "hi-IN-SwaraNeural"):
+        # v36 (Blind E2): the female voice runs at +8% (brighter, more
+        # energetic); the pitch still comes from the mood. (Local tests use
+        # Google TTS as a stand-in — edge-tts is blocked on this VM;
+        # production uses real edge-tts.)
+        rate = "+8%"
     last = None
     for attempt in range(4):
         try:
@@ -1311,14 +1321,35 @@ def camera(im, idx, t, d, mood, move="push"):
     return im.crop((int(x0), int(y0), int(x0 + cw), int(y0 + ch))).resize((W, H), Image.BILINEAR)
 
 def outro(p, t):
-    # v25: outro uses the video's look accent, not the last scene's mood accent.
-    # v26: no pawn here either (see scene_frame).
+    # v36 (Blind E4): the end card is 1 s — a QUESTION to the viewers +
+    # the channel name, not a plain fade. The question comes from
+    # p["end_question"] (set by plan()); the channel name is "DIVYA".
+    # The question is a title line (Anton 96 px, the title minimum, word
+    # boundaries only, max 2 lines — extra words are dropped, never cut).
     acc = tuple(p.get("accent") or MOODS[p["scenes"][-1]["mood"]][2])
     im = background(p["scenes"][-1]["mood"], p.get("look"), p["scenes"][-1].get("section"))
     d = ImageDraw.Draw(im)
-    k = C.pop(t / 0.5); f = anton(int(140 * max(k, 0.2)))
-    for li, (ln, col) in enumerate([("FOLLOW", (255, 255, 255)), ("FOR MORE", acc)]):
-        w = d.textlength(ln, font=f); d.text(((W - w) / 2, 640 + li * 180), ln, font=f, fill=col)
+    q = (p.get("end_question") or "Did you know this?").strip().upper()
+    f = anton(96)
+    lines, cur = [], ""
+    for w in q.split():
+        test = (cur + " " + w).strip()
+        if d.textlength(test, font=f) <= W - 160:
+            cur = test
+        else:
+            if cur: lines.append(cur)
+            cur = w
+            if len(lines) >= 2:
+                break
+    if cur and len(lines) < 2:
+        lines.append(cur)
+    k = C.pop(t / 0.5)
+    y = 700
+    for ln in lines[:2]:
+        w = d.textlength(ln, font=f); d.text(((W - w) / 2, y), ln, font=f, fill=(255, 255, 255))
+        y += 130
+    f2 = anton(int(110 * max(k, 0.2)))
+    w = d.textlength("DIVYA", font=f2); d.text(((W - w) / 2, y + 120), "DIVYA", font=f2, fill=acc)
     return im
 
 def transition(a, b, p, name, acc):
@@ -1372,7 +1403,24 @@ def _render_chunk(args):
 SR = 44100
 def note(m): return 440 * 2 ** ((m - 69) / 12)
 
-def music(total, starts, moods, path, hits=None):
+def _payoff_idx(p):
+    """v36 (Blind E1): the payoff scene — the biggest fact (the largest number
+    in the value/label). If no scene has a number, the verdict scene
+    (ban/myth) is the payoff."""
+    best, best_n = 0, -1
+    for i, s in enumerate(p["scenes"]):
+        _nums = re.findall(r"\d+(?:\.\d+)?", str(s.get("value", "")) + " " + str(s.get("label", "")))
+        _n = max((float(x) for x in _nums), default=0)
+        if _n > best_n:
+            best, best_n = i, _n
+    if best_n <= 0:
+        for i, s in enumerate(p["scenes"]):
+            if s.get("fact_type") in ("ban", "myth"):
+                return i
+    return best
+
+
+def music(total, starts, moods, path, hits=None, payoff=None):
     n = int(SR * total); out = np.zeros(n); rng = np.random.RandomState(7)
     dark = sum(m in ("tense", "sad", "mystery") for m in moods) >= len(moods) / 2
     prog = [[50, 57, 62, 65], [46, 53, 58, 62], [48, 55, 60, 64], [45, 52, 57, 61]] if dark else \
@@ -1403,8 +1451,21 @@ def music(total, starts, moods, path, hits=None):
     boom = (np.sin(2 * np.pi * np.cumsum(38 + 60 * np.exp(-tb * 6)) / SR) * np.exp(-tb * 3.5) + 0.3 * rng.randn(Lb) * np.exp(-tb * 25)) * 0.5
     add(boom, 0.02)
     for i, s in enumerate(starts[1:], 1):
-        add(whoosh, s - 0.3)
+        # v36 (Blind E1): the whoosh lands 100 ms BEFORE the cut (was 300 ms).
+        add(whoosh, s - 0.1)
         if moods[i] in ("tense", "excited", "mystery"): add(boom * 0.6, s)
+    # v36 (Blind E1): a soft riser builds for 1.5 s before the payoff (the
+    # biggest fact), then 200 ms of SILENCE before the fact lands — the
+    # classic hook-payoff shape. The riser is a rising sine sweep; the
+    # silence mutes both the music and the SFX in that window.
+    if payoff is not None and 1.7 < payoff < total - 1:
+        _rl = int(1.3 * SR); _rt = np.arange(_rl) / SR
+        _f0, _f1 = 220.0, 880.0
+        _riser = np.sin(2 * np.pi * (_f0 * _rt + (_f1 - _f0) * _rt ** 2 / (2 * 1.3))) * (_rt / 1.3) * 0.12
+        _a = int((payoff - 1.5) * SR); _e = min(n, _a + _rl)
+        out[_a:_e] += _riser[:_e - _a]
+        _sa, _se = int((payoff - 0.2) * SR), int(payoff * SR)
+        out[_sa:_se] = 0; sfx[_sa:_se] = 0
     # v34 (Hark SFX at word times, item 7): a hit on each scene's hit word
     # and ticks while a phone number is typed — placed at exact word times,
     # not scene boundaries. hits = [(time_s, kind), ...].
@@ -1881,9 +1942,12 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     fc = "".join(f"[{i}:a]adelay={int(st * 1000)}|{int(st * 1000)}[a{i}];" for i, st in enumerate(starts))
     fc += "".join(f"[a{i}]" for i in range(len(starts))) + f"amix=inputs={len(starts)}:normalize=0,apad,atrim=0:{total:.2f}[o]"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", fc, "-map", "[o]", "-ar", str(SR), "-ac", "1", f"{wd}/voice.wav"], check=True)
-    music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits)
+    _payoff = starts[_payoff_idx(p)] if starts else None
+    music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff)
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/voice.wav", "-i", f"{wd}/music.wav", "-i", f"{wd}/music_sfx.wav", "-filter_complex",
-                    "[0:a]asplit[v1][v2];[1:a]volume=0.55[m];[m][v2]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=350[md];"
+                    # v36 (Blind E1): the music is ducked -12 dB under the voice
+                    # (volume 0.55 -> 0.45, sidechain threshold 0.02 -> 0.015).
+                    "[0:a]asplit[v1][v2];[1:a]volume=0.45[m];[m][v2]sidechaincompress=threshold=0.015:ratio=10:attack=15:release=350[md];"
                     "[v1]highpass=f=70,acompressor=threshold=0.1:ratio=3,volume=1.5[vv];[2:a]volume=0.55[sx];"
                     # v32 (M6, Mark): final loudnorm -14 LUFS (was alimiter)
                     "[vv][md][sx]amix=inputs=3:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[o]", "-map", "[o]", "-ar", str(SR), f"{wd}/mix.wav"], check=True)
@@ -1898,24 +1962,21 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     ass = f"{wd}/subs.ass"; write_ass(p, ass)
     out = f"{wd}/divya_doc.mp4"
     vf = f"vignette=PI/4.5,eq=contrast=1.06:saturation=1.08,noise=alls=7:allf=t,ass={ass}:fontsdir={FONTS}"
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/raw.mp4", "-i", f"{wd}/mix.wav", "-vf", vf, "-c:v", "libx264", "-preset", "medium",
-                    "-crf", "23", "-maxrate", "2300k", "-bufsize", "4600k", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", out], check=True)
+    # v36 (Blind E5): the master is CRF 18, preset slow, yuv420p, +faststart
+    # (was CRF 23 preset medium). No maxrate cap — it would fight CRF 18.
+    # Cost: a much larger file and a slower encode (measured in the test).
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/raw.mp4", "-i", f"{wd}/mix.wav", "-vf", vf, "-c:v", "libx264", "-preset", "slow",
+                    "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", out], check=True)
     if os.path.getsize(out) > 15_000_000:  # WhatsApp media limit is 16 MB
         kb = max(600, int(14.2 * 8192 / total) - 140)
         small = f"{wd}/divya_doc_wa.mp4"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", out, "-c:v", "libx264", "-preset", "medium", "-b:v", f"{kb}k",
                         "-maxrate", f"{int(kb * 1.15)}k", "-bufsize", f"{kb * 2}k", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", small], check=True)
         out = small
-    # v34 (Hark delivery, item 9): keep the CRF 23 master, then make a CRF 26
-    # delivery copy (much smaller, faster to send) for sending to Ajju.
-    # NOTE: the delivery is encoded from the SAME raw source as the master
-    # (raw.mp4 + mix.wav + vf chain), NOT by re-encoding the master — a
-    # re-encode of the grainy CRF 23 master at CRF 26 came out LARGER than
-    # the master (1,290 kbps vs 1,080 kbps: the encoder chases the baked-in
-    # grain + quantisation noise). Same input + higher CRF = guaranteed smaller.
-    delivery = f"{wd}/divya_doc_delivery.mp4"
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/raw.mp4", "-i", f"{wd}/mix.wav", "-vf", vf, "-c:v", "libx264", "-preset", "medium",
-                    "-crf", "26", "-maxrate", "2300k", "-bufsize", "4600k", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", delivery], check=True)
+    # v36 (Blind E5): the delivery IS the CRF 18 master — no separate CRF 26
+    # re-encode any more (the v34 delivery copy is dropped). The >15 MB
+    # WhatsApp bitrate copy above is kept (out may already be that copy).
+    delivery = out
     # v35 (Ajju: "Divya is not checking at all"): automated frame-level QC
     # AFTER the render. The old team_qc scores the PLAN text and never looks
     # at a rendered frame — that is why stacked effects shipped. frame_qc
