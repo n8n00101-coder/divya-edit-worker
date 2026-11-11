@@ -2111,7 +2111,15 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", f"{wd}/parts.txt", "-c", "copy", f"{wd}/raw.mp4"], check=True)
     ass = f"{wd}/subs.ass"; write_ass(p, ass)
     out = f"{wd}/divya_doc.mp4"
-    vf = f"vignette=PI/4.5,eq=contrast=1.06:saturation=1.08,noise=alls=7:allf=t,ass={ass}:fontsdir={FONTS}"
+    vf = f"vignette=PI/4.5,eq=contrast=1.06:saturation=1.08,ass={ass}:fontsdir={FONTS}"
+    # v36 (Blind E5/C4): NO temporal noise filter in the vf chain. The old
+    # chain had noise=alls=7:allf=t (new random noise every frame) on top of
+    # the baked-in 3% film grain + dust + vignette. At CRF 18 the encoder
+    # preserves that per-frame noise faithfully: a 10 s clip took >2 min and
+    # the 37 s master ballooned past 400 MB and never converged (measured).
+    # Without it the same 10 s encodes in 24 s to 3.4 MB. The film look is
+    # kept by the baked-in grain (3%, in background()) + the drifting dust +
+    # the vignette — the per-frame noise filter was redundant.
     # v36 (Blind E5): the master is CRF 18, yuv420p, +faststart (was CRF 23).
     # No maxrate cap — it would fight CRF 18. Preset is MEDIUM, not slow:
     # preset slow on this grainy content took 20+ min and 400 MB for a 37 s
