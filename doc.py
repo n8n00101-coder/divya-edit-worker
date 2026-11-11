@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import create as C
 import effects as FX  # v29: Hark's effects library (Blind, divya-v26-effects.zip) — 14 ENTER, 11 EMPHASIS, 12 TRANSITIONS, 10 easings
 import transitions_lib as TL  # v29b: Hark's 379-transition library (Blind, divya-v29-transitions.zip) — 40 families, incl. 3D
+import teams  # v30+v31: Divya's own team (Hark's "teams" method) — role-based sub-agents, parallel tasks, merge + QC
 # v29b: transitions slower than 200 ms/frame at 1080x1920 (measured on this VM;
 # the render is offline + parallel, but these 10 would dominate it). Excluded
 # from the pick pool; 369 remain.
@@ -466,6 +467,21 @@ def header(d, p, idx, n, t, sc_d, acc, look=None):
     d.text((310, 92), p["title"][:26], font=f, fill=(225, 225, 230))
     progress()
 
+def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
+    # v30: a custom per-video visual (video_visuals.py, written by the Visual
+    # Artist) replaces the library visual for this scene when present; else
+    # the 25-kind library (create.draw_visual). A failed custom visual falls
+    # back to the library so one bad function never kills the scene.
+    fn = SCENE_VISUALS.get(idx)
+    if callable(fn):
+        try:
+            fn(vd, W, H, acc, pt)
+            return
+        except Exception as e:
+            print(f"custom visual scene {idx} failed: {str(e)[:150]}")
+    C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=cy, acc=acc)
+
+
 def scene_frame(p, idx, t):
     sc = p["scenes"][idx]; n = len(p["scenes"]); mood = sc["mood"]
     # v25: the look + title seed drive the palette, chapter card, layout and move.
@@ -496,17 +512,17 @@ def scene_frame(p, idx, t):
     llay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ld = ImageDraw.Draw(llay, "RGBA")
     if layout == 1:  # full-bleed
-        C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=900, acc=acc)
+        draw_scene_visual(vd, vlay, p, idx, sc, pt, 900, acc)
         label(ld, sc["label"], pt, acc, idx, look)
     elif layout == 2:  # centered big word, visual small below
         label(ld, sc["label"], pt, acc, idx, look)
-        C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=1500, acc=acc)
+        draw_scene_visual(vd, vlay, p, idx, sc, pt, 1500, acc)
     elif layout == 3:  # split
-        C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=650, acc=acc)
+        draw_scene_visual(vd, vlay, p, idx, sc, pt, 650, acc)
         d.rectangle([(120, 1080), (W - 120, 1088)], fill=acc)
         label(ld, sc["label"], pt, acc, idx, look)
     else:  # standard
-        C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=800, acc=acc)
+        draw_scene_visual(vd, vlay, p, idx, sc, pt, 800, acc)
         label(ld, sc["label"], pt, acc, idx, look)
     enter = sc.get("enter") or "pop_in"
     emph = sc.get("emphasis") or "punch"
@@ -756,12 +772,8 @@ def _sandbox_ok(path):
     except Exception as e:
         return False, str(e)
 
-def gen_video_fx(p, chat, wd, recent_families=()):
-    # Build the prompt from the plan, ask the LLM for video_fx.py, sandbox-test
-    # it (max 2 retries with the error fed back), load it into VIDEO_FX.
-    # Returns the number of custom functions loaded (0 = library fallback).
-    global VIDEO_FX
-    VIDEO_FX = None
+def _plan_context(p, recent_families=()):
+    # Shared context for the team's prompts: topic, look, objects, scenes.
     topic = p.get("title", "WATCH THIS")
     mood = LOOKS.get(p.get("look"), {}).get("name", p.get("look", ""))
     words = [w for w in re.split(r"[^A-Z0-9]+", topic.upper()) if len(w) > 3]
@@ -769,10 +781,57 @@ def gen_video_fx(p, chat, wd, recent_families=()):
     scenes = "; ".join(
         f"{s.get('label', '')}: {s.get('vo', '')[:60]} (hit: {s.get('hit_type', '')})"
         for s in p["scenes"])
-    prompt = VIDEO_FX_PROMPT.format(
-        topic=topic, mood=mood, objects=", ".join(objs) or "none",
-        scenes=scenes, recent_families=", ".join(recent_families) or "none")
-    code = None
+    return {"topic": topic, "mood": mood, "objects": ", ".join(objs) or "none",
+            "scenes": scenes, "recent_families": ", ".join(recent_families) or "none"}
+
+
+def _extract_code(raw):
+    m = re.search(r"```(?:python)?\s*([\s\S]*?)```", raw)
+    return (m.group(1) if m else raw).strip()
+
+
+def video_fx_prompt(p, recent_families=()):
+    ctx = _plan_context(p, recent_families)
+    return VIDEO_FX_PROMPT.format(**ctx)
+
+
+def load_video_fx(p, wd, code):
+    # Write video_fx.py, sandbox-test it, load it into VIDEO_FX, apply the
+    # custom tr_/fx_ to the plan. Returns (count, error) — count 0 = library
+    # fallback, error is the sandbox detail when it failed.
+    global VIDEO_FX
+    VIDEO_FX = None
+    if not code or not code.startswith(("import ", "from ", "#", "def ")):
+        return 0, "no Python code returned"
+    path = os.path.join(wd, "video_fx.py")
+    with open(path, "w") as f:
+        f.write(code)
+    ok, detail = _sandbox_ok(path)
+    if not ok:
+        return 0, str(detail)
+    spec = importlib.util.spec_from_file_location("video_fx", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    VIDEO_FX = mod
+    tr_names = [n for n in dir(mod) if n.startswith("tr_") and callable(getattr(mod, n))]
+    fx_names = [n for n in dir(mod) if n.startswith("fx_") and callable(getattr(mod, n))]
+    # custom transitions replace the first boundaries; custom fx_
+    # replace the library emphasis on the first scenes.
+    for i, name in enumerate(tr_names):
+        if i < len(p.get("transitions", [])):
+            p["transitions"][i] = name
+    for i, name in enumerate(fx_names):
+        if i < len(p["scenes"]):
+            p["scenes"][i]["emphasis"] = name
+    p["video_fx"] = {"tr": tr_names, "fx": fx_names}
+    return len(tr_names) + len(fx_names), ""
+
+
+def gen_video_fx(p, chat, wd, recent_families=()):
+    # Single-agent path (kept for the fallback): ask the LLM for video_fx.py,
+    # sandbox-test it, max 2 retries with the error fed back. Returns the
+    # number of custom functions loaded (0 = library fallback).
+    prompt = video_fx_prompt(p, recent_families)
     err = None
     for attempt in range(3):  # 1 try + 2 retries
         try:
@@ -782,45 +841,145 @@ def gen_video_fx(p, chat, wd, recent_families=()):
         except Exception as e:
             err = str(e)
             continue
-        m = re.search(r"```(?:python)?\s*([\s\S]*?)```", raw)
-        code = (m.group(1) if m else raw).strip()
-        if not code.startswith(("import ", "from ", "#", "def ")):
-            err = "no Python code returned"
-            continue
-        path = os.path.join(wd, "video_fx.py")
-        with open(path, "w") as f:
-            f.write(code)
-        ok, detail = _sandbox_ok(path)
-        if ok:
-            spec = importlib.util.spec_from_file_location("video_fx", path)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            VIDEO_FX = mod
-            tr_names = [n for n in dir(mod) if n.startswith("tr_") and callable(getattr(mod, n))]
-            fx_names = [n for n in dir(mod) if n.startswith("fx_") and callable(getattr(mod, n))]
-            # custom transitions replace the first boundaries; custom fx_
-            # replace the library emphasis on the first scenes.
-            for i, name in enumerate(tr_names):
-                if i < len(p.get("transitions", [])):
-                    p["transitions"][i] = name
-            for i, name in enumerate(fx_names):
-                if i < len(p["scenes"]):
-                    p["scenes"][i]["emphasis"] = name
-            p["video_fx"] = {"tr": tr_names, "fx": fx_names}
-            return len(tr_names) + len(fx_names)
-        err = str(detail)
+        n, err = load_video_fx(p, wd, _extract_code(raw))
+        if n:
+            return n
     return 0
+
+
+# ---------------- per-video custom visuals (v30) ----------------
+# Hark writes a NEW scene function per video (render.py s0-s7): a map for the
+# Gutka video, a newspaper for the male-gaze video, a scale for the tobacco
+# video — never a generic shape when a specific object fits. Blind only sent
+# ONE video's scene code (phantom vibration: phone/bell/arcs/stick/brain), so
+# Divya's Visual Artist writes the scene code fresh per video, sandbox-tested,
+# max 2 retries, else the 25-kind library (create.draw_visual).
+VIDEO_VISUALS_PROMPT = (
+    "You are writing NEW visual code for this one video. Topic: {topic}. "
+    "Mood: {mood}. Scenes: {scenes}.\n\n"
+    "Write video_visuals.py with ONE function per scene, in order: "
+    "def vis_0(d, w, h, acc, t): ...  def vis_1(d, w, h, acc, t): ...\n"
+    "d = PIL ImageDraw on a blank 1080x1920 RGBA layer; w=1080, h=1920; "
+    "acc = the accent colour (r, g, b); t = seconds into the scene.\n"
+    "Draw the scene's OWN object in code — a map, a document with real text, "
+    "a newspaper, packets, a scale, a chart, a diagram — whatever the "
+    "sentence needs. Never a generic bar/dot grid when a specific object "
+    "fits. Use only math, random, numpy, PIL. Fonts: headlines use "
+    "ImageFont.truetype('hark-kit/Anton.ttf', size), body text uses "
+    "'hark-kit/Oswald.ttf' — plain 'Anton.ttf' is NOT found and falls back "
+    "to a tiny bitmap font, so always use the hark-kit/ path. Keep content "
+    "inside the safe box (8% sides, 10% top/bottom). Under 200 ms per call. "
+    "Above each function write one comment: which sentence it serves and why "
+    "it fits.\n"
+    "Return only the Python file."
+)
+
+# v30: the per-scene custom visual functions, loaded from video_visuals.py.
+# scene_frame() calls them instead of the library visual when present.
+SCENE_VISUALS = {}
+
+
+def _visuals_sandbox_ok(path, n_scenes):
+    # Run visuals_sandbox.py (1080x1920, 200 ms/call, safe box) on the file.
+    sb = os.path.join(os.path.dirname(os.path.abspath(__file__)), "visuals_sandbox.py")
+    try:
+        r = _sp.run([sys.executable, sb, path, str(n_scenes)], capture_output=True, text=True, timeout=180)
+        out = (r.stdout or "").strip()
+        dd = json.loads(out[out.index("{"):])
+        return bool(dd.get("ok")), dd
+    except Exception as e:
+        return False, str(e)
+
+
+def video_visuals_prompt(p):
+    ctx = _plan_context(p)
+    return VIDEO_VISUALS_PROMPT.format(topic=ctx["topic"], mood=ctx["mood"], scenes=ctx["scenes"])
+
+
+def load_video_visuals(p, wd, code):
+    # Write video_visuals.py, sandbox-test it, load the vis_ functions into
+    # SCENE_VISUALS (scene idx -> function). Returns (count, error).
+    global SCENE_VISUALS
+    SCENE_VISUALS = {}
+    if not code or not code.startswith(("import ", "from ", "#", "def ")):
+        return 0, "no Python code returned"
+    path = os.path.join(wd, "video_visuals.py")
+    with open(path, "w") as f:
+        f.write(code)
+    n = len(p["scenes"])
+    ok, detail = _visuals_sandbox_ok(path, n)
+    if not ok:
+        return 0, str(detail)
+    spec = importlib.util.spec_from_file_location("video_visuals", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    names = sorted(n for n in dir(mod) if n.startswith("vis_") and callable(getattr(mod, n)))
+    for i, name in enumerate(names):
+        if i < n:
+            SCENE_VISUALS[i] = getattr(mod, name)
+    p["video_visuals"] = names
+    return len(SCENE_VISUALS), ""
+
+
+def gen_video_visuals(p, chat, wd):
+    # Single-agent path (fallback): ask for video_visuals.py, sandbox-test,
+    # max 2 retries. Returns the number of custom visuals loaded (0 = library).
+    prompt = video_visuals_prompt(p)
+    err = None
+    for attempt in range(3):
+        try:
+            raw = chat([{"role": "system", "content": "You output Python code only, no markdown fences."},
+                        {"role": "user", "content": prompt if attempt == 0 else
+                         f"The sandbox rejected your code: {err}. Fix it and return the full corrected video_visuals.py."}])
+        except Exception as e:
+            err = str(e)
+            continue
+        n, err = load_video_visuals(p, wd, _extract_code(raw))
+        if n:
+            return n
+    return 0
+
+def qc_prompt(p):
+    # The QC Reviewer's task: score each scene 1-5, name what is wrong.
+    scenes = "; ".join(
+        f"{i+1}. {s.get('label', '')}: {s.get('vo', '')[:60]} (visual: {s.get('visual', '')})"
+        for i, s in enumerate(p["scenes"]))
+    return (f"Score each scene 1-5 on: visual fits the sentence, nothing cut "
+            f"at edges, text readable, different from the last video. Scenes: "
+            f"{scenes}. Reply with one line per scene: <number> <score> "
+            f"<what is wrong, or OK>.")
+
 
 async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None):
     global _P
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
     p = plan(brief, chat, recent, recent_styles)
-    # v29b: per-video custom effects — the LLM writes a NEW video_fx.py for
-    # this topic, sandbox-tested, max 2 retries; 0 = library fallback.
-    n_fx = gen_video_fx(p, chat, wd)
-    if notify and n_fx:
-        await notify(f"Custom effects: {n_fx} new functions for this video "
-                     f"({', '.join(p.get('video_fx', {}).get('tr', []) + p.get('video_fx', {}).get('fx', []))}).")
+    # v30+v31 (Hark's teams): the crew works in PARALLEL — Visual Artist
+    # writes video_visuals.py, Effects Artist writes video_fx.py, QC Reviewer
+    # scores the plan. The orchestrator (this function) merges: visuals +
+    # effects are sandbox-tested and loaded, the QC verdict rides in the plan.
+    # A member that produces nothing falls back to the single-agent retry,
+    # then to the library — so one bad agent never kills the video.
+    n_fx = n_vis = 0
+    try:
+        crew = teams.Crew(
+            [teams.VISUAL_ARTIST, teams.EFFECTS_ARTIST, teams.QC_REVIEWER],
+            [teams.Task(video_visuals_prompt(p), "video_visuals.py (Python code only)", teams.VISUAL_ARTIST),
+             teams.Task(video_fx_prompt(p), "video_fx.py (Python code only)", teams.EFFECTS_ARTIST),
+             teams.Task(qc_prompt(p), "one line per scene: <number> <score> <what is wrong, or OK>", teams.QC_REVIEWER)],
+            chat)
+        res = crew.kickoff()
+        n_vis, _e1 = load_video_visuals(p, wd, _extract_code(res.get("Visual Artist", "")))
+        n_fx, _e2 = load_video_fx(p, wd, _extract_code(res.get("Effects Artist", "")))
+        p["team_qc"] = res.get("QC Reviewer", "")
+    except Exception as e:
+        print("team kickoff failed:", str(e)[:200])
+    if not n_vis:
+        n_vis = gen_video_visuals(p, chat, wd)
+    if not n_fx:
+        n_fx = gen_video_fx(p, chat, wd)
+    if notify and (n_fx or n_vis):
+        await notify(f"Team: {n_vis} custom visuals + {n_fx} custom effects for this video.")
     voice = VOICES.get((p["lang"], p.get("voice", "male")), VOICES[(p["lang"], "male")])
     if notify: await notify(f"Script ready: {p['title']} ({len(p['scenes'])} scenes, {p['lang']}). Voice, animation, music chestunna.")
     gap = 0.32
