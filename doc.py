@@ -47,7 +47,7 @@ MOODS = {  # top, bottom, accent, (rate, pitch)
 LOOKS = {
     "A": {"name": "science", "top": (8, 24, 48), "bot": (6, 60, 70),
           "accents": [(60, 200, 230), (255, 180, 60)], "font": "anton", "chapter": "none",
-          "ease": "smooth", "motion": "push", "bg": "gradient",
+          "ease": "smooth", "motion": "push", "bg": "gradient", "grain": 5,
           "motion_personality": "smooth glides", "transition_family": "zoom through the diagram",
           # v29 (Hark's effects.py): the look's transition TAG picks from FX.TRANSITIONS;
           # the camera moves are for narrow visuals only (WIDE_VISUALS get push-in).
@@ -55,19 +55,19 @@ LOOKS = {
           "desc": "deep navy to teal gradient, cyan/amber accent, thin line diagrams, animated plots, clean sans — lightning, physics, how-things-work"},
     "B": {"name": "myth", "top": (10, 10, 10), "bot": (24, 24, 24),
           "accents": [(255, 40, 40), (255, 210, 0)], "font": "bebas", "chapter": "none",
-          "ease": "hard", "motion": "cut", "bg": "flat",
+          "ease": "hard", "motion": "cut", "bg": "flat", "grain": 4,
           "motion_personality": "snappy pops", "transition_family": "hard cut + stamp slam",
           "fx_tag": "warning", "moves": ["push", "whip"],
           "desc": "high-contrast black and white, one hot red or yellow accent, huge bold condensed type, hard cuts, stamp/strike-through — myths, warnings, versus"},
     "C": {"name": "story", "top": (40, 30, 20), "bot": (24, 18, 12),
           "accents": [(250, 230, 200), (230, 120, 50), (60, 170, 160)], "font": "serif", "chapter": "none",
-          "ease": "slow", "motion": "push", "bg": "warm",
+          "ease": "slow", "motion": "push", "bg": "warm", "grain": 7,
           "motion_personality": "slow push-ins", "transition_family": "paper tear / fade",
           "fx_tag": "history", "moves": ["push", "drift"],
           "desc": "warm film grain, soft vignette, serif/elegant type, slow push-ins, cream/orange/teal grade, minimal text — movies, history, emotion"},
     "D": {"name": "tech", "top": (12, 14, 28), "bot": (8, 10, 22),
           "accents": [(60, 255, 140), (170, 100, 255)], "font": "anton", "chapter": "none",
-          "ease": "snappy", "motion": "whip", "bg": "grid",
+          "ease": "snappy", "motion": "whip", "bg": "grid", "grain": 5,
           "motion_personality": "snappy easing", "transition_family": "screen swipe / coin flip",
           "fx_tag": "tech", "moves": ["push", "pan", "whip"],
           "desc": "light or dark glassy UI, neon green/violet accent, big animated numbers, bar/line charts, grid backgrounds, snappy easing — stats, AI, finance"},
@@ -77,6 +77,37 @@ LOOKS = {
 # centered visuals can take any camera move.
 WIDE_VISUALS = {"versus", "bar", "bar_compare", "graph", "list", "checklist",
                 "arrows_steps", "dot_grid", "calendar", "chat", "battery"}
+# v34 (Hark blueprint §4, style table per topic family): the TOPIC FAMILY
+# picks the design system, so two videos on different topics cannot look the
+# same. Health = dark red clinical, science = deep blue diagrams, motivation =
+# warm gold film grain, history = sepia + warm grain, money = green/black ledger.
+TOPIC_FAMILIES = {
+    "health": {"look": "B", "grain": 6, "desc": "dark red clinical — health, body, disease, tobacco, sleep, food"},
+    "science": {"look": "A", "grain": 5, "desc": "deep blue diagrams — science, physics, space, how things work"},
+    "motivation": {"look": "C", "grain": 7, "desc": "warm gold film grain — motivation, habits, discipline, focus"},
+    "history": {"look": "C", "grain": 8, "desc": "sepia + warm grain — history, ancient, legend, culture"},
+    "money": {"look": "D", "grain": 4, "desc": "green/black ledger — money, finance, price, salary, business"},
+}
+_FAMILY_WORDS = {
+    "health": ["health", "tobacco", "gutka", "smoking", "sleep", "food", "diet", "disease", "doctor", "body", "heart", "brain", "cancer", "medicine", "drug", "alcohol", "exercise", "weight"],
+    "science": ["science", "physics", "lightning", "thunder", "space", "atom", "energy", "earth", "planet", "gravity", "biology", "experiment", "ocean", "volcano", "electric", "sound", "light", "weather"],
+    "motivation": ["motivat", "discipline", "habit", "focus", "success", "goal", "mindset", "confidence", "routine", "productiv", "willpower", "consist"],
+    "history": ["history", "ancient", "king", "queen", "war", "empire", "legend", "temple", "kingdom", "dynasty", "century", "historic", "civilization", "archaeolog"],
+    "money": ["money", "finance", "rupee", "price", "salary", "bank", "invest", "stock", "crypto", "business", "startup", "wealth", "rich", "poor", "budget", "loan", "debt"],
+}
+
+
+def topic_family(brief):
+    # v34: the topic family from the brief's keywords (most hits wins). "" = none.
+    text = (brief or "").lower()
+    best, best_n = "", 0
+    for fam, words in _FAMILY_WORDS.items():
+        n = sum(1 for w in words if w in text)
+        if n > best_n:
+            best, best_n = fam, n
+    return best
+
+
 # v32 (M8, Mark's fact-type -> visual table, 1a1c9017ef4ff629 §1): a scene's
 # FACT TYPE picks its visual kind FIRST, before the LLM's own pick — so a
 # number scene is *guaranteed* a counter, a % scene a donut, a myth scene a
@@ -84,8 +115,13 @@ WIDE_VISUALS = {"versus", "bar", "bar_compare", "graph", "list", "checklist",
 # plan() (fact_type_of). "place" is left to the codegen (VL india_map), which
 # has a real map; the 25-kind library has none.
 FACT_VISUALS = {
-    "number": "counter", "percent": "donut", "time": "clock", "ban": "warning",
+    "number": "counter", "percent": "donut", "time": "clock", "ban": "stamp",
     "list": "list", "comparison": "versus", "myth": "strike", "quote": "quote_card",
+    # v34 (Hark blueprint §3): "1 in N" -> people icons, phone -> type-out card,
+    # a rate ("one life every 25 seconds") -> stopwatch. "place" is handled in
+    # plan() via lib_visual (india_map / world_dots), because those live in
+    # visuals_lib, not in create.VISUALS.
+    "one_in_n": "four", "phone": "card", "rate": "watch",
 }
 # v32 (M9): one SFX per scene, picked from the fact type (surfaced in the
 # plan; the audio mix uses the mood-based whoosh/boom as now).
@@ -95,6 +131,8 @@ SCENE_SFX = {
     "warning": "boom", "shock": "boom", "growth": "rise", "drop": "fall",
     "money": "coin", "health": "beat", "space": "whoosh", "funny": "boing",
     "calm": "soft",
+    # v34 (Hark blueprint §3): SFX for the new fact types.
+    "one_in_n": "pop", "phone": "type", "rate": "tick", "place": "whoosh", "stamp": "stamp",
 }
 
 # v29: FX enter/emphasis effects that transform a whole RGBA layer (L, t, st).
@@ -137,11 +175,19 @@ def fact_type_of(s):
     # v32 (M8): the scene's FACT TYPE (for FACT_VISUALS). Determined from the
     # label + value + voice-over, in the same spirit as hit_type_of but for
     # the visual kind, not the effect.
+    # v34 (Hark blueprint §3): one_in_n / phone / rate / place added; the
+    # specific types are checked BEFORE the generic number/time ones, so
+    # "1 in 4" is people icons, not a counter, and "one life every 25 seconds"
+    # is a stopwatch, not a clock.
     txt = (str(s.get("label", "")) + " " + str(s.get("vo", ""))).lower()
     val = str(s.get("value", ""))
+    if re.search(r"\b(one|1|two|2|three|3)\s+in\s+(four|4|five|5|six|6|ten|10)\b", txt): return "one_in_n"
+    if any(w in txt for w in ("call ", "phone number", "toll free", "helpline", "quitline", "1800", "1-800", "dial ")): return "phone"
+    if re.search(r"\bevery\s+\d*\s*(second|seconds|minute|minutes|hour|hours)\b", txt) or "per second" in txt or "per minute" in txt: return "rate"
     if "%" in val or "%" in txt: return "percent"
     if any(c.isdigit() for c in val): return "number"
     if any(w in txt for w in ("ban", "banned", "prohibit", "prohibited", "illegal", "banned")): return "ban"
+    if any(w in txt for w in ("india", "country", "state", "city", "world", "delhi", "mumbai", "map", "place", "village", "town", "global")): return "place"
     if any(w in txt for w in ("clock", "time", "year", "years", "day", "days", "hour", "minute", "am", "pm", "ago", "history", "ancient")): return "time"
     if any(w in txt for w in ("first", "second", "third", "three things", "three ways", "steps", "ways")): return "list"
     if any(w in txt for w in (" vs ", "versus", " than ", "better", "worse", "compare", "compared")): return "comparison"
@@ -220,6 +266,9 @@ New visuals (v28, Hark kit): dot_grid/donut for a percentage of people, gauge fo
 toggle for on/off, phone_buzz for phone notifications, stick_figure for a person/feeling,
 quote_card for a quote, arrows_steps for a process, checklist for steps, document for a
 report, polaroid for a memory, icon_row for a set of items, bar_compare for two numbers.
+New visuals (v34, Hark engine): four for one-in-N people, question for a big question hook,
+card for a phone number or helpline, watch for a stopwatch or rate, stamp for a ban or
+verdict, stamp_cta for the final call to action.
 Language: follow the owner. If they ask for English voice/voice-over -> lang "en" (vo in English). Telugu -> "te" (vo in Telugu script).
 Hindi -> "hi". If they say nothing about language, use "te".
 Length: honour any duration they ask (e.g. "1 min" = 60 s). Default 50-60 s. English speaks ~2.5 words/s, Telugu ~1.8 words/s:
@@ -232,7 +281,9 @@ in the source field; leave it empty when there is no fact. Each visual must lite
 clock=time, calendar=days, warning=danger/mistake, check=right way, versus=comparison, counter=a number, list=steps, heart=love/health,
 bar=progress, dot_grid/donut=a percentage of people, gauge=a level, toggle=on/off, phone_buzz=phone notifications,
 stick_figure=a person/feeling, quote_card=a quote, arrows_steps=a process, checklist=steps, document=a report,
-polaroid=a memory, icon_row=a set of items, bar_compare=two numbers compared).
+polaroid=a memory, icon_row=a set of items, bar_compare=two numbers compared,
+four=one-in-N people, question=a big question, card=a phone number or helpline,
+watch=a stopwatch or rate, stamp=a ban or verdict, stamp_cta=the final call to action).
 If no clear topic is given ("nuvve select chesko", "any", "AUTO", empty) choose a fresh high-retention topic yourself (psychology,
 history mysteries, science facts, money habits, health, tech, motivation). Avoid these recent topics: {recent}.
 Owner request: """ % C.VISUALS
@@ -254,9 +305,16 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
     # transition family from the topic mood, so the motion differs per video too.
     # v28: recent_styles (the last 5 looks, from KV) keeps the look from repeating.
     look = pick_look(brief, recent, recent_styles)
+    # v34 (Hark blueprint §4): the TOPIC FAMILY picks the design system, so
+    # two videos on different topics cannot look the same. The family's look
+    # wins unless it was used in the last 5 videos (recent_styles).
+    fam = topic_family(brief)
+    if fam and TOPIC_FAMILIES[fam]["look"] not in (recent_styles or []):
+        look = TOPIC_FAMILIES[fam]["look"]
     look_line = (f"DESIGN LOOK {look} ({LOOKS[look]['name']}): {LOOKS[look]['desc']}. "
                  f"Motion personality: {LOOKS[look]['motion_personality']}. "
-                 f"Transition family: {LOOKS[look]['transition_family']}.")
+                 f"Transition family: {LOOKS[look]['transition_family']}."
+                 + (f" Topic family: {fam} ({TOPIC_FAMILIES[fam]['desc']})." if fam else ""))
     raw = chat([{"role": "system", "content": "You output strict JSON only."},
                 {"role": "user", "content": PLAN.replace("{recent}", recent or "none").replace("{look}", look_line) + (brief or "AUTO")}])
     p = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
@@ -279,6 +337,8 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
     # v25: the look + a title seed (so no two videos match inside a look).
     # v27: the style plan (motion personality + transition family) rides with it.
     p["look"] = look
+    p["family"] = fam
+    p["grain"] = TOPIC_FAMILIES[fam]["grain"] if fam else LOOKS[look].get("grain", 5)
     p["seed"] = look_seed(p["title"], brief)
     p["accent"] = LOOKS[look]["accents"][p["seed"] % len(LOOKS[look]["accents"])]
     p["motion_personality"] = LOOKS[look]["motion_personality"]
@@ -325,6 +385,19 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
         s["fact_type"] = ft
         if ft in FACT_VISUALS:
             s["visual"] = FACT_VISUALS[ft]
+    # v34: "place" scenes get the real map from visuals_lib (india_map /
+    # world_dots) via lib_visual — the codegen's own choice still overrides
+    # this in load_video_fx.
+    for s in sc:
+        if s.get("fact_type") == "place" and not s.get("lib_visual"):
+            _t = (str(s.get("label", "")) + " " + str(s.get("vo", ""))).lower()
+            s["lib_visual"] = "india_map" if "india" in _t else "world_dots"
+    # v34 (Hark stamp CTA, item 8): the last scene is the call to action — a
+    # big word + a rotated stamp + a strikethrough, not a separate outro.
+    _last = sc[-1]
+    _cta = str(_last.get("label", "")).upper() in ("FOLLOW", "QUIT", "STOP", "TODAY", "SUBSCRIBE") or "follow" in str(_last.get("vo", "")).lower()
+    if _cta:
+        _last["visual"] = "stamp_cta"
     # v32 (M9): surface the per-cut transition + one SFX per scene in the
     # plan (the codegen's PLAN call already picks per-cut transitions; the
     # transition here is the one that brings the viewer INTO the scene).
@@ -363,6 +436,23 @@ def dur(path):
 def clamp(x, a=0.0, b=1.0): return max(a, min(b, x))
 def ease(x): x = clamp(x); return 1 - (1 - x) ** 3
 def eio(x): x = clamp(x); return x * x * (3 - 2 * x)
+
+
+def word_t(words, idx):
+    # v34 (Hark word_t, hark_engine_tobacco.py): the start time (s, scene-local)
+    # of word idx in a scene's word list [(start, dur, text), ...]; clamped to
+    # the last word. Graphics time their animation to specific words with this.
+    if not words: return 0.0
+    i = max(0, min(int(idx), len(words) - 1))
+    return float(words[i][0])
+
+
+def word_span(words, i0, i1):
+    # v34: (start, end) covering words i0..i1 inclusive — for a count/fill that
+    # runs while a phrase is spoken.
+    if not words: return (0.0, 0.0)
+    i0 = max(0, min(int(i0), len(words) - 1)); i1 = max(i0, min(int(i1), len(words) - 1))
+    return (float(words[i0][0]), float(words[i1][0]) + float(words[i1][1]))
 _fc = {}
 def anton(s):
     s = max(8, int(s))
@@ -454,19 +544,24 @@ def background(mood, look=None):
         if look == "D":  # glassy grid
             for x in range(0, W, 90): d.line([(x, 0), (x, H)], fill=(22, 26, 44))
             for y in range(0, H, 90): d.line([(0, y), (W, y)], fill=(22, 26, 44))
-        elif look == "C":  # warm film grain (subtle, not noisy)
-            rng = np.random.RandomState(11)
-            noise = rng.randint(-6, 7, size=(H // 6, W // 6, 1)).repeat(6, 0).repeat(6, 1)[:H, :W]
-            g2 = np.clip(np.asarray(im).astype(int) + noise, 0, 255).astype(np.uint8)
-            im = Image.fromarray(g2); d = ImageDraw.Draw(im)
-            # soft vignette: darken the corners
-            vig = np.zeros((H, W, 1))
-            yy2, xx2 = np.mgrid[0:H, 0:W]
-            r2 = ((xx2 - W / 2) / (W / 2)) ** 2 + ((yy2 - H / 2) / (H / 2)) ** 2
-            vig = np.clip(1 - 0.28 * np.clip(r2 - 0.55, 0, 1), 0, 1)[..., None]
-            im = Image.fromarray(np.clip(np.asarray(im).astype(float) * vig, 0, 255).astype(np.uint8)); d = ImageDraw.Draw(im)
+        elif look == "C":  # warm grade (grain + vignette now apply to ALL looks below)
+            pass
         else:
             for y in range(0, H, 6): d.line([(0, y), (W, y)], fill=tuple(int(c * 0.93) for c in im.getpixel((5, y))))  # scanlines
+        # v34 (Hark film look, make_bg + GRAIN): a subtle grain + soft vignette
+        # on EVERY look, not just C — this is what makes the background feel
+        # like film rather than a flat digital slide. Amount is per-look
+        # (LOOKS[look]["grain"]); baked into the cached background once.
+        _gr = LOOKS.get(look, {}).get("grain", 5) if look else 5
+        rng = np.random.RandomState(11)
+        noise = rng.randint(-_gr, _gr + 1, size=(H // 6, W // 6, 1)).repeat(6, 0).repeat(6, 1)[:H, :W]
+        g2 = np.clip(np.asarray(im).astype(int) + noise, 0, 255).astype(np.uint8)
+        im = Image.fromarray(g2); d = ImageDraw.Draw(im)
+        _vig = 0.34 if look == "C" else 0.28
+        yy2, xx2 = np.mgrid[0:H, 0:W]
+        r2 = ((xx2 - W / 2) / (W / 2)) ** 2 + ((yy2 - H / 2) / (H / 2)) ** 2
+        vig = np.clip(1 - _vig * np.clip(r2 - 0.55, 0, 1), 0, 1)[..., None]
+        im = Image.fromarray(np.clip(np.asarray(im).astype(float) * vig, 0, 255).astype(np.uint8)); d = ImageDraw.Draw(im)
         _bg[key] = im
     return _bg[key].copy()
 
@@ -481,6 +576,11 @@ def bokeh(col, r):
 
 PART = [(random.Random(i).uniform(0, W), random.Random(i + 99).uniform(0, H), random.Random(i + 7).randint(10, 34),
          random.Random(i + 3).uniform(15, 55)) for i in range(16)]
+
+# v34 (Hark DUST): 70 drifting dust specks, drawn per frame in scene_frame().
+# Deterministic (fixed seeds) so the render is reproducible.
+_DUST = [(random.Random(i).uniform(0, W), random.Random(i + 500).uniform(0, H),
+          random.Random(i + 9).uniform(1, 3), random.Random(i + 31).uniform(8, 28)) for i in range(70)]
 
 # fake-3D shaded pawn character (single bean silhouette, no face) - user's chosen style
 LV = np.array([-0.55, -0.7, 0.62]); LV /= np.linalg.norm(LV); HV = LV + np.array([0, 0, 1.0]); HV /= np.linalg.norm(HV)
@@ -638,14 +738,20 @@ def _fit_above_label(lay):
     return out
 
 
-def _call_lib_vis(name, t, st, d, acc):
+def _call_lib_vis(name, t, st, d, acc, words=None):
     # v32: call a visuals_lib VIS function. accent= is passed as a KEYWORD
     # only when the function accepts it (inspect.signature) — the 18
     # functions have VARYING signatures (vis_warning takes no accent).
+    # v34: words= is passed the same way, when the function accepts it —
+    # word-timed visuals (Hark word_t) animate to specific words.
     fn = VL.VIS[name]
-    if "accent" in inspect.signature(fn).parameters:
-        return fn(t, st, d, accent=acc)
-    return fn(t, st, d)
+    _sig = inspect.signature(fn).parameters
+    kw = {}
+    if "accent" in _sig:
+        kw["accent"] = acc
+    if words is not None and "words" in _sig:
+        kw["words"] = words
+    return fn(t, st, d, **kw)
 
 
 def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
@@ -663,13 +769,19 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
             return False
         vlay.alpha_composite(_fit_above_label(lay720.resize((W, H), Image.BICUBIC)))
         return True
-    # 1) custom vis_ from video_fx.py (Blind interface: (t, st, d, accent))
+    # v34 (Hark word_t): the scene's word timings [(start, dur, text)] — the
+    # visual times its animation to specific words instead of sitting still
+    # after popping in. Set in make_video() from the TTS WordBoundary events.
+    words = sc.get("words")
+    # 1) custom vis_ from video_fx.py (Blind interface: (t, st, d, accent),
+    # v34: words= when the function accepts it).
     cv = sc.get("custom_vis")
     if cv and VIDEO_FX is not None:
         fn = getattr(VIDEO_FX, cv, None)
         if fn is not None:
             try:
-                if _place720(fn(pt, 0.0, sc["d"], acc)):
+                _kw = {"words": words} if words and "words" in inspect.signature(fn).parameters else {}
+                if _place720(fn(pt, 0.0, sc["d"], acc, **_kw)):
                     return
             except Exception as e:
                 print(f"custom vis {cv} scene {idx} failed: {str(e)[:120]}")
@@ -677,7 +789,7 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
     lv = sc.get("lib_visual")
     if lv and lv in VL.VIS:
         try:
-            if _place720(_call_lib_vis(lv, pt, 0.0, sc["d"], acc)):
+            if _place720(_call_lib_vis(lv, pt, 0.0, sc["d"], acc, words=words)):
                 return
         except Exception as e:
             print(f"library vis {lv} scene {idx} failed: {str(e)[:120]}")
@@ -685,12 +797,12 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
     mv = _VIS_NAME_MAP.get(sc["visual"])
     if mv and mv in VL.VIS:
         try:
-            if _place720(_call_lib_vis(mv, pt, 0.0, sc["d"], acc)):
+            if _place720(_call_lib_vis(mv, pt, 0.0, sc["d"], acc, words=words)):
                 return
         except Exception as e:
             print(f"mapped vis {mv} scene {idx} failed: {str(e)[:120]}")
     # 3) the 25-kind library (create.draw_visual)
-    C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=cy, acc=acc)
+    C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=cy, acc=acc, words=words)
 
 
 def scene_frame(p, idx, t):
@@ -720,6 +832,12 @@ def scene_frame(p, idx, t):
         yy = (y - t * sp - idx * 140) % (H + 200) - 100
         b = bokeh(acc, r); lay.paste(b, (int(x + 20 * math.sin(t + r)), int(yy)), b)
     d = ImageDraw.Draw(lay, "RGBA")
+    # v34 (Hark dust): 70 specks drifting slowly down, above the background
+    # but below the visuals — part of the film texture.
+    for (x, y, r, sp) in _DUST:
+        yy = (y + t * sp) % (H + 40) - 20
+        xx = x + 10 * math.sin(t * 0.5 + y)
+        d.ellipse([xx - r, yy - r, xx + r, yy + r], fill=(200, 200, 200, 70))
     header(d, p, idx, n, t, sc["d"], acc, look)
     # v29 (Hark's effects.py): the visual and the label are drawn on SEPARATE
     # layers, each given its own ENTER effect (chosen in plan() from the hit
@@ -883,7 +1001,7 @@ def _render_chunk(args):
 SR = 44100
 def note(m): return 440 * 2 ** ((m - 69) / 12)
 
-def music(total, starts, moods, path):
+def music(total, starts, moods, path, hits=None):
     n = int(SR * total); out = np.zeros(n); rng = np.random.RandomState(7)
     dark = sum(m in ("tense", "sad", "mystery") for m in moods) >= len(moods) / 2
     prog = [[50, 57, 62, 65], [46, 53, 58, 62], [48, 55, 60, 64], [45, 52, 57, 61]] if dark else \
@@ -916,6 +1034,18 @@ def music(total, starts, moods, path):
     for i, s in enumerate(starts[1:], 1):
         add(whoosh, s - 0.3)
         if moods[i] in ("tense", "excited", "mystery"): add(boom * 0.6, s)
+    # v34 (Hark SFX at word times, item 7): a hit on each scene's hit word
+    # and ticks while a phone number is typed — placed at exact word times,
+    # not scene boundaries. hits = [(time_s, kind), ...].
+    if hits:
+        Lh = int(0.5 * SR); th = np.arange(Lh) / SR
+        hit = np.sin(2 * np.pi * np.cumsum(55 + 60 * np.exp(-th * 8)) / SR) * np.exp(-th * 6) * 0.8
+        _pl = int(0.12 * SR)
+        pop = np.sin(2 * np.pi * 600 * th[:_pl]) * np.exp(-th[:_pl] * 40) * 0.5
+        _tl = int(0.03 * SR)
+        tick = rng.randn(_tl) * np.exp(-np.arange(_tl) / SR * 200) * 0.6
+        for (ht, kind) in hits:
+            add(hit if kind == "hit" else pop if kind == "pop" else tick, ht)
     fade = np.minimum(1, (total - np.arange(n) / SR) / 2.0); out = out / (np.abs(out).max() + 1e-6) * 0.6 * fade
     for arr, pth in ((out, path), (sfx / (np.abs(sfx).max() + 1e-6) * 0.7, path.replace(".wav", "_sfx.wav"))):
         w = wave.open(pth, "w"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
@@ -1067,7 +1197,26 @@ def qc_prompt(p):
             f"<what is wrong, or OK>.")
 
 
-async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=()):
+def preview_sheet(p, wd):
+    # v34 (Hark PREV): 2 frames per scene (45% and 92% of each scene) into one
+    # contact sheet, for fast layout QC before a full render. Durations are
+    # estimated from the vo words when TTS has not run (preview mode).
+    ims = []
+    for i, s in enumerate(p["scenes"]):
+        d = float(s.get("d") or (0.4 * len(str(s.get("vo", "")).split()) + 0.45))
+        for fr in (0.45, 0.92):
+            ims.append(scene_frame(p, i, d * fr).resize((270, 480)))
+    cols = 6
+    rows = (len(ims) + cols - 1) // cols
+    sheet = Image.new("RGB", (270 * cols, 480 * rows))
+    for k, im in enumerate(ims):
+        sheet.paste(im, ((k % cols) * 270, (k // cols) * 480))
+    out = os.path.join(wd, "preview.png")
+    sheet.save(out)
+    return out
+
+
+async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False):
     global _P
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
     p = plan(brief, chat, recent, recent_styles, recent_families)
@@ -1089,6 +1238,18 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         print("codegen failed:", str(e)[:200])
     if notify and (n_custom or n_fb):
         await notify(f"Codegen: {n_custom} custom functions + {n_fb} library fallbacks for this video.")
+    # v34 (Hark PREV, item 3): preview mode — render a contact sheet (2 frames
+    # per scene) and exit, for fast layout QC. Durations + word timings are
+    # estimated from the vo text (no TTS, no audio, no full render).
+    if preview or os.environ.get("DIVYA_PREVIEW"):
+        for s in p["scenes"]:
+            _w = str(s.get("vo", "")).split()
+            s["d"] = 0.4 * len(_w) + 0.45
+            s["words"] = [(i * 0.4, 0.4, w) for i, w in enumerate(_w)]
+        _prev = preview_sheet(p, wd)
+        return {"path": _prev, "preview": True, "topic": p.get("topic", brief),
+                "title": p["title"], "lang": p["lang"], "plan": p,
+                "duration": sum(s["d"] for s in p["scenes"])}
     voice = VOICES.get((p["lang"], p.get("voice", "male")), VOICES[(p["lang"], "male")])
     # v32 (M12, Mark): ChristopherNeural (-8%, -4Hz, "calm, deep") for
     # calm/motivational English videos — majority-calm moods, or a brief
@@ -1152,12 +1313,21 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     starts, t = [], 0.4  # 0.4 s pre-roll for the boom
     for s in p["scenes"]: starts.append(t); t += s["d"]
     p["starts"] = starts; p["voice_end"] = t; total = t + OUTRO
+    # v34 (Hark SFX at word times, item 7): a hit on each scene's hit word
+    # (pop_t, absolute time) + ticks while a phone number is typed.
+    _hits = []
+    for i, s in enumerate(p["scenes"]):
+        _hits.append((starts[i] + float(s.get("pop_t", 0.0) or 0.0), "hit" if s.get("fact_type") in ("ban", "myth") else "pop"))
+        if s.get("fact_type") == "phone":
+            for (o, _d, _w) in (s.get("words") or []):
+                if any(c.isdigit() for c in _w):
+                    _hits.append((starts[i] + float(o), "tick"))
     # voice track positioned exactly
     ins = sum([["-i", s["audio"]] for s in p["scenes"]], [])
     fc = "".join(f"[{i}:a]adelay={int(st * 1000)}|{int(st * 1000)}[a{i}];" for i, st in enumerate(starts))
     fc += "".join(f"[a{i}]" for i in range(len(starts))) + f"amix=inputs={len(starts)}:normalize=0,apad,atrim=0:{total:.2f}[o]"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", fc, "-map", "[o]", "-ar", str(SR), "-ac", "1", f"{wd}/voice.wav"], check=True)
-    music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav")
+    music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits)
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/voice.wav", "-i", f"{wd}/music.wav", "-i", f"{wd}/music_sfx.wav", "-filter_complex",
                     "[0:a]asplit[v1][v2];[1:a]volume=0.55[m];[m][v2]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=350[md];"
                     "[v1]highpass=f=70,acompressor=threshold=0.1:ratio=3,volume=1.5[vv];[2:a]volume=0.55[sx];"
@@ -1182,5 +1352,10 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", out, "-c:v", "libx264", "-preset", "medium", "-b:v", f"{kb}k",
                         "-maxrate", f"{int(kb * 1.15)}k", "-bufsize", f"{kb * 2}k", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", small], check=True)
         out = small
-    return {"path": out, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
+    # v34 (Hark delivery, item 9): keep the CRF 23 master, then make a CRF 26
+    # delivery copy (much smaller, faster to send) for sending to Ajju.
+    delivery = f"{wd}/divya_doc_delivery.mp4"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", out, "-c:v", "libx264", "-preset", "medium",
+                    "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", delivery], check=True)
+    return {"path": out, "delivery_path": delivery, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
             "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total}
