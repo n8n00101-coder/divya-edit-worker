@@ -63,7 +63,8 @@ function kokoroShortError(e, phase) {
 }
 function kokoroWithTimeout(promise, ms, phase) {
   let timer = null;
-  const timeout = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("kokoro: " + phase + " timed out after " + Math.round(ms / 1000) + "s")), ms); });
+  const secs = ms >= 10000 ? Math.round(ms / 1000) + "s" : (ms / 1000).toFixed(1) + "s";
+  const timeout = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("kokoro: " + phase + " timed out after " + secs)), ms); });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
