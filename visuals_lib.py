@@ -385,21 +385,26 @@ def vis_scale(t, st=0, d=1.2, left="COST", right="HEALTH", tilt=-14, accent=Y, c
     level; the tip is a damped wobble to the final tilt. v36: words= is the
     scene's word timings; without it the tip falls back to 60% of the scene."""
     L = _L(); dr = ImageDraw.Draw(L); q = _p(t, st, d); col = (225, 225, 235, 255)
-    # The tip word: a comparative ("more"/"less"/"than"/"versus") or the
-    # heavier side's word. Tip direction: the COST side down (tilt -14) when
-    # the word is "cost"; the HEALTH side down (tilt +14) when it is
-    # "health" or a bare comparative (the point of the scene is that health
-    # outweighs the cost).
+    # The tip TIME is the first comparative ("more"/"less"/"than"/
+    # "versus") or side word ("cost"/"health"). The tip DIRECTION follows
+    # the LAST side word in the vo — the conclusion, not the introduction.
+    # (v36 fix: "One side is the cost. The other side is your health.
+    # The scale never lies." — the first word was "cost" so the scale
+    # tipped COST down, but the point is health outweighs the cost, so
+    # HEALTH must go down. The last side word is "health" -> HEALTH down.)
     _tip_t, _tip_dir = None, -1
     if words:
+        _last_side = None
         for i, (o, _dd, w) in enumerate(words):
             ww = str(w).strip().lower().strip(".,!?\"'")
-            if ww in ("more", "less", "than", "versus", "vs"):
-                _tip_t = float(o); _tip_dir = -1; break
+            if _tip_t is None and ww in ("more", "less", "than", "versus", "vs", "cost", "health"):
+                _tip_t = float(o)
             if ww == "cost":
-                _tip_t = float(o); _tip_dir = 1; break
-            if ww == "health":
-                _tip_t = float(o); _tip_dir = -1; break
+                _last_side = 1
+            elif ww == "health":
+                _last_side = -1
+        if _last_side is not None:
+            _tip_dir = _last_side
     if _tip_t is None:
         _tip_t = d * 0.6
     # The tilt: 0 until the tip word, then a damped wobble to the final tilt.
