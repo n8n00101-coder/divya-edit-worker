@@ -887,6 +887,16 @@ def flow_email_signup(page, job, cfg):
         return _stopped()
     ctrls = wait_for_auth_form(page, cfg, timeout_s=60)
     if ctrls is None:
+        # Slow render (a stalled script bundle) is not a dead page — one
+        # reload before failing.
+        progress("running", "signin-page", f"{name} sign-in page malli load chesthunna…", page.url)
+        try:
+            page.reload(wait_until="domcontentloaded", timeout=60000)
+        except Exception:
+            pass
+        page.wait_for_timeout(1500)
+        ctrls = wait_for_auth_form(page, cfg, timeout_s=30)
+    if ctrls is None:
         return _fail(f"{name} sign-in page load avvaledu — form kanipinchaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
     if ctrls.get("stopped"):
         return _stopped()
