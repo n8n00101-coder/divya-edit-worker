@@ -571,17 +571,35 @@ def ease_look(look, x):
 
 
 _bg = {}
-def background(mood, look=None):
+# v36 (Blind C4): the palette changes by SECTION, so the viewer feels the
+# story turn — problem = dark red, fact = deep blue, fix = teal.
+SECTION_PALETTE = {
+    "problem": ((48, 13, 17), (18, 6, 10)),
+    "fact": ((14, 28, 52), (8, 14, 30)),
+    "fix": ((10, 42, 44), (6, 22, 26)),
+}
+
+
+def background(mood, look=None, section=None):
     # v25: the LOOK sets the base gradient (the mood still tints the glow +
     # drives the voice). B = flat near-black; C = warm grade + grain; D = grid.
-    key = (mood, look)
+    # v36 (Blind C4): the background is NEVER flat — a RADIAL gradient
+    # (centre light, edges dark), 3% film grain, a soft vignette, and the
+    # palette changes by SECTION. The section is part of the cache key (it
+    # varies scene to scene within one video).
+    key = (mood, look, section)
     if key not in _bg:
         top, bot, acc, _ = MOODS[mood]
         if look and look in LOOKS:
             top, bot = LOOKS[look]["top"], LOOKS[look]["bot"]
             acc = LOOKS[look]["accents"][0]
-        a = np.linspace(0, 1, H)[:, None, None]
-        g = (np.array(top)[None, None] * (1 - a) + np.array(bot)[None, None] * a) * np.ones((1, W, 1))
+        if section in SECTION_PALETTE:
+            top, bot = SECTION_PALETTE[section]
+        yy, xx = np.mgrid[0:H, 0:W]
+        # Radial gradient: the centre is the light colour, the edges the dark.
+        r2 = ((xx - W / 2) / (W * 0.62)) ** 2 + ((yy - H * 0.44) / (H * 0.62)) ** 2
+        rr = np.clip(r2, 0, 1)[..., None]
+        g = (np.array(top)[None, None] * (1 - rr) + np.array(bot)[None, None] * rr) * np.ones((1, W, 1))
         yy, xx = np.mgrid[0:H, 0:W]
         glow = np.exp(-(((xx - W / 2) / 520) ** 2 + ((yy - 860) / 620) ** 2))[..., None]
         g = g + glow * np.array(acc)[None, None] * 0.22
@@ -595,9 +613,9 @@ def background(mood, look=None):
             for y in range(0, H, 6): d.line([(0, y), (W, y)], fill=tuple(int(c * 0.93) for c in im.getpixel((5, y))))  # scanlines
         # v34 (Hark film look, make_bg + GRAIN): a subtle grain + soft vignette
         # on EVERY look, not just C — this is what makes the background feel
-        # like film rather than a flat digital slide. Amount is per-look
-        # (LOOKS[look]["grain"]); baked into the cached background once.
-        _gr = LOOKS.get(look, {}).get("grain", 5) if look else 5
+        # like film rather than a flat digital slide. v36: 3% film grain
+        # (+-8 in 0-255) for ALL looks, baked into the cached background once.
+        _gr = 8
         rng = np.random.RandomState(11)
         noise = rng.randint(-_gr, _gr + 1, size=(H // 6, W // 6, 1)).repeat(6, 0).repeat(6, 1)[:H, :W]
         g2 = np.clip(np.asarray(im).astype(int) + noise, 0, 255).astype(np.uint8)
@@ -609,6 +627,27 @@ def background(mood, look=None):
         im = Image.fromarray(np.clip(np.asarray(im).astype(float) * vig, 0, 255).astype(np.uint8)); d = ImageDraw.Draw(im)
         _bg[key] = im
     return _bg[key].copy()
+
+_par = {}
+
+
+def _parallax_layer(mood, look, idx):
+    """v36 (Blind C3 — depth): one FAR layer of large soft blurred shapes,
+    cached at full size. idx 0 drifts at 2 px/s, idx 1 at 6 px/s (different
+    speeds). The shapes are drawn small, blurred, then upscaled — the blur
+    is baked once, not per frame."""
+    key = (mood, look, idx)
+    if key not in _par:
+        rng = random.Random(hash(key) & 0x7FFFFFFF)
+        small = Image.new("RGBA", (W // 4, H // 4), (0, 0, 0, 0)); dr = ImageDraw.Draw(small)
+        for i in range(3):
+            _x = rng.randint(0, W // 4); _y = rng.randint(50, H // 4 - 50)
+            _r = rng.randint(35, 80)
+            _col = MOODS[mood][2] if i == 0 else (120, 140, 180) if i == 1 else (200, 170, 120)
+            dr.ellipse((_x - _r, _y - _r // 2, _x + _r, _y + _r // 2), fill=_col + (26,))
+        _par[key] = small.filter(ImageFilter.GaussianBlur(10)).resize((W, H))
+    return _par[key]
+
 
 _bok = {}
 def bokeh(col, r):
@@ -1035,7 +1074,15 @@ def scene_frame(p, idx, t, return_layers=False):
     # layer is composited onto the background. This is the fix for Ajju's
     # "background colour zooms" complaint — Divya's old camera cropped the WHOLE
     # frame (bg + content), so the bg zoomed and content went outside the screen.
-    bg = background(mood, look).convert("RGBA")
+    bg = background(mood, look, sc.get("section")).convert("RGBA")
+    # v36 (Blind C3): the FAR layer — two soft shape layers drifting at
+    # 2 px/s and 6 px/s (different speeds), tiled so they wrap. The camera
+    # stays static — only the background layers drift. (Bokeh = mid, dust = near.)
+    for _idx, _spd in ((0, 2.0), (1, 6.0)):
+        _pl = _parallax_layer(mood, look, _idx)
+        _off = int(-_spd * t) % W
+        bg.alpha_composite(_pl, (_off, 0))
+        bg.alpha_composite(_pl, (_off - W, 0))
     # v32 (Blind): per-scene background kind (changes only when the mood
     # changes, set in plan()) — VL.scene_bg upscaled, 35% alpha over the
     # look bg, cached per kind in _SBG.
@@ -1208,7 +1255,7 @@ def outro(p, t):
     # v25: outro uses the video's look accent, not the last scene's mood accent.
     # v26: no pawn here either (see scene_frame).
     acc = tuple(p.get("accent") or MOODS[p["scenes"][-1]["mood"]][2])
-    im = background(p["scenes"][-1]["mood"], p.get("look"))
+    im = background(p["scenes"][-1]["mood"], p.get("look"), p["scenes"][-1].get("section"))
     d = ImageDraw.Draw(im)
     k = C.pop(t / 0.5); f = anton(int(140 * max(k, 0.2)))
     for li, (ln, col) in enumerate([("FOLLOW", (255, 255, 255)), ("FOR MORE", acc)]):

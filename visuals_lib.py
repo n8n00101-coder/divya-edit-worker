@@ -36,7 +36,7 @@ def _font(size, kind="big"):
 def _c(x): return max(0.0, min(1.0, x))
 def _p(t, st, d): return _c((t-st)/d) if d > 0 else float(t >= st)
 def _oe(x): return 1-(1-_c(x))**3
-def _ob(x, s=1.70158): x = _c(x)-1; return 1+(s+1)*x**3+s*x**2
+def _ob(x, s=1.28): x = _c(x)-1; return 1+(s+1)*x**3+s*x**2  # v36: 6% overshoot (was 10%)
 def _word_t(words, idx):
     # v34 (Hark word_t): start time of word idx in [(start, dur, text), ...].
     if not words: return 0.0
@@ -58,8 +58,9 @@ def texture(img, amount=10, seed=3):
     n = rng.integers(-amount, amount+1, a.shape[:2])[..., None]
     a[..., :3] = np.clip(a[..., :3]+n, 0, 255); return Image.fromarray(a.astype(np.uint8), "RGBA")
 
-def shadow(obj, off=(10, 14), blur=14, alpha=150):
-    """Return obj with a soft drop shadow under it (same size)."""
+def shadow(obj, off=(0, 12), blur=18, alpha=90):
+    """Return obj with a soft drop shadow under it (same size). v36 (Blind C2):
+    blur 18, offset (0, 12), 35% black (alpha 90) — a rich, deep shadow."""
     a = obj.split()[3].point(lambda v: v*alpha//255)
     sh = Image.new("RGBA", obj.size, (0, 0, 0, 0)); sh.putalpha(a)
     sh = sh.filter(ImageFilter.GaussianBlur(blur)); out = Image.new("RGBA", obj.size, (0, 0, 0, 0))
@@ -90,7 +91,14 @@ def reg(name, tags):
     return deco
 
 # ============================ MAPS ============================
-INDIA = [(68.2,23.7),(70.0,20.8),(72.8,19.0),(73.4,16.0),(74.6,12.8),(76.3,9.5),(77.5,8.1),(78.2,9.0),(79.9,10.3),
+# v36 (Blind C1): the India outline is REAL shape data — INDIA_GEO from
+# india_geo.py (johan/world.geo.json IND.geo.json, Natural Earth-derived,
+# Douglas-Peucker simplified 136 -> 110 points), NOT a hand polygon.
+try:
+    from india_geo import INDIA_GEO as _INDIA_GEO
+except Exception:
+    _INDIA_GEO = None
+INDIA = _INDIA_GEO or [(68.2,23.7),(70.0,20.8),(72.8,19.0),(73.4,16.0),(74.6,12.8),(76.3,9.5),(77.5,8.1),(78.2,9.0),(79.9,10.3),
  (80.3,13.0),(80.1,15.5),(82.3,17.0),(84.8,19.3),(86.9,21.3),(88.2,21.7),(89.0,22.0),(88.7,24.3),(89.8,25.9),(92.0,25.0),
  (92.6,22.0),(93.4,24.0),(94.6,25.6),(95.3,26.8),(97.3,28.0),(96.0,29.3),(94.0,28.9),(92.0,27.8),(89.7,26.8),(88.2,27.9),
  (85.0,27.4),(82.0,28.5),(80.1,30.2),(78.9,31.5),(78.4,32.6),(79.4,34.0),(77.8,35.5),(76.0,35.9),(74.5,34.6),(73.8,33.3),
@@ -101,15 +109,13 @@ def _proj(lon, lat, box=(90, 260, 630, 1000), lon0=67.5, lon1=98.0, lat0=7.5, la
     return ox+(lon-lon0)*s, oy+(lat1-lat)*s
 
 @reg("india_map", ["map", "india", "country", "ban", "law", "places", "geography"])
-def vis_india_map(t, st=0, d=1.2, pins=(("Delhi", 77.2, 28.6),), accent=Y, land=(58, 66, 84), outline=WHITE, label="INDIA"):
-    """Outline draws on, land fills, pins drop one by one. v35 (Ajju: the
-    India map read as a very low-level edit — just a thin white outline,
-    because the old fill was a flat dark slate (58,66,84) that faded in late
-    and was almost the same as the dark background). Now: a soft accent glow
-    behind the map, a rich vertical accent gradient filling it from the
-    start (light on top, deep at the bottom), and a thicker outline. The
-    map box (90..630, 260..1000) stays inside the safe frame (57..662,
-    128..1152); the glow blur (18) keeps the halo in-frame too."""
+def vis_india_map(t, st=0, d=1.2, pins=(("Delhi", 77.2, 28.6), ("Mumbai", 72.8, 19.1)), accent=Y, land=(58, 66, 84), outline=WHITE, label="INDIA", words=None):
+    """v36 (Blind C1 — rich, professional map): REAL GeoJSON shape (not a
+    hand polygon), filled with a soft accent gradient, a 2 px light rim,
+    an inner shadow (a dark ring just inside the edge), the states that
+    matter as labelled pins with a glow pulse, and — on the verdict word
+    ("banned"/"ban") — a red BANNED stamp slamming onto the map (B2).
+    The map box (90..630, 260..1000) stays inside the safe frame."""
     L = _L(); dr = ImageDraw.Draw(L); q = _p(t, st, d)
     pts = [_proj(*p) for p in INDIA]; n = len(pts)
     _fa = _oe(_c((q - .08) / .35)) if q > .08 else 0.0
@@ -117,9 +123,15 @@ def vis_india_map(t, st=0, d=1.2, pins=(("Delhi", 77.2, 28.6),), accent=Y, land=
         # Glow: the polygon in accent, blurred, behind the fill.
         _glow = _L(); ImageDraw.Draw(_glow).polygon(pts, fill=accent + (110,))
         L.alpha_composite(_glow.filter(ImageFilter.GaussianBlur(18)))
-        # Gradient fill: light accent -> deep accent, clipped to the polygon.
-        _bx0, _bx1 = int(min(p[0] for p in pts)), int(max(p[0] for p in pts))
-        _by0, _by1 = int(min(p[1] for p in pts)), int(max(p[1] for p in pts))
+        # Inner shadow: a dark ring just inside the edge — draw the dark
+        # polygon first, then the gradient fill on a 3% inset polygon, so a
+        # dark band shows between the edge and the fill.
+        _cx = sum(p[0] for p in pts) / n; _cy = sum(p[1] for p in pts) / n
+        _inset = [(_cx + (x - _cx) * 0.97, _cy + (y - _cy) * 0.97) for x, y in pts]
+        ImageDraw.Draw(L).polygon(pts, fill=(10, 10, 16, int(200 * _fa)))
+        # Gradient fill: light accent -> deep accent, clipped to the inset polygon.
+        _bx0, _bx1 = int(min(p[0] for p in _inset)), int(max(p[0] for p in _inset))
+        _by0, _by1 = int(min(p[1] for p in _inset)), int(max(p[1] for p in _inset))
         _bw, _bh = max(1, _bx1 - _bx0), max(1, _by1 - _by0)
         _top = np.array([min(255, int(v + (255 - v) * .45)) for v in accent], dtype=np.float32)
         _bot = np.array([int(v * .45) for v in accent], dtype=np.float32)
@@ -127,20 +139,40 @@ def vis_india_map(t, st=0, d=1.2, pins=(("Delhi", 77.2, 28.6),), accent=Y, land=
         _g = (_top * (1 - _yy) + _bot * _yy).astype(np.uint8)
         _gi = Image.fromarray(np.repeat(_g, _bw, axis=1), "RGB").convert("RGBA")
         _mask = Image.new("L", (_bw, _bh), 0)
-        ImageDraw.Draw(_mask).polygon([(x - _bx0, y - _by0) for x, y in pts], fill=int(255 * _fa))
+        ImageDraw.Draw(_mask).polygon([(x - _bx0, y - _by0) for x, y in _inset], fill=int(255 * _fa))
         L.paste(_gi, (_bx0, _by0), _mask)
     k = int(n*_oe(min(1, q/.5)))+1                      # draw-on outline
-    dr.line(pts[:k]+([pts[0]] if k > n else []), fill=outline+(255,), width=8, joint="curve")
+    # v36: a 2 px light rim (was an 8 px heavy outline).
+    dr.line(pts[:k]+([pts[0]] if k > n else []), fill=outline+(255,), width=2, joint="curve")
     f = _font(30, "small")
     for i, (name, lon, lat) in enumerate(pins):
         pq = _p(t, st+d*.6+i*.25, .35)
         if pq <= 0: continue
         x, y = _proj(lon, lat); drop = (1-_ob(pq))*60; r = 16
+        # v36: a glow pulse at the pin (the "state that matters" highlighted).
+        _pr = 26 + 10 * math.sin(t * 3 + i * 2)
+        _pg = _L(); ImageDraw.Draw(_pg).ellipse((x-_pr, y-_pr, x+_pr, y+_pr), fill=accent+(70,))
+        L.alpha_composite(_pg.filter(ImageFilter.GaussianBlur(10)))
         dr.ellipse((x-r*2.2, y-r*.6, x+r*2.2, y+r*.6), fill=(0, 0, 0, 90))
         dr.polygon([(x, y-drop), (x-r, y-2*r-drop), (x+r, y-2*r-drop)], fill=accent+(255,))
         dr.ellipse((x-r, y-3*r-drop, x+r, y-r-drop), fill=accent+(255,)); dr.ellipse((x-6, y-2*r-6-drop, x+6, y-2*r+6-drop), fill=INK+(255,))
         dr.text((x+r+8, y-2*r-drop), name, font=f, fill=WHITE+(int(255*pq),), anchor="lm")
     if label: dr.text((W/2, 220), label, font=_font(64), fill=WHITE+(int(255*_c(q*2)),), anchor="mm")
+    # v36 (Blind B2 — "ban" -> stamp slams): a red BANNED stamp slamming onto
+    # the map on the verdict word ("banned"/"ban"/"illegal"), not at a fixed time.
+    _st = None
+    if words:
+        for i, (o, _dd, w) in enumerate(words):
+            if str(w).strip().lower().strip(".,!?\"'") in ("banned", "ban", "illegal", "prohibited"):
+                _st = float(o); break
+    if _st is not None and (t - st) > _st:
+        sq = _oe(_p(t, st + _st, .18))
+        if sq > 0:
+            s = Image.new("RGBA", (420, 130), (0, 0, 0, 0)); ds = ImageDraw.Draw(s)
+            ds.rounded_rectangle((4, 4, 416, 126), 14, outline=RED+(255,), width=8)
+            ds.text((210, 65), "BANNED", font=_font(72), fill=RED+(255,), anchor="mm")
+            s = texture(s, 40, 9)
+            L.alpha_composite(place(s, W/2, 640, scale=2.0-1.0*sq, rot=-14, alpha=_c(sq*3)))
     return L
 
 @reg("world_dots", ["map", "world", "global", "countries", "spread"])
@@ -173,17 +205,17 @@ def vis_world_dots(t, st=0, d=1.5, hot=((77, 22), (-100, 40), (10, 50)), accent=
 def _doc_obj(title, lines, stamp, accent, w=520, h=680, highlight=1, seal=True):
     o = Image.new("RGBA", (w, h), PAPER+(255,)); dr = ImageDraw.Draw(o)
     dr.rectangle((0, 0, w-1, h-1), outline=(200, 190, 170, 255), width=2)
-    if seal: dr.ellipse((w/2-34, 30, w/2+34, 98), outline=INK+(255,), width=3); dr.text((w/2, 64), "GOI", font=_font(22, "serif"), fill=INK+(255,), anchor="mm")
+    if seal: dr.ellipse((w/2-34, 30, w/2+34, 98), outline=INK+(255,), width=3); dr.text((w/2, 64), "GOI", font=_font(30, "serif"), fill=INK+(255,), anchor="mm")
     dr.text((w/2, 130), title, font=_font(30, "serif"), fill=INK+(255,), anchor="mm")
     dr.line((40, 160, w-40, 160), fill=INK+(255,), width=2)
-    f = _font(21, "serif_r"); y = 185
+    f = _font(30, "serif_r"); y = 185
     for i, ln in enumerate(lines):
         for sub in wrap(ln, f, w-80, dr):
             if i == highlight: dr.rectangle((36, y-2, 44+dr.textlength(sub, font=f), y+26), fill=accent+(150,))
             dr.text((40, y), sub, font=f, fill=INK+(255,)); y += 32
         y += 10
     for k in range(int((h-110-y)/32)): dr.line((40, y+k*32+14, w-40-(k*37 % 120), y+k*32+14), fill=(170, 165, 150, 255), width=6)
-    dr.line((w-210, h-70, w-50, h-70), fill=INK+(255,), width=2); dr.text((w-130, h-50), "Signature", font=_font(16, "serif_r"), fill=INK+(255,), anchor="mm")
+    dr.line((w-210, h-70, w-50, h-70), fill=INK+(255,), width=2); dr.text((w-130, h-50), "Signature", font=_font(30, "serif_r"), fill=INK+(255,), anchor="mm")
     return texture(o, 8)
 
 @reg("document", ["law", "rule", "ban", "government", "report", "study", "paper", "official"])
@@ -212,7 +244,7 @@ def vis_newspaper(t, st=0, d=1.0, paper="THE DAILY TIMES", headline="Study finds
     """Newspaper spins in (classic film move), with masthead, headline, photo and columns."""
     w, h = 560, 760; o = Image.new("RGBA", (w, h), NEWS+(255,)); dr = ImageDraw.Draw(o)
     dr.text((w/2, 50), paper, font=_font(44, "serif"), fill=INK+(255,), anchor="mm")
-    dr.line((24, 86, w-24, 86), fill=INK+(255,), width=3); dr.text((30, 96), date, font=_font(16, "serif_r"), fill=INK+(255,))
+    dr.line((24, 86, w-24, 86), fill=INK+(255,), width=3); dr.text((30, 96), date, font=_font(30, "serif_r"), fill=INK+(255,))
     dr.line((24, 120, w-24, 120), fill=INK+(255,), width=1)
     fy = 132
     for ln in wrap(headline.upper(), _font(46), w-48, dr): dr.text((w/2, fy), ln, font=_font(46), fill=INK+(255,), anchor="ma"); fy += 54
@@ -231,12 +263,28 @@ def vis_newspaper(t, st=0, d=1.0, paper="THE DAILY TIMES", headline="Study finds
 
 @reg("typewriter_page", ["history", "old", "letter", "secret", "file", "quote"])
 def vis_typewriter(t, st=0, d=None, text="CLASSIFIED: subjects did not notice the swap.", cps=18, accent=Y, cx=W/2, cy=640):
-    """Old paper, mono text typed letter by letter with a blinking caret."""
+    """Old paper, mono text typed with a blinking caret. v36 (Blind A2):
+    WHOLE WORDS ONLY — the old char-by-char cut rendered a trailing partial
+    word ("CLASSIFIED: s"). Each word appears complete (it pops in whole
+    when its last character's time arrives); once the full string is shown
+    it HOLDS for 400 ms (no caret, no change) before the scene moves on."""
     w, h = 560, 420; o = Image.new("RGBA", (w, h), (236, 226, 200, 255)); dr = ImageDraw.Draw(o)
-    f = _font(30, "mono"); n = int(max(0, t-st)*cps); shown = text[:n]; y = 40
+    f = _font(30, "mono")
+    # Word boundaries: word i is revealed whole when its last char's time arrives.
+    _words = text.split()
+    _ends, _pos = [], 0
+    for _w in _words:
+        _pos += len(_w) + 1
+        _ends.append(_pos - 1)
+    _el = max(0.0, t - st) * cps
+    _shown = [_w for _w, _e in zip(_words, _ends) if _e <= _el]
+    shown = " ".join(_shown)
+    _done = len(_shown) == len(_words)
+    y = 40
     for ln in wrap(shown, f, w-60, dr) or [""]:
         dr.text((30, y), ln, font=f, fill=(35, 30, 25, 255)); y += 42
-    if int(t*2) % 2 == 0 and n < len(text)+10:
+    # Caret only while still typing (hidden once the full text holds).
+    if int(t*2) % 2 == 0 and not _done:
         lw = dr.textlength((wrap(shown, f, w-60, dr) or [""])[-1], font=f); dr.rectangle((32+lw, y-40, 48+lw, y-8), fill=(35, 30, 25, 255))
     return place(shadow(texture(o, 14)), cx, cy)
 
@@ -246,7 +294,7 @@ def vis_receipt(t, st=0, d=1.0, items=(("Gutka x30", "Rs 300"), ("Doctor", "Rs 4
     w = 420; h = 160+len(items)*56+120; o = Image.new("RGBA", (w, h), (250, 250, 248, 255)); dr = ImageDraw.Draw(o)
     for x in range(0, w, 20): dr.polygon([(x, h), (x+10, h-12), (x+20, h)], fill=(0, 0, 0, 0))
     dr.text((w/2, 50), "RECEIPT", font=_font(40, "mono"), fill=INK+(255,), anchor="mm")
-    f = _font(26, "mono"); y = 120
+    f = _font(30, "mono"); y = 120
     for a, b in items: dr.text((30, y), a, font=f, fill=INK+(255,)); dr.text((w-30, y), b, font=f, fill=INK+(255,), anchor="ra"); y += 56
     dr.line((30, y, w-30, y), fill=INK+(255,), width=2); dr.rectangle((24, y+20, w-24, y+80), fill=accent+(255,))
     dr.text((30, y+50), "TOTAL", font=f, fill=INK+(255,), anchor="lm"); dr.text((w-30, y+50), total, font=f, fill=INK+(255,), anchor="rm")
@@ -255,27 +303,47 @@ def vis_receipt(t, st=0, d=1.0, items=(("Gutka x30", "Rs 300"), ("Doctor", "Rs 4
 
 # ============================ PRODUCTS / OBJECTS ============================
 def _packet(brand, sub, col, w=230, h=330, seed=1):
+    """v36 (Blind C2 — real objects with depth): fold lines (two vertical
+    side folds + a horizontal crease under the crimp), a highlight streak,
+    and a rich drop shadow (blur 18, offset 0/12, 35% black — see shadow())."""
     o = Image.new("RGBA", (w, h), (0, 0, 0, 0)); dr = ImageDraw.Draw(o)
     dr.rounded_rectangle((0, 18, w, h-18), 16, fill=col+(255,))
     for yy in (0, h-26):                                         # crimped seal edges
         for x in range(0, w, 12): dr.polygon([(x, yy+26 if yy == 0 else yy), (x+6, yy if yy == 0 else yy+26), (x+12, yy+26 if yy == 0 else yy)], fill=tuple(int(c*.8) for c in col)+(255,))
+    # Fold lines: two vertical side folds + a horizontal crease under the top crimp.
+    _fold = tuple(int(c*.72) for c in col) + (255,)
+    dr.line((w*.22, 26, w*.22, h-26), fill=_fold, width=2)
+    dr.line((w*.78, 26, w*.78, h-26), fill=_fold, width=2)
+    dr.line((0, 44, w, 44), fill=tuple(int(c*.85) for c in col)+(255,), width=2)
     dr.ellipse((w/2-80, h/2-90, w/2+80, h/2+20), fill=(255, 240, 200, 255))
     dr.text((w/2, h/2-35), brand, font=_font(46), fill=col+(255,), anchor="mm")
-    dr.text((w/2, h/2+60), sub, font=_font(22, "small"), fill=WHITE+(255,), anchor="mm")
-    dr.rectangle((14, h-90, w-14, h-44), fill=(0, 0, 0, 255)); dr.text((w/2, h-67), "WARNING: TOBACCO KILLS", font=_font(15, "small"), fill=WHITE+(255,), anchor="mm")
+    dr.text((w/2, h/2+60), sub, font=_font(30, "small"), fill=WHITE+(255,), anchor="mm")
+    dr.rectangle((14, h-90, w-14, h-44), fill=(0, 0, 0, 255)); dr.text((w/2, h-67), "WARNING: TOBACCO KILLS", font=_font(30, "small"), fill=WHITE+(255,), anchor="mm")
     hl = Image.new("RGBA", (w, h), (0, 0, 0, 0)); ImageDraw.Draw(hl).polygon([(w*.15, 18), (w*.35, 18), (w*.05, h-18), (0, h-18), (0, h*.5)], fill=(255, 255, 255, 45))
     o.alpha_composite(hl); return texture(o, 7, seed)
 
+
+def _light_sweep(img, q):
+    """v36 (Blind C5 — materials): a light sweep across a metal/plastic
+    object, ONCE per scene — a diagonal white band that crosses the object
+    as q goes 0 -> 1 (the caller drives q from the scene progress)."""
+    w, h = img.size
+    sw = Image.new("RGBA", (w, h), (0, 0, 0, 0)); ds = ImageDraw.Draw(sw)
+    x = -60 + q * (w + 120)
+    ds.polygon([(x, 0), (x + 50, 0), (x - 30, h), (x - 80, h)], fill=(255, 255, 255, 70))
+    out = img.copy(); out.alpha_composite(sw); return out
+
 @reg("product_packet", ["product", "packet", "gutka", "snack", "brand", "tobacco", "food"])
 def vis_packet(t, st=0, d=.6, brand="RAJ", sub="PAN MASALA", col=(200, 40, 40), twin=None, accent=Y, cx=W/2, cy=640):
-    """A sealed packet pops in with a wobble; twin=(brand2, sub2, col2) adds the twin-pack beside it."""
+    """A sealed packet pops in with a wobble; twin=(brand2, sub2, col2) adds the twin-pack beside it.
+    v36 (Blind C5): a light sweep crosses the packet once per scene."""
     q = _p(t, st, d); wob = math.sin(q*math.pi*3)*(1-q)*10
-    if not twin: return place(shadow(_packet(brand, sub, col)), cx, cy, scale=_ob(q), rot=wob)
+    if not twin: return place(shadow(_light_sweep(_packet(brand, sub, col), q)), cx, cy, scale=_ob(q), rot=wob)
     L = place(shadow(_packet(brand, sub, col)), cx-125, cy, scale=_ob(q), rot=6+wob)
     q2 = _p(t, st+.2, d); L.alpha_composite(place(shadow(_packet(*twin, seed=2)), cx+125, cy+20, scale=_ob(q2), rot=-6-wob)); return L
 
 @reg("polaroid", ["photo", "memory", "face", "person", "choice", "experiment", "people"])
-def vis_polaroid(t, st=0, d=.6, photo=None, caption="Photo A", hair=(60, 40, 30), skin=(230, 180, 140), cx=W/2, cy=640, rot=-6, accent=Y):
+def vis_polaroid(t, st=0, d=.6, photo=None, caption="Photo A", hair=(60, 40, 30), skin=(230, 180, 140), cx=W/2, cy=640, rot=-2, accent=Y):
     """Instant photo drops in and settles with a tilt. Uses a real photo if given, else a flat-design face."""
     w, h = 380, 450; o = Image.new("RGBA", (w, h), (250, 250, 246, 255)); dr = ImageDraw.Draw(o); ph = (24, 24, w-24, 380)
     if photo and os.path.exists(photo): o.alpha_composite(ImageOps.fit(Image.open(photo).convert("RGBA"), (ph[2]-ph[0], ph[3]-ph[1])), ph[:2])
@@ -385,7 +453,7 @@ def vis_photo(t, st=0, d=4.0, photo=None, cx=W/2, cy=640, w=600, h=760, kb=(1.0,
     q = _p(t, st, d); s = kb[0]+(kb[1]-kb[0])*q; im = Image.open(photo).convert("RGBA")
     big = ImageOps.fit(im, (int(w*s), int(h*s))); ox, oy = (big.width-w)//2, (big.height-h)//2
     pic = big.crop((ox, oy, ox+w, oy+h)); fr = Image.new("RGBA", (w+2*border, h+2*border), (250, 250, 250, 255)); fr.alpha_composite(pic, (border, border))
-    if caption: ImageDraw.Draw(fr).text((border+16, h-30), caption, font=_font(24, "small"), fill=WHITE+(255,))
+    if caption: ImageDraw.Draw(fr).text((border+16, h-30), caption, font=_font(30, "small"), fill=WHITE+(255,))
     return place(shadow(fr), cx, cy, alpha=_c(_p(t, st, .3)*1.0))
 
 @reg("film_camera", ["camera", "film", "photo", "old", "history"])
@@ -412,7 +480,7 @@ def vis_timeline_cards(t, st=0, d=.5, events=(("1962", "Started"), ("2012", "Ban
         dr.ellipse((x-16, yy-16, x+16, yy+16), fill=accent+(255,))
         cx = x+side*(170+(1-e)*200); card = (cx-140, yy-60, cx+140, yy+60)
         dr.rounded_rectangle(card, 18, fill=(40, 44, 56, int(255*_c(q*2))))
-        dr.text((cx, yy-22), yr, font=_font(40), fill=accent+(255,), anchor="mm"); dr.text((cx, yy+26), txt, font=_font(28, "small"), fill=WHITE+(255,), anchor="mm")
+        dr.text((cx, yy-22), yr, font=_font(40), fill=accent+(255,), anchor="mm"); dr.text((cx, yy+26), txt, font=_font(30, "small"), fill=WHITE+(255,), anchor="mm")
     return L
 
 @reg("speech_bubble", ["talk", "quote", "say", "people", "chat", "opinion"])
@@ -436,7 +504,7 @@ def vis_warning(t, st=0, d=.5, text="!", col=(255, 200, 0), cx=W/2, cy=620, puls
 @reg("source_line", ["source", "study", "credit", "fact"])
 def vis_source(t, st=0, d=.4, text="Source: WHO, 2023", y=1110, accent=Y):
     """Small source credit that fades up at the bottom of the safe box (always add when a fact is shown)."""
-    L = _L(); q = _oe(_p(t, st, d)); ImageDraw.Draw(L).text((W/2, y+(1-q)*20), text, font=_font(24, "small"), fill=(200, 200, 210, int(220*q)), anchor="mm"); return L
+    L = _L(); q = _oe(_p(t, st, d)); ImageDraw.Draw(L).text((W/2, y+(1-q)*20), text, font=_font(30, "small"), fill=(200, 200, 210, int(220*q)), anchor="mm"); return L
 
 # ============================ HARK ENGINE (v34) ============================
 def _person(col, s=1.0):
@@ -453,7 +521,7 @@ def vis_four(t, st=0, d=1.0, n=4, accent=Y, cx=W/2, cy=640, words=None):
     _ni = _num_word_idx(words)
     hot_t = _word_t(words, _ni) if _ni is not None else d*.6
     for k in range(n):
-        p = _ob(_p(t, st+k*.12, .35))
+        p = _ob(_p(t, st+k*.08, .35))  # v36 (Blind C7): stagger 60-80 ms (was 120)
         if p <= 0: continue
         red = k == 0 and (t - st) > hot_t
         spr = _person(RED if red else (200, 200, 205), 1.3)
@@ -501,7 +569,7 @@ def vis_card(t, st=0, d=1.0, title="NATIONAL TOBACCO QUITLINE", subtitle="Minist
     o = Image.new("RGBA", (w, h), (0, 0, 0, 0)); dr = ImageDraw.Draw(o)
     dr.rectangle([18, 22, 612, 436], fill=(0, 0, 0, 120)); dr.rectangle([8, 8, 604, 428], fill=(232, 226, 210, 255))
     dr.text((40, 35), title, font=_font(30, "small"), fill=INK+(255,))
-    dr.text((40, 85), subtitle, font=_font(18, "small"), fill=(170, 40, 40, 255))
+    dr.text((40, 85), subtitle, font=_font(30, "small"), fill=(170, 40, 40, 255))
     dr.line([40, 125, 580, 125], fill=(120, 120, 120, 255), width=2)
     # the number types out from the first digit word (Hark word_t); 1.8 s.
     _dig = [o2 for (o2, _dd, w2) in (words or []) if any(c.isdigit() for c in str(w2))]
@@ -516,7 +584,7 @@ def vis_card(t, st=0, d=1.0, title="NATIONAL TOBACCO QUITLINE", subtitle="Minist
         if int(t*4) % 2 == 0 and n < len(number):
             hw = dr.textlength(number[:n], font=fm)
             dr.rectangle([46+hw, 175, 52+hw, 255], fill=(25, 25, 25, 255))
-    dr.text((40, 350), footer, font=_font(26, "small"), fill=(60, 60, 60, 255))
+    dr.text((40, 350), footer, font=_font(30, "small"), fill=(60, 60, 60, 255))
     o = texture(o, 8)
     return place(shadow(o), cx, cy+(1-p)*120, rot=-2, alpha=p)
 

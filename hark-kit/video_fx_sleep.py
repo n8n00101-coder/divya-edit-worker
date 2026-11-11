@@ -48,7 +48,21 @@ def vis_bed_phone(t, st=0, d=1.0, accent=(255, 210, 0)):
     if k <= 0: return lay
     # the bed (headboard + mattress + pillow)
     dr.rounded_rectangle([90, 700, 630, 980], 20, fill=(40, 60, 120))
-    dr.rounded_rectangle([110, 620, 300, 720], 16, fill=(220, 220, 230))
+    # v36 (Blind C2 — real objects with depth): the pillow is SHADED, not
+    # flat white — a vertical gradient (light top-left, shadow bottom-right),
+    # a soft shadow beneath it, and a fold/crease line.
+    _pw, _ph = 190, 100
+    _pg = Image.new("RGBA", (_pw, _ph), (0, 0, 0, 0))
+    _top = np.array([245, 245, 250], dtype=np.float32); _bot = np.array([178, 184, 200], dtype=np.float32)
+    _yy = np.linspace(0, 1, _ph)[:, None, None]
+    _g = (_top * (1 - _yy) + _bot * _yy).astype(np.uint8)
+    _pg = Image.fromarray(np.repeat(_g, _pw, axis=1), "RGB").convert("RGBA")
+    _mask = Image.new("L", (_pw, _ph), 0)
+    ImageDraw.Draw(_mask).rounded_rectangle([0, 0, _pw, _ph], 16, fill=255)
+    _pg.putalpha(_mask)
+    dr.rounded_rectangle([116, 626, 306, 726], 16, fill=(0, 0, 0, 90))  # soft shadow under the pillow
+    lay.alpha_composite(_pg, (110, 620))
+    dr.arc([130, 640, 280, 700], 20, 160, fill=(150, 155, 170, 255), width=3)  # fold/crease
     dr.rounded_rectangle([90, 700, 630, 760], 12, fill=(90, 140, 200))
     # the phone, glowing — the glow grows with k
     gx, gy = 420, 560
@@ -57,6 +71,10 @@ def vis_bed_phone(t, st=0, d=1.0, accent=(255, 210, 0)):
         dr.ellipse([gx - rr, gy - rr, gx + rr, gy + rr], fill=(80, 160, 255, 40))
     dr.rounded_rectangle([gx - 55, gy - 100, gx + 55, gy + 100], 14, fill=(20, 20, 30), outline=(150, 200, 255), width=4)
     dr.rectangle([gx - 40, gy - 80, gx + 40, gy + 60], fill=(120, 180, 255))
+    # v36 (Blind C2): the phone screen LIGHTS the scene — a soft blue pool
+    # on the mattress below the phone, growing with the glow.
+    for rr in range(int(120 * k), 20, -25):
+        dr.ellipse([gx - rr, 740 - rr // 3, gx + rr, 740 + rr // 3], fill=(80, 160, 255, 22))
     # v33: no "2 AM" text here — the label already says "2 AM" (Ajju: the
     # visual's text duplicated the label, not accurate).
     return lay

@@ -113,8 +113,8 @@ def clamp(x, a=0.0, b=1.0):  # v34: was missing — _wprogress + card used it
     return max(a, min(b, x))
 
 
-def pop(t):  # overshoot pop 0->1
-    t = max(0.0, min(1.0, t)); return 1 + 2.2 * (t - 1) ** 3 + 1.2 * (t - 1) ** 2 if t < 1 else 1.0
+def pop(t):  # overshoot pop 0->1 (v36: 6% overshoot, was 5.3%)
+    t = max(0.0, min(1.0, t)); return 1 + 2.2 * (t - 1) ** 3 + 1.25 * (t - 1) ** 2 if t < 1 else 1.0
 
 
 def center_text(d, y, text, f, fill):
