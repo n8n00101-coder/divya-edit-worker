@@ -1388,9 +1388,14 @@ def _qc_audit(sc, idx):
     if ch.get("label") != "fade_in":
         flaws.append(f"label motion is not fade_in: {ch.get('label')}")
     # The motion must start after the transition tail (TR/2) for scenes
-    # after the first — otherwise the cut and the motion stack.
+    # after the first — otherwise the cut and the motion stack. This applies
+    # only to a LAYER transform (enter/emphasis/fx_): for a build_in there is
+    # no layer transform at all — the build-in IS the scene's entrance, and
+    # the crossfade is the scene arriving, so they do not stack on the same
+    # layer (the frames at the cuts confirm they read clean). Delaying a
+    # build-in would desync it from its hit word, which v34 timed it to.
     pop_t = float(sc.get("pop_t", 0.0) or 0.0)
-    if idx > 0 and ch.get("vis_start", 0.0) < max(0.0, TR / 2 - pop_t) - 0.01:
+    if ch.get("vis") != "build_in" and idx > 0 and ch.get("vis_start", 0.0) < max(0.0, TR / 2 - pop_t) - 0.01:
         flaws.append("visual motion starts inside the transition tail")
     # The label must be sequenced after the visual's motion (never at the
     # same instant). For a build-in the label starts 0.35 s after the hit
