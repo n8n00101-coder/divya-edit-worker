@@ -49,14 +49,14 @@ const T = {
     noNumber: n => `${n} number naa daggara ledu. "save ${n} 98xxxxxxxx" ani cheppu, leda contacts nunchi select cheyyi.`, askNumber: n => `${n} phone number?`, saved: (n, x) => `${n} number save chesa (+${x}). Ee phone lo matrame untundi.`,
     remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
     connectNote: "Login page browser lo open avuthundi. Connect ayyaka ikkadiki tirigi raa.", connect: "Connect", connectedP: "Connected", soon: "Tvaralo",
-    setupIntro: "Divya ni nee sontha accounts lo setup chestham — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (nee server). Divya antha prepare chesthundi; account create cheyyadam, key copy cheyyadam, captcha/verification — avi NUVVU cheyyali, Divya silent ga cheyyadhu.",
+    setupIntro: "Divya ni nee sontha accounts lo setup chestham — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (nee server). Divya anni chesthundhi — accounts, API keys, server setup — nee okka allow tho. Neeku emi cheyalsina pani undadhu.",
     googleRow: "Continue with Google", googleSub: "Nee email ni setup ki vaadutham", continueGoogle: "Continue", orLoginPw: "Leda password tho login cheyyi",
-    consent: "Naa keys ni Divya encrypt chesi save chesi, naa requests kosam matrame vaadadaniki permission istunna.", guideBtn: "🔊 Voice tho step-by-step setup",
+    consent: "Naa keys ni Divya encrypt chesi save chesi, naa requests kosam matrame vaadadaniki permission istunna.", guideBtn: "🔊 Voice tho manual setup",
     needConsent: "Mundu permission box tick cheyyi.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Ayyindi", delData: "Naa data delete cheyyi", delDataConfirm: "Nee account, chats, tokens — anni delete avthayi. Ee action ni venakki theeyalem. Confirm cheyala?", delDataDone: "Nee data delete chesam.", templateLabel: "Style template",
     stepNot: "Inka ledu", stepOk: w => `Connected${w ? " · " + w : ""}`, stepFail: "Test fail", oneTap: "One-tap connect", openCreate: "Open & key create", pasteKey: "Key ikkada paste cheyyi", paste: "Paste", testSave: "Test & save", test: "Test", remove: "Remove", oauthSoon: "OAuth login tvaralo; ippudu token paste cheyyi.",
     foundKey: (n, l) => `${n} key dorikindi (…${l}). Save cheyyana?`, keySaved: n => `${n} key save ayyindi, test pass.`, keyBad: n => `Idi ${n} key laaga ledu.`,
-    guideStep: (n, d) => `${n} setup. ${d} Nenu page open chestha. Nee email tho login avvu, key create chesi copy cheyyi, tarvatha Divya ki tirigi raa.`, guideReturn: "Key copy chesava? Clipboard nunchi chustunna.", guidePaste: "Key ni box lo paste chesi Test & save nokku.", guideDone: "Anni steps ayyayi. Super!", guideNextQ: n => `Next: ${n}. Continue cheyyana?`,
-    serverTitle: "Nee sontha server:", serverText: "Cloudflare token tho Divya nee account lo nee Worker deploy chesthundi — kani idi kuda nee OK tho, nuvve login ayyaka matrame. Ippudu kaadhu, tvaralo.", noPasswords: "Divya passwords save cheyyadhu, accounts silent ga create cheyyadhu, captchas bypass cheyyadhu. Prathi provider lo login nuvve chestav — Divya page open chesthundi, migatha nuvve.",
+    guideStep: (n, d) => `${n} manual step. ${d} Nee daggara key unte ikkada paste cheyyi — leda one-tap setup tho Divya anni chesthundhi.`, guideReturn: "Key copy chesava? Clipboard nunchi chustunna.", guidePaste: "Key ni box lo paste chesi Test & save nokku.", guideDone: "Anni steps ayyayi. Super!", guideNextQ: n => `Next: ${n}. Continue cheyyana?`,
+    serverTitle: "Nee sontha server:", serverText: "Cloudflare server kuda Divya ne setup chesthundhi — nee okka allow tho. Neeku emi cheyalsina pani undadhu.",
     d_openrouter: "Free AI models tho brain (backup).", d_groq: "Fast brain + voice-to-text.", d_gemini: "Images/screenshots chadavadaniki.", d_cloudflare: "Nee sontha server (Worker) kosam.", d_github: "Video machine (Actions) kosam.", d_huggingface: "AI models/voices kosam.",
     planNow: (p, u, l) => `Nee plan: ${p === "premium" ? "Premium (owner/friend access)" : "Free"}. Ee varam shorts: ${l === null ? `${u} (limit ledu)` : `${u}/${l}`}.`,
     freePlan: "Free", f1: "Voice commands: call, WhatsApp, open apps, songs, reminders, time, weather", f2: "Chat & chinna questions", f3: "Blind users kosam voice-first mode", f4: "Nee sontha API keys vaadochu",
@@ -68,8 +68,8 @@ const T = {
     language: "Language", voiceReplies: "Voice replies", voiceRepliesSub: "Mic lo adigithe Divya gattiga reply chestundi", voiceFirst: "Voice-first mode", voiceFirstSub: "Prathi result gattiga cheptundi, answer tarvatha malli vintundi (blind users kosam)", blindMode: "Blind Mode", blindModeSub: "Anni voice tho — pedha buttons, high contrast, captcha guide, voice signup", theme: "Theme", auto: "Auto", light: "Light", dark: "Dark", connected: "Connected accounts",
     inviteTitle: "Friends ni invite cheyyi", inviteSub: "Okkaru join aithe iddariki 10 lakh tokens (10 shorts leda 1× 10-min video). Pool tokens expire avvavu.", copy: "Copy", redeem: "Redeem", inviteStatus: (i, e) => `${i} invites · ${e} tokens vachayi`, tokSub: (w, p, v, d) => `Week lo ${fmtTok(w)} tokens migilayi · pool ${fmtTok(p)} · ${v} shorts · reset ${d}`, voiceSignup: "Voice tho signup cheyyi", voiceIncluded: "Voice assistant included — anni plans lo", capDone: "Captcha solve chesa ✓", capNo: "Sare, solve cheyaledu.", capAskShot: "Captcha screenshot pampu, nenu chadivi answer cheptha.", blindHello: "Blind Mode on. Anni voice tho cheptha. Em cheyyali?",
     netErr: "Network problem. Malli try cheyyi.", micDenied: "Mic permission ivvu (browser settings lo).", noRec: "Ee browser lo voice record avvadu.", loggedIn: n => `${n} tho login`, orDone: "OpenRouter connect ayyindi ✓", orFail: "OpenRouter connect avvaledu.",
-    voicePick: "Voice (Divya gonthu)", voiceLoading: "Voices load avthunnayi… (modati sari ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices load avvaledhu — internet check chesi malli try cheyyi. Ippudu system voice tho matladthunna.", voiceRetry: "Voices malli load cheyyi", voiceRetryNote: "Kokoro load avvaledhu — ippudu phone system voice matrame play avthundhi, andhuke anni voices okela vinipisthayi.", voicePlayedSystem: l => `Ee voice Kokoro kadhu — phone system voice (${l}) tho play ayyindhi. Kokoro load ayyaka selected voice vintundhi.`, voiceNoVoice: "Voice play avvaledhu — Kokoro load avvaledhu, phone lo voice kuda ledu. Internet check cheyyi.", voiceSample: "Hi, nenu Divya. Ee voice tho matladutha.", vChild: "Pillalu", vTeen: "Teenage", vAdult: "30–60", vElder: "60+ peddalu", vFemale: "Female", vMale: "Male", gsAsk: "Free AI setup cheyala? Allow cheyala vadha? Avunu ani cheppu, leda vadhu ani cheppu.", gsDeclined: "Sare, setup cheyaledu. Setup screen lo eppudaina start cheyochu.", gsStopped: "Sare, ikkada aapesthunna. Setup screen lo continue cheyochu.", gsVerifyAsk: "Verification mail vachindhi. Link open cheyala?", sPost: "YouTube post", postIntro: "Edit chesina video ni YouTube lo post cheyyi. Title, description, tags ivvu, schedule kuda set cheyochu.", postVideo: "Video (job id leda link)", postJobPh: "Job id leda video link", postTitle: "Title", postDesc: "Description", postTags: "Tags (comma tho)", postTagsPh: "divya, ai, video", postPrivacy: "Privacy", postSchedule: "Schedule (optional)", postThumb: "Thumbnail (optional)", postBtn: "YouTube lo post cheyyi", postDone: "Post ayyindi ✓", postViews: "Views", postLikes: "Likes", postComments: "Comments", postNeedVideo: "Video job id leda link ivvu.", sHistory: "Naa videos", gHistory: "Naa videos", histIntro: "Edit ayina videos — video 1, video 2 ani numbers. Upload cheyataniki chat lo 'upload video 1' ani cheppu.", histEmpty: "Inka videos levu. Chat lo video attach cheyyi.", histWatch: "Chudu / Download", histUpload: "Upload cheyu", histDone: "Ready", histFail: "Fail ayyindi", histEditing: "Edit avthondi",
-    setupOneTap: "Guided setup start cheyyi (okka allow)", setupConsent: "Okka allow tho Divya prathi step prepare chesi, page open chesthundi. Account create cheyyadam, key theeskovadam, captcha/verification complete cheyyadam — avi nuvve chesthav; Divya avi silent ga cheyyadhu, passwords save cheyyadhu.", setupHowT: "Setup ela work avthundhi?", setupHowDivyaT: "Divya chesthundhi:", setupHowDivya: "prathi provider page open cheyyadam, key ekkada paste cheyyalo chupinchadam, key test chesi save cheyyadam.", setupHowYouT: "Nuvvu cheyyalsindhi:", setupHowYou: "prathi site lo nee email tho FREE account create cheyyi, key create chesi copy cheyyi, captcha / email verification vasthe nuvve complete cheyyi.", setupHowAfterT: "Tarvatha:", setupHowAfter: "keys anni save ayyaka Divya chat lo neeku chepthundhi — appudu nunchi Divya nee keys tho panichesthundi.", setupHowNote: "Divya accounts create cheyyadhu, passwords adagadhu, captchas bypass cheyyadhu.", setupStepNote: "Kindha prathi step ki state untundhi: Connected = key save ayyindhi ✓ · Waiting on you = nuvvu key paste cheyyali · Not set = inka cheyyaledu · Test fail = key work avvatledhu, malli try cheyyi.", stepWaiting: "Nee kosam wait — key paste cheyyi", stepYouDo: "Nuvvu cheyyalsindhi: site open chesi free account create cheyyi, key copy chesi ikkada paste cheyyi.", setupNeedEmail: "Kotha accounts kosam email kavali — Profile lo email set cheyyi.", setupOpen: "Browser lo open cheyyi", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "Setup ayyindhi ✓", setupRunning: "Setup nadusthundhi…", setupPaused: "Pause ayyindhi — Continue nokku leda Take Control cheyyi.", setupFailed: "Setup fail ayyindhi.",
+    voicePick: "Voice (Divya gonthu)", voiceLoading: "Voices load avthunnayi… (modati sari ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices load avvaledhu — internet check chesi malli try cheyyi. Ippudu system voice tho matladthunna.", voiceRetry: "Voices malli load cheyyi", voiceRetryNote: "Kokoro load avvaledhu — ippudu phone system voice matrame play avthundhi, andhuke anni voices okela vinipisthayi.", voicePlayedSystem: l => `Ee voice Kokoro kadhu — phone system voice (${l}) tho play ayyindhi. Kokoro load ayyaka selected voice vintundhi.`, voiceNoVoice: "Voice play avvaledhu — Kokoro load avvaledhu, phone lo voice kuda ledu. Internet check cheyyi.", voiceSample: "Hi, nenu Divya. Ee voice tho matladutha.", vChild: "Pillalu", vTeen: "Teenage", vAdult: "30–60", vElder: "60+ peddalu", vFemale: "Female", vMale: "Male", gsAsk: "Setup cheyala? Divya anni setup chesthundhi — accounts, API keys, server — neeku emi cheyalsina pani undadhu.", gsDeclined: "Sare, setup cheyaledu. Chat panichesthundi — setup kavali ante Setup screen lo eppudaina start cheyochu.", gsStopped: "Sare, ikkada aapesthunna. Setup screen lo continue cheyochu.", gsVerifyAsk: "Verification mail vachindhi — link ni okkasari tap cheyu, migilina anni nene chestha.", sPost: "YouTube post", postIntro: "Edit chesina video ni YouTube lo post cheyyi. Title, description, tags ivvu, schedule kuda set cheyochu.", postVideo: "Video (job id leda link)", postJobPh: "Job id leda video link", postTitle: "Title", postDesc: "Description", postTags: "Tags (comma tho)", postTagsPh: "divya, ai, video", postPrivacy: "Privacy", postSchedule: "Schedule (optional)", postThumb: "Thumbnail (optional)", postBtn: "YouTube lo post cheyyi", postDone: "Post ayyindi ✓", postViews: "Views", postLikes: "Likes", postComments: "Comments", postNeedVideo: "Video job id leda link ivvu.", sHistory: "Naa videos", gHistory: "Naa videos", histIntro: "Edit ayina videos — video 1, video 2 ani numbers. Upload cheyataniki chat lo 'upload video 1' ani cheppu.", histEmpty: "Inka videos levu. Chat lo video attach cheyyi.", histWatch: "Chudu / Download", histUpload: "Upload cheyu", histDone: "Ready", histFail: "Fail ayyindi", histEditing: "Edit avthondi",
+    setupOneTap: "One-tap setup start cheyyi (okka allow)", setupConsent: "Okka allow tho Divya anni chesthundhi — accounts create cheyyadam, API keys theeskovadam, captchas solve cheyyadam, server setup — anni Divya ne chesthundhi. Neeku emi cheyalsina pani undadhu.", setupHowT: "Setup ela work avthundhi?", setupHowDivyaT: "Divya chesthundhi:", setupHowDivya: "accounts create cheyyadam, API keys theeskovadam, captchas solve cheyyadam, Cloudflare server setup cheyyadam — anni Divya ne chesthundhi, nee okka allow tho.", setupHowYouT: "Neeku okkasari matrame:", setupHowAfterT: "Tarvatha:", setupHowAfter: "setup ayyaka Divya chat lo neeku chepthundhi — appudu nunchi Divya nee accounts tho panichesthundi.", setupHowNote: "Divya anni chesthundhi — nee allow tho. Email link tap / SMS code thappa, neeku emi cheyalsina pani undadhu.", setupStepNote: "Kindha prathi step ki state untundhi: Connected = key save ayyindhi ✓ · Waiting on you = okka email-link tap leda SMS code matrame kavali · Not set = inka cheyyaledu · Test fail = key work avvatledhu, malli try cheyyi.", stepWaiting: "Nee okka tap kosam wait — email link leda SMS code", stepYouDo: "Ee step ni Divya chesthundhi — neeku emi cheyalsina pani ledu.", setupNeedEmail: "Kotha accounts kosam email kavali — Profile lo email set cheyyi.", setupOpen: "Browser lo open cheyyi", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "Setup ayyindhi ✓", setupRunning: "Setup nadusthundhi…", setupPaused: "Pause ayyindhi — nee okka tap kosam aagindhi.", setupFailed: "Setup fail ayyindhi.", setupAsk: "Setup cheyala? Divya anni setup chesthundhi — accounts, API keys, server — neeku emi cheyalsina pani undadhu.", setupAllow: "Setup cheyu", setupDoneMsg: "Setup aipoyindhi ✓ — chat ippudu ready", setupStepDone: "Ayyindhi ✓", setupStepRunning: "Jarugutondhi…", setupStepPaused: "Nee okka tap kosam aagindhi", setupStepFailed: "Fail ayyindhi — migilina steps tho continue chesthunna", setupPauseEmail: "Nee email lo vachina link ni okkasari tap cheyu, migilina anni nene chestha.", setupPauseSms: "Phone ki vachina SMS code ni ikkada ivvu, migilina anni nene chestha.", setupDidIt: "Nenu chesa ✓", setupYouEmail: "Nee email lo vachina verification link ni okkasari tap cheyu — migilina anni nene chestha.", setupYouSms: "Phone ki vachina SMS code ni okkasari ivvu — migilina anni nene chestha.", capSolving: "Captcha vachindhi — Divya ne solve chesthundhi, nee allow tho.", capNeedTap: "Image challenge aithe okka tap cheppu, nenu solve chestha.",
   },
   en: {
     skip: "Skip to content", numLabel: "WhatsApp number", codeLabel: "6-digit code",
@@ -103,14 +103,14 @@ const T = {
     noNumber: n => `I don't have ${n}'s number. Say "save ${n} 98xxxxxxxx", or pick from contacts.`, askNumber: n => `${n}'s phone number?`, saved: (n, x) => `Saved ${n} (+${x}). It stays on this phone only.`,
     remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
     connectNote: "Sign-in opens in your browser. Come back here when done.", connect: "Connect", connectedP: "Connected", soon: "Soon",
-    setupIntro: "We set Divya up inside YOUR own accounts — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (your server). Divya prepares everything; creating the account, copying the key, and any captcha or verification are YOUR steps — Divya never does them silently.",
+    setupIntro: "Divya sets itself up inside YOUR own accounts — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (your server). Divya does everything — accounts, API keys, server setup — with your one allow. You don't have to do anything.",
     googleRow: "Continue with Google", googleSub: "Uses your email for setup", continueGoogle: "Continue", orLoginPw: "Or log in with a password",
-    consent: "I allow Divya to save my keys encrypted and use them only for my requests.", guideBtn: "🔊 Voice-guided setup, step by step",
+    consent: "I allow Divya to save my keys encrypted and use them only for my requests.", guideBtn: "🔊 Manual setup by voice",
     needConsent: "Please tick the permission box first.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Done", delData: "Delete my data", delDataConfirm: "Your account, chats and tokens will all be deleted. This can't be undone. Confirm?", delDataDone: "Your data has been deleted.", templateLabel: "Style template",
     stepNot: "Not set", stepOk: w => `Connected${w ? " · " + w : ""}`, stepFail: "Test failed", oneTap: "One-tap connect", openCreate: "Open & create key", pasteKey: "Paste key here", paste: "Paste", testSave: "Test & save", test: "Test", remove: "Remove", oauthSoon: "OAuth sign-in coming soon; paste a token for now.",
     foundKey: (n, l) => `Found a ${n} key (…${l}). Save it?`, keySaved: n => `${n} key saved and tested.`, keyBad: n => `That doesn't look like a ${n} key.`,
-    guideStep: (n, d) => `${n} setup. ${d} I'll open the page. Sign in with your email, create a key, copy it, then come back to Divya.`, guideReturn: "Did you copy the key? Checking the clipboard.", guidePaste: "Paste the key in the box and tap Test and save.", guideDone: "All steps are done. Great!", guideNextQ: n => `Next: ${n}. Continue?`,
-    serverTitle: "Your own server:", serverText: "With your Cloudflare token, Divya will deploy your own Worker in your account — only with your OK, after you sign in yourself. Not yet — coming soon.", noPasswords: "Divya never stores passwords, never creates accounts silently, and never bypasses captchas. You sign in to each provider yourself — Divya opens the page, you do the rest.",
+    guideStep: (n, d) => `${n} manual step. ${d} If you already have a key, paste it here — or use one-tap setup and Divya does everything.`, guideReturn: "Did you copy the key? Checking the clipboard.", guidePaste: "Paste the key in the box and tap Test and save.", guideDone: "All steps are done. Great!", guideNextQ: n => `Next: ${n}. Continue?`,
+    serverTitle: "Your own server:", serverText: "Divya sets up the Cloudflare server too — with your one allow. You don't have to do anything.",
     d_openrouter: "Brain with free AI models (backup).", d_groq: "Fast brain + speech-to-text.", d_gemini: "Reads images and screenshots.", d_cloudflare: "For your own server (Worker).", d_github: "For the video machine (Actions).", d_huggingface: "For AI models and voices.",
     planNow: (p, u, l) => `Your plan: ${p === "premium" ? "Premium (owner/friend access)" : "Free"}. Shorts this week: ${l === null ? `${u} (no limit)` : `${u}/${l}`}.`,
     freePlan: "Free", f1: "Voice commands: call, WhatsApp, open apps, songs, reminders, time, weather", f2: "Chat & short questions", f3: "Voice-first mode for blind users", f4: "Use your own API keys",
@@ -122,8 +122,8 @@ const T = {
     language: "Language", voiceReplies: "Voice replies", voiceRepliesSub: "When you speak, Divya answers aloud", voiceFirst: "Voice-first mode", voiceFirstSub: "Speaks every result and keeps listening after each answer (for blind users)", blindMode: "Blind Mode", blindModeSub: "Everything by voice — big buttons, high contrast, captcha guide, voice signup", theme: "Theme", auto: "Auto", light: "Light", dark: "Dark", connected: "Connected accounts",
     inviteTitle: "Invite friends", inviteSub: "When a friend joins, both get 1,000,000 tokens (10 shorts or 1× 10-minute video). Pool tokens never expire.", copy: "Copy", redeem: "Redeem", inviteStatus: (i, e) => `${i} invites · ${e} tokens earned`, tokSub: (w, p, v, d) => `${fmtTok(w)} tokens left this week · pool ${fmtTok(p)} · ${v} shorts · resets ${d}`, voiceSignup: "Sign up by voice", voiceIncluded: "Voice assistant included in every plan", capDone: "Captcha solved ✓", capNo: "OK, not solving.", capAskShot: "Send a screenshot of the captcha and I'll read the answer.", blindHello: "Blind Mode on. I'll say everything aloud. What shall we do?",
     netErr: "Network problem. Try again.", micDenied: "Allow microphone access in browser settings.", noRec: "Voice recording isn't supported in this browser.", loggedIn: n => `Logged in as ${n}`, orDone: "OpenRouter connected ✓", orFail: "OpenRouter didn't connect.",
-    voicePick: "Voice (Divya's voice)", voiceLoading: "Loading voices… (first time ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices failed to load — check your internet and try again. Using the phone voice for now.", voiceRetry: "Retry loading voices", voiceRetryNote: "Kokoro didn't load — only the phone's system voice can play right now, so every voice sounds the same.", voicePlayedSystem: l => `That was not Kokoro — it played with the phone's system voice (${l}). Once Kokoro loads, you'll hear the selected voice.`, voiceNoVoice: "Voice could not play — Kokoro did not load and the phone has no voice. Check your internet.", voiceSample: "Hi, I'm Divya. I'll speak in this voice.", vChild: "Child", vTeen: "Teenage", vAdult: "Age 30–60", vElder: "Aged 60+", vFemale: "Female", vMale: "Male", gsAsk: "Shall I set up free AI for you? Say allow, or no.", gsDeclined: "OK, no setup. You can start it anytime from the Setup screen.", gsStopped: "OK, stopping here. You can continue from the Setup screen.", gsVerifyAsk: "The verification mail is here. Shall I open the link?", sPost: "Post to YouTube", postIntro: "Post your edited video to YouTube. Add a title, description and tags — you can also schedule it.", postVideo: "Video (job id or link)", postJobPh: "Job id or video link", postTitle: "Title", postDesc: "Description", postTags: "Tags (comma-separated)", postTagsPh: "divya, ai, video", postPrivacy: "Privacy", postSchedule: "Schedule (optional)", postThumb: "Thumbnail (optional)", postBtn: "Post to YouTube", postDone: "Posted ✓", postViews: "Views", postLikes: "Likes", postComments: "Comments", postNeedVideo: "Give a video job id or link.", sHistory: "My videos", gHistory: "My videos", histIntro: "Edited videos — numbered video 1, video 2. To upload, say 'upload video 1' in chat.", histEmpty: "No videos yet. Attach a video in chat.", histWatch: "Watch / Download", histUpload: "Upload", histDone: "Ready", histFail: "Failed", histEditing: "Editing",
-    setupOneTap: "Start guided setup (one allow)", setupConsent: "With one allow, Divya prepares each step and opens the page for you. You create the account, take the key, and complete any captcha or verification yourself — Divya never does those silently, and never saves passwords.", setupHowT: "How does setup work?", setupHowDivyaT: "Divya does:", setupHowDivya: "opening each provider page, showing where to paste the key, and testing + saving the key.", setupHowYouT: "You do:", setupHowYou: "create a FREE account on each site with your email, create a key and copy it, and complete any captcha or email verification yourself.", setupHowAfterT: "After that:", setupHowAfter: "once all keys are saved, Divya tells you in chat — from then on Divya works with your keys.", setupHowNote: "Divya never creates accounts, never asks for passwords, and never bypasses captchas.", setupStepNote: "Each step below shows its state: Connected = key saved ✓ · Waiting on you = paste your key · Not set = not done yet · Test failed = the key didn't work, try again.", stepWaiting: "Waiting on you — paste your key", stepYouDo: "Your step: open the site, create a free account, copy the key and paste it here.", setupNeedEmail: "An email is needed for the new accounts — set it in Profile.", setupOpen: "Open in browser", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "Setup done ✓", setupRunning: "Setup running…", setupPaused: "Paused — tap Continue or Take control.", setupFailed: "Setup failed.",
+    voicePick: "Voice (Divya's voice)", voiceLoading: "Loading voices… (first time ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices failed to load — check your internet and try again. Using the phone voice for now.", voiceRetry: "Retry loading voices", voiceRetryNote: "Kokoro didn't load — only the phone's system voice can play right now, so every voice sounds the same.", voicePlayedSystem: l => `That was not Kokoro — it played with the phone's system voice (${l}). Once Kokoro loads, you'll hear the selected voice.`, voiceNoVoice: "Voice could not play — Kokoro did not load and the phone has no voice. Check your internet.", voiceSample: "Hi, I'm Divya. I'll speak in this voice.", vChild: "Child", vTeen: "Teenage", vAdult: "Age 30–60", vElder: "Aged 60+", vFemale: "Female", vMale: "Male", gsAsk: "Shall I set everything up? Divya does it all — accounts, API keys, server — you don't have to do anything.", gsDeclined: "OK, no setup. Chat still works — you can start setup anytime from the Setup screen.", gsStopped: "OK, stopping here. You can continue from the Setup screen.", gsVerifyAsk: "The verification mail is here — tap the link once, Divya does the rest.", sPost: "Post to YouTube", postIntro: "Post your edited video to YouTube. Add a title, description and tags — you can also schedule it.", postVideo: "Video (job id or link)", postJobPh: "Job id or video link", postTitle: "Title", postDesc: "Description", postTags: "Tags (comma-separated)", postTagsPh: "divya, ai, video", postPrivacy: "Privacy", postSchedule: "Schedule (optional)", postThumb: "Thumbnail (optional)", postBtn: "Post to YouTube", postDone: "Posted ✓", postViews: "Views", postLikes: "Likes", postComments: "Comments", postNeedVideo: "Give a video job id or link.", sHistory: "My videos", gHistory: "My videos", histIntro: "Edited videos — numbered video 1, video 2. To upload, say 'upload video 1' in chat.", histEmpty: "No videos yet. Attach a video in chat.", histWatch: "Watch / Download", histUpload: "Upload", histDone: "Ready", histFail: "Failed", histEditing: "Editing",
+    setupOneTap: "Start one-tap setup (one allow)", setupConsent: "With one allow, Divya does everything — creating accounts, taking API keys, solving captchas, setting up the server. You don't have to do anything.", setupHowT: "How does setup work?", setupHowDivyaT: "Divya does:", setupHowDivya: "creating accounts, taking API keys, solving captchas, and setting up the Cloudflare server — all by Divya, with your one allow.", setupHowYouT: "Only once, from you:", setupHowAfterT: "After that:", setupHowAfter: "once setup is done, Divya tells you in chat — from then on Divya works with your accounts.", setupHowNote: "Divya does everything — with your allow. Apart from the email-link tap / SMS code, you don't have to do anything.", setupStepNote: "Each step below shows its state: Connected = key saved ✓ · Waiting on you = only one email-link tap or SMS code is needed · Not set = not done yet · Test failed = the key didn't work, try again.", stepWaiting: "Waiting for your one tap — email link or SMS code", stepYouDo: "Divya is doing this step — you don't have to do anything.", setupNeedEmail: "An email is needed for the new accounts — set it in Profile.", setupOpen: "Open in browser", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "Setup done ✓", setupRunning: "Setup running…", setupPaused: "Paused — waiting for your one tap.", setupFailed: "Setup failed.", setupAsk: "Shall I set everything up? Divya does it all — accounts, API keys, server — you don't have to do anything.", setupAllow: "Set it up", setupDoneMsg: "Setup is done ✓ — chat is ready now", setupStepDone: "Done ✓", setupStepRunning: "Running…", setupStepPaused: "Paused for your one tap", setupStepFailed: "Failed — continuing with the other steps", setupPauseEmail: "Tap the verification link in your email once — Divya does the rest.", setupPauseSms: "Enter the SMS code sent to your phone — Divya does the rest.", setupDidIt: "I did it ✓", setupYouEmail: "Tap the verification link in your email once — Divya does the rest.", setupYouSms: "Enter the SMS code sent to your phone once — Divya does the rest.", capSolving: "A captcha appeared — Divya is solving it with your allow.", capNeedTap: "If it's an image challenge, one tap from you and I'll solve it.",
   },
   hi: {
     skip: "सामग्री पर जाएँ", numLabel: "WhatsApp नंबर", codeLabel: "6 अंकों का कोड", loginSub: "अपना WhatsApp नंबर डालें। कोड WhatsApp पर आएगा।", loginSub2: "आपकी निजी AI। लॉग इन करें या नया अकाउंट बनाएँ।", loginWays: "लॉग इन करने के तरीके", tabLogin: "लॉग इन", tabSignup: "साइन अप", tabWa: "WhatsApp कोड", idLabel: "ईमेल या फ़ोन नंबर", idPh: "ईमेल या फ़ोन नंबर", pwLabel: "पासवर्ड", newPwLabel: "पासवर्ड (कम से कम 8)", nameLabel: "आपका नाम", emailLabel: "ईमेल", phoneLabel: "फ़ोन (WhatsApp) — वैकल्पिक", showPw: "पासवर्ड दिखाएँ", logIn: "लॉग इन", forgot: "पासवर्ड भूल गए?", createAcct: "अकाउंट बनाएँ", suHint: "फ़ोन WhatsApp कोड से वेरीफ़ाई होने के बाद ही लिंक होगा। नए अकाउंट Free प्लान पर शुरू होते हैं।",
@@ -146,15 +146,14 @@ const T = {
     voiceHonest: "Divya सिर्फ़ जब ऐप खुला हो और स्क्रीन पर हो, तब सुनती है (वेब ऐप बैकग्राउंड में नहीं सुनता)। कॉल/WhatsApp चुपचाप नहीं भेज सकती: डायलर या WhatsApp सब कुछ भरकर खोलती है, आप Call/Send दबाते हैं। वॉइस पहचान ब्राउज़र की सर्विस (Chrome में Google) से होती है।",
     callBtn: n => `कॉल करें ${n}`, waBtn: "WhatsApp खोलें", openBtn: n => `${n} खोलें`, playBtn: "YouTube पर सुनें", openedTab: n => `${n} naye tab mein khola`, openedApp: n => `${n} khola`, openYTApp: "YouTube ऐप खुल गया ✓", ytNoApp: "YouTube ऐप फ़ोन में नहीं है — ब्राउज़र में खोला।", ytOpening: "YouTube ऐप खोल रही हूँ…", waApp: "WhatsApp ऐप खुल गया ✓", waNoApp: "WhatsApp ऐप फ़ोन में नहीं है — ब्राउज़र में खोला।", waOpening: "WhatsApp ऐप खोल रही हूँ…", updBanner: v => `नया वर्शन ${v} आ गया — रिफ्रेश करें।`, updRefresh: "रिफ्रेश करें", updCheck: "ऐप अपडेट चेक करें", updLatest: "ऐप लेटेस्ट वर्शन पर है ✓", openBlocked: "Browser ne roka — neeche link dabao", openOff: "Auto-open band hai — neeche link dabao", calBtn: "Google Calendar में जोड़ें", subBtn: "प्लान देखें", pickContact: "कॉन्टैक्ट से चुनें", typeNumber: "नंबर टाइप करें", noNumber: n => `${n} का नंबर मेरे पास नहीं है। "${n} सेव करें 98xxxxxxxx" कहें, या कॉन्टैक्ट से चुनें।`, askNumber: n => `${n} का फ़ोन नंबर?`, saved: (n, x) => `${n} का नंबर सेव कर लिया (+${x})। यह सिर्फ़ इसी फ़ोन में रहेगा।`, remFire: t => `रिमाइंडर: ${t}`, notifTitle: "Divya रिमाइंडर",
     connectNote: "लॉग इन पेज ब्राउज़र में खुलेगा। कनेक्ट होने के बाद यहाँ वापस आएँ।", connect: "कनेक्ट", connectedP: "कनेक्टेड", soon: "जल्द आ रहा है",
-    setupIntro: "Divya को आपके अपने accounts में setup करते हैं — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (आपका server)। Divya सब कुछ तैयार करती है; account बनाना, key copy करना, captcha/verification — ये आपके steps हैं, Divya चुपचाप नहीं करती।",
+    setupIntro: "Divya आपके अपने accounts में setup हो जाती है — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (आपका server)। Divya सब कुछ करती है — accounts, API keys, server setup — आपके एक allow से। आपको कुछ नहीं करना है।",
     googleRow: "Continue with Google", googleSub: "आपका ईमेल सेटअप के लिए इस्तेमाल होगा", continueGoogle: "जारी रखें", orLoginPw: "या पासवर्ड से लॉग इन करें",
     consent: "मैं Divya को अपनी keys एन्क्रिप्ट करके सेव करने और सिर्फ़ मेरी रिक्वेस्ट के लिए इस्तेमाल करने की परमिशन देता/देती हूँ।",
-    guideBtn: "🔊 वॉइस से स्टेप-बाय-स्टेप सेटअप", needConsent: "पहले परमिशन बॉक्स पर टिक करें।", allow: "अलाउ करें", cancel: "कैंसिल", save: "सेव करें", next: "अगला स्टेप", done: "हो गया", delData: "मेरा डेटा डिलीट करें", delDataConfirm: "आपका अकाउंट, चैट, टोकन — सब डिलीट हो जाएगा। यह वापस नहीं होगा। कन्फ़र्म करें?", delDataDone: "आपका डेटा डिलीट कर दिया गया।", templateLabel: "स्टाइल टेम्पलेट",
+    guideBtn: "🔊 वॉइस से मैनुअल सेटअप", needConsent: "पहले परमिशन बॉक्स पर टिक करें।", allow: "अलाउ करें", cancel: "कैंसिल", save: "सेव करें", next: "अगला स्टेप", done: "हो गया", delData: "मेरा डेटा डिलीट करें", delDataConfirm: "आपका अकाउंट, चैट, टोकन — सब डिलीट हो जाएगा। यह वापस नहीं होगा। कन्फ़र्म करें?", delDataDone: "आपका डेटा डिलीट कर दिया गया।", templateLabel: "स्टाइल टेम्पलेट",
     stepNot: "अभी सेट नहीं है", stepOk: w => `कनेक्टेड${w ? " · " + w : ""}`, stepFail: "टेस्ट फ़ेल", oneTap: "वन-टैप कनेक्ट", openCreate: "खोलें और key बनाएँ", pasteKey: "Key यहाँ पेस्ट करें", paste: "पेस्ट करें", testSave: "टेस्ट और सेव करें", test: "टेस्ट", remove: "हटाएँ", oauthSoon: "OAuth लॉग इन जल्द आ रहा है; अभी टोकन पेस्ट करें।",
     foundKey: (n, l) => `${n} key मिली (…${l})। सेव करें?`, keySaved: n => `${n} key सेव हो गई, टेस्ट पास।`, keyBad: n => `यह ${n} key जैसी नहीं लगती।`,
-    guideStep: (n, d) => `${n} सेटअप। ${d} मैं पेज खोलती हूँ। अपने ईमेल से लॉग इन करें, key बनाएँ और कॉपी करें, फिर Divya पर वापस आएँ।`, guideReturn: "Key कॉपी कर ली? क्लिपबोर्ड देख रही हूँ।", guidePaste: "Key बॉक्स में पेस्ट करें और Test & save दबाएँ।", guideDone: "सारे स्टेप हो गए। बहुत बढ़िया!", guideNextQ: n => `अगला: ${n}। जारी रखूँ?`,
-    serverTitle: "आपका अपना सर्वर:", serverText: "Cloudflare token से Divya आपके account में आपका Worker deploy करेगी — पर ये भी आपकी OK से, आपके खुद sign in करने के बाद ही। अभी नहीं — जल्द आ रहा है।",
-    noPasswords: "Divya कभी passwords save नहीं करती, accounts चुपचाप नहीं बनाती, और captchas bypass नहीं करती। हर provider में आप खुद sign in करते हैं — Divya page खोलती है, बाकी आप करते हैं।",
+    guideStep: (n, d) => `${n} मैनुअल step। ${d} अगर आपके पास key है तो यहाँ paste करें — या वन-टैप सेटअप से Divya सब कर देगी।`, guideReturn: "Key कॉपी कर ली? क्लिपबोर्ड देख रही हूँ।", guidePaste: "Key बॉक्स में पेस्ट करें और Test & save दबाएँ।", guideDone: "सारे स्टेप हो गए। बहुत बढ़िया!", guideNextQ: n => `अगला: ${n}। जारी रखूँ?`,
+    serverTitle: "आपका अपना सर्वर:", serverText: "Cloudflare server भी Divya ही setup करती है — आपके एक allow से। आपको कुछ नहीं करना है।",
     d_openrouter: "फ्री AI मॉडल के साथ ब्रेन (बैकअप)।", d_groq: "फ़ास्ट ब्रेन + वॉइस-टू-टेक्स्ट।", d_gemini: "इमेज/स्क्रीनशॉट पढ़ने के लिए।", d_cloudflare: "आपके अपने सर्वर (Worker) के लिए।", d_github: "वीडियो मशीन (Actions) के लिए।", d_huggingface: "AI मॉडल/वॉइस के लिए।",
     planNow: (p, u, l) => `आपका प्लान: ${p === "premium" ? "प्रीमियम (ओनर/दोस्त एक्सेस)" : "फ्री"}। इस हफ़्ते शॉर्ट्स: ${l === null ? `${u} (कोई लिमिट नहीं)` : `${u}/${l}`}।`,
     freePlan: "फ्री", f1: "वॉइस कमांड: कॉल, WhatsApp, ऐप खोलना, गाने, रिमाइंडर, समय, मौसम", f2: "चैट और छोटे सवाल", f3: "ब्लाइंड यूज़र्स के लिए वॉइस-फ़र्स्ट मोड", f4: "अपनी API keys इस्तेमाल कर सकते हैं", p1: "अनलिमिटेड वीडियो एडिट", p2: "मल्टी-स्टेप एजेंट काम, लंबी रिसर्च", p3: "अकाउंट ऑटोमेशन (पोस्ट/अपलोड — आपकी OK के साथ)", priceSoon: "कीमत: जल्द आ रही है", comingSoon: "जल्द आ रहा है", noPayNote: "अभी पेमेंट नहीं है। Pro तैयार होने पर बताएँगे।",
@@ -165,8 +164,8 @@ const T = {
     language: "भाषा", voiceReplies: "वॉइस जवाब", voiceRepliesSub: "माइक में पूछने पर Divya ज़ोर से जवाब देती है", voiceFirst: "वॉइस-फ़र्स्ट मोड", voiceFirstSub: "हर रिज़ल्ट ज़ोर से बोलती है, जवाब के बाद फिर सुनती है (ब्लाइंड यूज़र्स के लिए)", blindMode: "ब्लाइंड मोड", blindModeSub: "सब कुछ वॉइस से — बड़े बटन, हाई कॉन्ट्रास्ट, कैप्चा गाइड, वॉइस साइनअप", theme: "थीम", auto: "ऑटो", light: "लाइट", dark: "डार्क", connected: "कनेक्टेड अकाउंट",
     inviteTitle: "दोस्तों को इन्वाइट करें", inviteSub: "एक दोस्त के जॉइन करने पर दोनों को 10 लाख टोकन मिलते हैं (10 शॉर्ट्स या 1× 10 मिनट का वीडियो)। पूल टोकन कभी एक्सपायर नहीं होते।", copy: "कॉपी करें", redeem: "रिडीम करें", inviteStatus: (i, e) => `${i} इन्वाइट · ${e} टोकन मिले`, tokSub: (w, p, v, d) => `इस हफ़्ते ${fmtTok(w)} टोकन बचे · पूल ${fmtTok(p)} · ${v} शॉर्ट्स · रीसेट ${d}`, voiceSignup: "वॉइस से साइन अप करें", voiceIncluded: "वॉइस असिस्टेंट हर प्लान में शामिल है", capDone: "कैप्चा सॉल्व हो गया ✓", capNo: "ठीक है, सॉल्व नहीं किया।", capAskShot: "कैप्चा का स्क्रीनशॉट भेजें, मैं पढ़कर जवाब बताऊँगी।", blindHello: "ब्लाइंड मोड ऑन। सब कुछ वॉइस से बताऊँगी। क्या करना है?",
     netErr: "नेटवर्क प्रॉब्लम। फिर कोशिश करें।", micDenied: "माइक परमिशन दें (ब्राउज़र सेटिंग्स में)।", noRec: "इस ब्राउज़र में वॉइस रिकॉर्ड नहीं होती।", loggedIn: n => `${n} से लॉग इन`, orDone: "OpenRouter कनेक्ट हो गया ✓", orFail: "OpenRouter कनेक्ट नहीं हुआ।",
-    voicePick: "वॉइस (Divya की आवाज़)", voiceLoading: "Voices load ho rahi hain… (pehli baar ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices load nahi hui — internet check karke phir try karo. Abhi phone voice se bol rahi hoon.", voiceRetry: "आवाज़ें फिर से लोड करें", voiceRetryNote: "Kokoro लोड नहीं हुआ — अभी सिर्फ़ फ़ोन की सिस्टम वॉइस बजेगी, इसलिए सभी आवाज़ें एक जैसी सुनाई देती हैं।", voicePlayedSystem: l => `Ye Kokoro nahi tha — phone ki system voice (${l}) se baja. Kokoro load hone par selected voice sunai degi.`, voiceNoVoice: "Voice play nahi hui — Kokoro load nahi hua, phone me voice bhi nahi hai. Internet check karo.", voiceSample: "नमस्ते, मैं Divya हूँ। मैं इसी आवाज़ में बोलूँगी।", vChild: "बच्चे", vTeen: "टीनएज", vAdult: "30–60", vElder: "60+ बुज़ुर्ग", vFemale: "महिला", vMale: "पुरुष", gsAsk: "क्या मैं आपके लिए फ्री AI सेटअप करूँ? Allow कहें, या नहीं।", gsDeclined: "ठीक है, सेटअप नहीं किया। Setup स्क्रीन से कभी भी शुरू कर सकते हैं।", gsStopped: "ठीक है, यहीं रुक रही हूँ। Setup स्क्रीन से जारी रख सकते हैं।", gsVerifyAsk: "वेरिफ़िकेशन मेल आ गया है। क्या लिंक खोलूँ?", sPost: "YouTube पोस्ट", postIntro: "एडिट किया वीडियो YouTube पर पोस्ट करें। टाइटल, डिस्क्रिप्शन और टैग दें — शेड्यूल भी कर सकते हैं।", postVideo: "वीडियो (job id या लिंक)", postJobPh: "Job id या वीडियो लिंक", postTitle: "टाइटल", postDesc: "डिस्क्रिप्शन", postTags: "टैग (कॉमा से अलग करें)", postTagsPh: "divya, ai, video", postPrivacy: "प्राइवेसी", postSchedule: "शेड्यूल (वैकल्पिक)", postThumb: "थंबनेल (वैकल्पिक)", postBtn: "YouTube पर पोस्ट करें", postDone: "पोस्ट हो गया ✓", postViews: "व्यूज़", postLikes: "लाइक्स", postComments: "कमेंट्स", postNeedVideo: "वीडियो job id या लिंक दें।", sHistory: "Mere videos", gHistory: "Mere videos", histIntro: "Edit kiye videos — video 1, video 2 number se. Upload ke liye chat me 'upload video 1' kaho.", histEmpty: "Abhi koi video nahi hai. Chat me video attach karo.", histWatch: "Dekho / Download", histUpload: "Upload karo", histDone: "Ready", histFail: "Fail ho gaya", histEditing: "Edit ho raha hai",
-    setupOneTap: "गाइडेड सेटअप शुरू करें (एक allow)", setupConsent: "एक allow से Divya हर step तैयार करके page खोलती है। Account बनाना, key लेना, captcha/verification पूरा करना — ये आप खुद करते हैं; Divya ये चुपचाप नहीं करती, passwords save नहीं करती।", setupHowT: "सेटअप कैसे काम करता है?", setupHowDivyaT: "Divya करती है:", setupHowDivya: "हर provider का page खोलना, key कहाँ paste करनी है ये दिखाना, और key test करके save करना।", setupHowYouT: "आप करते हैं:", setupHowYou: "हर site पर अपने email से FREE account बनाएँ, key बनाएँ और copy करें, और कोई captcha या email verification आए तो खुद पूरा करें।", setupHowAfterT: "उसके बाद:", setupHowAfter: "सारी keys save होने पर Divya chat में बता देगी — उसके बाद Divya आपकी keys से काम करेगी।", setupHowNote: "Divya कभी accounts नहीं बनाती, passwords नहीं माँगती, और captchas bypass नहीं करती।", setupStepNote: "नीचे हर step की state दिखती है: Connected = key save हो गई ✓ · Waiting on you = अपनी key paste करें · Not set = अभी नहीं हुआ · Test failed = key काम नहीं कर रही, फिर कोशिश करें।", stepWaiting: "आपका इंतज़ार — अपनी key paste करें", stepYouDo: "आपका step: site खोलें, free account बनाएँ, key copy करके यहाँ paste करें।", setupNeedEmail: "नए अकाउंट के लिए ईमेल चाहिए — प्रोफ़ाइल में ईमेल सेट करो।", setupOpen: "ब्राउज़र में खोलो", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "सेटअप हो गया ✓", setupRunning: "सेटअप चल रहा है…", setupPaused: "रुका हुआ है — Continue दबाओ या Take control करो।", setupFailed: "सेटअप फ़ेल हो गया।",
+    voicePick: "वॉइस (Divya की आवाज़)", voiceLoading: "Voices load ho rahi hain… (pehli baar ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices load nahi hui — internet check karke phir try karo. Abhi phone voice se bol rahi hoon.", voiceRetry: "आवाज़ें फिर से लोड करें", voiceRetryNote: "Kokoro लोड नहीं हुआ — अभी सिर्फ़ फ़ोन की सिस्टम वॉइस बजेगी, इसलिए सभी आवाज़ें एक जैसी सुनाई देती हैं।", voicePlayedSystem: l => `Ye Kokoro nahi tha — phone ki system voice (${l}) se baja. Kokoro load hone par selected voice sunai degi.`, voiceNoVoice: "Voice play nahi hui — Kokoro load nahi hua, phone me voice bhi nahi hai. Internet check karo.", voiceSample: "नमस्ते, मैं Divya हूँ। मैं इसी आवाज़ में बोलूँगी।", vChild: "बच्चे", vTeen: "टीनएज", vAdult: "30–60", vElder: "60+ बुज़ुर्ग", vFemale: "महिला", vMale: "पुरुष", gsAsk: "क्या मैं सब कुछ setup करूँ? Divya सब करती है — accounts, API keys, server — आपको कुछ नहीं करना है।", gsDeclined: "ठीक है, सेटअप नहीं किया। चैट चलती रहेगी — Setup स्क्रीन से कभी भी शुरू कर सकते हैं।", gsStopped: "ठीक है, यहीं रुक रही हूँ। Setup स्क्रीन से जारी रख सकते हैं।", gsVerifyAsk: "वेरिफ़िकेशन मेल आ गया है — link को एक बार tap करें, बाकी सब Divya कर देगी।", sPost: "YouTube पोस्ट", postIntro: "एडिट किया वीडियो YouTube पर पोस्ट करें। टाइटल, डिस्क्रिप्शन और टैग दें — शेड्यूल भी कर सकते हैं।", postVideo: "वीडियो (job id या लिंक)", postJobPh: "Job id या वीडियो लिंक", postTitle: "टाइटल", postDesc: "डिस्क्रिप्शन", postTags: "टैग (कॉमा से अलग करें)", postTagsPh: "divya, ai, video", postPrivacy: "प्राइवेसी", postSchedule: "शेड्यूल (वैकल्पिक)", postThumb: "थंबनेल (वैकल्पिक)", postBtn: "YouTube पर पोस्ट करें", postDone: "पोस्ट हो गया ✓", postViews: "व्यूज़", postLikes: "लाइक्स", postComments: "कमेंट्स", postNeedVideo: "वीडियो job id या लिंक दें।", sHistory: "Mere videos", gHistory: "Mere videos", histIntro: "Edit kiye videos — video 1, video 2 number se. Upload ke liye chat me 'upload video 1' kaho.", histEmpty: "Abhi koi video nahi hai. Chat me video attach karo.", histWatch: "Dekho / Download", histUpload: "Upload karo", histDone: "Ready", histFail: "Fail ho gaya", histEditing: "Edit ho raha hai",
+    setupOneTap: "वन-टैप सेटअप शुरू करें (एक allow)", setupConsent: "एक allow से Divya सब कुछ करती है — accounts बनाना, API keys लेना, captchas solve करना, server setup — सब Divya करती है। आपको कुछ नहीं करना है।", setupHowT: "सेटअप कैसे काम करता है?", setupHowDivyaT: "Divya करती है:", setupHowDivya: "accounts बनाना, API keys लेना, captchas solve करना, और Cloudflare server setup करना — सब Divya करती है, आपके एक allow से।", setupHowYouT: "आपसे सिर्फ़ एक बार:", setupHowAfterT: "उसके बाद:", setupHowAfter: "सेटअप होने पर Divya chat में बता देगी — उसके बाद Divya आपके accounts से काम करेगी।", setupHowNote: "Divya सब कुछ करती है — आपके allow से। Email link tap / SMS code के अलावा, आपको कुछ नहीं करना है।", setupStepNote: "नीचे हर step की state दिखती है: Connected = key save हो गई ✓ · Waiting on you = सिर्फ़ एक email-link tap या SMS code चाहिए · Not set = अभी नहीं हुआ · Test failed = key काम नहीं कर रही, फिर कोशिश करें।", stepWaiting: "आपके एक tap का इंतज़ार — email link या SMS code", stepYouDo: "यह step Divya कर रही है — आपको कुछ नहीं करना है।", setupNeedEmail: "नए अकाउंट के लिए ईमेल चाहिए — प्रोफ़ाइल में ईमेल सेट करो।", setupOpen: "ब्राउज़र में खोलो", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "सेटअप हो गया ✓", setupRunning: "सेटअप चल रहा है…", setupPaused: "रुका हुआ है — आपके एक tap का इंतज़ार है।", setupFailed: "सेटअप फ़ेल हो गया।", setupAsk: "क्या मैं सब कुछ setup करूँ? Divya सब करती है — accounts, API keys, server — आपको कुछ नहीं करना है।", setupAllow: "सेटअप करो", setupDoneMsg: "सेटअप हो गया ✓ — चैट अब तैयार है", setupStepDone: "हो गया ✓", setupStepRunning: "चल रहा है…", setupStepPaused: "आपके एक tap के लिए रुका है", setupStepFailed: "फ़ेल हो गया — बाकी steps से जारी है", setupPauseEmail: "अपने email में आए link को एक बार tap करें — बाकी सब Divya कर देगी।", setupPauseSms: "फ़ोन पर आए SMS code को डालें — बाकी सब Divya कर देगी।", setupDidIt: "मैंने कर दिया ✓", setupYouEmail: "अपने email में आए verification link को एक बार tap करें — बाकी सब Divya कर देगी।", setupYouSms: "फ़ोन पर आए SMS code को एक बार डालें — बाकी सब Divya कर देगी।", capSolving: "Captcha आ गया है — Divya आपके allow से खुद solve कर रही है।", capNeedTap: "अगर image challenge है तो एक tap करें, मैं solve कर दूँगी।",
   },
   "hi-Latn": {
     skip: "Content par jao", numLabel: "WhatsApp number", codeLabel: "6 digit ka code", loginSub: "Apna WhatsApp number dalo. Code WhatsApp par aayega.", loginSub2: "Aapki personal AI. Log in karo ya naya account banao.", loginWays: "Log in karne ke tareeke", tabLogin: "Log in", tabSignup: "Sign up", tabWa: "WhatsApp code", idLabel: "Email ya phone number", idPh: "Email ya phone number", pwLabel: "Password", newPwLabel: "Password (kam se kam 8)", nameLabel: "Aapka naam", emailLabel: "Email", phoneLabel: "Phone (WhatsApp) — optional", showPw: "Password dikhao", logIn: "Log in", forgot: "Password bhool gaye?", createAcct: "Account banao", suHint: "Phone WhatsApp code se verify hone ke baad hi link hoga. Naye accounts Free plan par shuru hote hain.",
@@ -189,15 +188,14 @@ const T = {
     voiceHonest: "Divya sirf jab app khula ho aur screen par ho, tab sunti hai (web app background me nahi sunta). Call/WhatsApp chupchaap nahi bhej sakti: dialer ya WhatsApp sab kuch bharkar kholti hai, aap Call/Send dabate hain. Voice pehchan browser ki service (Chrome me Google) se hoti hai.",
     callBtn: n => `Call karo ${n}`, waBtn: "WhatsApp kholo", openBtn: n => `${n} kholo`, playBtn: "YouTube par suno", openedTab: n => `${n} naye tab mein khola`, openedApp: n => `${n} khola`, openYTApp: "YouTube app khul gaya ✓", ytNoApp: "YouTube app phone mein nahi hai — browser mein khola.", ytOpening: "YouTube app khol rahi hoon…", waApp: "WhatsApp app khul gaya ✓", waNoApp: "WhatsApp app phone mein nahi hai — browser mein khola.", waOpening: "WhatsApp app khol rahi hoon…", updBanner: v => `Naya version ${v} aa gaya — refresh karo.`, updRefresh: "Refresh karo", updCheck: "App update check karo", updLatest: "App latest version par hai ✓", openBlocked: "Browser ne roka — neeche link dabao", openOff: "Auto-open band hai — neeche link dabao", calBtn: "Google Calendar me jodo", subBtn: "Plans dekho", pickContact: "Contacts se chuno", typeNumber: "Number type karo", noNumber: n => `${n} ka number mere paas nahi hai. "${n} save karo 98xxxxxxxx" kaho, ya contacts se chuno.`, askNumber: n => `${n} ka phone number?`, saved: (n, x) => `${n} ka number save kar liya (+${x}). Ye sirf isi phone me rahega.`, remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
     connectNote: "Log in page browser me khulega. Connect hone ke baad yahan wapas aao.", connect: "Connect", connectedP: "Connected", soon: "Jald aa raha hai",
-    setupIntro: "Divya ko aapke apne accounts me setup karte hain — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (aapka server). Divya sab prepare karti hai; account banana, key copy karna, captcha/verification — ye aapke steps hain, Divya chupchaap nahi karti.",
+    setupIntro: "Divya aapke apne accounts me setup ho jati hai — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (aapka server). Divya sab kuch karti hai — accounts, API keys, server setup — aapke ek allow se. Aapko kuch nahi karna hai.",
     googleRow: "Continue with Google", googleSub: "Aapka email setup ke liye use hoga", continueGoogle: "Continue", orLoginPw: "Ya password se log in karo",
     consent: "Main Divya ko apni keys encrypt karke save karne aur sirf meri requests ke liye use karne ki permission deta/deti hoon.",
-    guideBtn: "🔊 Voice se step-by-step setup", needConsent: "Pehle permission box par tick karo.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Ho gaya", delData: "Mera data delete karo", delDataConfirm: "Aapka account, chats, tokens — sab delete ho jayega. Ye wapas nahi hoga. Confirm karo?", delDataDone: "Aapka data delete kar diya gaya.", templateLabel: "Style template",
+    guideBtn: "🔊 Voice se manual setup", needConsent: "Pehle permission box par tick karo.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Ho gaya", delData: "Mera data delete karo", delDataConfirm: "Aapka account, chats, tokens — sab delete ho jayega. Ye wapas nahi hoga. Confirm karo?", delDataDone: "Aapka data delete kar diya gaya.", templateLabel: "Style template",
     stepNot: "Abhi set nahi hai", stepOk: w => `Connected${w ? " · " + w : ""}`, stepFail: "Test fail", oneTap: "One-tap connect", openCreate: "Kholo aur key banao", pasteKey: "Key yahan paste karo", paste: "Paste", testSave: "Test & save", test: "Test", remove: "Remove", oauthSoon: "OAuth log in jald aa raha hai; abhi token paste karo.",
     foundKey: (n, l) => `${n} key mili (…${l}). Save karein?`, keySaved: n => `${n} key save ho gayi, test pass.`, keyBad: n => `Ye ${n} key jaisi nahi lagti.`,
-    guideStep: (n, d) => `${n} setup. ${d} Main page kholti hoon. Apne email se log in karo, key banao aur copy karo, phir Divya par wapas aao.`, guideReturn: "Key copy kar li? Clipboard dekh rahi hoon.", guidePaste: "Key box me paste karo aur Test & save dabao.", guideDone: "Saare steps ho gaye. Bahut badhiya!", guideNextQ: n => `Agla: ${n}. Jaari rakhoon?`,
-    serverTitle: "Aapka apna server:", serverText: "Cloudflare token se Divya aapke account me aapka Worker deploy karegi — par ye bhi aapki OK se, aapke khud sign in karne ke baad hi. Abhi nahi — jald aa raha hai.",
-    noPasswords: "Divya kabhi passwords save nahi karti, accounts chupchaap nahi banati, aur captchas bypass nahi karti. Har provider me aap khud sign in karte hain — Divya page kholti hai, baaki aap karte hain.",
+    guideStep: (n, d) => `${n} manual step. ${d} Agar aapke paas key hai to yahan paste karo — ya one-tap setup se Divya sab kar degi.`, guideReturn: "Key copy kar li? Clipboard dekh rahi hoon.", guidePaste: "Key box me paste karo aur Test & save dabao.", guideDone: "Saare steps ho gaye. Bahut badhiya!", guideNextQ: n => `Agla: ${n}. Jaari rakhoon?`,
+    serverTitle: "Aapka apna server:", serverText: "Cloudflare server bhi Divya hi setup karti hai — aapke ek allow se. Aapko kuch nahi karna hai.",
     d_openrouter: "Free AI models ke saath brain (backup).", d_groq: "Fast brain + voice-to-text.", d_gemini: "Images/screenshots padhne ke liye.", d_cloudflare: "Aapke apne server (Worker) ke liye.", d_github: "Video machine (Actions) ke liye.", d_huggingface: "AI models/voices ke liye.",
     planNow: (p, u, l) => `Aapka plan: ${p === "premium" ? "Premium (owner/friend access)" : "Free"}। Is hafte shorts: ${l === null ? `${u} (koi limit nahi)` : `${u}/${l}`}।`,
     freePlan: "Free", f1: "Voice commands: call, WhatsApp, open apps, gaane, reminders, time, weather", f2: "Chat & chhote sawaal", f3: "Blind users ke liye voice-first mode", f4: "Apni API keys use kar sakte hain", p1: "Unlimited video edits", p2: "Multi-step agent kaam, long research", p3: "Account automation (post/upload — aapki OK ke saath)", priceSoon: "Price: jald aa raha hai", comingSoon: "Jald aa raha hai", noPayNote: "Abhi payments nahi hain. Pro ready hone par batayenge.",
@@ -208,8 +206,8 @@ const T = {
     language: "Language", voiceReplies: "Voice replies", voiceRepliesSub: "Mic me poochhne par Divya zor se jawab deti hai", voiceFirst: "Voice-first mode", voiceFirstSub: "Har result zor se bolti hai, jawab ke baad phir sunti hai (blind users ke liye)", blindMode: "Blind Mode", blindModeSub: "Sab kuch voice se — bade buttons, high contrast, captcha guide, voice signup", theme: "Theme", auto: "Auto", light: "Light", dark: "Dark", connected: "Connected accounts",
     inviteTitle: "Doston ko invite karo", inviteSub: "Ek dost ke join karne par dono ko 10 lakh tokens milte hain (10 shorts ya 1× 10 minute ka video). Pool tokens kabhi expire nahi hote.", copy: "Copy", redeem: "Redeem", inviteStatus: (i, e) => `${i} invites · ${e} tokens mile`, tokSub: (w, p, v, d) => `Is hafte ${fmtTok(w)} tokens bache · pool ${fmtTok(p)} · ${v} shorts · reset ${d}`, voiceSignup: "Voice se sign up karo", voiceIncluded: "Voice assistant har plan me included hai", capDone: "Captcha solve ho gaya ✓", capNo: "Theek hai, solve nahi kiya.", capAskShot: "Captcha ka screenshot bhejo, main padhkar jawab bataungi.", blindHello: "Blind Mode on. Sab kuch voice se bataungi. Kya karna hai?",
     netErr: "Network problem. Phir try karo.", micDenied: "Mic permission do (browser settings me).", noRec: "Is browser me voice record nahi hoti.", loggedIn: n => `${n} se log in`, orDone: "OpenRouter connect ho gaya ✓", orFail: "OpenRouter connect nahi hua.",
-    voicePick: "Voice (Divya ki awaaz)", voiceLoading: "Voices load ho rahi hain… (pehli baar ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices load nahi hui — internet check karke phir try karo. Abhi phone voice se bol rahi hoon.", voiceRetry: "Voices phir se load karo", voiceRetryNote: "Kokoro load nahi hua — abhi sirf phone ki system voice bajegi, isliye saari voices ek jaisi sunai deti hain.", voicePlayedSystem: l => `Ye Kokoro nahi tha — phone ki system voice (${l}) se baja. Kokoro load hone par selected voice sunai degi.`, voiceNoVoice: "Voice play nahi hui — Kokoro load nahi hua, phone me voice bhi nahi hai. Internet check karo.", voiceSample: "Namaste, main Divya hoon. Main isi awaaz me bolungi.", vChild: "Bachche", vTeen: "Teenage", vAdult: "30–60", vElder: "60+ buzurg", vFemale: "Mahila", vMale: "Purush", gsAsk: "Kya main aapke liye free AI setup karoon? Allow kaho, ya nahi.", gsDeclined: "Theek hai, setup nahi kiya. Setup screen se kabhi bhi shuru kar sakte hain.", gsStopped: "Theek hai, yahin ruk rahi hoon. Setup screen se jaari rakh sakte hain.", gsVerifyAsk: "Verification mail aa gaya hai. Kya link kholoon?", sPost: "YouTube post", postIntro: "Edit kiya video YouTube par post karo. Title, description aur tags do — schedule bhi kar sakte ho.", postVideo: "Video (job id ya link)", postJobPh: "Job id ya video link", postTitle: "Title", postDesc: "Description", postTags: "Tags (comma se alag karo)", postTagsPh: "divya, ai, video", postPrivacy: "Privacy", postSchedule: "Schedule (optional)", postThumb: "Thumbnail (optional)", postBtn: "YouTube par post karo", postDone: "Post ho gaya ✓", postViews: "Views", postLikes: "Likes", postComments: "Comments", postNeedVideo: "Video job id ya link do.", sHistory: "Mere videos", gHistory: "Mere videos", histIntro: "Edit kiye videos — video 1, video 2 number se. Upload ke liye chat me 'upload video 1' kaho.", histEmpty: "Abhi koi video nahi hai. Chat me video attach karo.", histWatch: "Dekho / Download", histUpload: "Upload karo", histDone: "Ready", histFail: "Fail ho gaya", histEditing: "Edit ho raha hai",
-    setupOneTap: "Guided setup shuru karo (ek allow)", setupConsent: "Ek allow se Divya har step prepare karke page kholti hai. Account banana, key lena, captcha/verification poora karna — ye aap khud karte hain; Divya ye chupchaap nahi karti, passwords save nahi karti.", setupHowT: "Setup kaise kaam karta hai?", setupHowDivyaT: "Divya karti hai:", setupHowDivya: "har provider ka page kholna, key kahan paste karni hai ye dikhana, aur key test karke save karna.", setupHowYouT: "Aap karte hain:", setupHowYou: "har site par apne email se FREE account banao, key banao aur copy karo, aur koi captcha ya email verification aaye to khud poora karo.", setupHowAfterT: "Uske baad:", setupHowAfter: "saari keys save hone par Divya chat me bata degi — uske baad Divya aapki keys se kaam karegi.", setupHowNote: "Divya kabhi accounts nahi banati, passwords nahi maangti, aur captchas bypass nahi karti.", setupStepNote: "Neeche har step ki state dikhti hai: Connected = key save ho gayi ✓ · Waiting on you = apni key paste karo · Not set = abhi nahi hua · Test failed = key kaam nahi kar rahi, phir try karo.", stepWaiting: "Aapka intezaar — apni key paste karo", stepYouDo: "Aapka step: site kholo, free account banao, key copy karke yahan paste karo.", setupNeedEmail: "Naye accounts ke liye email chahiye — Profile me email set karo.", setupOpen: "Browser me kholo", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "Setup ho gaya ✓", setupRunning: "Setup chal raha hai…", setupPaused: "Ruka hua hai — Continue dabao ya Take control karo.", setupFailed: "Setup fail ho gaya.",
+    voicePick: "Voice (Divya ki awaaz)", voiceLoading: "Voices load ho rahi hain… (pehli baar ~90 MB download)", voiceReady: "Voices ready ✓ (Kokoro)", voiceLoadFail: "Voices load nahi hui — internet check karke phir try karo. Abhi phone voice se bol rahi hoon.", voiceRetry: "Voices phir se load karo", voiceRetryNote: "Kokoro load nahi hua — abhi sirf phone ki system voice bajegi, isliye saari voices ek jaisi sunai deti hain.", voicePlayedSystem: l => `Ye Kokoro nahi tha — phone ki system voice (${l}) se baja. Kokoro load hone par selected voice sunai degi.`, voiceNoVoice: "Voice play nahi hui — Kokoro load nahi hua, phone me voice bhi nahi hai. Internet check karo.", voiceSample: "Namaste, main Divya hoon. Main isi awaaz me bolungi.", vChild: "Bachche", vTeen: "Teenage", vAdult: "30–60", vElder: "60+ buzurg", vFemale: "Mahila", vMale: "Purush", gsAsk: "Kya main sab kuch setup karoon? Divya sab karti hai — accounts, API keys, server — aapko kuch nahi karna hai.", gsDeclined: "Theek hai, setup nahi kiya. Chat chalti rahegi — Setup screen se kabhi bhi shuru kar sakte hain.", gsStopped: "Theek hai, yahin ruk rahi hoon. Setup screen se jaari rakh sakte hain.", gsVerifyAsk: "Verification mail aa gaya hai — link ko ek baar tap karo, baaki sab Divya kar degi.", sPost: "YouTube post", postIntro: "Edit kiya video YouTube par post karo. Title, description aur tags do — schedule bhi kar sakte ho.", postVideo: "Video (job id ya link)", postJobPh: "Job id ya video link", postTitle: "Title", postDesc: "Description", postTags: "Tags (comma se alag karo)", postTagsPh: "divya, ai, video", postPrivacy: "Privacy", postSchedule: "Schedule (optional)", postThumb: "Thumbnail (optional)", postBtn: "YouTube par post karo", postDone: "Post ho gaya ✓", postViews: "Views", postLikes: "Likes", postComments: "Comments", postNeedVideo: "Video job id ya link do.", sHistory: "Mere videos", gHistory: "Mere videos", histIntro: "Edit kiye videos — video 1, video 2 number se. Upload ke liye chat me 'upload video 1' kaho.", histEmpty: "Abhi koi video nahi hai. Chat me video attach karo.", histWatch: "Dekho / Download", histUpload: "Upload karo", histDone: "Ready", histFail: "Fail ho gaya", histEditing: "Edit ho raha hai",
+    setupOneTap: "One-tap setup shuru karo (ek allow)", setupConsent: "Ek allow se Divya sab kuch karti hai — accounts banana, API keys lena, captchas solve karna, server setup — sab Divya karti hai. Aapko kuch nahi karna hai.", setupHowT: "Setup kaise kaam karta hai?", setupHowDivyaT: "Divya karti hai:", setupHowDivya: "accounts banana, API keys lena, captchas solve karna, aur Cloudflare server setup karna — sab Divya karti hai, aapke ek allow se.", setupHowYouT: "Aapse sirf ek baar:", setupHowAfterT: "Uske baad:", setupHowAfter: "Setup hone par Divya chat me bata degi — uske baad Divya aapke accounts se kaam karegi.", setupHowNote: "Divya sab kuch karti hai — aapke allow se. Email link tap / SMS code ke alawa, aapko kuch nahi karna hai.", setupStepNote: "Neeche har step ki state dikhti hai: Connected = key save ho gayi ✓ · Waiting on you = sirf ek email-link tap ya SMS code chahiye · Not set = abhi nahi hua · Test failed = key kaam nahi kar rahi, phir try karo.", stepWaiting: "Aapke ek tap ka intezaar — email link ya SMS code", stepYouDo: "Ye step Divya kar rahi hai — aapko kuch nahi karna hai.", setupNeedEmail: "Naye accounts ke liye email chahiye — Profile me email set karo.", setupOpen: "Browser me kholo", setupStop: "Stop task", setupTake: "Take control", setupContinue: "Continue", setupDone: "Setup ho gaya ✓", setupRunning: "Setup chal raha hai…", setupPaused: "Ruka hua hai — aapke ek tap ka intezaar hai.", setupFailed: "Setup fail ho gaya.", setupAsk: "Kya main sab kuch setup karoon? Divya sab karti hai — accounts, API keys, server — aapko kuch nahi karna hai.", setupAllow: "Setup karo", setupDoneMsg: "Setup ho gaya ✓ — chat ab ready hai", setupStepDone: "Ho gaya ✓", setupStepRunning: "Chal raha hai…", setupStepPaused: "Aapke ek tap ke liye ruka hai", setupStepFailed: "Fail ho gaya — baaki steps se jaari hai", setupPauseEmail: "Apne email me aaye link ko ek baar tap karo — baaki sab Divya kar degi.", setupPauseSms: "Phone par aaye SMS code ko dalo — baaki sab Divya kar degi.", setupDidIt: "Maine kar diya ✓", setupYouEmail: "Apne email me aaye verification link ko ek baar tap karo — baaki sab Divya kar degi.", setupYouSms: "Phone par aaye SMS code ko ek baar dalo — baaki sab Divya kar degi.", capSolving: "Captcha aa gaya hai — Divya aapke allow se khud solve kar rahi hai.", capNeedTap: "Agar image challenge hai to ek tap karo, main solve kar dungi.",
   },
 };
 const t = (k, ...a) => { const v = (T[S.lang] || T.te)[k]; return typeof v === "function" ? v(...a) : v ?? k; };
@@ -783,7 +781,7 @@ async function send(text) {
     reply = reply.replace(/\[\[TEMPLATES\]\]/g, "").trim();
     if (!d.ok && !reply) { typing(false); bubble("bot", d.error || t("netErr")); }
     else { const p = await runAction(d.action, true); typing(false); bubble("bot", reply + (p.say ? "\n" + p.say : ""), { buttons: p.buttons }); if (S.vf) speak(reply + (p.say ? " " + p.say : "")); if (d.video_started) { toast(t("started")); if (d.video_num != null && d.video_job) pollChatVideo(d.video_num, d.video_job); } }
-  } catch (e) { typing(false); if (e.message !== "login") bubble("sys", t("netErr")); }
+  } catch (e) { typing(false); if (e.message !== "login") { bubble("sys", t("netErr")); checkSetupPrompt(true); /* R48 item 5: chat failed + setup still needed -> offer setup again, not a dead-end */ } }
   busy = false; saveChat();
 }
 /* R42: in-chat video delivery, Hark-style — when a video starts, poll History
@@ -827,36 +825,74 @@ async function startOneTapSetup() {
     try { const me = await api("me"); email = (me.account && me.account.email) || ""; } catch {}
     if (!email) { toast(t("setupNeedEmail"), true); return; }
     const d = await api("setup/start", { method: "POST", json: { email, providers: ["groq", "openrouter", "gemini"] } });
+    // R48 note: Cloudflare stays out of this list until setup.py has a
+    // Cloudflare flow (FLOWS has only email/google flows today) — starting it
+    // now would stall the chain. The mini-box still renders a Cloudflare step
+    // when setup/status reports one.
     if (!d.ok) { toast(d.error || t("netErr"), true); return; }
     location.hash = "#/chat";
     bubble("bot", t("setupRunning"));
     pollSetup();
   } finally { if (btn) btn.disabled = false; }
 }
-function renderSetupBox(st) {
-  if (!st || !st.current) return;
-  const c = st.current;
+/* R48 mini-box: renders the steps[] array from setup/status, one row per step
+   (Groq / OpenRouter / Gemini / Cloudflare server) with its state — done ✓,
+   running…, paused for the user's one tap, or failed (moves on with the
+   rest). Falls back to the pre-v38 shape {current:{site,step,note,url,state},
+   providers, done}. A paused step shows the one plain line (email-link tap
+   or SMS code) plus a "Nenu chesa ✓" button that resumes via setup/continue. */
+let setupPause = null; // {id} of the step paused for the user's one tap (email/SMS only)
+function setupStepLabel(st) {
+  const name = st.name || (KP[st.id] && KP[st.id].name) || st.id || st.site || "";
+  const state = String(st.state || "").toLowerCase();
+  const queued = state === "queued" || state === "pending" || state === "waiting";
+  const mark = state === "done" ? "✓ " : state === "paused" ? "⏸ " : state === "failed" ? "✗ " : queued ? "· " : "… ";
+  const word = state === "done" ? t("setupStepDone") : state === "paused" ? t("setupStepPaused") : state === "failed" ? t("setupStepFailed") : queued ? t("stepNot") : t("setupStepRunning");
+  return `<div class="muted small">${esc(mark + name + ": " + word)}${st.note ? " — " + esc(st.note) : ""}</div>`;
+}
+function renderSetupBox(d) {
+  const steps = Array.isArray(d.steps) ? d.steps : null;
+  const cur = d.current;
+  if (!steps && !cur) return;
   if (!setupBoxEl || !document.body.contains(setupBoxEl)) {
     $("#msgs .empty")?.remove();
     setupBoxEl = document.createElement("div");
     setupBoxEl.className = "msg bot setup-box";
     $("#msgs").appendChild(setupBoxEl);
   }
-  const done = c.state === "done";
-  const failed = c.state === "failed" || c.state === "stopped";
-  const paused = c.state === "paused";
-  const title = done ? t("setupDone") : failed ? t("setupFailed") : paused ? t("setupPaused") : t("setupRunning");
-  const provs = (st.providers || []).join(" → ");
-  setupBoxEl.innerHTML = `<b>${esc(title)}</b><div class="muted small">${esc(c.site || "")} · ${esc(c.step || "")}</div>` +
-    (c.note ? `<div>${esc(c.note)}</div>` : "") +
-    `<div class="muted small">${esc(provs)}${st.done && st.done.length ? " · ✓ " + st.done.join(", ") : ""}</div>` +
-    `<div class="act"><button class="pill" data-a="open">${esc(t("setupOpen"))}</button>` +
-    (paused ? `<button class="pill" data-a="continue">${esc(t("setupContinue"))}</button>` : "") +
+  const state = String(d.state || (cur && cur.state) || (d.active ? "running" : "")).toLowerCase();
+  const done = state === "done";
+  const failed = state === "failed" || state === "stopped";
+  const pausedStep = steps ? steps.find(s => String(s.state || "").toLowerCase() === "paused") : (cur && cur.state === "paused" ? cur : null);
+  const title = done ? t("setupDone") : failed ? t("setupFailed") : pausedStep ? t("setupPaused") : t("setupRunning");
+  // "Waiting on you" lives ONLY on the paused step (email link / SMS code).
+  const newPause = pausedStep ? { id: pausedStep.id || pausedStep.provider || "" } : null;
+  if (JSON.stringify(newPause) !== JSON.stringify(setupPause)) { setupPause = newPause; if (cur === "setup") renderSteps(); }
+  let html = `<b>${esc(title)}</b>`;
+  if (steps) {
+    html += steps.map(setupStepLabel).join("");
+    if (pausedStep) {
+      const kind = String(pausedStep.kind || pausedStep.pause || "").toLowerCase();
+      html += `<div>${esc(kind === "sms" || kind === "phone" || kind === "code" ? t("setupPauseSms") : t("setupPauseEmail"))}</div>`;
+    }
+  } else {
+    html += `<div class="muted small">${esc(cur.site || "")} · ${esc(cur.step || "")}</div>` +
+      (cur.note ? `<div>${esc(cur.note)}</div>` : "") +
+      `<div class="muted small">${esc((d.providers || []).join(" → "))}${d.done && d.done.length ? " · ✓ " + d.done.join(", ") : ""}</div>`;
+  }
+  html += `<div class="act">` +
+    (cur && cur.url ? `<button class="pill" data-a="open">${esc(t("setupOpen"))}</button>` : "") +
+    (pausedStep ? `<button class="pill" data-a="done">${esc(t("setupDidIt"))}</button>` : "") +
+    (cur && cur.state === "paused" && !pausedStep ? `<button class="pill" data-a="continue">${esc(t("setupContinue"))}</button>` : "") +
     `<button class="pill" data-a="take">${esc(t("setupTake"))}</button>` +
     `<button class="pill" data-a="stop">${esc(t("setupStop"))}</button></div>`;
-  setupBoxEl.querySelector('[data-a="open"]').onclick = () => { if (c.url) window.open(c.url, "_blank"); };
+  setupBoxEl.innerHTML = html;
+  const open = setupBoxEl.querySelector('[data-a="open"]');
+  if (open) open.onclick = () => { if (cur.url) window.open(cur.url, "_blank"); };
+  const didIt = setupBoxEl.querySelector('[data-a="done"]');
+  if (didIt) didIt.onclick = async () => { await api("setup/continue", { method: "POST", json: {} }); pollSetup(); };
   const take = setupBoxEl.querySelector('[data-a="take"]');
-  if (take) take.onclick = async () => { await api("setup/pause", { method: "POST", json: {} }); if (c.url) window.open(c.url, "_blank"); pollSetup(); };
+  if (take) take.onclick = async () => { await api("setup/pause", { method: "POST", json: {} }); if (cur && cur.url) window.open(cur.url, "_blank"); pollSetup(); };
   const stop = setupBoxEl.querySelector('[data-a="stop"]');
   if (stop) stop.onclick = async () => { await api("setup/stop", { method: "POST", json: {} }); pollSetup(); };
   const cont = setupBoxEl.querySelector('[data-a="continue"]');
@@ -871,16 +907,26 @@ async function pollSetup() {
     let d = null;
     try { d = await api("setup/status"); } catch {}
     if (!d || !d.ok) return;
-    if (!d.active) {
+    // v38 shape carries d.state ("done"/"running"/"paused"/"failed"); pre-v38
+    // shape carries d.finished. Either way, a finished run ends polling.
+    const state = String(d.state || (d.finished && d.finished.state) || "").toLowerCase();
+    if (!d.active && (state === "done" || state === "failed" || d.finished)) {
       clearInterval(setupPoll); setupPoll = null;
+      if (state === "done") {
+        // R48: done means the mini-box closes and chat is ready — one plain line.
+        if (setupBoxEl && document.body.contains(setupBoxEl)) { setupBoxEl.remove(); setupBoxEl = null; }
+        setupPause = null;
+        bubble("bot", t("setupDoneMsg")); saveChat();
+        return;
+      }
       // v24: the setup ended — show the final state (done/failed) as a chat
       // message so it survives redraws, instead of the box just vanishing.
       if (d.finished && setupBoxEl && document.body.contains(setupBoxEl)) {
         const f = d.finished;
         const doneKeys = (f.done || []).filter(id => d.keys && d.keys[id]);
-        const title = f.state === "done" ? t("setupDone") : t("setupFailed");
+        const title = t("setupFailed");
         const line = f.state === "done"
-          ? `${title} — ${doneKeys.length ? "✓ " + doneKeys.join(", ") : (f.done || []).join(", ")}`
+          ? `${t("setupDone")} — ${doneKeys.length ? "✓ " + doneKeys.join(", ") : (f.done || []).join(", ")}`
           : `${title} — ${(f.done || []).join(", ")}${f.provider ? " (" + f.provider + ": " + (f.note || "") + ")" : ""}`;
         setupBoxEl.innerHTML = `<b>${esc(title)}</b><div>${esc(line)}</div>`;
         bubble("bot", line); saveChat();
@@ -888,7 +934,7 @@ async function pollSetup() {
       }
       return;
     }
-    renderSetupBox(d);
+    if (d.active || d.steps || d.current) renderSetupBox(d);
   };
   tick();
   setupPoll = setInterval(tick, 5000);
@@ -1178,10 +1224,10 @@ function renderSteps() {
   const box = $("#steps"); if (!box) return; $("#consent").checked = S.consent;
   box.innerHTML = Object.entries(KP).map(([id, k]) => {
     const s = keyState[id] || {};
-    // Waiting = the guided flow is on this provider right now: the USER is the
-    // one who has to act (create the account, copy the key) — say so plainly
-    // instead of leaving a bare "Not set".
-    const waiting = guide.id === id && !(s.set && s.ok);
+    // R48: "Waiting on you" appears ONLY on the step paused for the user's
+    // one tap (email-link tap / SMS code) — never for a key paste or any
+    // other step. setupPause is set by the mini-box from setup/status.
+    const waiting = setupPause && setupPause.id === id && !(s.set && s.ok);
     const st = s.set ? (s.ok ? t("stepOk", s.who) : t("stepFail")) : waiting ? t("stepWaiting") : t("stepNot");
     return `<li class="step${s.set && s.ok ? " done" : ""}${waiting ? " waiting" : ""}" id="st-${id}"><div class="step-h"><b>${esc(k.name)}</b><span class="pill wait">${esc(st)}</span></div>
       <p class="muted small">${esc(t("d_" + id))}${k.soon ? " " + esc(t("oauthSoon")) : ""}</p>
@@ -1250,61 +1296,42 @@ async function guideReturn() {
   $("#key-" + id)?.focus(); speak(t("guidePaste"));
 }
 
-/* ---------- Guided Setup v2 (voice-only) ----------
-   After login, if no AI key is set and the user has never been asked: Divya asks
-   by voice "Free AI setup cheyala? Allow cheyala vadha?" — "avunu/cheyu/allow"
-   starts the voice-guided flow; anything else stops and never asks again (the
-   Setup screen can still start it by hand). Every step is announced + voice-
-   confirmed first. Captcha -> captchaGuide (answer read aloud, per-captcha OK).
-   Email verify -> Gmail (R19) via /api/gmail/verify, link opened only after
-   per-step OK. Nothing is silent; no password is ever used or seen.
-   TODO(live-keys): the Gmail endpoint needs the Google OAuth app to include the
-   gmail.readonly scope; until then gsVerifyEmail() falls back to the one manual
-   tap (open Gmail, tap the link). */
-const GS2 = { asked: store.get("gsAsked", false), running: false };
-async function gsMaybeOffer() {
-  if (GS2.asked || GS2.running || !S.voice) return;
-  await loadKeys();
-  const missing = Object.keys(KP).find(k => !(keyState[k]?.set && keyState[k]?.ok));
-  if (!missing) return;
-  GS2.asked = true; store.set("gsAsked", true);
-  const heard = await askVoice(t("gsAsk"));
-  if (heard && /allow|avunu|cheyu|sare|yes|cheyyi|haan/i.test(heard)) { store.set("gsConsent", true); gsVoiceFlow(); }
-  else speak(t("gsDeclined"));
+/* ---------- R48 login-time setup prompt ----------
+   After login, ask the Worker whether setup is actually needed:
+   GET setup/status -> {needsSetup, state, steps[]} (v38 Worker shape).
+   Only then show the one-allow prompt — never on every login, never once
+   setup is done. Allow -> setup/start + the chat mini-box with live
+   per-step progress. Decline -> limited mode (chat still works with the
+   shared brain if available); the Setup screen (bottom of the drawer) can
+   start it later. The prompt comes back only when chat itself fails while
+   setup is still needed (send() calls checkSetupPrompt(true)) — never a
+   dead-end, never a nag. */
+let setupPromptShown = false;
+async function checkSetupPrompt(force) {
+  if (setupPromptShown || !S.token) return false;
+  let d = null;
+  try { d = await api("setup/status"); } catch { return false; }
+  if (!d || !d.ok) return false;
+  // v38 shape: needsSetup + steps[]. Pre-v38 shape has no needsSetup — derive
+  // it from {active, finished, keys} (see setupNeedsFrom).
+  const needs = d.needsSetup ?? setupNeedsFrom(d);
+  if (!needs) return false;
+  if (!force && store.get("setupDeclined", false)) return false;
+  setupPromptShown = true;
+  sheet(t("setupAsk"), [
+    { label: t("setupAllow"), primary: true, fn: () => { store.del("setupDeclined"); startOneTapSetup(); } },
+    { label: t("later"), fn: () => { store.set("setupDeclined", true); setupPromptShown = false; toast(t("gsDeclined")); } },
+  ]);
+  return true;
 }
-async function gsVoiceFlow() {
-  if (GS2.running) return; GS2.running = true;
-  try {
-    for (;;) {
-      await loadKeys();
-      const id = Object.keys(KP).find(k => !(keyState[k]?.set && keyState[k]?.ok));
-      if (!id) { speak(t("guideDone")); return; }
-      const heard = await askVoice(t("guideNextQ", KP[id].name));
-      if (!heard || /vadhu|aagu|kadhu|nahi|stop|\bno\b/i.test(heard)) { speak(t("gsStopped")); return; }
-      guideOpen(id);
-      await gsWaitKey(id);
-    }
-  } finally { GS2.running = false; }
-}
-async function gsWaitKey(id) {
-  // Wait until the provider key is saved (the user returns from the provider
-  // page; guideReturn() reads the clipboard and confirmKey() saves it), or 10 min.
-  for (let i = 0; i < 40; i++) {
-    await new Promise(r => setTimeout(r, 15000));
-    await loadKeys();
-    if (keyState[id]?.set && keyState[id]?.ok) return true;
-    if (!guide.id) return false; // user left the flow
-  }
-  return false;
-}
-async function gsVerifyEmail(from) {
-  // Email verification via connected Gmail (R19). Returns the link or "" — the
-  // link is NEVER opened without the user's per-step OK.
-  const d = await api("gmail/verify?q=" + encodeURIComponent(from || "verify")).catch(() => ({}));
-  if (!d.ok || !d.link) return "";
-  const heard = await askVoice(t("gsVerifyAsk"));
-  if (heard && /cheyu|avunu|yes|open|khol|allow|haan/i.test(heard)) { window.open(d.link, "_blank", "noopener"); return d.link; }
-  return "";
+/* Pre-v38 setup/status shape {active, finished, keys}: setup is needed when
+   no setup run is active, no finished "done" is recorded, and no provider
+   key is saved yet. */
+function setupNeedsFrom(d) {
+  if (d.active) return false;
+  if (d.finished && d.finished.state === "done") return false;
+  const keys = d.keys || {};
+  return !["groq", "openrouter", "gemini"].every(id => keys[id]);
 }
 
 /* ---------- plan ---------- */
@@ -1451,22 +1478,19 @@ $("#bubbleClose").onclick = bubbleClose;
   btn.addEventListener("click", () => { if (Date.now() < suppressClickUntil) return; bubbleOpen(); });
 })();
 
-/* ---------- Blind Mode: captcha guide (answer aloud -> ask OK -> submit on OK) ---------- */
-// Rule: Divya never solves a captcha silently or via a solving service.
-// In Blind Mode it may read the challenge (audio / image description), tell the
-// user the answer aloud, and submit ONLY after the user's explicit per-captcha OK.
-// (Uneducated / blind users: Divya finds the answer, reads it aloud, asks "solve cheyala?",
-// and acts only when the user says "cheyu".)
+/* ---------- Blind Mode: captcha guide (R48) ----------
+   Captchas are part of the one allow: Divya solves them itself (audio
+   challenge on-device). This guide appears ONLY when Divya cannot solve one
+   alone (an image challenge) — it reads the challenge aloud, and acts only
+   after the user's one tap / "cheyu". Never a third-party solving service. */
 const captchaGuide = {
   pending: null,
   start(question, answer, onConfirm) {
     this.pending = { answer, onConfirm };
-    const msg = S.lang === "en"
-      ? `Captcha found. ${question} The answer is: ${answer}. Shall I solve it with this answer? Say "do it" or tap Yes.`
-      : `Captcha vachindhi. ${question} Answer idhi: ${answer}. Ee answer tho solve cheyala? "Cheyu" ani cheppu leda Yes nokku.`;
+    const msg = `${t("capSolving")}${question ? " " + question : ""}${answer ? " Answer: " + answer + "." : ""} ${t("capNeedTap")}`;
     speak(msg); toast(msg);
     bubbleOpen();
-    bubbleLog("divya", `${question} Answer: ${answer}. Solve cheyala?`);
+    bubbleLog("divya", `${question} Answer: ${answer}. ${t("capNeedTap")}`);
     const log = $("#bubbleLog");
     const row = document.createElement("div"); row.className = "cap-row";
     row.innerHTML = `<button class="btn primary" id="capYes">✓ Cheyu</button><button class="btn" id="capNo">Kadhu</button>`;
@@ -1529,7 +1553,7 @@ function enter() {
   route(); setTimeout(() => $("#screen-title").focus({ preventScroll: true }), 50);
   if (store.get("orcode", "")) { go("setup"); orFinish(); }
   if (S.wake && SR) vaStart();
-  setTimeout(() => gsMaybeOffer(), 3000); // Guided Setup v2: offer free AI setup by voice, once
+  setTimeout(() => checkSetupPrompt(), 3000); // R48: login-time setup prompt — only when setup/status says it is needed
 }
 // OpenRouter PKCE callback lands on /setup?code=...
 if (location.pathname.endsWith("/setup") || new URLSearchParams(location.search).has("orcb")) { const c = new URLSearchParams(location.search).get("code"); if (c) store.set("orcode", c); history.replaceState(null, "", BASE + "#/setup"); }

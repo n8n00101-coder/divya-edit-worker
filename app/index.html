@@ -218,13 +218,15 @@
       <section id="s-setup" class="screen" data-title="sSetup">
         <div class="scroll pad">
           <p class="muted" data-t="setupIntro"></p>
-          <!-- v37: plain-words explainer — what Divya does vs what YOU must do
-               (create the free account, copy the key, complete any captcha /
-               verification yourself). Divya never creates accounts silently. -->
+          <!-- R48: plain-words explainer — Divya does everything with one allow
+               (accounts, API keys, captchas, server). The user is asked for
+               ONE thing only, and only once: the email-link tap / SMS code. -->
           <div class="card note small" id="setupHow">
             <p><b data-t="setupHowT"></b></p>
             <p><b data-t="setupHowDivyaT"></b> <span data-t="setupHowDivya"></span></p>
-            <p><b data-t="setupHowYouT"></b> <span data-t="setupHowYou"></span></p>
+            <p><b data-t="setupHowYouT"></b></p>
+            <p><span data-t="setupYouEmail"></span></p>
+            <p><span data-t="setupYouSms"></span></p>
             <p><b data-t="setupHowAfterT"></b> <span data-t="setupHowAfter"></span></p>
             <p class="muted" data-t="setupHowNote"></p>
           </div>
@@ -239,7 +241,6 @@
           <p class="muted small" data-t="setupStepNote"></p>
           <div class="card note small">
             <p><b data-t="serverTitle"></b> <span data-t="serverText"></span></p>
-            <p class="muted" data-t="noPasswords"></p>
           </div>
         </div>
       </section>

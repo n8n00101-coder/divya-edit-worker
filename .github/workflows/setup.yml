@@ -7,7 +7,7 @@ on:
         required: true
         type: string
       provider:
-        description: "Provider id (groq, openrouter, gemini)"
+        description: "Provider id (groq, openrouter, gemini, cloudflare — or 'chain' for all four in order)"
         required: true
         type: string
 jobs:
@@ -19,6 +19,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # No wrangler needed: the Cloudflare flow deploys via the raw
+      # Cloudflare API (httpx), so playwright + httpx + faster-whisper
+      # already cover every provider, including cloudflare.
       - name: Install browser + deps
         run: |
           pip install -q playwright httpx faster-whisper
