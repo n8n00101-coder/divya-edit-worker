@@ -1392,7 +1392,7 @@ async function loadSetupState() {
   if (!d || !d.ok) { card.hidden = true; return; }
   const state = String(d.state || "").toLowerCase();
   const title = $("#setupStateTitle"), sub = $("#setupStateSub"), retry = $("#setupRetryBtn");
-  const show = (t, s, canRetry) => { title.textContent = t; sub.textContent = s || ""; retry.hidden = !canRetry; card.hidden = false; };
+  const show = (t, s, canRetry) => { title.textContent = t; sub.textContent = s || ""; sub.hidden = !s; retry.hidden = !canRetry; card.hidden = false; };
   if (state === "done") return show(t("setupDone"), "");
   if (state === "failed" || state === "stopped") return show(t("setupFailed"), "", true);
   if (state === "stalled" || d.stalled) return show(t("setupStalled"), t("setupStalledSub"), true);

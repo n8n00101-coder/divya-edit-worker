@@ -316,3 +316,15 @@ body.blind .tabbar a{font-size:15px}
 .tpl-card .muted{display:block;padding:2px 8px 0}
 .hist-item{display:flex;flex-direction:column;gap:6px}
 .hist-num{font-weight:800;color:#1a73e8}
+/* v39 (D7): voice list — a voice label never wraps mid-phrase ("Arjun ·" /
+   "Teenage"): one line, ellipsis only when genuinely too long for the
+   screen. Warning/status lines wrap fully and never clip at the edge.
+   The flex-column list's children need min-width:0 or a long line can
+   overflow its card instead of wrapping. */
+#voiceList > *{min-width:0}
+.voice-row .voice-btn{flex:1 1 auto;min-width:0;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.voice-row .voice-btn .voice-label{white-space:nowrap}
+.voice-row .voice-sample{flex:none}
+.voice-note{white-space:normal;overflow-wrap:anywhere;min-width:0;width:100%}
+/* v39 (D4): Setup page state banner — Retry button sits under the state line. */
+#setupStateCard .btn.secondary{margin:6px 0 0}
