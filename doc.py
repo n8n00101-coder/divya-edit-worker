@@ -620,27 +620,57 @@ def character(im, mood, t, acc):
     else: sy = 1 + 0.025 * math.sin(t * 3)
     put(im, pawn(tuple(int(c * 0.9 + 25) for c in acc)), x, by, 0.55, rot, sx, sy)
 
-def label(d, text, t, acc, idx, look=None):
-    # v27 (Hark kit headline()): word-by-word ease-out-back pops, 0.09s stagger.
-    # Each word pops in like the kit's headline; the underline grows after.
+def _label_width(d, text):
+    # v36: the label's width at the 132 px headline size (fit-to-width, min
+    # 96 px) — used by the pattern-break highlight bar. Mirrors label()'s
+    # sizing so the bar matches the text.
     words = text.split()
-    size = 104 if look == "C" else 132
-    f = look_font(look, size)
-    widths = [d.textlength(w + " ", font=f) for w in words]
-    total = sum(widths) - d.textlength(" ", font=f)
+    size = 132
+    while size > 96 and sum(d.textlength(w + " ", font=anton(size)) for w in words) > 908:
+        size -= 4
+    return sum(d.textlength(w, font=anton(size)) + 2 for w in words) - 2
+
+
+def label(d, text, t, acc, idx, look=None, keyword=None):
+    # v36 (Blind A1/A4/C6 — fixed zones): the scene label ("title") lives in
+    # the TITLE zone y 120-450 (frame), NOT at the bottom — it used to sit at
+    # y 1190, inside the visual band, which is why "THE BILL" sat on the
+    # receipt and "10 PM-6 AM" sat on "8 HOURS". Anton headline (C6), 96 px
+    # minimum (A4), fit-to-width; exactly ONE keyword in yellow per line
+    # (the value-matching word, else the longest word), the rest near-white;
+    # tracking +2 (C6); word pops staggered 70 ms (C7, 60-80 ms).
+    words = text.split()
+    size = 132
+    f = anton(size)
+    # Fit to width (x 86..994 safe frame); shrink to the 96 px minimum, never below.
+    while size > 96 and sum(d.textlength(w + " ", font=anton(size)) for w in words) > 908:
+        size -= 4
+        f = anton(size)
+    # The keyword: the word matching the scene value, else the longest word.
+    kw = keyword or ""
+    if kw:
+        _kwi = next((i for i, w in enumerate(words) if kw.lower() in w.lower()), -1)
+    else:
+        _kwi = -1
+    if _kwi < 0 and words:
+        _kwi = max(range(len(words)), key=lambda i: len(words[i]))
+    widths = [d.textlength(w, font=f) + 2 for w in words]
+    total = sum(widths) - 2
     x = (W - total) / 2
+    cy = 285  # title zone 120-450, vertically centred
     for k, w in enumerate(words):
-        p = C.pop((t - 0.05 - k * 0.09) / 0.3)
-        a = int(255 * clamp((t - 0.05 - k * 0.09) / 0.12))
+        p = C.pop((t - 0.05 - k * 0.07) / 0.3)
+        a = int(255 * clamp((t - 0.05 - k * 0.07) / 0.12))
         if a > 0:
-            fs = look_font(look, int(size * (0.6 + 0.4 * p)))
+            fs = anton(int(size * (0.6 + 0.4 * p)))
             cxw = x + d.textlength(w, font=f) / 2
-            d.text((cxw + 6, 1196), w, font=fs, fill=(0, 0, 0, int(a * 0.7)), anchor="mm")
-            d.text((cxw, 1190), w, font=fs, fill=(acc if idx % 2 == 0 else (250, 245, 235)) + (a,), anchor="mm")
+            col = (255, 210, 0) if k == _kwi else (250, 245, 235)
+            d.text((cxw + 6, cy + 6), w, font=fs, fill=(0, 0, 0, int(a * 0.7)), anchor="mm")
+            d.text((cxw, cy), w, font=fs, fill=col + (a,), anchor="mm")
         x += widths[k]
     ul = ease((t - 0.35) / 0.4) * total
     if ul > 0:
-        d.rectangle([(W - total) / 2, 1350, (W - total) / 2 + ul, 1360], fill=acc)
+        d.rectangle([(W - total) / 2, 365, (W - total) / 2 + ul, 375], fill=acc)
 
 
 def wrap_title(title, max_w, d, start=34, min_s=20):
@@ -678,24 +708,23 @@ def wrap_title(title, max_w, d, start=34, min_s=20):
 
 
 def header(d, p, idx, n, t, sc_d, acc, look=None):
-    # v33 (Ajju 2026-11-11): NO chapter labels — "FIG 01 / FIG 02 ani ndhuku
-    # chupisthunnav". The header is the title only (wrapped, full width) +
-    # the progress bar. The old per-look chapter cards (FIG / stamp / counter)
-    # are deleted; look C already had "none" and now every look is the same.
-    # v27 (Hark kit safe box): content inside 8% left/right — x starts at 120.
-    # v32: the title wraps on word boundaries (wrap_title) instead of the
-    # [:26] cut; the progress bar drops to y=162 when the title needs 2 lines.
+    # v36 (Blind A1/A4 — fixed zones): the header is COMPACT and lives ABOVE
+    # the title zone: progress bar y 28-34, video title ONE line at 44 px
+    # (the 44 px label minimum, A4) y 40-84. The scene label (the "title",
+    # 96 px+) owns y 120-450 below it, so the two can never collide. The old
+    # header wrapped to 2 lines at 34 px down to y 164, crowding the label.
     seg = (W - 240) / n
-    def progress(two=False):
-        y = 162 if two else 150
-        for i in range(n):
-            x0 = 120 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
-            d.rectangle([x0, y, x0 + seg - 8, y + 6], fill=(60, 60, 70))
-            if fill: d.rectangle([x0, y, x0 + (seg - 8) * fill, y + 6], fill=acc)
-    lines, sz = wrap_title(p["title"], W - 240, d, start=34)
-    for k, ln in enumerate(lines):
-        d.text((120, 92 + k * 36), ln, font=montserrat(sz), fill=(225, 225, 230))
-    progress(len(lines) > 1)
+    for i in range(n):
+        x0 = 120 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
+        d.rectangle([x0, 28, x0 + seg - 8, 34], fill=(60, 60, 70))
+        if fill: d.rectangle([x0, 28, x0 + (seg - 8) * fill, 34], fill=acc)
+    title = str(p["title"])
+    f = montserrat(44)
+    while d.textlength(title, font=f) > W - 240 and len(title) > 4:
+        title = title[:-2]
+    if len(title) < len(str(p["title"])):
+        title = title.rstrip() + "…"
+    d.text((120, 40), title, font=montserrat(44), fill=(225, 225, 230))
 
 # v32: plan visual kind -> visuals_lib name (used when the plan's kind has a
 # richer VL equivalent; the scene's stored lib_visual wins over this map).
@@ -708,18 +737,19 @@ _SBG = {}
 
 
 def _fit_above_label(lay):
-    # v32 (Blind): fit a 1080x1920 visual layer's CONTENT into the band
-    # y 200-1110 (below the header, above the label at y 1190-1360). v35:
-    # the band ended at 1150 but the label text reaches up to y~1137, so a
-    # tall visual filling to 1150 overlapped the label's top by ~13 px (the
-    # frame-QC caught it). 1110 leaves a clear gap. Scale + shift so the
-    # content fits the band and is centred in it; a layer that already fits
-    # is returned unchanged.
+    # v36 (Blind A1 — fixed zones, 720-layer coords x1.5): a 1080x1920 visual
+    # layer's CONTENT fits the VISUAL band y 480-1410 (below the title zone
+    # 120-450, above the caption band 1440-1725). The old band was 200-1110,
+    # which put the visual on top of the label (the label lived at y 1190).
+    # Scale + shift so the content fits the band and is centred in it; a
+    # layer that already fits is returned unchanged. The fit scale is stored
+    # on the module (read by the frame-QC font check — a heavy downscale
+    # would shrink the visual's text below the 44 px minimum).
     bb = lay.getbbox()
     if not bb:
         return lay
     top, bot = bb[1], bb[3]
-    lo, hi = 200, 1110
+    lo, hi = 480, 1410
     if top >= lo and bot <= hi:
         return lay
     bh = bot - top
@@ -838,22 +868,30 @@ WORD_TIMED_VISUALS = {
 PUNCH_HIT_TYPES = {"number", "percent", "shock", "warning"}
 
 def pick_one_effect(sc, idx, pop_t):
-    """v35: decide the SINGLE motion effect for a scene (Hark: ONE effect at a
-    time). Returns {vis, vis_name, vis_start, vis_dur, label_start} and logs
-    the choice on sc['_effect_choice'] so the frame-QC audit can verify it.
+    """v36 (Blind A5/A6/A7 + v35 one-effect rule): decide the SINGLE motion
+    effect for a scene (Hark: ONE effect at a time). Returns {vis, vis_name,
+    vis_start, vis_dur, label_start} and logs the choice on
+    sc['_effect_choice'] so the frame-QC audit can verify it.
     - vis: "build_in" (the visual animates itself — no layer transform),
       "enter" (one enter transform), "emphasis" (one punch/shake at the hit
       word), "fx_" (one custom per-video emphasis from video_fx.py).
-    - vis_start: the pt offset at which the visual motion starts. For scenes
-      after the first it is delayed past the transition tail (TR/2), so the
-      cut finishes BEFORE the new scene's motion starts.
-    - label_start: the SCENE-local time at which the label's word pops
-      start. For a build-in it is a fixed early time (just after the
-      transition tail) so the label is present from the start of the scene
-      no matter how late the hit word falls; for a layer transform it is
-      after the motion ends. The label is always an alpha-only fade (its
-      word pops); it never gets a layer transform, so it cannot clash with
-      the visual.
+    - TIMING (A6): the visual LANDS 80 ms before the spoken key word and the
+      SFX hits ON the word. pop_t IS the word time minus 0.08 (set in
+      make_video), and pt = t - pop_t, so a pt-time start of 0 lands the
+      effect at word - 0.08. An ENTER is different: it is the visual
+      ARRIVING, so it starts right after the transition tail (scene time
+      TR/2) — in pt-time that is vis_start = TR/2 - pop_t (negative when
+      the word is late; the FX functions clamp progress, so the enter is
+      simply complete by the word). An enter delayed to the word would leave
+      the scene empty until the word (a blank frame, A5). An EMPHASIS
+      (punch/shake) starts at the word: vis_start = max(0, TR/2 - pop_t).
+    - FINISH (A7): every discrete effect ends before the transition starts
+      (scene time d - TR/2, i.e. >=150 ms before the cut); the start is
+      clamped so the end never crosses it.
+    - label_start: a FIXED early scene time (0.05 s for scene 1 — the hook,
+      B4; TR/2 + 0.15 after that). The label is the scene's headline in its
+      own zone (120-450) and cannot collide with the visual, so it does not
+      wait for the visual's motion — it must be present from the start.
     - "pulse" is continuous (it never ends) so it can never be "one effect at
       a time" — it is mapped to "punch" whenever it would be chosen."""
     kind = sc.get("visual") or ""
@@ -866,10 +904,15 @@ def pick_one_effect(sc, idx, pop_t):
         _vk = sc.get("lib_visual") or _VIS_NAME_MAP.get(kind) or kind
         is_word_timed = _vk in WORD_TIMED_VISUALS
     # The transition's second half runs loc in [0, TR/2] — a new scene's
-    # motion must not start before it ends. vis_start is in pt-time
-    # (pt = t - pop_t), so the earliest start is max(0, TR/2 - pop_t).
+    # motion must not start before it ends. tr_tail is the SCENE time at
+    # which the transition ends; earliest_pt is the same instant in pt-time.
     tr_tail = TR / 2 if idx > 0 else 0.0
-    earliest = max(0.0, tr_tail - pop_t)
+    earliest_pt = max(0.0, tr_tail - pop_t)
+    # The latest a discrete effect may END (scene time): before the
+    # transition into the next scene starts (d - TR/2, >=150 ms before the cut).
+    d = float(sc.get("d", 1.0) or 1.0)
+    latest_end_pt = (d - TR / 2) - pop_t
+    label_start = 0.05 if idx == 0 else tr_tail + 0.15
     hit_type = sc.get("hit_type") or hit_type_of(sc)
     if is_word_timed:
         # The build-in (word-timed / draw-on) IS the motion. No enter, no
@@ -881,36 +924,47 @@ def pick_one_effect(sc, idx, pop_t):
         # must be present from the start of the scene.
         choice = {"vis": "build_in", "vis_name": kind, "vis_start": 0.0,
                   "vis_dur": float(sc["d"]), "label": "fade_in",
-                  "label_start": (TR / 2 if idx > 0 else 0.0) + 0.15}
+                  "label_start": label_start}
     elif hit_type in PUNCH_HIT_TYPES:
         emph = sc.get("emphasis") or "punch"
         if emph.startswith("fx_") and VIDEO_FX is not None and callable(getattr(VIDEO_FX, emph, None)):
-            choice = {"vis": "fx_", "vis_name": emph, "vis_start": earliest,
-                      "vis_dur": 0.3, "label": "fade_in",
-                      "label_start": pop_t + earliest + 0.3 + 0.05}
+            _dur = 0.3
+            # The punch lands on the word (pt 0 = word - 0.08). If it would
+            # run past the next transition, shorten it so it ends in time.
+            if earliest_pt + _dur > latest_end_pt and latest_end_pt - earliest_pt > 0.05:
+                _dur = latest_end_pt - earliest_pt
+            choice = {"vis": "fx_", "vis_name": emph, "vis_start": earliest_pt,
+                      "vis_dur": _dur, "label": "fade_in",
+                      "label_start": label_start}
         elif emph in FX_LAYER_EMPHASIS:
             if emph == "pulse":
                 emph = "punch"
             _d = EMPH_DUR.get(emph, 0.3)
-            choice = {"vis": "emphasis", "vis_name": emph, "vis_start": earliest,
+            if earliest_pt + _d > latest_end_pt and latest_end_pt - earliest_pt > 0.05:
+                _d = latest_end_pt - earliest_pt
+            choice = {"vis": "emphasis", "vis_name": emph, "vis_start": earliest_pt,
                       "vis_dur": _d, "label": "fade_in",
-                      "label_start": pop_t + earliest + _d + 0.05}
+                      "label_start": label_start}
         else:
             enter = sc.get("enter") or "pop_in"
             if enter not in FX_LAYER_ENTER:
                 enter = "pop_in"
             _d = ENTER_DUR.get(enter, 0.35)
-            choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
+            # The enter starts right after the transition tail (scene time
+            # tr_tail); in pt-time that is tr_tail - pop_t (negative when
+            # the word is late — the FX functions clamp progress, so the
+            # enter is simply complete by the word).
+            choice = {"vis": "enter", "vis_name": enter, "vis_start": tr_tail - pop_t,
                       "vis_dur": _d, "label": "fade_in",
-                      "label_start": pop_t + earliest + _d + 0.05}
+                      "label_start": label_start}
     else:
         enter = sc.get("enter") or "pop_in"
         if enter not in FX_LAYER_ENTER:
             enter = "pop_in"
         _d = ENTER_DUR.get(enter, 0.35)
-        choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
+        choice = {"vis": "enter", "vis_name": enter, "vis_start": tr_tail - pop_t,
                   "vis_dur": _d, "label": "fade_in",
-                  "label_start": pop_t + earliest + _d + 0.05}
+                  "label_start": label_start}
     sc["_effect_choice"] = choice
     return choice
 
@@ -968,7 +1022,20 @@ def scene_frame(p, idx, t, return_layers=False):
     # for half the scene). label_t is the label's own clock; before
     # label_start it is 0 and the label is invisible.
     label_t = max(0.0, t - _ch.get("label_start", 0.35))
-    layout = (idx + seed) % 4
+    # v36 (Blind A1/B5 — fixed zones + pattern break): the label is ALWAYS
+    # the top headline (title zone 120-450, drawn by label()); the visual
+    # lives in the band 480-1410. Layouts: 0 standard (visual centred,
+    # cy 945), 2 compact (visual lower/smaller, cy 1050). Layout 1 is
+    # RESERVED for the pattern break — the scene at 50% of the video gets a
+    # full-bleed visual (scaled 1.15x, bleeding off the band edges) + a
+    # yellow highlight bar behind the label, so one scene reads clearly
+    # different (B5: "full-bleed visual, or split screen").
+    n_sc = len(p["scenes"])
+    _pb = max(1, min(n_sc - 2, int(n_sc * 0.5))) if n_sc >= 4 else -1
+    if idx == _pb:
+        layout = 1
+    else:
+        layout = ((idx + seed) % 2) * 2
     vlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     vd = ImageDraw.Draw(vlay, "RGBA")
     llay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -976,19 +1043,26 @@ def scene_frame(p, idx, t, return_layers=False):
     # v34: the stamp visual itself carries the word (e.g. BANNED) — drawing
     # the scene label too duplicates it (v33 dup-text rule), so skip it.
     nolabel = sc.get("visual") == "stamp"
-    if layout == 1:  # full-bleed
-        draw_scene_visual(vd, vlay, p, idx, sc, pt, 900, acc)
-        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
-    elif layout == 2:  # centered big word, visual small below
-        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
-        draw_scene_visual(vd, vlay, p, idx, sc, pt, 750, acc)
-    elif layout == 3:  # split
-        draw_scene_visual(vd, vlay, p, idx, sc, pt, 650, acc)
-        d.rectangle([(120, 1080), (W - 120, 1088)], fill=acc)
-        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
+    _kw = str(sc.get("value", "") or "")
+    if layout == 1:  # pattern break: full-bleed
+        draw_scene_visual(vd, vlay, p, idx, sc, pt, 945, acc)
+        # full-bleed: scale the visual layer 1.15x about its centre so it
+        # bleeds off the band edges (the excess is clipped by the frame).
+        _bw, _bh = vlay.size
+        _big = vlay.resize((int(_bw * 1.15), int(_bh * 1.15)), Image.BICUBIC)
+        vlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        vlay.alpha_composite(_big, ((_bw - _big.width) // 2, (_bh - _big.height) // 2))
+        # yellow highlight bar behind the label (drawn first on the label layer).
+        if not nolabel:
+            _lw = _label_width(ld, sc["label"])
+            ld.rectangle([(W - _lw) / 2 - 24, 205, (W + _lw) / 2 + 24, 365], fill=(255, 210, 0, 90))
+        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw) if not nolabel else None
+    elif layout == 2:  # compact: visual lower/smaller
+        draw_scene_visual(vd, vlay, p, idx, sc, pt, 1050, acc)
+        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw) if not nolabel else None
     else:  # standard
-        draw_scene_visual(vd, vlay, p, idx, sc, pt, 800, acc)
-        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
+        draw_scene_visual(vd, vlay, p, idx, sc, pt, 945, acc)
+        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw) if not nolabel else None
     # v35: ONE motion effect on the visual layer — the choice made above by
     # pick_one_effect(). "build_in" means the visual animates itself (word-
     # timed / draw-on) and NO layer transform is applied on top of it; that
@@ -1014,30 +1088,27 @@ def scene_frame(p, idx, t, return_layers=False):
     _lb = llay.getchannel("A").getbbox()
     lay.alpha_composite(vlay)
     lay.alpha_composite(llay)
-    # v32 (Blind): the source line — a short official credit under the label
-    # (VL.vis_source at y=930 in 720 coords -> ~1400 after upscale, above
-    # the caption band). Only when the scene states a sourced fact.
+    # v36 (Blind A1/E3 — fixed zones): the source line lives in the SOURCE
+    # zone y 1755-1845 (frame) = y 1170-1230 in the 720-layer coords the VL
+    # function uses. It used to be drawn at y=930 (frame ~1395), inside the
+    # caption band. Only when the scene states a sourced fact (E3: a source
+    # line on every fact/number).
     _src = sc.get("source")
+    _src_bb = None
     if _src:
         try:
-            _sl = VL.VIS["source_line"](pt, 0.0, sc["d"], text=f"Source: {_src}", y=930, accent=acc)
+            _sl = VL.VIS["source_line"](pt, 0.0, sc["d"], text=f"Source: {_src}", y=1200, accent=acc)
             if _sl is not None and _sl.size == (720, 1280):
                 lay.alpha_composite(_sl.resize((W, H), Image.BICUBIC))
+                _sw = ImageDraw.Draw(lay).textlength(f"Source: {_src}", font=VL._font(24, "small")) * 1.5
+                _src_bb = (int(W / 2 - _sw / 2), 1782, int(W / 2 + _sw / 2), 1818)
         except Exception as e:
             print(f"source_line scene {idx} failed: {str(e)[:100]}")
-    # v26: the pawn character is REMOVED — Ajju calls it 'ah chess board shipai';
-    # a fixed mascot in every scene of every video is not an edit, and it has
-    # nothing to do with the topic. Scenes now carry only the topic's own visuals.
-    if idx == 0 and t < 2.4:  # cold-open title
-        k = ease(t / 0.5) * (1 - ease((t - 1.9) / 0.5))
-        d.rectangle([0, 0, W, H], fill=(0, 0, 0, int(150 * k)))
-        txt = p["title"]; words = txt.split(); lines = [" ".join(words[:max(1, len(words) // 2)]), " ".join(words[max(1, len(words) // 2):])]
-        lines = [l for l in lines if l]
-        fs = 150
-        while fs > 60 and max(d.textlength(l, font=look_font(look, fs)) for l in lines) > W - 120: fs -= 8
-        f = look_font(look, fs)
-        for li, ln in enumerate(lines):
-            w = d.textlength(ln, font=f); d.text(((W - w) / 2, 700 + li * 190 + 40 * (1 - k)), ln, font=f, fill=acc if li else (255, 255, 255))
+    # v36 (Blind B4 — hook in the first 1 s): NO slow fade-in cold-open.
+    # The old cold-open (a dark overlay + the big video title fading in over
+    # 0.5 s, covering the visual for the first 2.4 s) hid the hook. The hook
+    # is now scene 1's label + visual, present at frame 1 with no fade
+    # (the label's first word pops at 0.05 s, the visual builds in from t=0).
     # v33 (Ajju 2026-11-11): the camera is STATIC — no zoom/pan/whip/drift.
     # A zoom running through the whole video is not a professional edit, and
     # the constant push-in is what made every video feel the same. The
@@ -1045,7 +1116,7 @@ def scene_frame(p, idx, t, return_layers=False):
     # from the visual's own build-in (v35: one effect at a time).
     _img = Image.alpha_composite(bg, lay).convert("RGB")
     if return_layers:
-        return _img, _vb, _lb, sc.get("_effect_choice")
+        return _img, _vb, _lb, sc.get("_effect_choice"), _src_bb
     return _img
 
 def camera(im, idx, t, d, mood, move="push"):
@@ -1191,7 +1262,11 @@ def ass_t(s):
 
 def write_ass(p, path):
     fn = "Noto Sans Telugu" if p["lang"] == "te" else "Anton"
-    size = 70 if p["lang"] == "te" else 96
+    # v36 (Blind A1/A4 — fixed zones): the caption band is y 1440-1725
+    # (frame), captions ONLY. MarginV 200 puts the caption bottom at 1720.
+    # Min caption font 72 px (A4): English 96, Telugu 72 (was 70).
+    # MarginL/R 80 keeps the 40 px side margin with room.
+    size = 72 if p["lang"] == "te" else 96
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -1200,7 +1275,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: K,{fn},{size},&H0040D8FF,&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,1,0,1,6,3,2,80,80,250,1
+Style: K,{fn},{size},&H0040D8FF,&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,1,0,1,6,3,2,80,80,200,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1349,30 +1424,34 @@ def preview_sheet(p, wd):
     return out
 
 
-def _qc_geometry(vb, lb, has_source, expect_label=True):
-    """v35: geometry checks on one scene's layer bboxes (mid-scene, settled).
-    vb = visual-layer alpha bbox, lb = label-layer alpha bbox (or None if the
-    layer is empty). expect_label=False for a stamp scene (v34: the stamp
-    carries the word, so the label is skipped by design). Returns
-    (flaws, warnings). A flaw is a real defect (clipped at the frame edge,
-    overlapping, missing, colliding). Sitting outside the 8% safe frame
-    while still inside the frame is only a WARNING — the bold full-bleed
-    visuals (four, card, stamp_cta) do that by design and read clean; the
-    frame-QC must not fail a good-looking scene for it."""
+def _qc_geometry(vb, lb, has_source, expect_label=True, src_bb=None):
+    """v36 (Blind A1/A4 — fixed zones): geometry checks on one scene's layer
+    bboxes (mid-scene, settled). Zones (1080x1920 frame): title/label
+    120-450, visual 480-1410, caption band 1440-1725 (captions ONLY),
+    source 1755-1845. vb = visual-layer alpha bbox, lb = label-layer alpha
+    bbox, src_bb = source-line bbox (or None). A flaw is a real defect
+    (clipped at the frame edge, overlapping, missing, colliding, or in the
+    caption band). Sitting outside the 40 px margin while still inside the
+    frame is only a WARNING — the bold full-bleed visuals (four, card,
+    stamp_cta, and the pattern-break scene) do that by design."""
     flaws, warnings = [], []
-    # The visual lives in the band y 200-1110 (below the header, above the
-    # label); the label lives in y 1120-1400.
+    # Caption band: NOTHING except the karaoke captions may touch it.
+    for _name, _bb in (("visual", vb), ("label", lb), ("source", src_bb)):
+        if _bb is None:
+            continue
+        if _bb[1] < 1725 and _bb[3] > 1440:
+            flaws.append(f"{_name} intrudes into the caption band (bbox y {_bb[1]}..{_bb[3]})")
     if vb is None:
         flaws.append("visual missing/empty at mid-scene")
     else:
         if vb[0] <= 2 or vb[2] >= W - 2:
             flaws.append(f"visual clipped at frame edge (bbox x {vb[0]}..{vb[2]})")
-        elif vb[0] < 86 or vb[2] > W - 86:
-            warnings.append(f"visual outside safe frame (bbox x {vb[0]}..{vb[2]})")
-        if vb[1] < 170:
-            flaws.append(f"visual collides with header (bbox top y {vb[1]})")
-        if vb[3] > 1110:
-            flaws.append(f"visual overflows into label band (bbox bottom y {vb[3]})")
+        elif vb[0] < 40 or vb[2] > W - 40:
+            warnings.append(f"visual outside 40 px margin (bbox x {vb[0]}..{vb[2]})")
+        if vb[1] < 470:
+            flaws.append(f"visual collides with title zone (bbox top y {vb[1]})")
+        if vb[3] > 1420:
+            flaws.append(f"visual overflows into caption band (bbox bottom y {vb[3]})")
     if lb is None:
         # A missing label at mid-scene is a flaw — unless the scene is a
         # stamp visual (expect_label=False), where the label is skipped by
@@ -1382,23 +1461,36 @@ def _qc_geometry(vb, lb, has_source, expect_label=True):
     else:
         if lb[0] <= 2 or lb[2] >= W - 2:
             flaws.append(f"label clipped at frame edge (bbox x {lb[0]}..{lb[2]})")
-        elif lb[0] < 86 or lb[2] > W - 86:
-            warnings.append(f"label outside safe frame (bbox x {lb[0]}..{lb[2]})")
-        if lb[3] > 1400:
-            flaws.append(f"label overflows below its band (bbox bottom y {lb[3]})")
-        if has_source and lb[3] > 1380:
-            flaws.append(f"label collides with source line (bbox bottom y {lb[3]})")
+        elif lb[0] < 40 or lb[2] > W - 40:
+            warnings.append(f"label outside 40 px margin (bbox x {lb[0]}..{lb[2]})")
+        if lb[1] < 110:
+            flaws.append(f"label collides with header (bbox top y {lb[1]})")
+        if lb[3] > 460:
+            flaws.append(f"label overflows below its zone (bbox bottom y {lb[3]})")
+    if src_bb is not None:
+        if src_bb[1] < 1745 or src_bb[3] > 1855:
+            flaws.append(f"source line outside its zone (bbox y {src_bb[1]}..{src_bb[3]})")
     if vb is not None and lb is not None and expect_label:
-        # The visual's bottom must not push into the label's top by more
-        # than a 10 px touch — more than that is the two elements overlapping.
-        if vb[3] > lb[1] + 10:
-            flaws.append(f"label overlaps visual (visual bottom y {vb[3]}, label top y {lb[1]})")
+        # The visual and the label live in separate zones — any overlap is
+        # the "text sits on the visual" defect Blind flagged.
+        if vb[3] > lb[1] + 10 and vb[1] < lb[3] - 10:
+            flaws.append(f"label overlaps visual (visual y {vb[1]}..{vb[3]}, label y {lb[1]}..{lb[3]})")
     return flaws, warnings
 
 
 def _qc_audit(sc, idx):
-    """v35: verify the one-effect decision for one scene (the stacking audit).
-    Returns a list of flaw strings (empty = clean)."""
+    """v36: verify the one-effect decision for one scene (the stacking audit).
+    Returns a list of flaw strings (empty = clean). Rules (Blind A6/A7):
+    - exactly one motion per layer, the label an alpha-only fade;
+    - an ENTER starts right after the transition tail (scene time TR/2);
+      an EMPHASIS/fx_ starts at the hit word (pt 0 = word - 0.08) or right
+      after the transition tail, whichever is later;
+    - every discrete effect ENDS before the next transition starts
+      (scene time d - TR/2, i.e. >=150 ms before the cut);
+    - the label starts early (0.05 s scene 1, TR/2 + 0.15 after that) and
+      never later than 1.0 s — it is the headline and must be present from
+      the start (it lives in its own zone, so it cannot clash with the
+      visual)."""
     flaws = []
     ch = sc.get("_effect_choice")
     if not ch:
@@ -1407,31 +1499,28 @@ def _qc_audit(sc, idx):
         flaws.append(f"visual motion is not a single choice: {ch.get('vis')}")
     if ch.get("label") != "fade_in":
         flaws.append(f"label motion is not fade_in: {ch.get('label')}")
-    # The motion must start after the transition tail (TR/2) for scenes
-    # after the first — otherwise the cut and the motion stack. This applies
-    # only to a LAYER transform (enter/emphasis/fx_): for a build_in there is
-    # no layer transform at all — the build-in IS the scene's entrance, and
-    # the crossfade is the scene arriving, so they do not stack on the same
-    # layer (the frames at the cuts confirm they read clean). Delaying a
-    # build-in would desync it from its hit word, which v34 timed it to.
     pop_t = float(sc.get("pop_t", 0.0) or 0.0)
-    if ch.get("vis") != "build_in" and idx > 0 and ch.get("vis_start", 0.0) < max(0.0, TR / 2 - pop_t) - 0.01:
-        flaws.append("visual motion starts inside the transition tail")
-    # The label must be sequenced after the visual's motion (never at the
-    # same instant) and must be present early in the scene. For a build-in
-    # the label starts at a fixed early scene time (just after the
-    # transition tail); otherwise it starts after the motion ends (scene
-    # time = pop_t + vis_start + vis_dur).
+    d = float(sc.get("d", 1.0) or 1.0)
+    tr_tail = TR / 2 if idx > 0 else 0.0
+    # The label must start early (after the transition tail, never late).
+    _earliest_label = 0.05 if idx == 0 else tr_tail + 0.1
+    if ch.get("label_start", 0.0) < _earliest_label - 0.01:
+        flaws.append("label starts inside the transition tail")
+    if ch.get("label_start", 0.0) > 1.0:
+        flaws.append("label starts too late in the scene")
     if ch.get("vis") == "build_in":
-        _earliest = (TR / 2 if idx > 0 else 0.0) + 0.1
-        if ch.get("label_start", 0.0) < _earliest:
-            flaws.append("label starts inside the transition tail")
-        if ch.get("label_start", 0.0) > 1.0:
-            flaws.append("label starts too late in the scene")
-    else:
-        _end = pop_t + ch.get("vis_start", 0.0) + ch.get("vis_dur", 0.35)
-        if ch.get("label_start", 0.0) < _end - 0.05:
-            flaws.append("label starts before the visual motion ends")
+        # No layer transform — the build-in IS the scene's entrance and the
+        # crossfade is the scene arriving, so they do not stack on the same
+        # layer. Delaying a build-in would desync it from its hit word.
+        return flaws
+    # A layer transform: it must start at/after the transition tail (in
+    # scene time) and end before the next transition starts.
+    start_scene = pop_t + ch.get("vis_start", 0.0)
+    end_scene = start_scene + ch.get("vis_dur", 0.35)
+    if start_scene < tr_tail - 0.01:
+        flaws.append("visual motion starts inside the transition tail")
+    if end_scene > d - TR / 2 + 0.05:
+        flaws.append(f"visual motion runs into the next transition (ends {end_scene:.2f}s, scene {d:.2f}s)")
     return flaws
 
 
@@ -1462,9 +1551,9 @@ def frame_qc(p, video_path):
         # _effect_choice, THEN run the audit on it.
         _mid = float(sc.get("d", 1.0) or 1.0) / 2
         try:
-            _img, _vb, _lb, _ch = scene_frame(p, i, _mid, return_layers=True)
+            _img, _vb, _lb, _ch, _sb = scene_frame(p, i, _mid, return_layers=True)
         except Exception as e:
-            _vb, _lb = None, None
+            _vb, _lb, _sb = None, None, None
             flaws.append(f"scene {i + 1}: geometry check failed to run: {str(e)[:100]}")
         # (a) the effect audit (the stacking check, on the decision itself).
         flaws += [f"scene {i + 1}: {f}" for f in _qc_audit(sc, i)]
@@ -1472,7 +1561,7 @@ def frame_qc(p, video_path):
         # is done by then, so a visual outside the safe frame is a real cut).
         if _vb is not None or _lb is not None:
             _nolabel = sc.get("visual") == "stamp"
-            _gf, _gw = _qc_geometry(_vb, _lb, bool(sc.get("source")), expect_label=not _nolabel)
+            _gf, _gw = _qc_geometry(_vb, _lb, bool(sc.get("source")), expect_label=not _nolabel, src_bb=_sb)
             flaws += [f"scene {i + 1}: {f}" for f in _gf]
             warnings += [f"scene {i + 1}: {w}" for w in _gw]
         # (c) the encoded frame itself (from the video file, not the plan).
@@ -1598,14 +1687,28 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     for s in p["scenes"]: starts.append(t); t += s["d"]
     p["starts"] = starts; p["voice_end"] = t; total = t + OUTRO
     # v34 (Hark SFX at word times, item 7): a hit on each scene's hit word
-    # (pop_t, absolute time) + ticks while a phone number is typed.
+    # + ticks while a phone number is typed. v36 (Blind A6/E1): the SFX
+    # lands ON the word — pop_t is the word time minus 0.08 (the visual
+    # lands 80 ms before the word), so the hit is at pop_t + 0.08. And a
+    # count-up (B2, price) gets ticking SFX while the number counts.
     _hits = []
     for i, s in enumerate(p["scenes"]):
-        _hits.append((starts[i] + float(s.get("pop_t", 0.0) or 0.0), "hit" if s.get("fact_type") in ("ban", "myth") else "pop"))
+        _word_t = float(s.get("pop_t", 0.0) or 0.0) + 0.08
+        _hits.append((starts[i] + _word_t, "hit" if s.get("fact_type") in ("ban", "myth") else "pop"))
         if s.get("fact_type") == "phone":
             for (o, _d, _w) in (s.get("words") or []):
                 if any(c.isdigit() for c in _w):
                     _hits.append((starts[i] + float(o), "tick"))
+        if s.get("visual") == "counter":
+            # Ticks while the counter counts up (from the number word, ~1.2 s).
+            _nw = [o for (o, _d, _w) in (s.get("words") or [])
+                   if any(c.isdigit() for c in str(_w)) or str(_w).strip().lower() in
+                   ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+                    "eleven", "twelve", "twenty", "thirty", "fifty", "hundred", "thousand")]
+            if _nw:
+                _t0 = float(_nw[0])
+                for _k in range(10):
+                    _hits.append((starts[i] + _t0 + _k * 0.12, "tick"))
     # voice track positioned exactly
     ins = sum([["-i", s["audio"]] for s in p["scenes"]], [])
     fc = "".join(f"[{i}:a]adelay={int(st * 1000)}|{int(st * 1000)}[a{i}];" for i, st in enumerate(starts))
