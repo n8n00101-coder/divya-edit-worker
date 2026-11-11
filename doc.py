@@ -709,15 +709,17 @@ _SBG = {}
 
 def _fit_above_label(lay):
     # v32 (Blind): fit a 1080x1920 visual layer's CONTENT into the band
-    # y 200-1150 (below the header, above the label at y 1190-1360). Scale +
-    # shift so the content fits the band and is centred in it; a layer that
-    # already fits is returned unchanged. (A document layer went from bbox
-    # bottom 1471 to 1150, top 200, in the v32 session test.)
+    # y 200-1110 (below the header, above the label at y 1190-1360). v35:
+    # the band ended at 1150 but the label text reaches up to y~1137, so a
+    # tall visual filling to 1150 overlapped the label's top by ~13 px (the
+    # frame-QC caught it). 1110 leaves a clear gap. Scale + shift so the
+    # content fits the band and is centred in it; a layer that already fits
+    # is returned unchanged.
     bb = lay.getbbox()
     if not bb:
         return lay
     top, bot = bb[1], bb[3]
-    lo, hi = 200, 1150
+    lo, hi = 200, 1110
     if top >= lo and bot <= hi:
         return lay
     bh = bot - top
@@ -1351,7 +1353,7 @@ def _qc_geometry(vb, lb, has_source, expect_label=True):
             flaws.append(f"visual cut off at side edge (bbox x {vb[0]}..{vb[2]})")
         if vb[1] < 170:
             flaws.append(f"visual collides with header (bbox top y {vb[1]})")
-        if vb[3] > 1150:
+        if vb[3] > 1110:
             flaws.append(f"visual overflows into label band (bbox bottom y {vb[3]})")
     if lb is None:
         # A missing label at mid-scene is a flaw — unless the scene is a
@@ -1423,18 +1425,25 @@ def frame_qc(p, video_path):
     for i in range(n):
         sc = p["scenes"][i]
         flaws = []
+        # The render runs in forked child processes (mp.Pool), so the
+        # _effect_choice set by pick_one_effect() during the render lives
+        # only in the children's copies — the parent's plan never gets it.
+        # Call scene_frame() HERE (in the parent) first, so it populates
+        # _effect_choice, THEN run the audit on it.
+        _mid = float(sc.get("d", 1.0) or 1.0) / 2
+        try:
+            _img, _vb, _lb, _ch = scene_frame(p, i, _mid, return_layers=True)
+        except Exception as e:
+            _vb, _lb = None, None
+            flaws.append(f"scene {i + 1}: geometry check failed to run: {str(e)[:100]}")
         # (a) the effect audit (the stacking check, on the decision itself).
         flaws += [f"scene {i + 1}: {f}" for f in _qc_audit(sc, i)]
         # (b) the layer geometry at mid-scene (the settled state — the enter
         # is done by then, so a visual outside the safe frame is a real cut).
-        _mid = float(sc.get("d", 1.0) or 1.0) / 2
-        try:
-            _img, _vb, _lb, _ch = scene_frame(p, i, _mid, return_layers=True)
+        if _vb is not None or _lb is not None:
             _nolabel = sc.get("visual") == "stamp"
             _g = _qc_geometry(_vb, _lb, bool(sc.get("source")), expect_label=not _nolabel)
             flaws += [f"scene {i + 1}: {f}" for f in _g]
-        except Exception as e:
-            flaws.append(f"scene {i + 1}: geometry check failed to run: {str(e)[:100]}")
         # (c) the encoded frame itself (from the video file, not the plan).
         if i < len(starts):
             _t = starts[i] + _mid

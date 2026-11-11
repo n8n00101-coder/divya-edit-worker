@@ -308,11 +308,15 @@ def vis_scale(t, st=0, d=1.2, left="COST", right="HEALTH", tilt=-14, accent=Y, c
     L = _L(); dr = ImageDraw.Draw(L); q = _p(t, st, d); col = (225, 225, 235, 255)
     a = math.radians(tilt*(1-math.exp(-4*q)*math.cos(10*q)) if q > 0 else 0)
     dr.polygon([(cx-90, cy+300), (cx+90, cy+300), (cx, cy+260)], fill=col); dr.rectangle((cx-8, cy-10, cx+8, cy+270), fill=col)
-    arm = 230; lx, ly = cx-arm*math.cos(a), cy-arm*math.sin(a); rx, ry = cx+arm*math.cos(a), cy+arm*math.sin(a)
+    # v35: the arm (230) + pan radius (95) put the pans at x 35..685 in the
+    # 720 layer — upscaled 1.5x that is x 52..1028 in 1080, outside the safe
+    # frame (86..994). The frame-QC caught it. Arm 190 + radius 80 keeps the
+    # pans at x 90..630 (135..945 in 1080), inside the safe frame.
+    arm = 190; lx, ly = cx-arm*math.cos(a), cy-arm*math.sin(a); rx, ry = cx+arm*math.cos(a), cy+arm*math.sin(a)
     dr.line((lx, ly, rx, ry), fill=col, width=12); dr.ellipse((cx-18, cy-18, cx+18, cy+18), fill=accent+(255,))
     for (x, yy), txt in (((lx, ly), left), ((rx, ry), right)):
         dr.line((x, yy, x-70, yy+150), fill=col, width=3); dr.line((x, yy, x+70, yy+150), fill=col, width=3)
-        dr.chord((x-95, yy+110, x+95, yy+190), 0, 180, fill=col)
+        dr.chord((x-80, yy+110, x+80, yy+190), 0, 180, fill=col)
         dr.text((x, yy+95), txt, font=_font(36), fill=WHITE+(int(255*_c(q*2)),), anchor="mb")
     return L
 
