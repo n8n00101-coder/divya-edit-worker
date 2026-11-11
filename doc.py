@@ -839,7 +839,7 @@ PUNCH_HIT_TYPES = {"number", "percent", "shock", "warning"}
 
 def pick_one_effect(sc, idx, pop_t):
     """v35: decide the SINGLE motion effect for a scene (Hark: ONE effect at a
-    time). Returns {vis, vis_name, vis_start, vis_dur, label_delay} and logs
+    time). Returns {vis, vis_name, vis_start, vis_dur, label_start} and logs
     the choice on sc['_effect_choice'] so the frame-QC audit can verify it.
     - vis: "build_in" (the visual animates itself — no layer transform),
       "enter" (one enter transform), "emphasis" (one punch/shake at the hit
@@ -847,10 +847,13 @@ def pick_one_effect(sc, idx, pop_t):
     - vis_start: the pt offset at which the visual motion starts. For scenes
       after the first it is delayed past the transition tail (TR/2), so the
       cut finishes BEFORE the new scene's motion starts.
-    - label_delay: the pt offset at which the label's word pops start — the
-      label is sequenced AFTER the visual's motion, never at the same instant.
-      The label is always an alpha-only fade (its word pops); it never gets a
-      layer transform, so it cannot clash with the visual.
+    - label_start: the SCENE-local time at which the label's word pops
+      start. For a build-in it is a fixed early time (just after the
+      transition tail) so the label is present from the start of the scene
+      no matter how late the hit word falls; for a layer transform it is
+      after the motion ends. The label is always an alpha-only fade (its
+      word pops); it never gets a layer transform, so it cannot clash with
+      the visual.
     - "pulse" is continuous (it never ends) so it can never be "one effect at
       a time" — it is mapped to "punch" whenever it would be chosen."""
     kind = sc.get("visual") or ""
@@ -870,35 +873,44 @@ def pick_one_effect(sc, idx, pop_t):
     hit_type = sc.get("hit_type") or hit_type_of(sc)
     if is_word_timed:
         # The build-in (word-timed / draw-on) IS the motion. No enter, no
-        # emphasis, no custom fx_ on top of it. The label pops start 0.35 s
-        # after the hit word, once the build-in's opening has settled.
+        # emphasis, no custom fx_ on top of it. The label starts at a fixed
+        # early scene time (just after the transition tail) — NOT after the
+        # hit word: the hit word can fall 4 s into a 5 s scene, and a label
+        # tied to it would be missing at mid-scene (the frame-QC caught
+        # this on sleep scene 3). The label is the scene's headline; it
+        # must be present from the start of the scene.
         choice = {"vis": "build_in", "vis_name": kind, "vis_start": 0.0,
-                  "vis_dur": float(sc["d"]), "label": "fade_in", "label_delay": 0.35}
+                  "vis_dur": float(sc["d"]), "label": "fade_in",
+                  "label_start": (TR / 2 if idx > 0 else 0.0) + 0.15}
     elif hit_type in PUNCH_HIT_TYPES:
         emph = sc.get("emphasis") or "punch"
         if emph.startswith("fx_") and VIDEO_FX is not None and callable(getattr(VIDEO_FX, emph, None)):
             choice = {"vis": "fx_", "vis_name": emph, "vis_start": earliest,
-                      "vis_dur": 0.3, "label": "fade_in", "label_delay": earliest + 0.3 + 0.05}
+                      "vis_dur": 0.3, "label": "fade_in",
+                      "label_start": pop_t + earliest + 0.3 + 0.05}
         elif emph in FX_LAYER_EMPHASIS:
             if emph == "pulse":
                 emph = "punch"
             _d = EMPH_DUR.get(emph, 0.3)
             choice = {"vis": "emphasis", "vis_name": emph, "vis_start": earliest,
-                      "vis_dur": _d, "label": "fade_in", "label_delay": earliest + _d + 0.05}
+                      "vis_dur": _d, "label": "fade_in",
+                      "label_start": pop_t + earliest + _d + 0.05}
         else:
             enter = sc.get("enter") or "pop_in"
             if enter not in FX_LAYER_ENTER:
                 enter = "pop_in"
             _d = ENTER_DUR.get(enter, 0.35)
             choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
-                      "vis_dur": _d, "label": "fade_in", "label_delay": earliest + _d + 0.05}
+                      "vis_dur": _d, "label": "fade_in",
+                      "label_start": pop_t + earliest + _d + 0.05}
     else:
         enter = sc.get("enter") or "pop_in"
         if enter not in FX_LAYER_ENTER:
             enter = "pop_in"
         _d = ENTER_DUR.get(enter, 0.35)
         choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
-                  "vis_dur": _d, "label": "fade_in", "label_delay": earliest + _d + 0.05}
+                  "vis_dur": _d, "label": "fade_in",
+                  "label_start": pop_t + earliest + _d + 0.05}
     sc["_effect_choice"] = choice
     return choice
 
@@ -951,10 +963,11 @@ def scene_frame(p, idx, t, return_layers=False):
     # time). The choice is made ONCE here, before the layout draws anything,
     # so the visual and the label can never be given two motions at once.
     _ch = pick_one_effect(sc, idx, float(sc.get("pop_t", 0.0) or 0.0))
-    # The label's word pops are delayed by label_delay (sequenced AFTER the
-    # visual's motion). label_t is the label's own clock; before the delay
-    # has elapsed it is 0 and the label is invisible.
-    label_t = max(0.0, pt - _ch["label_delay"])
+    # The label's word pops start at label_start (a SCENE-local time, not
+    # a delay after the hit word — a late hit word must not hide the label
+    # for half the scene). label_t is the label's own clock; before
+    # label_start it is 0 and the label is invisible.
+    label_t = max(0.0, t - _ch.get("label_start", 0.35))
     layout = (idx + seed) % 4
     vlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     vd = ImageDraw.Draw(vlay, "RGBA")
@@ -983,7 +996,7 @@ def scene_frame(p, idx, t, return_layers=False):
     # transition across the cut). "enter" / "emphasis" / "fx_" is the single
     # transform, started after the transition tail (vis_start). The label
     # gets NO layer transform at all — its motion is its word-by-word pops
-    # (label(), delayed by label_delay above), so it can never clash with
+    # (label(), starting at label_start above), so it can never clash with
     # the visual. The camera stays STATIC (v33).
     if _ch["vis"] == "enter":
         vlay = getattr(FX, _ch["vis_name"])(vlay, pt, _ch["vis_start"])
@@ -1398,14 +1411,19 @@ def _qc_audit(sc, idx):
     if ch.get("vis") != "build_in" and idx > 0 and ch.get("vis_start", 0.0) < max(0.0, TR / 2 - pop_t) - 0.01:
         flaws.append("visual motion starts inside the transition tail")
     # The label must be sequenced after the visual's motion (never at the
-    # same instant). For a build-in the label starts 0.35 s after the hit
-    # word; otherwise it starts after the motion ends.
+    # same instant) and must be present early in the scene. For a build-in
+    # the label starts at a fixed early scene time (just after the
+    # transition tail); otherwise it starts after the motion ends (scene
+    # time = pop_t + vis_start + vis_dur).
     if ch.get("vis") == "build_in":
-        if ch.get("label_delay", 0.0) < 0.3:
-            flaws.append("label starts too soon after the hit word")
+        _earliest = (TR / 2 if idx > 0 else 0.0) + 0.1
+        if ch.get("label_start", 0.0) < _earliest:
+            flaws.append("label starts inside the transition tail")
+        if ch.get("label_start", 0.0) > 1.0:
+            flaws.append("label starts too late in the scene")
     else:
-        _end = ch.get("vis_start", 0.0) + ch.get("vis_dur", 0.35)
-        if ch.get("label_delay", 0.0) < _end - 0.05:
+        _end = pop_t + ch.get("vis_start", 0.0) + ch.get("vis_dur", 0.35)
+        if ch.get("label_start", 0.0) < _end - 0.05:
             flaws.append("label starts before the visual motion ends")
     return flaws
 
