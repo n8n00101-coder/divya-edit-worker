@@ -64,7 +64,26 @@ Visual recipe (visuals_lib helpers: _L, _p, _oe, _ob, place, shadow, texture, _f
   above). Real text (headline, numbers, names) beats grey lines. Never a stick figure when an object fits.
 Rules: each function is built from a REAL object of the topic; one comment line above each function saying which
 sentence it serves and why; under 40 ms per 720x1280 frame (prefer numpy over pixel loops); no file, network or
-subprocess use; no reuse of the families listed as recent. Return only one ```python block."""
+subprocess use; no reuse of the families listed as recent. Return only one ```python block.
+v36 rules (Blind's frame review — these are the rules that stop the mistakes repeating):
+- FIXED ZONES (1080x1920 frame): title 120-450, visual 480-1410, caption band 1440-1725 (captions ONLY),
+  source 1755-1845. No layer may cross into another zone. If two layers intersect, scale the visual to 80%
+  or move it; still hitting, drop the smaller item.
+- MIN FONTS: title 96 px, captions 72 px, labels 44 px, source 30 px. Anything smaller is rejected.
+- ONE EFFECT AT A TIME per layer (never stacked); max 1 emphasis per scene; every effect finishes
+  >=150 ms before the cut. The camera is STATIC — no zoom, push-in, pan, or camera move of any kind, ever.
+- EFFECTS LAND ON THE WORD: the visual lands 80 ms before its hit word (use words=), the SFX on the word.
+  The typewriter reveals WHOLE WORDS only (never a trailing partial word) and holds the final text 400 ms.
+- HOOK AT FRAME 1: the biggest number or shock line is on screen at frame 1 — no slow fade-in.
+- PATTERN BREAK at 40-60%: one scene with a different layout (full-bleed visual).
+- NEVER THE SAME LOOK as the previous video (A Investigative, B Science/health, C Story/emotional, D Data/money);
+  the topic mood picks the look, and the transition family follows the topic object.
+- A source line on EVERY fact/number scene (small, bottom).
+- No blank frames: every frame has a background + at least one visible element.
+- Typography: Anton for the headline, Oswald for labels, tracking +2 on labels, ONE keyword in yellow per line.
+- Motion: ease-out cubic for entries, back-ease with 6% overshoot for pops, never linear; stagger child
+  items 60-80 ms. Backgrounds are radial gradients (never flat) with 3% film grain; 3 layers per scene
+  (far shapes drifting 2-6 px/s, mid main visual, near dust)."""
 
 def step_plan(plan):
     msg = f"""Topic: {plan['topic']}
@@ -156,3 +175,36 @@ def main(plan_path, out_dir):
 
 if __name__ == "__main__":
     main(sys.argv[1], sys.argv[2])
+
+
+# v36 (Blind E7): after 20 videos, the top 3 mistakes from the rejection log
+# are added to the SYSTEM rules above. This reads the log (qc_rejections.jsonl)
+# and returns the top 3 flaw kinds by count. The rule-update itself is a
+# FUTURE step (a human reviews the top 3 and edits SYSTEM) — this function
+# only reports them. The log lives at ~/workspace/qc_rejections.jsonl (the
+# test script copies the per-video log there) or DIVYA_QC_LOG.
+def qc_top_mistakes(path=None, n=3):
+    import collections, json, os
+    p = path or os.environ.get("DIVYA_QC_LOG") or os.path.expanduser("~/workspace/qc_rejections.jsonl")
+    counts = collections.Counter()
+    total = 0
+    try:
+        with open(p) as f:
+            for line in f:
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                total += 1
+                for flaw in rec.get("flaws", []):
+                    # The flaw kind is the text after "scene N: " / "scene N @t: ",
+                    # up to the first "(" — e.g. "label overlaps visual".
+                    kind = flaw
+                    for _pref in ("scene ",):
+                        if _pref in kind:
+                            kind = kind.split(": ", 1)[-1]
+                    kind = kind.split(" (")[0].strip()
+                    counts[kind] += 1
+    except FileNotFoundError:
+        return {"videos": 0, "top": []}
+    return {"videos": total, "top": counts.most_common(n)}

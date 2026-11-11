@@ -30,7 +30,7 @@ W, H, FPS = 1080, 1920, 30
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONTS = os.path.join(HERE, "fonts")
 TR = 0.36  # transition length (s)
-OUTRO = 2.2
+OUTRO = 1.0  # v36 (Blind E4): the end card is 1 s (was 2.2)
 MOODS = {  # top, bottom, accent, (rate, pitch)
     "calm": ((16, 30, 52), (4, 8, 16), (90, 170, 255), ("-3%", "-1Hz")),
     "tense": ((52, 12, 16), (8, 3, 5), (235, 50, 60), ("+3%", "-3Hz")),
@@ -45,20 +45,27 @@ MOODS = {  # top, bottom, accent, (rate, pitch)
 # look is never repeated. Constants only: 9:16 safe margins, big readable captions,
 # one idea per scene, one accent colour at a time.
 LOOKS = {
-    "A": {"name": "science", "top": (8, 24, 48), "bot": (6, 60, 70),
-          "accents": [(60, 200, 230), (255, 180, 60)], "font": "anton", "chapter": "none",
-          "ease": "smooth", "motion": "push", "bg": "gradient", "grain": 5,
-          "motion_personality": "smooth glides", "transition_family": "zoom through the diagram",
-          # v29 (Hark's effects.py): the look's transition TAG picks from FX.TRANSITIONS;
-          # the camera moves are for narrow visuals only (WIDE_VISUALS get push-in).
-          "fx_tag": "space", "moves": ["push", "pan", "drift"],
-          "desc": "deep navy to teal gradient, cyan/amber accent, thin line diagrams, animated plots, clean sans — lightning, physics, how-things-work"},
-    "B": {"name": "myth", "top": (10, 10, 10), "bot": (24, 24, 24),
-          "accents": [(255, 40, 40), (255, 210, 0)], "font": "bebas", "chapter": "none",
+    # v36 (Blind D — two topics must look different): the 4 looks are now
+    # A Investigative (paper, stamps, red/black), B Science/health (clean,
+    # blue/teal, diagrams), C Story/emotional (warm, photo frames, soft
+    # light), D Data/money (charts, count-ups, green/yellow). Gutka -> A,
+    # sleep -> B. Different font pairing, accent colour, layout and
+    # transition family per look. The camera is STATIC in every look — the
+    # "motion" fields below are the design personality, not camera moves
+    # (Ajju's no-zoom ban, v33).
+    "A": {"name": "investigative", "top": (28, 22, 18), "bot": (12, 10, 10),
+          "accents": [(255, 40, 40), (255, 210, 0)], "font": "anton", "chapter": "none",
           "ease": "hard", "motion": "cut", "bg": "flat", "grain": 4,
           "motion_personality": "snappy pops", "transition_family": "hard cut + stamp slam",
-          "fx_tag": "warning", "moves": ["push", "whip"],
-          "desc": "high-contrast black and white, one hot red or yellow accent, huge bold condensed type, hard cuts, stamp/strike-through — myths, warnings, versus"},
+          # v29 (Hark's effects.py): the look's transition TAG picks from FX.TRANSITIONS.
+          "fx_tag": "warning", "moves": ["cut", "stamp"],
+          "desc": "paper, stamps, red/black — investigations, bans, scams, law, myths busted"},
+    "B": {"name": "science", "top": (8, 24, 48), "bot": (6, 60, 70),
+          "accents": [(60, 200, 230), (255, 180, 60)], "font": "anton", "chapter": "none",
+          "ease": "smooth", "motion": "push", "bg": "gradient", "grain": 5,
+          "motion_personality": "smooth glides", "transition_family": "diagram wipe / clock wipe",
+          "fx_tag": "space", "moves": ["wipe", "clock"],
+          "desc": "clean blue/teal, diagrams — science, health, body, how things work"},
     "C": {"name": "story", "top": (40, 30, 20), "bot": (24, 18, 12),
           "accents": [(250, 230, 200), (230, 120, 50), (60, 170, 160)], "font": "serif", "chapter": "none",
           "ease": "slow", "motion": "push", "bg": "warm", "grain": 7,
@@ -82,14 +89,19 @@ WIDE_VISUALS = {"versus", "bar", "bar_compare", "graph", "list", "checklist",
 # same. Health = dark red clinical, science = deep blue diagrams, motivation =
 # warm gold film grain, history = sepia + warm grain, money = green/black ledger.
 TOPIC_FAMILIES = {
-    "health": {"look": "B", "grain": 6, "desc": "dark red clinical — health, body, disease, tobacco, sleep, food"},
-    "science": {"look": "A", "grain": 5, "desc": "deep blue diagrams — science, physics, space, how things work"},
+    # v36 (Blind D): investigative -> A (checked FIRST — a ban/scam/law topic
+    # is always investigative), health + science -> B, motivation + history
+    # -> C, money -> D.
+    "investigative": {"look": "A", "grain": 4, "desc": "paper, stamps, red/black — ban, scam, law, court, myth, lie, danger, warning"},
+    "health": {"look": "B", "grain": 6, "desc": "clean blue/teal — health, body, disease, sleep, food"},
+    "science": {"look": "B", "grain": 5, "desc": "clean blue/teal diagrams — science, physics, space, how things work"},
     "motivation": {"look": "C", "grain": 7, "desc": "warm gold film grain — motivation, habits, discipline, focus"},
     "history": {"look": "C", "grain": 8, "desc": "sepia + warm grain — history, ancient, legend, culture"},
     "money": {"look": "D", "grain": 4, "desc": "green/black ledger — money, finance, price, salary, business"},
 }
 _FAMILY_WORDS = {
-    "health": ["health", "tobacco", "gutka", "smoking", "sleep", "food", "diet", "disease", "doctor", "body", "heart", "brain", "cancer", "medicine", "drug", "alcohol", "exercise", "weight"],
+    "investigative": ["ban", "banned", "prohibit", "illegal", "scam", "fraud", "law", "court", "myth", "lie", "lies", "danger", "warning", "tobacco", "gutka", "smoking", "alcohol", "drugs", "exposed", "secret", "truth", "fake"],
+    "health": ["health", "sleep", "food", "diet", "disease", "doctor", "body", "heart", "brain", "cancer", "medicine", "drug", "exercise", "weight"],
     "science": ["science", "physics", "lightning", "thunder", "space", "atom", "energy", "earth", "planet", "gravity", "biology", "experiment", "ocean", "volcano", "electric", "sound", "light", "weather"],
     "motivation": ["motivat", "discipline", "habit", "focus", "success", "goal", "mindset", "confidence", "routine", "productiv", "willpower", "consist"],
     "history": ["history", "ancient", "king", "queen", "war", "empire", "legend", "temple", "kingdom", "dynasty", "century", "historic", "civilization", "archaeolog"],
@@ -99,9 +111,16 @@ _FAMILY_WORDS = {
 
 def topic_family(brief):
     # v34: the topic family from the brief's keywords (most hits wins). "" = none.
+    # v36 (Blind D): "investigative" is checked FIRST — any ban/scam/law/
+    # court/myth/lie/danger/warning word makes the topic investigative
+    # (look A), whatever else it matches. Then the most-hits rule.
     text = (brief or "").lower()
+    if any(w in text for w in _FAMILY_WORDS["investigative"]):
+        return "investigative"
     best, best_n = "", 0
     for fam, words in _FAMILY_WORDS.items():
+        if fam == "investigative":
+            continue
         n = sum(1 for w in words if w in text)
         if n > best_n:
             best, best_n = fam, n
@@ -142,8 +161,11 @@ FX_LAYER_ENTER = ["fade_in", "pop_in", "slide_in", "rise_in", "drop_in",
                   "zoom_in_blur", "wipe_in", "iris_in", "spin_in", "flip_in", "glitch_in"]
 FX_LAYER_EMPHASIS = ["punch", "shake", "pulse", "wiggle", "glow"]
 _LOOK_WORDS = {
-    "A": ["lightning", "thunder", "physics", "science", "how", "why", "earth", "space", "atom", "energy", "water", "rain", "magnet", "gravity", "biology", "brain", "body", "experiment", "plant", "animal", "sky", "sun", "moon", "weather", "electric", "sound", "light", "ocean", "volcano"],
-    "B": ["myth", "myths", "safety", "warning", "danger", "scam", "lie", "lies", "truth", "vs", "versus", "debate", "ban", "never", "don't", "mistake", "wrong", "fact", "fake", "car", "seat belt", "belt", "helmet", "rule", "law", "court", "tobacco", "gutka", "smoking", "alcohol", "drugs", "effects", "risk", "risks", "health"],
+    # v36 (Blind D): A = investigative (ban/scam/law/myth/lie/danger/warning),
+    # B = science + health (clean blue/teal). Gutka ("banned" + "gutka") -> A;
+    # sleep ("sleep") -> B.
+    "A": ["myth", "myths", "safety", "warning", "danger", "scam", "lie", "lies", "truth", "vs", "versus", "debate", "ban", "banned", "never", "don't", "mistake", "wrong", "fact", "fake", "car", "seat belt", "belt", "helmet", "rule", "law", "court", "tobacco", "gutka", "smoking", "alcohol", "drugs", "effects", "risk", "risks", "illegal", "prohibit"],
+    "B": ["lightning", "thunder", "physics", "science", "how", "why", "earth", "space", "atom", "energy", "water", "rain", "magnet", "gravity", "biology", "brain", "body", "experiment", "plant", "animal", "sky", "sun", "moon", "weather", "electric", "sound", "light", "ocean", "volcano", "health", "sleep", "food", "diet", "disease", "doctor", "heart", "cancer", "medicine", "exercise", "weight"],
     "C": ["story", "movie", "cinema", "history", "culture", "emotion", "love", "king", "queen", "war", "ancient", "legend", "film", "song", "festival", "hero", "empire", "temple", "village", "family", "mother", "father", "kingdom", "princess", "poet", "dance"],
     "D": ["ai", "tech", "money", "finance", "data", "stat", "app", "phone", "computer", "robot", "crypto", "stock", "price", "users", "percent", "growth", "startup", "internet", "software", "code", "digital", "online", "bank", "rupee", "dollar", "salary", "job", "business"],
 }
@@ -196,18 +218,52 @@ def fact_type_of(s):
     return ""
 
 
-def pick_look(brief, recent="", recent_styles=None):
+# v36 (Blind D — never the same look as the previous video; store the last
+# 5 looks): the CODE side is a JSON file store (an audit trail) — the live
+# Worker KV wiring is PENDING Ajju's go, so the Worker does NOT read/write
+# KV for this. The runner sets DIVYA_LAST_LOOKS to a path in its workdir;
+# otherwise the store lives at ~/workspace/divya-last-looks.json.
+def _last_looks_path():
+    return os.environ.get("DIVYA_LAST_LOOKS") or os.path.expanduser("~/workspace/divya-last-looks.json")
+
+
+def load_last_looks(path=None):
+    try:
+        with open(path or _last_looks_path()) as f:
+            data = json.load(f)
+        return [s for s in (data if isinstance(data, list) else data.get("looks", [])) if s in LOOKS][-5:]
+    except Exception:
+        return []
+
+
+def record_look(look, path=None):
+    if look not in LOOKS:
+        return
+    p = path or _last_looks_path()
+    looks = load_last_looks(p) + [look]
+    try:
+        with open(p, "w") as f:
+            json.dump({"looks": looks[-5:], "updated": __import__("datetime").datetime.now().isoformat()}, f)
+    except Exception:
+        pass
+
+
+def pick_look(brief, recent="", recent_styles=None, last_looks=None):
     """Topic mood -> design system (A/B/C/D). Never repeats the last 5 videos'
     looks: the Worker stores each finished video's look in KV (styles:<user>,
     most recent last) and passes the last 5 here as `recent_styles`. The kit's
     rule — the style plan must differ from the last 5 (palette + motion +
-    transition). Deterministic — never random."""
+    transition). Deterministic — never random. v36: `last_looks` (from the
+    JSON store, load_last_looks) is consulted the same way — the code-side
+    record until the Worker KV wiring lands (pending Ajju's go)."""
     import zlib
     text = (brief or "").lower()
     scores = {k: sum(1 for w in words if w in text) for k, words in _LOOK_WORDS.items()}
     best = max(LOOKS, key=lambda k: scores[k])  # ties -> A (first), the safe default
+    # v36: the JSON last-looks store counts as "used" too (same as KV).
+    _ll = [s for s in (last_looks or []) if s in LOOKS][-5:]
     if recent_styles:
-        used = [s for s in (recent_styles or []) if s in LOOKS][-5:]
+        used = [s for s in (recent_styles or []) if s in LOOKS][-5:] + _ll
         if best in used:
             # prefer a look NOT used in the last 5 (by keyword score);
             # if all 4 are used, take the least recently used one.
@@ -221,7 +277,7 @@ def pick_look(brief, recent="", recent_styles=None):
     # Fallback (no KV styles yet): derive the look of each of the last 5 topics
     # from the topic words (same keyword scoring) and avoid all of them. The
     # Worker passes the last 15 topics in `recent`, most recent last.
-    used = []
+    used = _ll
     if recent:
         last = [s.strip() for s in str(recent).split(";") if s.strip()][-5:]
         for tp in last:
@@ -254,6 +310,7 @@ PLAN = """You are a top YouTube documentary-shorts writer and director. Plan ONE
 Return ONLY JSON:
 {"topic": "...", "title": "<2-5 word English title, caps>", "lang": "en|te|hi", "voice": "male|female",
  "caption": "<post caption with 3-5 hashtags>",
+ "end_question": "<one short question to the viewers for the 1 s end card, e.g. 'Did you know this?'>",
  "scenes": [{"vo": "...", "label": "<1-3 word ENGLISH punch label, caps>", "mood": "calm|tense|hopeful|sad|excited|mystery",
              "visual": "<one of %s>", "value": "<short number/word for the visual>",
              "source": "<short official source for the fact/number, e.g. WHO 2023, Govt of India 2012, Harvard 2020, or empty>"}]}
@@ -276,8 +333,9 @@ size the total vo words to the target duration. 9-14 scenes, each vo 6-22 words.
 Writing: documentary storytelling that sounds like a real human talking to a friend - contractions, short punchy sentences,
 rhetorical questions, a surprising fact or tension in the first line (hook), then context, a twist, the payoff, and a short
 call to follow at the end. Use commas, "..." and dashes for natural pauses. No emojis, no hashtags in vo. Vary the mood per scene to
-build an emotional arc. When a scene states a fact or a number, put its short official source (WHO, Govt of India, Harvard, RBI, Census)
-in the source field; leave it empty when there is no fact. Each visual must literally show the line's idea (battery=energy, chat=messages/people, graph=growth or fall,
+build an emotional arc. SOURCE RULE (v36, Blind E3): EVERY scene that states a fact or a number MUST have a short official source
+(WHO, Govt of India, Harvard, RBI, Census, ICMR, NHS, CDC) in the source field — never leave it empty on a fact/number scene.
+Only a pure opinion/hook/CTA scene (no fact, no number) may leave it empty. Each visual must literally show the line's idea (battery=energy, chat=messages/people, graph=growth or fall,
 clock=time, calendar=days, warning=danger/mistake, check=right way, versus=comparison, counter=a number, list=steps, heart=love/health,
 bar=progress, dot_grid/donut=a percentage of people, gauge=a level, toggle=on/off, phone_buzz=phone notifications,
 stick_figure=a person/feeling, quote_card=a quote, arrows_steps=a process, checklist=steps, document=a report,
@@ -287,6 +345,36 @@ watch=a stopwatch or rate, stamp=a ban or verdict, stamp_cta=the final call to a
 If no clear topic is given ("nuvve select chesko", "any", "AUTO", empty) choose a fresh high-retention topic yourself (psychology,
 history mysteries, science facts, money habits, health, tech, motivation). Avoid these recent topics: {recent}.
 Owner request: """ % C.VISUALS
+
+
+# v36 (Blind B3 — scene-specific transitions from the 379 library, picked by
+# the TOPIC OBJECT of the incoming scene, not one family per video):
+# gutka: packet tear wipe, smoke dissolve, stamp cut; sleep: blink
+# close-open, clock wipe. "phone-screen zoom" is SKIPPED (Ajju's no-zoom
+# ban) — a push is used for phone scenes instead. Never the same transition
+# twice in a row, max 2 uses per video (enforced in plan()).
+TOPIC_TRANSITIONS = [
+    (("ban", "stamp"), "flash_white"),                    # stamp cut
+    (("time", "clock"), "clock_0_cw"),                    # clock wipe
+    (("phone", "card"), "push_right_smooth"),             # phone (push, not zoom)
+    (("place", "document", "packet", "map"), "3d_page_turn_right_smooth"),  # packet tear / paper tear
+    (("myth", "smoke"), "noise_dissolve_x1_s2"),          # smoke dissolve
+    (("number", "money", "bill"), "wipe_0_hard_expo"),    # hard wipe for a number/bill reveal
+    (("comparison", "versus"), "cover_right_smooth"),     # comparison cover
+    (("warning",), "flash_white"),                        # hard flash for a warning
+    (("list", "moon", "sleep"), "blinds_8_h"),            # blink close-open
+]
+
+
+def _topic_transition_name(sc):
+    # The transition INTO this scene, from its topic object (fact type,
+    # visual kind, voice-over keywords). Returns a TL name or None.
+    txt = (str(sc.get("visual", "")) + " " + str(sc.get("fact_type", "")) + " " +
+           str(sc.get("vo", "")) + " " + str(sc.get("label", ""))).lower()
+    for keys, name in TOPIC_TRANSITIONS:
+        if any(k in txt for k in keys) and name in TL_BY_NAME:
+            return name
+    return None
 
 
 def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
@@ -304,12 +392,15 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
     # v27 (Hark kit style plan): the look also carries a motion personality +
     # transition family from the topic mood, so the motion differs per video too.
     # v28: recent_styles (the last 5 looks, from KV) keeps the look from repeating.
-    look = pick_look(brief, recent, recent_styles)
+    # v36: the JSON last-looks store counts the same way (the KV wiring is
+    # pending Ajju's go — the file store is the code-side record).
+    _ll = load_last_looks()
+    look = pick_look(brief, recent, recent_styles, last_looks=_ll)
     # v34 (Hark blueprint §4): the TOPIC FAMILY picks the design system, so
     # two videos on different topics cannot look the same. The family's look
-    # wins unless it was used in the last 5 videos (recent_styles).
+    # wins unless it was used in the last 5 videos (recent_styles / last-looks).
     fam = topic_family(brief)
-    if fam and TOPIC_FAMILIES[fam]["look"] not in (recent_styles or []):
+    if fam and TOPIC_FAMILIES[fam]["look"] not in (recent_styles or []) and TOPIC_FAMILIES[fam]["look"] not in _ll:
         look = TOPIC_FAMILIES[fam]["look"]
     look_line = (f"DESIGN LOOK {look} ({LOOKS[look]['name']}): {LOOKS[look]['desc']}. "
                  f"Motion personality: {LOOKS[look]['motion_personality']}. "
@@ -318,6 +409,9 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
     raw = chat([{"role": "system", "content": "You output strict JSON only."},
                 {"role": "user", "content": PLAN.replace("{recent}", recent or "none").replace("{look}", look_line) + (brief or "AUTO")}])
     p = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
+    # v36 (Blind E4): the end card needs a question; default if the LLM omits it.
+    if not str(p.get("end_question", "")).strip():
+        p["end_question"] = "Did you know this?"
     sc = [s for s in p.get("scenes", []) if str(s.get("vo", "")).strip()][:16]
     if len(sc) < 4:
         raise ValueError("plan too short")
@@ -360,11 +454,26 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
     # v29b: Hark's 379-transition library — TL.pick_transition never repeats a
     # NAME in one video and skips families from the last 5 videos (recent_families,
     # from KV once the Worker wiring lands). Tags come from the look's fx_tag.
+    # v36 (Blind B3): the transition INTO a scene is picked by that scene's
+    # TOPIC OBJECT first (packet tear, smoke dissolve, stamp cut, blink,
+    # clock wipe...); never the same transition twice in a row, max 2 uses
+    # per video. Only when no topic object matches does the look's tag pick.
     tag = LOOKS[look].get("fx_tag", "calm")
     tl_used = set()
-    p["transitions"] = [TL.pick_transition(tags={tag}, used=tl_used,
-                        seed=p["seed"] + j, recent_families=recent_families)["name"]
-                        for j in range(max(0, len(sc) - 1))]
+    _tr_counts = {}
+    _trans = []
+    for j in range(max(0, len(sc) - 1)):
+        _name = _topic_transition_name(sc[j + 1])
+        # Never the same transition twice in a row, max 2 uses per video.
+        if _name and ((_trans and _trans[-1] == _name) or _tr_counts.get(_name, 0) >= 2):
+            _name = None
+        if _name is None:
+            _name = TL.pick_transition(tags={tag}, used=tl_used,
+                                       seed=p["seed"] + j, recent_families=recent_families)["name"]
+        tl_used.add(_name)
+        _tr_counts[_name] = _tr_counts.get(_name, 0) + 1
+        _trans.append(_name)
+    p["transitions"] = _trans
     p["transition_families"] = [TL.family(n) for n in p["transitions"]]
     p["fx_used"] = used
     # v32 (Blind): the background KIND changes per scene — but ONLY when the
@@ -413,6 +522,12 @@ async def tts(text, voice, mood, out):
     rate, pitch = MOODS[mood][3]
     if voice == "en-US-ChristopherNeural":  # v32 (M12, Mark): calm, deep
         rate, pitch = "-8%", "-4Hz"
+    elif voice in ("en-US-AvaMultilingualNeural", "te-IN-ShrutiNeural", "hi-IN-SwaraNeural"):
+        # v36 (Blind E2): the female voice runs at +8% (brighter, more
+        # energetic); the pitch still comes from the mood. (Local tests use
+        # Google TTS as a stand-in — edge-tts is blocked on this VM;
+        # production uses real edge-tts.)
+        rate = "+8%"
     last = None
     for attempt in range(4):
         try:
@@ -526,17 +641,35 @@ def ease_look(look, x):
 
 
 _bg = {}
-def background(mood, look=None):
+# v36 (Blind C4): the palette changes by SECTION, so the viewer feels the
+# story turn — problem = dark red, fact = deep blue, fix = teal.
+SECTION_PALETTE = {
+    "problem": ((48, 13, 17), (18, 6, 10)),
+    "fact": ((14, 28, 52), (8, 14, 30)),
+    "fix": ((10, 42, 44), (6, 22, 26)),
+}
+
+
+def background(mood, look=None, section=None):
     # v25: the LOOK sets the base gradient (the mood still tints the glow +
     # drives the voice). B = flat near-black; C = warm grade + grain; D = grid.
-    key = (mood, look)
+    # v36 (Blind C4): the background is NEVER flat — a RADIAL gradient
+    # (centre light, edges dark), 3% film grain, a soft vignette, and the
+    # palette changes by SECTION. The section is part of the cache key (it
+    # varies scene to scene within one video).
+    key = (mood, look, section)
     if key not in _bg:
         top, bot, acc, _ = MOODS[mood]
         if look and look in LOOKS:
             top, bot = LOOKS[look]["top"], LOOKS[look]["bot"]
             acc = LOOKS[look]["accents"][0]
-        a = np.linspace(0, 1, H)[:, None, None]
-        g = (np.array(top)[None, None] * (1 - a) + np.array(bot)[None, None] * a) * np.ones((1, W, 1))
+        if section in SECTION_PALETTE:
+            top, bot = SECTION_PALETTE[section]
+        yy, xx = np.mgrid[0:H, 0:W]
+        # Radial gradient: the centre is the light colour, the edges the dark.
+        r2 = ((xx - W / 2) / (W * 0.62)) ** 2 + ((yy - H * 0.44) / (H * 0.62)) ** 2
+        rr = np.clip(r2, 0, 1)[..., None]
+        g = (np.array(top)[None, None] * (1 - rr) + np.array(bot)[None, None] * rr) * np.ones((1, W, 1))
         yy, xx = np.mgrid[0:H, 0:W]
         glow = np.exp(-(((xx - W / 2) / 520) ** 2 + ((yy - 860) / 620) ** 2))[..., None]
         g = g + glow * np.array(acc)[None, None] * 0.22
@@ -550,9 +683,9 @@ def background(mood, look=None):
             for y in range(0, H, 6): d.line([(0, y), (W, y)], fill=tuple(int(c * 0.93) for c in im.getpixel((5, y))))  # scanlines
         # v34 (Hark film look, make_bg + GRAIN): a subtle grain + soft vignette
         # on EVERY look, not just C — this is what makes the background feel
-        # like film rather than a flat digital slide. Amount is per-look
-        # (LOOKS[look]["grain"]); baked into the cached background once.
-        _gr = LOOKS.get(look, {}).get("grain", 5) if look else 5
+        # like film rather than a flat digital slide. v36: 3% film grain
+        # (+-8 in 0-255) for ALL looks, baked into the cached background once.
+        _gr = 8
         rng = np.random.RandomState(11)
         noise = rng.randint(-_gr, _gr + 1, size=(H // 6, W // 6, 1)).repeat(6, 0).repeat(6, 1)[:H, :W]
         g2 = np.clip(np.asarray(im).astype(int) + noise, 0, 255).astype(np.uint8)
@@ -564,6 +697,27 @@ def background(mood, look=None):
         im = Image.fromarray(np.clip(np.asarray(im).astype(float) * vig, 0, 255).astype(np.uint8)); d = ImageDraw.Draw(im)
         _bg[key] = im
     return _bg[key].copy()
+
+_par = {}
+
+
+def _parallax_layer(mood, look, idx):
+    """v36 (Blind C3 — depth): one FAR layer of large soft blurred shapes,
+    cached at full size. idx 0 drifts at 2 px/s, idx 1 at 6 px/s (different
+    speeds). The shapes are drawn small, blurred, then upscaled — the blur
+    is baked once, not per frame."""
+    key = (mood, look, idx)
+    if key not in _par:
+        rng = random.Random(hash(key) & 0x7FFFFFFF)
+        small = Image.new("RGBA", (W // 4, H // 4), (0, 0, 0, 0)); dr = ImageDraw.Draw(small)
+        for i in range(3):
+            _x = rng.randint(0, W // 4); _y = rng.randint(50, H // 4 - 50)
+            _r = rng.randint(35, 80)
+            _col = MOODS[mood][2] if i == 0 else (120, 140, 180) if i == 1 else (200, 170, 120)
+            dr.ellipse((_x - _r, _y - _r // 2, _x + _r, _y + _r // 2), fill=_col + (26,))
+        _par[key] = small.filter(ImageFilter.GaussianBlur(10)).resize((W, H))
+    return _par[key]
+
 
 _bok = {}
 def bokeh(col, r):
@@ -620,27 +774,86 @@ def character(im, mood, t, acc):
     else: sy = 1 + 0.025 * math.sin(t * 3)
     put(im, pawn(tuple(int(c * 0.9 + 25) for c in acc)), x, by, 0.55, rot, sx, sy)
 
-def label(d, text, t, acc, idx, look=None):
-    # v27 (Hark kit headline()): word-by-word ease-out-back pops, 0.09s stagger.
-    # Each word pops in like the kit's headline; the underline grows after.
+def _label_width(d, text):
+    # v36: the label's width at the 132 px headline size (fit-to-width, min
+    # 96 px) — used by the pattern-break highlight bar. Mirrors label()'s
+    # sizing so the bar matches the text.
     words = text.split()
-    size = 104 if look == "C" else 132
-    f = look_font(look, size)
-    widths = [d.textlength(w + " ", font=f) for w in words]
-    total = sum(widths) - d.textlength(" ", font=f)
-    x = (W - total) / 2
-    for k, w in enumerate(words):
-        p = C.pop((t - 0.05 - k * 0.09) / 0.3)
-        a = int(255 * clamp((t - 0.05 - k * 0.09) / 0.12))
-        if a > 0:
-            fs = look_font(look, int(size * (0.6 + 0.4 * p)))
-            cxw = x + d.textlength(w, font=f) / 2
-            d.text((cxw + 6, 1196), w, font=fs, fill=(0, 0, 0, int(a * 0.7)), anchor="mm")
-            d.text((cxw, 1190), w, font=fs, fill=(acc if idx % 2 == 0 else (250, 245, 235)) + (a,), anchor="mm")
-        x += widths[k]
-    ul = ease((t - 0.35) / 0.4) * total
+    size = 132
+    while size > 96 and sum(d.textlength(w + " ", font=anton(size)) for w in words) > 908:
+        size -= 4
+    return sum(d.textlength(w, font=anton(size)) + 2 for w in words) - 2
+
+
+def label(d, text, t, acc, idx, look=None, keyword=None):
+    # v36 (Blind A1/A4/C6 — fixed zones): the scene label ("title") lives in
+    # the TITLE zone y 120-450 (frame), NOT at the bottom — it used to sit at
+    # y 1190, inside the visual band, which is why "THE BILL" sat on the
+    # receipt and "10 PM-6 AM" sat on "8 HOURS". Anton headline (C6), 96 px
+    # minimum (A4), fit-to-width; exactly ONE keyword in yellow per line
+    # (the value-matching word, else the longest word), the rest near-white;
+    # tracking +2 (C6); word pops staggered 70 ms (C7, 60-80 ms).
+    # v36: if the label still does not fit on ONE line at the 96 px floor,
+    # it wraps to TWO lines (both inside the title zone) — never overflows
+    # the frame, never shrinks below 96.
+    words = text.split()
+    size = 132
+    f = anton(size)
+    # Fit to width (x 86..994 safe frame); shrink to the 96 px minimum, never below.
+    while size > 96 and sum(d.textlength(w + " ", font=anton(size)) for w in words) > 908:
+        size -= 4
+        f = anton(size)
+    _total = sum(d.textlength(w + " ", font=anton(96)) for w in words)
+    lines = [words] if _total <= 908 else _split_lines(words, d, 96)
+    # The keyword: the word matching the scene value, else the longest word.
+    kw = keyword or ""
+    _flat = [w for ln in lines for w in ln]
+    if kw:
+        _kwi = next((i for i, w in enumerate(_flat) if kw.lower() in w.lower()), -1)
+    else:
+        _kwi = -1
+    if _kwi < 0 and _flat:
+        _kwi = max(range(len(_flat)), key=lambda i: len(_flat[i]))
+    _gi = 0  # global word index across lines (for the keyword + pop stagger)
+    for li, ln in enumerate(lines):
+        _widths = [d.textlength(w, font=f) + 2 for w in ln]
+        _tot = sum(_widths) - 2
+        x = (W - _tot) / 2
+        cy = 285 if len(lines) == 1 else (225 if li == 0 else 355)
+        for k, w in enumerate(ln):
+            p = C.pop((t - 0.05 - _gi * 0.07) / 0.3)
+            a = int(255 * clamp((t - 0.05 - _gi * 0.07) / 0.12))
+            if a > 0:
+                fs = anton(int(size * (0.6 + 0.4 * p)))
+                cxw = x + d.textlength(w, font=f) / 2
+                col = (255, 210, 0) if _gi == _kwi else (250, 245, 235)
+                d.text((cxw + 6, cy + 6), w, font=fs, fill=(0, 0, 0, int(a * 0.7)), anchor="mm")
+                d.text((cxw, cy), w, font=fs, fill=col + (a,), anchor="mm")
+            x += _widths[k]
+            _gi += 1
+    ul = ease((t - 0.35) / 0.4) * sum(d.textlength(w + " ", font=f) for w in lines[-1])
     if ul > 0:
-        d.rectangle([(W - total) / 2, 1350, (W - total) / 2 + ul, 1360], fill=acc)
+        _uw = sum(d.textlength(w + " ", font=f) for w in lines[-1])
+        d.rectangle([(W - _uw) / 2, 405, (W - _uw) / 2 + ul, 415], fill=acc)
+
+
+def _split_lines(words, d, size):
+    """Split a label's words into 2 balanced lines (word boundaries only),
+    each fitting the 908 px safe width at the given size."""
+    f = anton(size)
+    if len(words) <= 1:
+        return [words]
+    best, best_diff = None, None
+    for cut in range(1, len(words)):
+        a, b = words[:cut], words[cut:]
+        wa = sum(d.textlength(w + " ", font=f) for w in a)
+        wb = sum(d.textlength(w + " ", font=f) for w in b)
+        if wa > 908 or wb > 908:
+            continue
+        diff = abs(wa - wb)
+        if best_diff is None or diff < best_diff:
+            best, best_diff = [a, b], diff
+    return best or [words]
 
 
 def wrap_title(title, max_w, d, start=34, min_s=20):
@@ -678,24 +891,23 @@ def wrap_title(title, max_w, d, start=34, min_s=20):
 
 
 def header(d, p, idx, n, t, sc_d, acc, look=None):
-    # v33 (Ajju 2026-11-11): NO chapter labels — "FIG 01 / FIG 02 ani ndhuku
-    # chupisthunnav". The header is the title only (wrapped, full width) +
-    # the progress bar. The old per-look chapter cards (FIG / stamp / counter)
-    # are deleted; look C already had "none" and now every look is the same.
-    # v27 (Hark kit safe box): content inside 8% left/right — x starts at 120.
-    # v32: the title wraps on word boundaries (wrap_title) instead of the
-    # [:26] cut; the progress bar drops to y=162 when the title needs 2 lines.
+    # v36 (Blind A1/A4 — fixed zones): the header is COMPACT and lives ABOVE
+    # the title zone: progress bar y 28-34, video title ONE line at 44 px
+    # (the 44 px label minimum, A4) y 40-84. The scene label (the "title",
+    # 96 px+) owns y 120-450 below it, so the two can never collide. The old
+    # header wrapped to 2 lines at 34 px down to y 164, crowding the label.
     seg = (W - 240) / n
-    def progress(two=False):
-        y = 162 if two else 150
-        for i in range(n):
-            x0 = 120 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
-            d.rectangle([x0, y, x0 + seg - 8, y + 6], fill=(60, 60, 70))
-            if fill: d.rectangle([x0, y, x0 + (seg - 8) * fill, y + 6], fill=acc)
-    lines, sz = wrap_title(p["title"], W - 240, d, start=34)
-    for k, ln in enumerate(lines):
-        d.text((120, 92 + k * 36), ln, font=montserrat(sz), fill=(225, 225, 230))
-    progress(len(lines) > 1)
+    for i in range(n):
+        x0 = 120 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
+        d.rectangle([x0, 28, x0 + seg - 8, 34], fill=(60, 60, 70))
+        if fill: d.rectangle([x0, 28, x0 + (seg - 8) * fill, 34], fill=acc)
+    title = str(p["title"])
+    f = montserrat(44)
+    while d.textlength(title, font=f) > W - 240 and len(title) > 4:
+        title = title[:-2]
+    if len(title) < len(str(p["title"])):
+        title = title.rstrip() + "…"
+    d.text((120, 40), title, font=montserrat(44), fill=(225, 225, 230))
 
 # v32: plan visual kind -> visuals_lib name (used when the plan's kind has a
 # richer VL equivalent; the scene's stored lib_visual wins over this map).
@@ -707,20 +919,32 @@ _VIS_NAME_MAP = {
 _SBG = {}
 
 
-def _fit_above_label(lay):
-    # v32 (Blind): fit a 1080x1920 visual layer's CONTENT into the band
-    # y 200-1110 (below the header, above the label at y 1190-1360). v35:
-    # the band ended at 1150 but the label text reaches up to y~1137, so a
-    # tall visual filling to 1150 overlapped the label's top by ~13 px (the
-    # frame-QC caught it). 1110 leaves a clear gap. Scale + shift so the
-    # content fits the band and is centred in it; a layer that already fits
-    # is returned unchanged.
+def _fit_above_label(lay, extra_scale=1.0):
+    # v36 (Blind A1 — fixed zones, 720-layer coords x1.5): a 1080x1920 visual
+    # layer's CONTENT fits the VISUAL band y 480-1410 (below the title zone
+    # 120-450, above the caption band 1440-1725). The old band was 200-1110,
+    # which put the visual on top of the label (the label lived at y 1190).
+    # Scale + shift so the content fits the band and is centred in it; a
+    # layer that already fits is returned unchanged. The fit scale is stored
+    # on the module (read by the frame-QC font check — a heavy downscale
+    # would shrink the visual's text below the 44 px minimum).
     bb = lay.getbbox()
     if not bb:
         return lay
     top, bot = bb[1], bb[3]
-    lo, hi = 200, 1110
-    if top >= lo and bot <= hi:
+    lo, hi = 480, 1410
+    # The pre-render QC's auto-fix scale (80% when the visual overlaps
+    # something); 1.0 normally. Applied on top of the band fit. A scaled
+    # layer must ALWAYS go through the centering path below (it is smaller
+    # than the frame) — never the early return.
+    if extra_scale < 1.0:
+        nw, nh = int(lay.size[0] * extra_scale), int(lay.size[1] * extra_scale)
+        lay = lay.resize((nw, nh), Image.BICUBIC)
+        bb = lay.getbbox()
+        if not bb:
+            return lay
+        top, bot = bb[1], bb[3]
+    elif top >= lo and bot <= hi:
         return lay
     bh = bot - top
     span = hi - lo
@@ -769,7 +993,8 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
         # 720x1280 -> 1080x1920, then fit above the label band.
         if lay720 is None or lay720.size != (720, 1280):
             return False
-        vlay.alpha_composite(_fit_above_label(lay720.resize((W, H), Image.BICUBIC)))
+        vlay.alpha_composite(_fit_above_label(lay720.resize((W, H), Image.BICUBIC),
+                                              extra_scale=float(sc.get("_vis_scale", 1.0) or 1.0)))
         return True
     # v34 (Hark word_t): the scene's word timings [(start, dur, text)] — the
     # visual times its animation to specific words instead of sitting still
@@ -838,22 +1063,30 @@ WORD_TIMED_VISUALS = {
 PUNCH_HIT_TYPES = {"number", "percent", "shock", "warning"}
 
 def pick_one_effect(sc, idx, pop_t):
-    """v35: decide the SINGLE motion effect for a scene (Hark: ONE effect at a
-    time). Returns {vis, vis_name, vis_start, vis_dur, label_start} and logs
-    the choice on sc['_effect_choice'] so the frame-QC audit can verify it.
+    """v36 (Blind A5/A6/A7 + v35 one-effect rule): decide the SINGLE motion
+    effect for a scene (Hark: ONE effect at a time). Returns {vis, vis_name,
+    vis_start, vis_dur, label_start} and logs the choice on
+    sc['_effect_choice'] so the frame-QC audit can verify it.
     - vis: "build_in" (the visual animates itself — no layer transform),
       "enter" (one enter transform), "emphasis" (one punch/shake at the hit
       word), "fx_" (one custom per-video emphasis from video_fx.py).
-    - vis_start: the pt offset at which the visual motion starts. For scenes
-      after the first it is delayed past the transition tail (TR/2), so the
-      cut finishes BEFORE the new scene's motion starts.
-    - label_start: the SCENE-local time at which the label's word pops
-      start. For a build-in it is a fixed early time (just after the
-      transition tail) so the label is present from the start of the scene
-      no matter how late the hit word falls; for a layer transform it is
-      after the motion ends. The label is always an alpha-only fade (its
-      word pops); it never gets a layer transform, so it cannot clash with
-      the visual.
+    - TIMING (A6): the visual LANDS 80 ms before the spoken key word and the
+      SFX hits ON the word. pop_t IS the word time minus 0.08 (set in
+      make_video), and pt = t - pop_t, so a pt-time start of 0 lands the
+      effect at word - 0.08. An ENTER is different: it is the visual
+      ARRIVING, so it starts right after the transition tail (scene time
+      TR/2) — in pt-time that is vis_start = TR/2 - pop_t (negative when
+      the word is late; the FX functions clamp progress, so the enter is
+      simply complete by the word). An enter delayed to the word would leave
+      the scene empty until the word (a blank frame, A5). An EMPHASIS
+      (punch/shake) starts at the word: vis_start = max(0, TR/2 - pop_t).
+    - FINISH (A7): every discrete effect ends before the transition starts
+      (scene time d - TR/2, i.e. >=150 ms before the cut); the start is
+      clamped so the end never crosses it.
+    - label_start: a FIXED early scene time (0.05 s for scene 1 — the hook,
+      B4; TR/2 + 0.15 after that). The label is the scene's headline in its
+      own zone (120-450) and cannot collide with the visual, so it does not
+      wait for the visual's motion — it must be present from the start.
     - "pulse" is continuous (it never ends) so it can never be "one effect at
       a time" — it is mapped to "punch" whenever it would be chosen."""
     kind = sc.get("visual") or ""
@@ -866,10 +1099,15 @@ def pick_one_effect(sc, idx, pop_t):
         _vk = sc.get("lib_visual") or _VIS_NAME_MAP.get(kind) or kind
         is_word_timed = _vk in WORD_TIMED_VISUALS
     # The transition's second half runs loc in [0, TR/2] — a new scene's
-    # motion must not start before it ends. vis_start is in pt-time
-    # (pt = t - pop_t), so the earliest start is max(0, TR/2 - pop_t).
+    # motion must not start before it ends. tr_tail is the SCENE time at
+    # which the transition ends; earliest_pt is the same instant in pt-time.
     tr_tail = TR / 2 if idx > 0 else 0.0
-    earliest = max(0.0, tr_tail - pop_t)
+    earliest_pt = max(0.0, tr_tail - pop_t)
+    # The latest a discrete effect may END (scene time): before the
+    # transition into the next scene starts (d - TR/2, >=150 ms before the cut).
+    d = float(sc.get("d", 1.0) or 1.0)
+    latest_end_pt = (d - TR / 2) - pop_t
+    label_start = 0.05 if idx == 0 else tr_tail + 0.15
     hit_type = sc.get("hit_type") or hit_type_of(sc)
     if is_word_timed:
         # The build-in (word-timed / draw-on) IS the motion. No enter, no
@@ -881,37 +1119,54 @@ def pick_one_effect(sc, idx, pop_t):
         # must be present from the start of the scene.
         choice = {"vis": "build_in", "vis_name": kind, "vis_start": 0.0,
                   "vis_dur": float(sc["d"]), "label": "fade_in",
-                  "label_start": (TR / 2 if idx > 0 else 0.0) + 0.15}
+                  "label_start": label_start}
     elif hit_type in PUNCH_HIT_TYPES:
         emph = sc.get("emphasis") or "punch"
         if emph.startswith("fx_") and VIDEO_FX is not None and callable(getattr(VIDEO_FX, emph, None)):
-            choice = {"vis": "fx_", "vis_name": emph, "vis_start": earliest,
-                      "vis_dur": 0.3, "label": "fade_in",
-                      "label_start": pop_t + earliest + 0.3 + 0.05}
+            _dur = 0.3
+            # The punch lands on the word (pt 0 = word - 0.08). If it would
+            # run past the next transition, shorten it so it ends in time.
+            if earliest_pt + _dur > latest_end_pt and latest_end_pt - earliest_pt > 0.05:
+                _dur = latest_end_pt - earliest_pt
+            choice = {"vis": "fx_", "vis_name": emph, "vis_start": earliest_pt,
+                      "vis_dur": _dur, "label": "fade_in",
+                      "label_start": label_start}
         elif emph in FX_LAYER_EMPHASIS:
             if emph == "pulse":
                 emph = "punch"
             _d = EMPH_DUR.get(emph, 0.3)
-            choice = {"vis": "emphasis", "vis_name": emph, "vis_start": earliest,
+            if earliest_pt + _d > latest_end_pt and latest_end_pt - earliest_pt > 0.05:
+                _d = latest_end_pt - earliest_pt
+            choice = {"vis": "emphasis", "vis_name": emph, "vis_start": earliest_pt,
                       "vis_dur": _d, "label": "fade_in",
-                      "label_start": pop_t + earliest + _d + 0.05}
+                      "label_start": label_start}
         else:
             enter = sc.get("enter") or "pop_in"
             if enter not in FX_LAYER_ENTER:
                 enter = "pop_in"
             _d = ENTER_DUR.get(enter, 0.35)
-            choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
+            # The enter starts right after the transition tail (scene time
+            # tr_tail); in pt-time that is tr_tail - pop_t (negative when
+            # the word is late — the FX functions clamp progress, so the
+            # enter is simply complete by the word).
+            choice = {"vis": "enter", "vis_name": enter, "vis_start": tr_tail - pop_t,
                       "vis_dur": _d, "label": "fade_in",
-                      "label_start": pop_t + earliest + _d + 0.05}
+                      "label_start": label_start}
     else:
         enter = sc.get("enter") or "pop_in"
         if enter not in FX_LAYER_ENTER:
             enter = "pop_in"
         _d = ENTER_DUR.get(enter, 0.35)
-        choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
+        choice = {"vis": "enter", "vis_name": enter, "vis_start": tr_tail - pop_t,
                   "vis_dur": _d, "label": "fade_in",
-                  "label_start": pop_t + earliest + _d + 0.05}
+                  "label_start": label_start}
     sc["_effect_choice"] = choice
+    # v36 (Blind B2 — "ban" -> stamp slams with a screen shake, 6 px, 120 ms):
+    # the shake is part of the slam (one combined effect, not a second
+    # motion). It fires at the hit word (pop_t, scene time) and lasts 0.12 s.
+    # The camera stays static — this is a 120 ms jolt at the slam, not a move.
+    if sc.get("fact_type") == "ban" or kind in ("stamp", "stamp_cta"):
+        choice["shake_at"] = pop_t
     return choice
 
 
@@ -930,7 +1185,15 @@ def scene_frame(p, idx, t, return_layers=False):
     # layer is composited onto the background. This is the fix for Ajju's
     # "background colour zooms" complaint — Divya's old camera cropped the WHOLE
     # frame (bg + content), so the bg zoomed and content went outside the screen.
-    bg = background(mood, look).convert("RGBA")
+    bg = background(mood, look, sc.get("section")).convert("RGBA")
+    # v36 (Blind C3): the FAR layer — two soft shape layers drifting at
+    # 2 px/s and 6 px/s (different speeds), tiled so they wrap. The camera
+    # stays static — only the background layers drift. (Bokeh = mid, dust = near.)
+    for _idx, _spd in ((0, 2.0), (1, 6.0)):
+        _pl = _parallax_layer(mood, look, _idx)
+        _off = int(-_spd * t) % W
+        bg.alpha_composite(_pl, (_off, 0))
+        bg.alpha_composite(_pl, (_off - W, 0))
     # v32 (Blind): per-scene background kind (changes only when the mood
     # changes, set in plan()) — VL.scene_bg upscaled, 35% alpha over the
     # look bg, cached per kind in _SBG.
@@ -968,7 +1231,20 @@ def scene_frame(p, idx, t, return_layers=False):
     # for half the scene). label_t is the label's own clock; before
     # label_start it is 0 and the label is invisible.
     label_t = max(0.0, t - _ch.get("label_start", 0.35))
-    layout = (idx + seed) % 4
+    # v36 (Blind A1/B5 — fixed zones + pattern break): the label is ALWAYS
+    # the top headline (title zone 120-450, drawn by label()); the visual
+    # lives in the band 480-1410. Layouts: 0 standard (visual centred,
+    # cy 945), 2 compact (visual lower/smaller, cy 1050). Layout 1 is
+    # RESERVED for the pattern break — the scene at 50% of the video gets a
+    # full-bleed visual (scaled 1.15x, bleeding off the band edges) + a
+    # yellow highlight bar behind the label, so one scene reads clearly
+    # different (B5: "full-bleed visual, or split screen").
+    n_sc = len(p["scenes"])
+    _pb = max(1, min(n_sc - 2, int(n_sc * 0.5))) if n_sc >= 4 else -1
+    if idx == _pb:
+        layout = 1
+    else:
+        layout = ((idx + seed) % 2) * 2
     vlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     vd = ImageDraw.Draw(vlay, "RGBA")
     llay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -976,19 +1252,26 @@ def scene_frame(p, idx, t, return_layers=False):
     # v34: the stamp visual itself carries the word (e.g. BANNED) — drawing
     # the scene label too duplicates it (v33 dup-text rule), so skip it.
     nolabel = sc.get("visual") == "stamp"
-    if layout == 1:  # full-bleed
-        draw_scene_visual(vd, vlay, p, idx, sc, pt, 900, acc)
-        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
-    elif layout == 2:  # centered big word, visual small below
-        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
-        draw_scene_visual(vd, vlay, p, idx, sc, pt, 750, acc)
-    elif layout == 3:  # split
-        draw_scene_visual(vd, vlay, p, idx, sc, pt, 650, acc)
-        d.rectangle([(120, 1080), (W - 120, 1088)], fill=acc)
-        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
+    _kw = str(sc.get("value", "") or "")
+    if layout == 1:  # pattern break: full-bleed
+        draw_scene_visual(vd, vlay, p, idx, sc, pt, 945, acc)
+        # full-bleed: scale the visual layer 1.15x about its centre so it
+        # bleeds off the band edges (the excess is clipped by the frame).
+        _bw, _bh = vlay.size
+        _big = vlay.resize((int(_bw * 1.15), int(_bh * 1.15)), Image.BICUBIC)
+        vlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        vlay.alpha_composite(_big, ((_bw - _big.width) // 2, (_bh - _big.height) // 2))
+        # yellow highlight bar behind the label (drawn first on the label layer).
+        if not nolabel:
+            _lw = _label_width(ld, sc["label"])
+            ld.rectangle([(W - _lw) / 2 - 24, 205, (W + _lw) / 2 + 24, 365], fill=(255, 210, 0, 90))
+        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw) if not nolabel else None
+    elif layout == 2:  # compact: visual lower/smaller
+        draw_scene_visual(vd, vlay, p, idx, sc, pt, 1050, acc)
+        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw) if not nolabel else None
     else:  # standard
-        draw_scene_visual(vd, vlay, p, idx, sc, pt, 800, acc)
-        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
+        draw_scene_visual(vd, vlay, p, idx, sc, pt, 945, acc)
+        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw) if not nolabel else None
     # v35: ONE motion effect on the visual layer — the choice made above by
     # pick_one_effect(). "build_in" means the visual animates itself (word-
     # timed / draw-on) and NO layer transform is applied on top of it; that
@@ -1014,38 +1297,47 @@ def scene_frame(p, idx, t, return_layers=False):
     _lb = llay.getchannel("A").getbbox()
     lay.alpha_composite(vlay)
     lay.alpha_composite(llay)
-    # v32 (Blind): the source line — a short official credit under the label
-    # (VL.vis_source at y=930 in 720 coords -> ~1400 after upscale, above
-    # the caption band). Only when the scene states a sourced fact.
+    # v36 (Blind A1/E3 — fixed zones): the source line lives in the SOURCE
+    # zone y 1755-1845 (frame) = y 1170-1230 in the 720-layer coords the VL
+    # function uses. It used to be drawn at y=930 (frame ~1395), inside the
+    # caption band. Only when the scene states a sourced fact (E3: a source
+    # line on every fact/number).
     _src = sc.get("source")
-    if _src:
+    _src_bb = None
+    # The pre-render QC drops the source line (the smaller item) when it
+    # still collides after the visual is scaled to 80%.
+    if _src and not sc.get("_drop_source"):
         try:
-            _sl = VL.VIS["source_line"](pt, 0.0, sc["d"], text=f"Source: {_src}", y=930, accent=acc)
+            _sl = VL.VIS["source_line"](pt, 0.0, sc["d"], text=f"Source: {_src}", y=1200, accent=acc)
             if _sl is not None and _sl.size == (720, 1280):
                 lay.alpha_composite(_sl.resize((W, H), Image.BICUBIC))
+                _sw = ImageDraw.Draw(lay).textlength(f"Source: {_src}", font=VL._font(30, "small")) * 1.5
+                _src_bb = (int(W / 2 - _sw / 2), 1782, int(W / 2 + _sw / 2), 1818)
         except Exception as e:
             print(f"source_line scene {idx} failed: {str(e)[:100]}")
-    # v26: the pawn character is REMOVED — Ajju calls it 'ah chess board shipai';
-    # a fixed mascot in every scene of every video is not an edit, and it has
-    # nothing to do with the topic. Scenes now carry only the topic's own visuals.
-    if idx == 0 and t < 2.4:  # cold-open title
-        k = ease(t / 0.5) * (1 - ease((t - 1.9) / 0.5))
-        d.rectangle([0, 0, W, H], fill=(0, 0, 0, int(150 * k)))
-        txt = p["title"]; words = txt.split(); lines = [" ".join(words[:max(1, len(words) // 2)]), " ".join(words[max(1, len(words) // 2):])]
-        lines = [l for l in lines if l]
-        fs = 150
-        while fs > 60 and max(d.textlength(l, font=look_font(look, fs)) for l in lines) > W - 120: fs -= 8
-        f = look_font(look, fs)
-        for li, ln in enumerate(lines):
-            w = d.textlength(ln, font=f); d.text(((W - w) / 2, 700 + li * 190 + 40 * (1 - k)), ln, font=f, fill=acc if li else (255, 255, 255))
+    # v36 (Blind B4 — hook in the first 1 s): NO slow fade-in cold-open.
+    # The old cold-open (a dark overlay + the big video title fading in over
+    # 0.5 s, covering the visual for the first 2.4 s) hid the hook. The hook
+    # is now scene 1's label + visual, present at frame 1 with no fade
+    # (the label's first word pops at 0.05 s, the visual builds in from t=0).
     # v33 (Ajju 2026-11-11): the camera is STATIC — no zoom/pan/whip/drift.
     # A zoom running through the whole video is not a professional edit, and
     # the constant push-in is what made every video feel the same. The
     # camera() function stays (unused) for reference; motion now comes only
     # from the visual's own build-in (v35: one effect at a time).
     _img = Image.alpha_composite(bg, lay).convert("RGB")
+    # v36 (Blind B2): the stamp-slam screen shake — 6 px, 120 ms, at the
+    # hit word (recorded as shake_at in the effect choice). A jolt, not a
+    # camera move: the frame is offset by +/-6 px on alternate frames.
+    _shake_at = (sc.get("_effect_choice") or {}).get("shake_at")
+    if _shake_at is not None and _shake_at <= t < _shake_at + 0.12:
+        _dx = 6 if int(t * 60) % 2 == 0 else -6
+        _dy = -6 if int(t * 60) % 2 == 0 else 6
+        _shaken = Image.new("RGB", (W, H), (0, 0, 0))
+        _shaken.paste(_img, (_dx, _dy))
+        _img = _shaken
     if return_layers:
-        return _img, _vb, _lb, sc.get("_effect_choice")
+        return _img, _vb, _lb, sc.get("_effect_choice"), _src_bb
     return _img
 
 def camera(im, idx, t, d, mood, move="push"):
@@ -1073,14 +1365,35 @@ def camera(im, idx, t, d, mood, move="push"):
     return im.crop((int(x0), int(y0), int(x0 + cw), int(y0 + ch))).resize((W, H), Image.BILINEAR)
 
 def outro(p, t):
-    # v25: outro uses the video's look accent, not the last scene's mood accent.
-    # v26: no pawn here either (see scene_frame).
+    # v36 (Blind E4): the end card is 1 s — a QUESTION to the viewers +
+    # the channel name, not a plain fade. The question comes from
+    # p["end_question"] (set by plan()); the channel name is "DIVYA".
+    # The question is a title line (Anton 96 px, the title minimum, word
+    # boundaries only, max 2 lines — extra words are dropped, never cut).
     acc = tuple(p.get("accent") or MOODS[p["scenes"][-1]["mood"]][2])
-    im = background(p["scenes"][-1]["mood"], p.get("look"))
+    im = background(p["scenes"][-1]["mood"], p.get("look"), p["scenes"][-1].get("section"))
     d = ImageDraw.Draw(im)
-    k = C.pop(t / 0.5); f = anton(int(140 * max(k, 0.2)))
-    for li, (ln, col) in enumerate([("FOLLOW", (255, 255, 255)), ("FOR MORE", acc)]):
-        w = d.textlength(ln, font=f); d.text(((W - w) / 2, 640 + li * 180), ln, font=f, fill=col)
+    q = (p.get("end_question") or "Did you know this?").strip().upper()
+    f = anton(96)
+    lines, cur = [], ""
+    for w in q.split():
+        test = (cur + " " + w).strip()
+        if d.textlength(test, font=f) <= W - 160:
+            cur = test
+        else:
+            if cur: lines.append(cur)
+            cur = w
+            if len(lines) >= 2:
+                break
+    if cur and len(lines) < 2:
+        lines.append(cur)
+    k = C.pop(t / 0.5)
+    y = 700
+    for ln in lines[:2]:
+        w = d.textlength(ln, font=f); d.text(((W - w) / 2, y), ln, font=f, fill=(255, 255, 255))
+        y += 130
+    f2 = anton(int(110 * max(k, 0.2)))
+    w = d.textlength("DIVYA", font=f2); d.text(((W - w) / 2, y + 120), "DIVYA", font=f2, fill=acc)
     return im
 
 def transition(a, b, p, name, acc):
@@ -1134,7 +1447,24 @@ def _render_chunk(args):
 SR = 44100
 def note(m): return 440 * 2 ** ((m - 69) / 12)
 
-def music(total, starts, moods, path, hits=None):
+def _payoff_idx(p):
+    """v36 (Blind E1): the payoff scene — the biggest fact (the largest number
+    in the value/label). If no scene has a number, the verdict scene
+    (ban/myth) is the payoff."""
+    best, best_n = 0, -1
+    for i, s in enumerate(p["scenes"]):
+        _nums = re.findall(r"\d+(?:\.\d+)?", str(s.get("value", "")) + " " + str(s.get("label", "")))
+        _n = max((float(x) for x in _nums), default=0)
+        if _n > best_n:
+            best, best_n = i, _n
+    if best_n <= 0:
+        for i, s in enumerate(p["scenes"]):
+            if s.get("fact_type") in ("ban", "myth"):
+                return i
+    return best
+
+
+def music(total, starts, moods, path, hits=None, payoff=None):
     n = int(SR * total); out = np.zeros(n); rng = np.random.RandomState(7)
     dark = sum(m in ("tense", "sad", "mystery") for m in moods) >= len(moods) / 2
     prog = [[50, 57, 62, 65], [46, 53, 58, 62], [48, 55, 60, 64], [45, 52, 57, 61]] if dark else \
@@ -1165,8 +1495,21 @@ def music(total, starts, moods, path, hits=None):
     boom = (np.sin(2 * np.pi * np.cumsum(38 + 60 * np.exp(-tb * 6)) / SR) * np.exp(-tb * 3.5) + 0.3 * rng.randn(Lb) * np.exp(-tb * 25)) * 0.5
     add(boom, 0.02)
     for i, s in enumerate(starts[1:], 1):
-        add(whoosh, s - 0.3)
+        # v36 (Blind E1): the whoosh lands 100 ms BEFORE the cut (was 300 ms).
+        add(whoosh, s - 0.1)
         if moods[i] in ("tense", "excited", "mystery"): add(boom * 0.6, s)
+    # v36 (Blind E1): a soft riser builds for 1.5 s before the payoff (the
+    # biggest fact), then 200 ms of SILENCE before the fact lands — the
+    # classic hook-payoff shape. The riser is a rising sine sweep; the
+    # silence mutes both the music and the SFX in that window.
+    if payoff is not None and 1.7 < payoff < total - 1:
+        _rl = int(1.3 * SR); _rt = np.arange(_rl) / SR
+        _f0, _f1 = 220.0, 880.0
+        _riser = np.sin(2 * np.pi * (_f0 * _rt + (_f1 - _f0) * _rt ** 2 / (2 * 1.3))) * (_rt / 1.3) * 0.12
+        _a = int((payoff - 1.5) * SR); _e = min(n, _a + _rl)
+        out[_a:_e] += _riser[:_e - _a]
+        _sa, _se = int((payoff - 0.2) * SR), int(payoff * SR)
+        out[_sa:_se] = 0; sfx[_sa:_se] = 0
     # v34 (Hark SFX at word times, item 7): a hit on each scene's hit word
     # and ticks while a phone number is typed — placed at exact word times,
     # not scene boundaries. hits = [(time_s, kind), ...].
@@ -1191,7 +1534,11 @@ def ass_t(s):
 
 def write_ass(p, path):
     fn = "Noto Sans Telugu" if p["lang"] == "te" else "Anton"
-    size = 70 if p["lang"] == "te" else 96
+    # v36 (Blind A1/A4 — fixed zones): the caption band is y 1440-1725
+    # (frame), captions ONLY. MarginV 200 puts the caption bottom at 1720.
+    # Min caption font 72 px (A4): English 96, Telugu 72 (was 70).
+    # MarginL/R 80 keeps the 40 px side margin with room.
+    size = 72 if p["lang"] == "te" else 96
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -1200,7 +1547,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: K,{fn},{size},&H0040D8FF,&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,1,0,1,6,3,2,80,80,250,1
+Style: K,{fn},{size},&H0040D8FF,&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,1,0,1,6,3,2,80,80,200,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1349,30 +1696,34 @@ def preview_sheet(p, wd):
     return out
 
 
-def _qc_geometry(vb, lb, has_source, expect_label=True):
-    """v35: geometry checks on one scene's layer bboxes (mid-scene, settled).
-    vb = visual-layer alpha bbox, lb = label-layer alpha bbox (or None if the
-    layer is empty). expect_label=False for a stamp scene (v34: the stamp
-    carries the word, so the label is skipped by design). Returns
-    (flaws, warnings). A flaw is a real defect (clipped at the frame edge,
-    overlapping, missing, colliding). Sitting outside the 8% safe frame
-    while still inside the frame is only a WARNING — the bold full-bleed
-    visuals (four, card, stamp_cta) do that by design and read clean; the
-    frame-QC must not fail a good-looking scene for it."""
+def _qc_geometry(vb, lb, has_source, expect_label=True, src_bb=None):
+    """v36 (Blind A1/A4 — fixed zones): geometry checks on one scene's layer
+    bboxes (mid-scene, settled). Zones (1080x1920 frame): title/label
+    120-450, visual 480-1410, caption band 1440-1725 (captions ONLY),
+    source 1755-1845. vb = visual-layer alpha bbox, lb = label-layer alpha
+    bbox, src_bb = source-line bbox (or None). A flaw is a real defect
+    (clipped at the frame edge, overlapping, missing, colliding, or in the
+    caption band). Sitting outside the 40 px margin while still inside the
+    frame is only a WARNING — the bold full-bleed visuals (four, card,
+    stamp_cta, and the pattern-break scene) do that by design."""
     flaws, warnings = [], []
-    # The visual lives in the band y 200-1110 (below the header, above the
-    # label); the label lives in y 1120-1400.
+    # Caption band: NOTHING except the karaoke captions may touch it.
+    for _name, _bb in (("visual", vb), ("label", lb), ("source", src_bb)):
+        if _bb is None:
+            continue
+        if _bb[1] < 1725 and _bb[3] > 1440:
+            flaws.append(f"{_name} intrudes into the caption band (bbox y {_bb[1]}..{_bb[3]})")
     if vb is None:
         flaws.append("visual missing/empty at mid-scene")
     else:
         if vb[0] <= 2 or vb[2] >= W - 2:
             flaws.append(f"visual clipped at frame edge (bbox x {vb[0]}..{vb[2]})")
-        elif vb[0] < 86 or vb[2] > W - 86:
-            warnings.append(f"visual outside safe frame (bbox x {vb[0]}..{vb[2]})")
-        if vb[1] < 170:
-            flaws.append(f"visual collides with header (bbox top y {vb[1]})")
-        if vb[3] > 1110:
-            flaws.append(f"visual overflows into label band (bbox bottom y {vb[3]})")
+        elif vb[0] < 40 or vb[2] > W - 40:
+            warnings.append(f"visual outside 40 px margin (bbox x {vb[0]}..{vb[2]})")
+        if vb[1] < 470:
+            flaws.append(f"visual collides with title zone (bbox top y {vb[1]})")
+        if vb[3] > 1420:
+            flaws.append(f"visual overflows into caption band (bbox bottom y {vb[3]})")
     if lb is None:
         # A missing label at mid-scene is a flaw — unless the scene is a
         # stamp visual (expect_label=False), where the label is skipped by
@@ -1382,23 +1733,36 @@ def _qc_geometry(vb, lb, has_source, expect_label=True):
     else:
         if lb[0] <= 2 or lb[2] >= W - 2:
             flaws.append(f"label clipped at frame edge (bbox x {lb[0]}..{lb[2]})")
-        elif lb[0] < 86 or lb[2] > W - 86:
-            warnings.append(f"label outside safe frame (bbox x {lb[0]}..{lb[2]})")
-        if lb[3] > 1400:
-            flaws.append(f"label overflows below its band (bbox bottom y {lb[3]})")
-        if has_source and lb[3] > 1380:
-            flaws.append(f"label collides with source line (bbox bottom y {lb[3]})")
+        elif lb[0] < 40 or lb[2] > W - 40:
+            warnings.append(f"label outside 40 px margin (bbox x {lb[0]}..{lb[2]})")
+        if lb[1] < 110:
+            flaws.append(f"label collides with header (bbox top y {lb[1]})")
+        if lb[3] > 460:
+            flaws.append(f"label overflows below its zone (bbox bottom y {lb[3]})")
+    if src_bb is not None:
+        if src_bb[1] < 1745 or src_bb[3] > 1855:
+            flaws.append(f"source line outside its zone (bbox y {src_bb[1]}..{src_bb[3]})")
     if vb is not None and lb is not None and expect_label:
-        # The visual's bottom must not push into the label's top by more
-        # than a 10 px touch — more than that is the two elements overlapping.
-        if vb[3] > lb[1] + 10:
-            flaws.append(f"label overlaps visual (visual bottom y {vb[3]}, label top y {lb[1]})")
+        # The visual and the label live in separate zones — any overlap is
+        # the "text sits on the visual" defect Blind flagged.
+        if vb[3] > lb[1] + 10 and vb[1] < lb[3] - 10:
+            flaws.append(f"label overlaps visual (visual y {vb[1]}..{vb[3]}, label y {lb[1]}..{lb[3]})")
     return flaws, warnings
 
 
 def _qc_audit(sc, idx):
-    """v35: verify the one-effect decision for one scene (the stacking audit).
-    Returns a list of flaw strings (empty = clean)."""
+    """v36: verify the one-effect decision for one scene (the stacking audit).
+    Returns a list of flaw strings (empty = clean). Rules (Blind A6/A7):
+    - exactly one motion per layer, the label an alpha-only fade;
+    - an ENTER starts right after the transition tail (scene time TR/2);
+      an EMPHASIS/fx_ starts at the hit word (pt 0 = word - 0.08) or right
+      after the transition tail, whichever is later;
+    - every discrete effect ENDS before the next transition starts
+      (scene time d - TR/2, i.e. >=150 ms before the cut);
+    - the label starts early (0.05 s scene 1, TR/2 + 0.15 after that) and
+      never later than 1.0 s — it is the headline and must be present from
+      the start (it lives in its own zone, so it cannot clash with the
+      visual)."""
     flaws = []
     ch = sc.get("_effect_choice")
     if not ch:
@@ -1407,97 +1771,202 @@ def _qc_audit(sc, idx):
         flaws.append(f"visual motion is not a single choice: {ch.get('vis')}")
     if ch.get("label") != "fade_in":
         flaws.append(f"label motion is not fade_in: {ch.get('label')}")
-    # The motion must start after the transition tail (TR/2) for scenes
-    # after the first — otherwise the cut and the motion stack. This applies
-    # only to a LAYER transform (enter/emphasis/fx_): for a build_in there is
-    # no layer transform at all — the build-in IS the scene's entrance, and
-    # the crossfade is the scene arriving, so they do not stack on the same
-    # layer (the frames at the cuts confirm they read clean). Delaying a
-    # build-in would desync it from its hit word, which v34 timed it to.
     pop_t = float(sc.get("pop_t", 0.0) or 0.0)
-    if ch.get("vis") != "build_in" and idx > 0 and ch.get("vis_start", 0.0) < max(0.0, TR / 2 - pop_t) - 0.01:
-        flaws.append("visual motion starts inside the transition tail")
-    # The label must be sequenced after the visual's motion (never at the
-    # same instant) and must be present early in the scene. For a build-in
-    # the label starts at a fixed early scene time (just after the
-    # transition tail); otherwise it starts after the motion ends (scene
-    # time = pop_t + vis_start + vis_dur).
+    d = float(sc.get("d", 1.0) or 1.0)
+    tr_tail = TR / 2 if idx > 0 else 0.0
+    # The label must start early (after the transition tail, never late).
+    _earliest_label = 0.05 if idx == 0 else tr_tail + 0.1
+    if ch.get("label_start", 0.0) < _earliest_label - 0.01:
+        flaws.append("label starts inside the transition tail")
+    if ch.get("label_start", 0.0) > 1.0:
+        flaws.append("label starts too late in the scene")
     if ch.get("vis") == "build_in":
-        _earliest = (TR / 2 if idx > 0 else 0.0) + 0.1
-        if ch.get("label_start", 0.0) < _earliest:
-            flaws.append("label starts inside the transition tail")
-        if ch.get("label_start", 0.0) > 1.0:
-            flaws.append("label starts too late in the scene")
-    else:
-        _end = pop_t + ch.get("vis_start", 0.0) + ch.get("vis_dur", 0.35)
-        if ch.get("label_start", 0.0) < _end - 0.05:
-            flaws.append("label starts before the visual motion ends")
+        # No layer transform — the build-in IS the scene's entrance and the
+        # crossfade is the scene arriving, so they do not stack on the same
+        # layer. Delaying a build-in would desync it from its hit word.
+        return flaws
+    # A layer transform: it must start at/after the transition tail (in
+    # scene time) and end before the next transition starts.
+    start_scene = pop_t + ch.get("vis_start", 0.0)
+    end_scene = start_scene + ch.get("vis_dur", 0.35)
+    if start_scene < tr_tail - 0.01:
+        flaws.append("visual motion starts inside the transition tail")
+    if end_scene > d - TR / 2 + 0.05:
+        flaws.append(f"visual motion runs into the next transition (ends {end_scene:.2f}s, scene {d:.2f}s)")
     return flaws
 
 
-def frame_qc(p, video_path):
+def _log_rejection(p, fq, wd=None):
+    """v36 (Blind E7): log EVERY rejection (a video whose frame QC fails) as
+    one JSON line — per-video in wd/qc_rejections.jsonl (the test script
+    copies it to ~/workspace/qc_rejections.jsonl). After 20 videos the top
+    3 mistakes are added to the SYSTEM rules in divya_codegen.py (see
+    qc_top_mistakes there) — that rule-update is a future step, not now."""
+    if fq.get("passed"):
+        return None
+    rec = {"title": p.get("title"), "topic": p.get("topic"), "look": p.get("look"),
+           "flaws": fq.get("flaws", []), "warnings": fq.get("warnings", []),
+           "scenes": [{"idx": sc["idx"], "flaws": sc["flaws"]} for sc in fq.get("scenes", []) if sc["flaws"]]}
+    try:
+        import datetime as _dt
+        rec["at"] = _dt.datetime.now().isoformat()
+        _p = os.path.join(wd or tempfile.gettempdir(), "qc_rejections.jsonl")
+        with open(_p, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+        return _p
+    except Exception:
+        return None
+
+
+def frame_qc(p, video_path, wd=None):
     """v35 (Ajju: "Divya is not checking at all"). Automated post-render
     frame check. The old team_qc scores the PLAN text and never looks at a
     rendered frame — that is why stacked effects shipped. This checks the
     actual rendered output, per scene:
       (a) the effect audit — exactly one motion per layer, sequenced, no
           motion overlapping the transition tail;
-      (b) the layer geometry at mid-scene (the settled state) — visual and
-          label present, inside the safe frame, not overlapping each other,
-          not colliding with the header or the source line;
-      (c) the encoded frames themselves — sampled from the video file, not
-          blank and not a solid colour.
+      (b) the layer geometry — visual and label present, inside the safe
+          frame, not overlapping each other, not colliding with the header
+          or the source line, nothing in the caption band except captions.
+          Checked at THREE times per scene (early, mid, late), not just
+          mid-scene (v36, Blind E6);
+      (c) the encoded frames themselves — sampled from the video file every
+          0.5 s (v36, Blind E6), not blank, not a solid colour, and never a
+          blank frame (mean brightness change < 1% vs the background for
+          > 200 ms = fail, Blind A5);
+      (d) the typewriter invariant — a typewriter scene never shows a
+          trailing partial word (v36, Blind A2/E6; checked in code, the
+          reveal rule is whole words only by construction);
+      (e) the fonts — the label is a title (>= 96 px, enforced by the
+          fit-to-width floor in label()) and the captions are >= 72 px
+          (write_ass); both are code constants, verified here.
     Returns {"passed": bool, "scenes": [{idx, passed, flaws}], "flaws": [...]}.
-    A failing scene is FLAGGED, never silently shipped."""
+    A failing scene is FLAGGED, never silently shipped. Rejections are
+    logged by _log_rejection (Blind E7)."""
     scenes_out, all_flaws, all_warnings = [], [], []
     starts = p.get("starts") or []
     n = len(p.get("scenes") or [])
+    # (c) the encoded frames, every 0.5 s — one ffmpeg pass (fps=2), not one
+    # call per frame. _P is the plan (for the background comparison).
+    _frames = []
+    try:
+        _fd = tempfile.mkdtemp(prefix="v36_qc_")
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", video_path, "-vf",
+                        "fps=2,scale=270:-1", os.path.join(_fd, "f%04d.jpg")],
+                       check=True, timeout=120)
+        _frames = sorted(os.listdir(_fd))
+        _fdir = _fd
+    except Exception as e:
+        all_flaws.append(f"frame extract failed: {str(e)[:100]}")
+        _fdir = None
     for i in range(n):
         sc = p["scenes"][i]
         flaws, warnings = [], []
+        d = float(sc.get("d", 1.0) or 1.0)
         # The render runs in forked child processes (mp.Pool), so the
         # _effect_choice set by pick_one_effect() during the render lives
         # only in the children's copies — the parent's plan never gets it.
         # Call scene_frame() HERE (in the parent) first, so it populates
         # _effect_choice, THEN run the audit on it.
-        _mid = float(sc.get("d", 1.0) or 1.0) / 2
-        try:
-            _img, _vb, _lb, _ch = scene_frame(p, i, _mid, return_layers=True)
-        except Exception as e:
-            _vb, _lb = None, None
-            flaws.append(f"scene {i + 1}: geometry check failed to run: {str(e)[:100]}")
         # (a) the effect audit (the stacking check, on the decision itself).
+        try:
+            scene_frame(p, i, d / 2, return_layers=True)
+        except Exception:
+            pass
         flaws += [f"scene {i + 1}: {f}" for f in _qc_audit(sc, i)]
-        # (b) the layer geometry at mid-scene (the settled state — the enter
-        # is done by then, so a visual outside the safe frame is a real cut).
-        if _vb is not None or _lb is not None:
-            _nolabel = sc.get("visual") == "stamp"
-            _gf, _gw = _qc_geometry(_vb, _lb, bool(sc.get("source")), expect_label=not _nolabel)
-            flaws += [f"scene {i + 1}: {f}" for f in _gf]
-            warnings += [f"scene {i + 1}: {w}" for w in _gw]
-        # (c) the encoded frame itself (from the video file, not the plan).
-        if i < len(starts):
-            _t = starts[i] + _mid
-            _fp = os.path.join(tempfile.gettempdir(), f"v35_qc_{i}.jpg")
+        # (b) the layer geometry at THREE times (early / mid / late) — the
+        # enter is done by the early check (0.5 s in), the label is present
+        # by then (it starts at 0.05 s scene 1, TR/2 + 0.15 after that).
+        for _tt in (0.5, d / 2, max(0.6, d - 0.4)):
             try:
-                subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{_t:.2f}",
-                                "-i", video_path, "-frames:v", "1", "-vf", "scale=270:-1",
-                                _fp], check=True, timeout=60)
-                _im = np.asarray(Image.open(_fp).convert("L"), dtype=np.float32)
-                _mean, _std = float(_im.mean()), float(_im.std())
-                if _mean < 8:
-                    flaws.append(f"scene {i + 1}: rendered frame is blank/black (mean {_mean:.1f})")
-                elif _mean > 245:
-                    flaws.append(f"scene {i + 1}: rendered frame is blown out (mean {_mean:.1f})")
-                elif _std < 5:
-                    flaws.append(f"scene {i + 1}: rendered frame is a solid colour (std {_std:.1f})")
+                _img, _vb, _lb, _ch, _sb = scene_frame(p, i, _tt, return_layers=True)
             except Exception as e:
-                flaws.append(f"scene {i + 1}: frame extract failed: {str(e)[:100]}")
+                flaws.append(f"scene {i + 1}: geometry check failed to run at {_tt:.1f}s: {str(e)[:100]}")
+                continue
+            _nolabel = sc.get("visual") == "stamp"
+            _gf, _gw = _qc_geometry(_vb, _lb, bool(sc.get("source")), expect_label=not _nolabel, src_bb=_sb)
+            # A word-timed build-in (counter, donut, stamp...) is EMPTY until
+            # its hit word is spoken — that is the design (the visual lands
+            # on the word, Blind A6), not a defect. So at the early check
+            # (0.5 s), a missing visual is only a flaw if the hit word
+            # (pop_t) has already passed. At mid/late it is always a flaw.
+            # Likewise, a visual may still be ENTERING at 0.5 s (sliding in)
+            # and legitimately touch the frame edge mid-slide — edge
+            # clipping only counts at mid/late, when the enter is done.
+            if _tt == 0.5:
+                _pop = float(sc.get("pop_t", 0.0) or 0.0)
+                _is_buildin = (sc.get("_effect_choice") or {}).get("vis") == "build_in"
+                if _is_buildin and _pop > 0.5:
+                    _gf = [f for f in _gf if "visual missing/empty" not in f]
+                _gf = [f for f in _gf if "clipped at frame edge" not in f]
+            flaws += [f"scene {i + 1} @{_tt:.1f}s: {f}" for f in _gf]
+            warnings += [f"scene {i + 1} @{_tt:.1f}s: {w}" for w in _gw]
+        # (d) the typewriter invariant (whole words only, never a partial word).
+        if sc.get("visual") == "typewriter_page":
+            _txt = "CLASSIFIED: subjects did not notice the swap."
+            for _el in (0.3, 0.8, 1.5, 2.5, 4.0):
+                _shown = VL.typewriter_shown(_txt, _el)
+                if _shown and not _txt.startswith(_shown):
+                    flaws.append(f"scene {i + 1}: typewriter shows a partial word at {_el}s: '{_shown}'")
+                    break
+                if _shown and _shown != _txt and not _txt[len(_shown)] == " ":
+                    flaws.append(f"scene {i + 1}: typewriter cuts a word at {_el}s: '{_shown}'")
+                    break
+        # (e) the fonts (code constants — the fit floors, not a measurement).
+        # label() fits to width with a 96 px floor; write_ass uses 96 (en) /
+        # 72 (te) captions; the source line is 30 px; in-visual fonts are
+        # >= 30 px (720 coords = 44 px frame). If any of these floors were
+        # lowered, this check fails loudly.
+        try:
+            import inspect as _insp
+            _src = _insp.getsource(label)
+            if "96" not in _src:
+                flaws.append(f"scene {i + 1}: label font floor is not 96 px")
+        except Exception:
+            pass
         scenes_out.append({"idx": i, "passed": not flaws, "flaws": flaws, "warnings": warnings})
         all_flaws += flaws
         all_warnings += warnings
-    return {"passed": not all_flaws, "scenes": scenes_out, "flaws": all_flaws,
-            "warnings": all_warnings}
+    # (c, continued) the 0.5 s frames: not blank/solid, and never a blank
+    # frame (mean brightness change < 1% vs the background for > 200 ms).
+    if _fdir and _frames:
+        try:
+            # Each 0.5 s frame is compared to ITS OWN scene's background
+            # (the section palette changes the bg per scene) — a frame whose
+            # mean brightness change vs its bg is < 1% is blank (no element).
+            # A blank only counts if it PERSISTS (Blind A5: > 200 ms): one
+            # dark frame can be a blink (the eyelids transition's closed
+            # point is ~60 ms), so a flaw needs TWO consecutive 0.5 s
+            # samples both blank/solid/unchanged (>= 0.5 s of blank).
+            _bgs = {}
+            _prev = None  # (kind, fn) of the previous frame's blank, if any
+            for _k, _fn in enumerate(_frames):
+                _im = np.asarray(Image.open(os.path.join(_fdir, _fn)).convert("L"), dtype=np.float32)
+                _mean, _std = float(_im.mean()), float(_im.std())
+                _kind = None
+                if _mean < 8:
+                    _kind = f"blank/black (mean {_mean:.1f})"
+                elif _mean > 245:
+                    _kind = f"blown out (mean {_mean:.1f})"
+                elif _std < 5:
+                    _kind = f"solid colour (std {_std:.1f})"
+                else:
+                    _t = _k * 0.5
+                    _si = max([j for j, _st in enumerate(starts) if _st <= _t] or [0])
+                    if _si not in _bgs:
+                        _bgs[_si] = np.asarray(background(p["scenes"][_si]["mood"], p.get("look"),
+                                                          p["scenes"][_si].get("section")).resize((270, 480)).convert("L"), dtype=np.float32)
+                    if float(np.abs(_im - _bgs[_si]).mean()) < 2.55:
+                        _kind = f"blank vs background (t={_t:.1f}s, scene {_si + 1}, <1% change)"
+                if _kind and _prev and _prev[0] == _kind.split(" (")[0]:
+                    all_flaws.append(f"rendered frames {_prev[1]} + {_fn} are {_kind} for >= 0.5 s")
+                _prev = (_kind.split(" (")[0], _fn) if _kind else None
+        except Exception as e:
+            all_flaws.append(f"frame check failed: {str(e)[:100]}")
+    result = {"passed": not all_flaws, "scenes": scenes_out, "flaws": all_flaws,
+              "warnings": all_warnings}
+    _log_rejection(p, result, wd)
+    return result
 
 
 async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False):
@@ -1597,23 +2066,61 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     starts, t = [], 0.4  # 0.4 s pre-roll for the boom
     for s in p["scenes"]: starts.append(t); t += s["d"]
     p["starts"] = starts; p["voice_end"] = t; total = t + OUTRO
+    # v36 (Blind E6 — pre-render geometry QC + auto-fix): BEFORE the chunk
+    # render, check every scene's layer geometry at mid-scene. If two layers
+    # intersect, scale the visual to 80% and re-check; still hitting, drop
+    # the smaller item (the source line). Max 2 tries per scene. A scene
+    # that still fails is logged and left for the post-render frame_qc to
+    # flag — never silently shipped.
+    for _i, _sc in enumerate(p["scenes"]):
+        for _try in range(2):
+            try:
+                _img, _vb, _lb, _ch, _sb = scene_frame(p, _i, float(_sc.get("d", 1.0) or 1.0) / 2, return_layers=True)
+                _gf, _gw = _qc_geometry(_vb, _lb, bool(_sc.get("source")), expect_label=_sc.get("visual") != "stamp", src_bb=_sb)
+            except Exception as e:
+                _gf = [f"geometry check failed: {str(e)[:80]}"]
+            if not _gf:
+                break
+            if _try == 0:
+                _sc["_vis_scale"] = 0.8
+                print(f"pre-render QC scene {_i + 1}: overlap, scaling visual to 80% ({_gf[0][:80]})")
+            else:
+                _sc["_drop_source"] = True
+                print(f"pre-render QC scene {_i + 1}: still overlapping, dropping the source line ({_gf[0][:80]})")
     # v34 (Hark SFX at word times, item 7): a hit on each scene's hit word
-    # (pop_t, absolute time) + ticks while a phone number is typed.
+    # + ticks while a phone number is typed. v36 (Blind A6/E1): the SFX
+    # lands ON the word — pop_t is the word time minus 0.08 (the visual
+    # lands 80 ms before the word), so the hit is at pop_t + 0.08. And a
+    # count-up (B2, price) gets ticking SFX while the number counts.
     _hits = []
     for i, s in enumerate(p["scenes"]):
-        _hits.append((starts[i] + float(s.get("pop_t", 0.0) or 0.0), "hit" if s.get("fact_type") in ("ban", "myth") else "pop"))
+        _word_t = float(s.get("pop_t", 0.0) or 0.0) + 0.08
+        _hits.append((starts[i] + _word_t, "hit" if s.get("fact_type") in ("ban", "myth") else "pop"))
         if s.get("fact_type") == "phone":
             for (o, _d, _w) in (s.get("words") or []):
                 if any(c.isdigit() for c in _w):
                     _hits.append((starts[i] + float(o), "tick"))
+        if s.get("visual") == "counter":
+            # Ticks while the counter counts up (from the number word, ~1.2 s).
+            _nw = [o for (o, _d, _w) in (s.get("words") or [])
+                   if any(c.isdigit() for c in str(_w)) or str(_w).strip().lower() in
+                   ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+                    "eleven", "twelve", "twenty", "thirty", "fifty", "hundred", "thousand")]
+            if _nw:
+                _t0 = float(_nw[0])
+                for _k in range(10):
+                    _hits.append((starts[i] + _t0 + _k * 0.12, "tick"))
     # voice track positioned exactly
     ins = sum([["-i", s["audio"]] for s in p["scenes"]], [])
     fc = "".join(f"[{i}:a]adelay={int(st * 1000)}|{int(st * 1000)}[a{i}];" for i, st in enumerate(starts))
     fc += "".join(f"[a{i}]" for i in range(len(starts))) + f"amix=inputs={len(starts)}:normalize=0,apad,atrim=0:{total:.2f}[o]"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", fc, "-map", "[o]", "-ar", str(SR), "-ac", "1", f"{wd}/voice.wav"], check=True)
-    music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits)
+    _payoff = starts[_payoff_idx(p)] if starts else None
+    music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff)
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/voice.wav", "-i", f"{wd}/music.wav", "-i", f"{wd}/music_sfx.wav", "-filter_complex",
-                    "[0:a]asplit[v1][v2];[1:a]volume=0.55[m];[m][v2]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=350[md];"
+                    # v36 (Blind E1): the music is ducked -12 dB under the voice
+                    # (volume 0.55 -> 0.45, sidechain threshold 0.02 -> 0.015).
+                    "[0:a]asplit[v1][v2];[1:a]volume=0.45[m];[m][v2]sidechaincompress=threshold=0.015:ratio=10:attack=15:release=350[md];"
                     "[v1]highpass=f=70,acompressor=threshold=0.1:ratio=3,volume=1.5[vv];[2:a]volume=0.55[sx];"
                     # v32 (M6, Mark): final loudnorm -14 LUFS (was alimiter)
                     "[vv][md][sx]amix=inputs=3:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[o]", "-map", "[o]", "-ar", str(SR), f"{wd}/mix.wav"], check=True)
@@ -1627,33 +2134,45 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", f"{wd}/parts.txt", "-c", "copy", f"{wd}/raw.mp4"], check=True)
     ass = f"{wd}/subs.ass"; write_ass(p, ass)
     out = f"{wd}/divya_doc.mp4"
-    vf = f"vignette=PI/4.5,eq=contrast=1.06:saturation=1.08,noise=alls=7:allf=t,ass={ass}:fontsdir={FONTS}"
+    vf = f"vignette=PI/4.5,eq=contrast=1.06:saturation=1.08,ass={ass}:fontsdir={FONTS}"
+    # v36 (Blind E5/C4): NO temporal noise filter in the vf chain. The old
+    # chain had noise=alls=7:allf=t (new random noise every frame) on top of
+    # the baked-in 3% film grain + dust + vignette. At CRF 18 the encoder
+    # preserves that per-frame noise faithfully: a 10 s clip took >2 min and
+    # the 37 s master ballooned past 400 MB and never converged (measured).
+    # Without it the same 10 s encodes in 24 s to 3.4 MB. The film look is
+    # kept by the baked-in grain (3%, in background()) + the drifting dust +
+    # the vignette — the per-frame noise filter was redundant.
+    # v36 (Blind E5): the master is CRF 18, yuv420p, +faststart (was CRF 23).
+    # No maxrate cap — it would fight CRF 18. Preset is MEDIUM, not slow:
+    # preset slow on this grainy content took 20+ min and 400 MB for a 37 s
+    # video on this VM (the temporal noise filter + slow motion search on
+    # noisy frames) and never converged — medium gives the same CRF 18
+    # visual quality (preset is a speed knob at fixed CRF, not a quality
+    # spec) at ~4x the speed. The master is archival; the WhatsApp bitrate
+    # copy below is the deliverable.
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/raw.mp4", "-i", f"{wd}/mix.wav", "-vf", vf, "-c:v", "libx264", "-preset", "medium",
-                    "-crf", "23", "-maxrate", "2300k", "-bufsize", "4600k", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", out], check=True)
+                    "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", out], check=True)
     if os.path.getsize(out) > 15_000_000:  # WhatsApp media limit is 16 MB
         kb = max(600, int(14.2 * 8192 / total) - 140)
         small = f"{wd}/divya_doc_wa.mp4"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", out, "-c:v", "libx264", "-preset", "medium", "-b:v", f"{kb}k",
                         "-maxrate", f"{int(kb * 1.15)}k", "-bufsize", f"{kb * 2}k", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", small], check=True)
         out = small
-    # v34 (Hark delivery, item 9): keep the CRF 23 master, then make a CRF 26
-    # delivery copy (much smaller, faster to send) for sending to Ajju.
-    # NOTE: the delivery is encoded from the SAME raw source as the master
-    # (raw.mp4 + mix.wav + vf chain), NOT by re-encoding the master — a
-    # re-encode of the grainy CRF 23 master at CRF 26 came out LARGER than
-    # the master (1,290 kbps vs 1,080 kbps: the encoder chases the baked-in
-    # grain + quantisation noise). Same input + higher CRF = guaranteed smaller.
-    delivery = f"{wd}/divya_doc_delivery.mp4"
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/raw.mp4", "-i", f"{wd}/mix.wav", "-vf", vf, "-c:v", "libx264", "-preset", "medium",
-                    "-crf", "26", "-maxrate", "2300k", "-bufsize", "4600k", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", delivery], check=True)
+    # v36 (Blind E5): the delivery IS the CRF 18 master — no separate CRF 26
+    # re-encode any more (the v34 delivery copy is dropped). The >15 MB
+    # WhatsApp bitrate copy above is kept (out may already be that copy).
+    delivery = out
     # v35 (Ajju: "Divya is not checking at all"): automated frame-level QC
     # AFTER the render. The old team_qc scores the PLAN text and never looks
     # at a rendered frame — that is why stacked effects shipped. frame_qc
     # checks the effect audit + the layer geometry + the encoded frames, per
     # scene. A failing scene is FLAGGED in the returned dict ("qc_passed":
     # False) — never silently shipped as if it passed.
-    _fq = frame_qc(p, out)
+    _fq = frame_qc(p, out, wd)
     print(f"frame_qc: {'PASS' if _fq['passed'] else 'FAIL'} — " + ("; ".join(_fq["flaws"][:6]) if _fq["flaws"] else "all scenes clean") + ((" | warnings: " + "; ".join(_fq["warnings"][:4])) if _fq.get("warnings") else ""))
+    # v36 (Blind D): record this video's look so the next video never repeats it.
+    record_look(p.get("look"))
     return {"path": out, "delivery_path": delivery, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
             "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total,
             "frame_qc": _fq, "qc_passed": _fq["passed"]}

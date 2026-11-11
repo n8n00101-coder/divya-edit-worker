@@ -24,7 +24,7 @@ def out_cubic(t): t = cl(t); return 1-(1-t)**3
 def in_cubic(t): t = cl(t); return t**3
 def in_out_cubic(t): t = cl(t); return 4*t**3 if t < .5 else 1-(-2*t+2)**3/2
 def out_expo(t): t = cl(t); return 1 if t == 1 else 1-2**(-10*t)
-def out_back(t, s=1.70158): t = cl(t)-1; return 1+(s+1)*t**3+s*t**2   # pop overshoot
+def out_back(t, s=1.28): t = cl(t)-1; return 1+(s+1)*t**3+s*t**2   # pop overshoot (v36: 6%, was 10%)
 def out_elastic(t):
     t = cl(t)
     if t in (0, 1): return t
