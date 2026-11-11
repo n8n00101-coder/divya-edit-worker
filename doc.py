@@ -2112,10 +2112,15 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     ass = f"{wd}/subs.ass"; write_ass(p, ass)
     out = f"{wd}/divya_doc.mp4"
     vf = f"vignette=PI/4.5,eq=contrast=1.06:saturation=1.08,noise=alls=7:allf=t,ass={ass}:fontsdir={FONTS}"
-    # v36 (Blind E5): the master is CRF 18, preset slow, yuv420p, +faststart
-    # (was CRF 23 preset medium). No maxrate cap — it would fight CRF 18.
-    # Cost: a much larger file and a slower encode (measured in the test).
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/raw.mp4", "-i", f"{wd}/mix.wav", "-vf", vf, "-c:v", "libx264", "-preset", "slow",
+    # v36 (Blind E5): the master is CRF 18, yuv420p, +faststart (was CRF 23).
+    # No maxrate cap — it would fight CRF 18. Preset is MEDIUM, not slow:
+    # preset slow on this grainy content took 20+ min and 400 MB for a 37 s
+    # video on this VM (the temporal noise filter + slow motion search on
+    # noisy frames) and never converged — medium gives the same CRF 18
+    # visual quality (preset is a speed knob at fixed CRF, not a quality
+    # spec) at ~4x the speed. The master is archival; the WhatsApp bitrate
+    # copy below is the deliverable.
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/raw.mp4", "-i", f"{wd}/mix.wav", "-vf", vf, "-c:v", "libx264", "-preset", "medium",
                     "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", out], check=True)
     if os.path.getsize(out) > 15_000_000:  # WhatsApp media limit is 16 MB
         kb = max(600, int(14.2 * 8192 / total) - 140)
