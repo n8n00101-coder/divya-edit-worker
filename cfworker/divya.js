@@ -2225,6 +2225,13 @@ async function appSetupUser(req, env, u, p, body, lang) {
     const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
     if (!j) return { ok: false, error: "no job" };
     j.state = "running"; j.note = ""; j.pauseReason = ""; j.resumedAt = Date.now(); j.upd = Date.now();
+    // v39 C7: the resume can carry what the runner needs to finish the
+    // paused step — the magic-link URL (job.verifyLink, opened in the
+    // runner's own browser so the session lands there) or an SMS code
+    // (job.smsCode, filled by maybe_sms). Never logged; job records live
+    // 2 days in KV and are never returned by any read API.
+    if (typeof body.link === "string" && body.link.startsWith("https://")) j.verifyLink = body.link.slice(0, 2000);
+    if (typeof body.code === "string" && body.code.trim()) j.smsCode = body.code.trim().slice(0, 32);
     await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
     return { ok: true };
   }

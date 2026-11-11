@@ -78,6 +78,16 @@ EMAIL_PAUSE_MSG = "Nee email lo vachina link ni okkasari tap cheyu, migilina ann
 SMS_PAUSE_MSG = "Nee phone ki vachina SMS code ni app lo enter chesi Continue nokku — migilina anni nene chestha."
 CAPTCHA_PAUSE_MSG = "Image captcha — Take Control tho nuvve okka step cheyyi, tarvatha Continue nokku."
 GOOGLE_PAUSE_MSG = "Google sign-in — Take Control tho nuvve sign in cheyyi, tarvatha Continue nokku."
+# v39 C7: Groq (Stytch) sends a MAGIC LINK, not a password step. The link
+# is single-use: the user must NOT tap it themselves, or the runner's copy
+# is dead. The runner opens the link (supplied via setup/continue) in its
+# own browser, where the session must land.
+VERIFY_NEEDLES = ["check your email", "email was sent", "verify your email", "verification link", "confirm your email", "sent you an email"]
+
+
+def MAGIC_LINK_PAUSE_MSG(name):
+    return (f"{name} verification link nee email ki vachindhi — link ni nuvvu tap cheyyaku, "
+            f"Continue nokku, Divya ne link open chesi sign in avthundhi.")
 
 def SIGNIN_PAUSE_MSG(name):
     # v39: the one plain line for a provider whose auth page needs the
@@ -630,6 +640,48 @@ def detect_auth_mode(ctrls):
     return "unknown"
 
 
+def pause_for_email_verify(page, job, cfg):
+    """Magic-link verification pause (v39 C7): Groq (Stytch) sends a link
+    instead of a password step. Pause with reason=email so the app surfaces
+    the verification step; on resume, open the link the user supplied via
+    setup/continue (job.verify_link) in THIS browser — that is where the
+    session must land — then verify the console is reachable signed-in.
+    Returns True only when signed in; False when stopped or the sign-in
+    did not complete (the caller fails clearly, never hangs)."""
+    name = cfg["name"]
+    progress("paused", "verify-email", MAGIC_LINK_PAUSE_MSG(name), page.url, reason="email")
+    if wait_pause():
+        return False
+    page.wait_for_timeout(2000)
+    j = get_job()
+    link = str(j.get("verify_link") or j.get("verifyLink") or "").strip()
+    if link.startswith("http"):
+        progress("running", "verify-link", f"{name} verification link open chesthunna — sign in avthundhi.", link)
+        try:
+            page.goto(link, timeout=60000)
+        except Exception:
+            pass
+        # The link may redirect (Stytch discovery) — give it up to 30s to
+        # leave the redirect host before checking the console.
+        for _ in range(15):
+            page.wait_for_timeout(2000)
+            if "stytch.com" not in page.url:
+                break
+            if _page_says(page, ["dashboard", "api keys", "create api key", "log out", "sign out"]):
+                break
+    try:
+        page.goto(cfg["keys_url"], timeout=60000)
+    except Exception:
+        pass
+    page.wait_for_timeout(3000)
+    if _page_says(page, ["create an account or login", "continue with email", "continue with google"]):
+        return False
+    ctrls = wait_for_auth_form(page, cfg, timeout_s=15)
+    if ctrls is None:
+        return True  # no auth form any more — signed in
+    return False
+
+
 def pause_for_signin(page, cfg, note=None):
     """Surface the sign-in step: post paused-signin WITH the current page
     URL, then wait for the user to sign in + tap Continue. Returns True
@@ -729,10 +781,19 @@ def flow_email_signup(page, job, cfg):
         maybe_captcha(page)
         if check_stop():
             return _stopped()
-        # The password field appears after Continue — or SSO buttons do.
+        # The password field appears after Continue — or SSO buttons do —
+        # or the provider sent a MAGIC LINK instead (Groq/Stytch: the page
+        # shows "Check your email" and no auth form at all). That screen
+        # is a verification pause, never a failure.
         ctrls2 = wait_for_auth_form(page, cfg, timeout_s=30)
         if ctrls2 is None:
-            return _fail(f"{name} — email tarvatha next step load avvaledu (step: signup form). Take Control tho try cheyyi.")
+            if _page_says(page, VERIFY_NEEDLES):
+                if pause_for_email_verify(page, job, cfg):
+                    pass  # verified + signed in — fall through to key creation
+                else:
+                    return _fail(f"{name} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).")
+            else:
+                return _fail(f"{name} — email tarvatha next step load avvaledu (step: signup form). Take Control tho try cheyyi.")
         if ctrls2.get("stopped"):
             return _stopped()
         mode2 = detect_auth_mode(ctrls2)
@@ -783,11 +844,11 @@ def flow_email_signup(page, job, cfg):
         return _stopped()
     # Email verification: Divya cannot open the user's mailbox yet (Gmail
     # connect pending) — pause and let the user tap the link + Continue.
-    if _page_says(page, ["verify your email", "check your email", "verification"]):
-        progress("paused", "verify-email", EMAIL_PAUSE_MSG, page.url)
-        if wait_pause():
-            return _stopped()
-        page.wait_for_timeout(3000)
+    # v39 C7: the magic-link resume opens the supplied link in this browser
+    # (session must land here) and verifies the console before proceeding.
+    if _page_says(page, VERIFY_NEEDLES):
+        if not pause_for_email_verify(page, job, cfg):
+            return _fail(f"{cfg['name']} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).")
     if check_stop():
         return _stopped()
     progress("running", "api-key", "API key create chesthunna.", page.url)
@@ -877,12 +938,10 @@ def flow_cloudflare(page, job, cfg):
     sms = maybe_sms(page, job)
     if sms is False:
         return _stopped()
-    # Email verification pause (same as the other providers).
-    if _page_says(page, ["verify your email", "check your email", "verification"]):
-        progress("paused", "verify-email", EMAIL_PAUSE_MSG, page.url)
-        if wait_pause():
-            return _stopped()
-        page.wait_for_timeout(3000)
+    # Email verification pause (same as the other providers, v39 C7).
+    if _page_says(page, VERIFY_NEEDLES):
+        if not pause_for_email_verify(page, job, cfg):
+            return _fail(f"{cfg['name']} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).")
     if check_stop():
         return _stopped()
     # (b) API token with Workers deploy permissions, via the dashboard.
