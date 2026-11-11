@@ -340,7 +340,12 @@ const PROVIDERS = {
   facebook:  { title: "Facebook connect",  desc: "Page lo post cheyadaniki" },
   telegram:  { title: "Telegram connect",  desc: "Telegram lo kuda Divya" },
 };
-const GSCOPE = { youtube: "openid email https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly", google: "openid email profile https://www.googleapis.com/auth/gmail.readonly" };
+const GSCOPE = { youtube: "openid email https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly", google: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/cloud-platform" };
+// v40 Gemini: cloud-platform is the ONLY scope keys.create accepts (no
+// narrower scope exists) — it is also a SENSITIVE scope: an unverified app
+// shows "Google hasn't verified this app" + a 100-user lifetime cap until
+// Google approves sensitive-scope verification. Adding it forces ALL Google
+// connects to re-consent (old tokens cannot mint cloud-platform tokens).
 const MSCOPE = { instagram: "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management", facebook: "pages_show_list,pages_manage_posts,pages_read_engagement" };
 
 async function connectMenu(env, user) {
@@ -1883,7 +1888,7 @@ async function appRunner(req, env, p, url, body) {
 const SETUP_PROVIDERS = {
   groq: { name: "Groq", site: "console.groq.com", url: "https://console.groq.com/signup", flow: "email" },
   openrouter: { name: "OpenRouter", site: "openrouter.ai", url: "https://openrouter.ai/sign-up", flow: "email" },
-  gemini: { name: "Gemini (Google AI Studio)", site: "aistudio.google.com", url: "https://aistudio.google.com/", flow: "google" },
+  gemini: { name: "Gemini (Google AI Studio)", site: "aistudio.google.com", url: "https://aistudio.google.com/", flow: "google" }, // v40: provisioned SERVER-SIDE by provisionGeminiKey() in setupStartNext — flow "google" stays as the runner fallback for manual runs only
   cloudflare: { name: "Cloudflare (server)", site: "dash.cloudflare.com", url: "https://dash.cloudflare.com/sign-up", flow: "token" },
 };
 function setupJobId() { return [...crypto.getRandomValues(new Uint8Array(10))].map(b => b.toString(16).padStart(2, "0")).join(""); }
@@ -1920,7 +1925,7 @@ async function setupWatchdog(env, n, chain) {
   const mins = Math.max(1, Math.round((Date.now() - last) / 60000));
   const fin = { state: "stalled", done: chain.done || [], failed: chain.failed || [],
     provider: cur.provider, note: (cur.note || "") + ` — runner nunchi ${mins} min nunchi update ledu (setup aagipoyindhi).`,
-    lastStep: cur.step || "", lastUrl: cur.url || "", at: Date.now() };
+    lastStep: cur.step || "", lastUrl: cur.url || "", at: Date.now(), geminiVerify: (chain && chain.geminiNeedsVerify) || null };
   await env.KV.put(`setupdone:${n}`, JSON.stringify(fin), { expirationTtl: 86400 });
   await env.KV.delete(`setupchain:${n}`);
   return fin;
@@ -2350,7 +2355,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       if (stalled) {
         const state = setupStateFor(null, null, stalled, keys);
         const autoLog = await autoLogRead(env, u.n);
-        return { ok: true, active: false, consent: !!consent, finished: stalled, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), autoLog: autoLog.slice(0, 10) };
+        return { ok: true, active: false, consent: !!consent, finished: stalled, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (stalled && stalled.geminiVerify) || null, autoLog: autoLog.slice(0, 10) };
       }
       chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     }
@@ -2365,7 +2370,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       let auto = null;
       try { auto = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", false); } catch {}
       const autoLog = await autoLogRead(env, u.n);
-      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
+      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
     }
     let cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
     // v40 (R19): paused on email verification — try feeding the magic link
@@ -2396,7 +2401,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // of a bare "Setup running…". Additive field; older app builds ignore it.
     const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang) } : null;
     const autoLog = await autoLogRead(env, u.n);
-    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, autoLog: autoLog.slice(0, 10) };
+    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, geminiVerify: chain.geminiNeedsVerify || null, autoLog: autoLog.slice(0, 10) };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
@@ -2493,6 +2498,131 @@ async function appSetupUser(req, env, u, p, body, lang) {
   }
   return { ok: false, error: "not found" };
 }
+// ===== v40: Gemini server-side provisioning (no browser, no runner) =====
+// The GitHub runner cannot create a Gemini key: AI Studio needs a Google
+// sign-in and the headless runner has no Google session (the runner's
+// flow_google is a dead end — left untouched as the fallback for manual
+// runs). The Worker does it instead, with the user's stored Google OAuth
+// token (tok:<n>:google, refreshed by googleToken()): list/reuse a project
+// -> create one if none -> enable APIs -> create a restricted key -> fetch
+// its key string -> test it. The key is sealed via storeKey() like every
+// other provider key — never logged, never returned by any API.
+// Returns {ok:true, projectNumber, projectId, reused} on success, else
+// {ok:false, reason, ...}: "no-google-token" | "needs-scope" (token predates
+// the cloud-platform consent — user must reconnect Google) | "needs-tos"
+// (first-project Cloud ToS tap) | "needs-verification" (key IS stored; only
+// the 30-second phone QR scan at verifyUrl is pending) | "list-projects-failed"
+// | "create-project-failed" | "enable-apis-failed" | "create-key-failed" |
+// "test-failed" | "provision-error".
+const GEMINI_GCP_SERVICES = ["generativelanguage.googleapis.com", "apikeys.googleapis.com", "serviceusage.googleapis.com", "cloudresourcemanager.googleapis.com"];
+const GEMINI_OP_TIMEOUT_MS = 120000;
+const GEMINI_POLL_MS = 5000;
+async function gcpJson(tok, url, opts) {
+  const r = await fetch(url, { ...(opts || {}), headers: { ...(opts?.headers || {}), Authorization: "Bearer " + tok, "content-type": "application/json" } }).catch(() => null);
+  const b = r ? await r.json().catch(() => ({})) : {};
+  return { ok: !!r && r.ok, status: r ? r.status : 0, body: b };
+}
+async function gcpPollOp(tok, pollUrl) {
+  // Long-running GCP operation: poll until done (success or error) or timeout.
+  const deadline = Date.now() + GEMINI_OP_TIMEOUT_MS;
+  while (true) {
+    const r = await gcpJson(tok, pollUrl);
+    if (r.ok && r.body.done) return r.body;
+    if (!r.ok) return { error: r.body.error || { message: "operation poll failed: HTTP " + r.status } };
+    if (r.body.error) return r.body; // done:true carrying an error
+    if (Date.now() >= deadline) return { error: { message: "operation timed out" }, timeout: true };
+    await new Promise(res => setTimeout(res, GEMINI_POLL_MS));
+  }
+}
+async function provisionGeminiKey(env, n) {
+  const tok = await googleToken(env, n);
+  if (!tok) return { ok: false, reason: "no-google-token" };
+  const at = tok.access_token;
+  const errMsg = e => String((e && (e.message || e.status)) || "");
+  const isTos = e => /terms of service/i.test(errMsg(e));
+  const isScope = (status, e) => status === 403 && /insufficient|PERMISSION_DENIED|does not have/i.test(errMsg(e));
+  try {
+    // 1. Reuse an existing project when possible — dodges both the
+    // first-project ToS tap and the free-tier verification problem (an
+    // AI Studio project is already ToS-accepted + verified). Prefer a
+    // project with the Generative Language API already enabled.
+    let projectNumber = "", projectId = "", reused = false;
+    const list = await gcpJson(at, "https://cloudresourcemanager.googleapis.com/v1/projects?pageSize=100");
+    if (!list.ok) {
+      const e = list.body.error || {};
+      if (list.status === 403 && isTos(e)) return { ok: false, reason: "needs-tos", tosUrl: "https://console.cloud.google.com" };
+      if (isScope(list.status, e)) return { ok: false, reason: "needs-scope" };
+      return { ok: false, reason: "list-projects-failed", status: list.status, detail: errMsg(e).slice(0, 200) };
+    }
+    const projects = (list.body.projects || []).filter(p => p.projectNumber && p.lifecycleState !== "DELETE_REQUESTED");
+    for (const p of projects.slice(0, 5)) {
+      const svc = await gcpJson(at, `https://serviceusage.googleapis.com/v1/projects/${p.projectNumber}/services/generativelanguage.googleapis.com`);
+      if (svc.ok && svc.body.state === "ENABLED") { projectNumber = String(p.projectNumber); projectId = String(p.projectId || ""); reused = true; break; }
+    }
+    if (!projectNumber && projects.length) { projectNumber = String(projects[0].projectNumber); projectId = String(projects[0].projectId || ""); reused = true; }
+    // 2. No project: create one (no parent/org — a user account needs none).
+    if (!projectNumber) {
+      const pid = "divya-" + [...crypto.getRandomValues(new Uint8Array(6))].map(b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
+      const created = await gcpJson(at, "https://cloudresourcemanager.googleapis.com/v1/projects", { method: "POST", body: JSON.stringify({ projectId: pid, name: "Divya" }) });
+      if (!created.ok) {
+        const e = created.body.error || {};
+        if (created.status === 403 && isTos(e)) return { ok: false, reason: "needs-tos", tosUrl: "https://console.cloud.google.com" };
+        if (isScope(created.status, e)) return { ok: false, reason: "needs-scope" };
+        return { ok: false, reason: "create-project-failed", status: created.status, detail: errMsg(e).slice(0, 200) };
+      }
+      const op = await gcpPollOp(at, "https://cloudresourcemanager.googleapis.com/v1/" + created.body.name);
+      if (op.error) {
+        if (isTos(op.error)) return { ok: false, reason: "needs-tos", tosUrl: "https://console.cloud.google.com" };
+        return { ok: false, reason: "create-project-failed", detail: errMsg(op.error).slice(0, 200) };
+      }
+      projectNumber = String(op.response?.projectNumber || "");
+      projectId = String(op.response?.projectId || pid);
+      if (!projectNumber) return { ok: false, reason: "create-project-failed", detail: "no projectNumber in operation response" };
+    }
+    // 3. Enable the APIs (batchEnable, one call).
+    const en = await gcpJson(at, `https://serviceusage.googleapis.com/v1/projects/${projectNumber}/services:batchEnable`, { method: "POST", body: JSON.stringify({ serviceIds: GEMINI_GCP_SERVICES }) });
+    if (!en.ok) return { ok: false, reason: "enable-apis-failed", status: en.status, detail: errMsg(en.body.error).slice(0, 200) };
+    const enOp = await gcpPollOp(at, "https://serviceusage.googleapis.com/v1/" + en.body.name);
+    if (enOp.error) return { ok: false, reason: "enable-apis-failed", detail: errMsg(enOp.error).slice(0, 200) };
+    // 4. Create the key — restricted to generativelanguage (MANDATORY:
+    // Gemini rejects unrestricted standard keys).
+    const kc = await gcpJson(at, `https://apikeys.googleapis.com/v2/projects/${projectNumber}/locations/global/keys`, { method: "POST", body: JSON.stringify({ displayName: "Divya", restrictions: { apiTargets: [{ service: "generativelanguage.googleapis.com" }] } }) });
+    if (!kc.ok) return { ok: false, reason: "create-key-failed", status: kc.status, detail: errMsg(kc.body.error).slice(0, 200) };
+    const kcOp = await gcpPollOp(at, "https://apikeys.googleapis.com/v2/" + kc.body.name);
+    if (kcOp.error) return { ok: false, reason: "create-key-failed", detail: errMsg(kcOp.error).slice(0, 200) };
+    const keyName = String(kcOp.response?.name || "");
+    if (!keyName) return { ok: false, reason: "create-key-failed", detail: "no key name in operation response" };
+    // 5. Fetch the key string (ListKeys/GetKey deliberately omit it).
+    const ks = await gcpJson(at, `https://apikeys.googleapis.com/v2/${keyName}/keyString`);
+    if (!ks.ok || !ks.body.keyString) return { ok: false, reason: "create-key-failed", status: ks.status, detail: "keyString not returned" };
+    const key = String(ks.body.keyString);
+    // 6. Test it (same probe setup.py uses). 403 FREE_TIER_VERIFICATION_REQUIRED
+    // means the key EXISTS but the project needs the 30-second phone QR
+    // scan — store the key anyway; it becomes usable after verification.
+    // Other failures are retried (API enablement can take a minute to
+    // propagate) before giving up; an untested key is NOT stored, so a
+    // later auto-provision can retry cleanly instead of piling up keys.
+    let probe = null, probeBody = {};
+    for (let attempt = 0; attempt < 3; attempt++) {
+      probe = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=${encodeURIComponent(key)}`).catch(() => null);
+      probeBody = probe ? await probe.json().catch(() => ({})) : {};
+      if (probe && probe.ok) break;
+      if (probe && probe.status === 403 && /FREE_TIER_VERIFICATION_REQUIRED/i.test(JSON.stringify(probeBody))) break;
+      if (attempt < 2) await new Promise(res => setTimeout(res, 10000));
+    }
+    if (probe && probe.ok) {
+      await storeKey(env, n, "gemini", key, { who: "AI Studio" });
+      return { ok: true, projectNumber, projectId, reused };
+    }
+    if (probe && probe.status === 403 && /FREE_TIER_VERIFICATION_REQUIRED/i.test(JSON.stringify(probeBody))) {
+      await storeKey(env, n, "gemini", key, { who: "AI Studio" });
+      return { ok: false, reason: "needs-verification", projectNumber, projectId, reused, verifyUrl: `https://aistudio.google.com/verify?project=${projectNumber}` };
+    }
+    return { ok: false, reason: "test-failed", status: probe ? probe.status : 0 };
+  } catch (e) {
+    return { ok: false, reason: "provision-error", detail: String(e).slice(0, 200) };
+  }
+}
 async function setupStartNext(env, n) {
   const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
   if (!chain) return { ok: false, error: "no chain" };
@@ -2501,12 +2631,43 @@ async function setupStartNext(env, n) {
   // v24: record the outcome before deleting the chain — otherwise the app has
   // nothing to show when the setup ends (the mini-box just vanished).
   // v38 merge fix: if NO provider produced a key, the run failed (not done).
-  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, at: Date.now(), ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
+  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
   const job = setupJobId();
   const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
   await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
   chain.current = job;
   await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+  // v40: Gemini is provisioned SERVER-SIDE here — the runner's flow_google
+  // is a dead end (no Google session in the headless runner), so NO GitHub
+  // dispatch for gemini. On success the key is sealed in the KV slot and
+  // the chain advances like the runner's done path. On needs-verification
+  // the key is ALSO stored (it becomes usable after the phone QR scan) and
+  // gemini counts as done, with geminiNeedsVerify carried so the app can
+  // show the verify step. Any other failure marks gemini failed and the
+  // chain advances to the next provider (one provider's failure never
+  // kills the chain).
+  if (nextId === "gemini") {
+    rec.state = "running"; rec.step = "creating key"; rec.upd = Date.now();
+    await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    const prov = await provisionGeminiKey(env, n).catch(e => ({ ok: false, reason: "provision-error", detail: String(e).slice(0, 200) }));
+    rec.upd = Date.now();
+    if (prov.ok) {
+      rec.state = "done"; rec.step = "key saved"; rec.note = "";
+      if (!chain.done.includes("gemini")) chain.done.push("gemini");
+    } else if (prov.reason === "needs-verification") {
+      rec.state = "done"; rec.step = "key saved — verification pending"; rec.note = "";
+      if (!chain.done.includes("gemini")) chain.done.push("gemini");
+      chain.geminiNeedsVerify = { projectNumber: prov.projectNumber || "", verifyUrl: prov.verifyUrl || "" };
+    } else {
+      rec.state = "failed"; rec.step = "failed";
+      rec.note = String(prov.reason || "failed").slice(0, 200);
+      chain.failed = chain.failed || [];
+      if (!chain.failed.includes("gemini")) chain.failed.push("gemini");
+    }
+    await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+    return setupStartNext(env, n); // advance to the next provider
+  }
   const ok = await setupDispatch(env, job, nextId);
   if (!ok) { await env.KV.delete(`setupjob:${job}`); return { ok: false, error: "dispatch failed" }; }
   return { ok: true, job, provider: nextId };
