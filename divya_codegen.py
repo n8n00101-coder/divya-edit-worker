@@ -46,12 +46,22 @@ Interfaces (Divya renders 1080x1920; the kit was written for 720x1280):
     MUST be size-agnostic: derive w, h from A.size (never hard-code 720x1280).
   def fx_<name>(layer, t, start, dur) -> PIL RGBA image (same size as layer, content stays inside 8%/10% safe box)
     MUST be size-agnostic: derive w, h from layer.size.
-  def vis_<name>(t, st=0, d=1.0, accent=(r,g,b)) -> PIL RGBA 720x1280: a REAL OBJECT of the topic, drawn and animated in.
+  def vis_<name>(t, st=0, d=1.0, accent=(r,g,b), words=None) -> PIL RGBA 720x1280: a REAL OBJECT of the topic, drawn and animated in.
     vis_ ALWAYS returns 720x1280 RGBA (Divya upscales it 1.5x); use visuals_lib's W, H (720, 1280).
+    words = [(start, dur, text), ...] — the scene's word timings (scene-local seconds).
+    WORD-TIMING (v34, Hark's word_t pattern — this is what makes a video feel alive):
+    time the animation to SPECIFIC words, never just the scene clock. A word's
+    start time is words[min(idx, len(words)-1)][0]. Examples: a counter counts
+    up while the number words are spoken; a stamp slams on the verdict word
+    ("banned"); dots fill one by one as the number is spoken; a phone number
+    types out character by character as the voice reads it; a stopwatch sector
+    sweeps while the rate is spoken. If words is None, fall back to progress
+    p = (t-st)/d.
 Visual recipe (visuals_lib helpers: _L, _p, _oe, _ob, place, shadow, texture, _font, wrap, scene_bg, VIS):
   1 silhouette (polygon / rounded rect)  2 material (flat colour + texture())  3 two-four details that make it
   recognisable (label, lines, text)  4 depth: shadow()  5 ONE accent element  6 build-in motion from p (pop, slide,
-  draw-on, fill, drop). Real text (headline, numbers, names) beats grey lines. Never a stick figure when an object fits.
+  draw-on, fill, drop) — and WORD-TIMED: the key change lands on a specific word (use words=, see the interface
+  above). Real text (headline, numbers, names) beats grey lines. Never a stick figure when an object fits.
 Rules: each function is built from a REAL object of the topic; one comment line above each function saying which
 sentence it serves and why; under 40 ms per 720x1280 frame (prefer numpy over pixel loops); no file, network or
 subprocess use; no reuse of the families listed as recent. Return only one ```python block."""
@@ -64,7 +74,9 @@ Scenes: {json.dumps(plan['scenes'])}
 2) For every scene give ONE motion idea built from one object, tied to its hit word (enter or emphasis).
 3) For every scene change give ONE transition idea built from an object.
 3b) For every scene give the MAIN VISUAL: the real object to draw (map, document, packet, organ, machine, place ...),
-    its details/text, and how it animates in. Reuse a library visual only if it fits exactly; else write a new vis_.
+    its details/text, and how it animates in — TIME IT TO A WORD: say which word index triggers the key change
+    (e.g. "the stamp slams on word 2 'banned'", "the counter counts up during words 3-6"). Reuse a library visual
+    only if it fits exactly; else write a new vis_.
 4) Pick a motion personality (snappy / smooth / heavy / glitchy / playful) and say why.
 Answer as JSON: {{"objects": [...], "personality": "...", "scene_fx": [{{"scene":1,"idea":"...","fn":"fx_name"}}],
 "transitions": [{{"between":[1,2],"idea":"...","fn":"tr_name"}}],
