@@ -1890,11 +1890,15 @@ def frame_qc(p, video_path, wd=None):
             # on the word, Blind A6), not a defect. So at the early check
             # (0.5 s), a missing visual is only a flaw if the hit word
             # (pop_t) has already passed. At mid/late it is always a flaw.
+            # Likewise, a visual may still be ENTERING at 0.5 s (sliding in)
+            # and legitimately touch the frame edge mid-slide — edge
+            # clipping only counts at mid/late, when the enter is done.
             if _tt == 0.5:
                 _pop = float(sc.get("pop_t", 0.0) or 0.0)
                 _is_buildin = (sc.get("_effect_choice") or {}).get("vis") == "build_in"
                 if _is_buildin and _pop > 0.5:
                     _gf = [f for f in _gf if "visual missing/empty" not in f]
+                _gf = [f for f in _gf if "clipped at frame edge" not in f]
             flaws += [f"scene {i + 1} @{_tt:.1f}s: {f}" for f in _gf]
             warnings += [f"scene {i + 1} @{_tt:.1f}s: {w}" for w in _gw]
         # (d) the typewriter invariant (whole words only, never a partial word).
@@ -1930,16 +1934,22 @@ def frame_qc(p, video_path, wd=None):
             # Each 0.5 s frame is compared to ITS OWN scene's background
             # (the section palette changes the bg per scene) — a frame whose
             # mean brightness change vs its bg is < 1% is blank (no element).
+            # A blank only counts if it PERSISTS (Blind A5: > 200 ms): one
+            # dark frame can be a blink (the eyelids transition's closed
+            # point is ~60 ms), so a flaw needs TWO consecutive 0.5 s
+            # samples both blank/solid/unchanged (>= 0.5 s of blank).
             _bgs = {}
+            _prev = None  # (kind, fn) of the previous frame's blank, if any
             for _k, _fn in enumerate(_frames):
                 _im = np.asarray(Image.open(os.path.join(_fdir, _fn)).convert("L"), dtype=np.float32)
                 _mean, _std = float(_im.mean()), float(_im.std())
+                _kind = None
                 if _mean < 8:
-                    all_flaws.append(f"rendered frame {_fn} is blank/black (mean {_mean:.1f})")
+                    _kind = f"blank/black (mean {_mean:.1f})"
                 elif _mean > 245:
-                    all_flaws.append(f"rendered frame {_fn} is blown out (mean {_mean:.1f})")
+                    _kind = f"blown out (mean {_mean:.1f})"
                 elif _std < 5:
-                    all_flaws.append(f"rendered frame {_fn} is a solid colour (std {_std:.1f})")
+                    _kind = f"solid colour (std {_std:.1f})"
                 else:
                     _t = _k * 0.5
                     _si = max([j for j, _st in enumerate(starts) if _st <= _t] or [0])
@@ -1947,7 +1957,10 @@ def frame_qc(p, video_path, wd=None):
                         _bgs[_si] = np.asarray(background(p["scenes"][_si]["mood"], p.get("look"),
                                                           p["scenes"][_si].get("section")).resize((270, 480)).convert("L"), dtype=np.float32)
                     if float(np.abs(_im - _bgs[_si]).mean()) < 2.55:
-                        all_flaws.append(f"rendered frame {_fn} (t={_t:.1f}s, scene {_si + 1}) is blank vs background (<1% change)")
+                        _kind = f"blank vs background (t={_t:.1f}s, scene {_si + 1}, <1% change)"
+                if _kind and _prev and _prev[0] == _kind.split(" (")[0]:
+                    all_flaws.append(f"rendered frames {_prev[1]} + {_fn} are {_kind} for >= 0.5 s")
+                _prev = (_kind.split(" (")[0], _fn) if _kind else None
         except Exception as e:
             all_flaws.append(f"frame check failed: {str(e)[:100]}")
     result = {"passed": not all_flaws, "scenes": scenes_out, "flaws": all_flaws,
