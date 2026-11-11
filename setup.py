@@ -45,6 +45,20 @@ new {provider, step, status, message} fields) and the verified key to
 /api/setup/runner/key. Progress/reporting failures are best-effort: they
 are logged and the setup continues. Keys are tested with one cheap API
 call before they are posted anywhere.
+
+v39 (setup-flow fix, 2026-11-11 — the live test proved the Groq step
+stalls silently): Groq's console auth is a JS-rendered combined
+"Create Account or Login" page (console.groq.com/signup and /login serve
+the same shell; the form renders client-side) offering Google / GitHub /
+SSO / email. The runner must therefore NEVER fill email+password blindly:
+it waits for the rendered auth form, detects which mode the page is in
+(email+password / email-first / SSO-only / login), and — when the page
+needs the user's own sign-in — posts a paused-signin progress WITH the
+sign-in URL so the app surfaces "sign in here, then tap Continue"
+instead of "Setup running…" forever. Every pause re-posts a heartbeat
+while waiting (so the Worker's staleness watchdog can tell "waiting on
+the user" from "runner dead"), and every progress post carries the pause
+`reason` the Worker stores.
 """
 import os, sys, time, json, re
 import httpx
@@ -65,6 +79,17 @@ SMS_PAUSE_MSG = "Nee phone ki vachina SMS code ni app lo enter chesi Continue no
 CAPTCHA_PAUSE_MSG = "Image captcha — Take Control tho nuvve okka step cheyyi, tarvatha Continue nokku."
 GOOGLE_PAUSE_MSG = "Google sign-in — Take Control tho nuvve sign in cheyyi, tarvatha Continue nokku."
 
+def SIGNIN_PAUSE_MSG(name):
+    # v39: the one plain line for a provider whose auth page needs the
+    # USER's own sign-in (Groq SSO chooser / existing account). The app
+    # shows this next to an "Open in browser" button for the sign-in URL.
+    return f"{name} sign-in kavali — browser lo open chesi sign in cheyu, tarvatha Continue nokku, migilina anni nene chestha."
+
+# v39: last progress payload, re-posted as a heartbeat while the runner
+# waits on a pause — so the Worker's staleness watchdog sees a live
+# runner (fresh upd) and never mistakes "waiting on the user" for dead.
+LAST_PROGRESS = {"state": "running", "step": "", "note": "", "url": "", "reason": None}
+
 CF_API = "https://api.cloudflare.com/client/v4"
 CF_SCRIPT_NAME = "divya"
 
@@ -81,25 +106,61 @@ def _pause_status(step):
     return "paused"
 
 
-def progress(state, step="", note="", url="", status=None):
+def _pause_reason(step):
+    """Pause reason for a step name (email/sms/captcha/signin), or None."""
+    if step in ("verify-email", "email"):
+        return "email"
+    if step == "captcha":
+        return "captcha"
+    if step == "sms":
+        return "sms"
+    if step in ("google-signin", "signin"):
+        return "signin"
+    return None
+
+
+def progress(state, step="", note="", url="", status=None, reason=None):
     """POST progress to the Worker (best-effort: never fails the setup).
 
     Payload carries BOTH shapes: the legacy {state, step, note, url} the
     current Worker stores in KV, and the new {provider, step, status,
     message} the setup/status endpoint reads. `status` defaults from
     state+step (paused-email / paused-captcha / paused-sms / ...).
+    v39: `reason` is sent explicitly on pauses (email/sms/captcha/signin)
+    — the Worker stores it as pauseReason, so the app shows the right
+    user step instead of defaulting every pause to the email line.
     """
     st = status or (state if state != "paused" else _pause_status(step))
+    rsn = reason or (st[len("paused-"):] if st.startswith("paused-") else _pause_reason(step))
     payload = {
         "provider": CURRENT_PROVIDER or PROVIDER,
         "step": step, "status": st, "message": note,
         "state": state, "note": note, "url": url,
     }
+    if rsn:
+        payload["reason"] = rsn
+    LAST_PROGRESS.update({"state": state, "step": step, "note": note, "url": url, "reason": rsn})
     try:
         httpx.post(f"{WORKER}/api/setup/runner/progress", params={"job": JOB},
                    json=payload, headers=H, timeout=20)
     except Exception as e:
         print("progress failed:", e)
+
+
+def heartbeat():
+    """Re-post the last progress event (best-effort). Called while the
+    runner waits on a user pause, so the Worker sees a live runner and
+    its staleness watchdog does not mark a waiting run as dead."""
+    try:
+        httpx.post(f"{WORKER}/api/setup/runner/progress", params={"job": JOB},
+                   json={"provider": CURRENT_PROVIDER or PROVIDER,
+                         "step": LAST_PROGRESS["step"], "status": LAST_PROGRESS["state"] if LAST_PROGRESS["state"] != "paused" else _pause_status(LAST_PROGRESS["step"]),
+                         "message": LAST_PROGRESS["note"], "state": LAST_PROGRESS["state"],
+                         "note": LAST_PROGRESS["note"], "url": LAST_PROGRESS["url"],
+                         "reason": LAST_PROGRESS["reason"]},
+                   headers=H, timeout=20)
+    except Exception:
+        pass
 
 
 def report_result(provider, status, key=None, error=None, extra=None):
@@ -148,7 +209,13 @@ def get_job():
 
 
 def check_stop():
-    """True if the user stopped the job. Waits while paused (up to 30 min)."""
+    """True if the user stopped the job. Waits while paused (up to 30 min).
+
+    v39: while paused, re-posts the last progress as a heartbeat (every
+    poll, ~15s) so the Worker sees a LIVE runner waiting on the user —
+    without it the Worker's staleness watchdog cannot tell a waiting run
+    from a dead one, and the app would show "Setup running…" forever.
+    """
     deadline = time.time() + 1800
     while True:
         j = get_job()
@@ -156,6 +223,7 @@ def check_stop():
         if st == "stopped":
             return True
         if st == "paused":
+            heartbeat()
             time.sleep(15)
             if time.time() > deadline:
                 return True
@@ -196,6 +264,9 @@ def solve_audio_captcha(page):
         import urllib.request
         data = urllib.request.urlopen(audio_url, timeout=30).read()
         open("/tmp/captcha.mp3", "wb").write(data)
+        # v39: the first Whisper model download can take minutes on a cold
+        # runner — say so, or the app shows a frozen "running" meanwhile.
+        progress("running", "captcha", "Audio captcha transcribe chesthunna.", page.url)
         from faster_whisper import WhisperModel
         model = WhisperModel("tiny", device="cpu", compute_type="int8")
         segs, _ = model.transcribe("/tmp/captcha.mp3")
@@ -489,27 +560,182 @@ def submit_provider_result(provider, name, result):
 
 # ---------- provider flows (each returns {"status","error","key","extra"}) ----------
 
+# ---------- v39: auth-page detection (the Groq stall fix) ----------
+# Groq's console auth (and other providers' pages) is a JS-rendered
+# combined "Create Account or Login" page: the form appears only after
+# client-side render, and it may offer Google/GitHub/SSO buttons with NO
+# password field at all. Filling email+password blindly after a fixed
+# sleep either fails or — worse — sits silently on the login page. So the
+# runner waits for the rendered form, detects its mode, and surfaces a
+# sign-in pause (with the page URL) whenever the user must sign in.
+
+_AUTH_EMAIL = ["input[type='email']", "input[name='email']", "input[autocomplete='email']", "input[placeholder*='email' i]"]
+_AUTH_PASS = ["input[type='password']", "input[name='password']", "input[autocomplete='current-password']", "input[autocomplete='new-password']"]
+_AUTH_SSO = ["button:has-text('Google')", "a:has-text('Google')", "button:has-text('GitHub')", "a:has-text('GitHub')", "button:has-text('SSO')", "a:has-text('SSO')"]
+
+
+def _visible(page, selectors):
+    """True if any of the selectors matches a VISIBLE element."""
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() and loc.is_visible():
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _any_visible(page, selectors):
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() and loc.is_visible():
+                return sel
+        except Exception:
+            pass
+    return None
+
+
+def wait_for_auth_form(page, cfg, timeout_s=60):
+    """Wait for the rendered auth form (up to timeout_s). Posts progress
+    while waiting so the app shows movement, never a frozen "running".
+    Returns a controls dict, or None if no auth control ever appeared."""
+    progress("running", "signin-page", f"{cfg['name']} sign-in page load avthondhi…", page.url)
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        ctrls = {
+            "email": _visible(page, _AUTH_EMAIL),
+            "password": _visible(page, _AUTH_PASS),
+            "sso": _visible(page, _AUTH_SSO),
+        }
+        if ctrls["email"] or ctrls["password"] or ctrls["sso"]:
+            return ctrls
+        if check_stop():
+            return {"stopped": True}
+        page.wait_for_timeout(2000)
+    return None
+
+
+def detect_auth_mode(ctrls):
+    """email-password | email-first | sso-only | unknown."""
+    if not ctrls or ctrls.get("stopped"):
+        return "unknown"
+    if ctrls.get("password") and ctrls.get("email"):
+        return "email-password"
+    if ctrls.get("email"):
+        return "email-first"
+    if ctrls.get("sso"):
+        return "sso-only"
+    return "unknown"
+
+
+def pause_for_signin(page, cfg, note=None):
+    """Surface the sign-in step: post paused-signin WITH the current page
+    URL, then wait for the user to sign in + tap Continue. Returns True
+    if the user resumed (runner should re-detect the page), False if the
+    user stopped the job. Never hangs silently: wait_pause is bounded
+    (30 min) and heartbeats while waiting."""
+    progress("paused", "google-signin", note or SIGNIN_PAUSE_MSG(cfg["name"]), page.url, reason="signin")
+    if wait_pause():
+        return False
+    page.wait_for_timeout(3000)
+    return True
+
+
 def flow_email_signup(page, job, cfg):
-    """Generic email-signup flow: signup page -> email+password -> verify
-    (pause) -> keys page -> create key -> extract."""
+    """Email-signup flow, v39: detect the rendered auth page first.
+
+    signup page -> detect mode -> (email+password | email-first, then
+    password | SSO-only: pause for the user's sign-in) -> verify (pause)
+    -> keys page -> create key -> extract. Any page that never renders a
+    usable form FAILS with the exact step named — never hangs."""
     email, password = job["email"], job["pass"]
-    progress("running", "signup", f"{cfg['name']} account create chesthunna.", cfg["url"])
+    name = cfg["name"]
+    progress("running", "signup", f"{name} account create chesthunna.", cfg["url"])
     page.goto(cfg["url"], timeout=60000)
-    page.wait_for_timeout(2500)
+    page.wait_for_timeout(1500)
     if check_stop():
         return _stopped()
     maybe_captcha(page)
     if check_stop():
         return _stopped()
-    ok = fill(page, ["input[type='email']", "input[name='email']", "input[placeholder*='email' i]"], email)
-    ok = fill(page, ["input[type='password']", "input[name='password']"], password) and ok
-    if not ok:
-        return _fail("Signup form kanipinchaledu — site layout marindhi (step: signup form). Take Control tho try cheyyi.")
-    click(page, ["button[type='submit']", "button:has-text('Sign up')", "button:has-text('Create account')", "button:has-text('Continue')"])
-    page.wait_for_timeout(4000)
-    maybe_captcha(page)
-    if check_stop():
+    ctrls = wait_for_auth_form(page, cfg, timeout_s=60)
+    if ctrls is None:
+        return _fail(f"{name} sign-in page load avvaledu — form kanipinchaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
+    if ctrls.get("stopped"):
         return _stopped()
+    mode = detect_auth_mode(ctrls)
+    if mode == "sso-only":
+        # The page offers ONLY Google/GitHub/SSO — the runner has no
+        # session to sign in with. Surface the step, do not fill blindly.
+        progress("running", "signin", f"{name} — sign-in page lo Google/GitHub matrame undhi.", page.url)
+        if not pause_for_signin(page, cfg):
+            return _stopped()
+        if check_stop():
+            return _stopped()
+        # After resume, re-detect: signed in (dashboard/keys reachable)
+        # or still on the auth page (user did not finish signing in).
+        ctrls = wait_for_auth_form(page, cfg, timeout_s=30)
+        if ctrls is None or ctrls.get("stopped"):
+            return _stopped() if (ctrls or {}).get("stopped") else _fail(f"{name} sign-in tarvatha page load avvaledu — sign in ayyindha check chesi malli try cheyyi (step: sign-in).")
+        mode = detect_auth_mode(ctrls)
+        if mode == "sso-only":
+            return _fail(f"{name} sign-in complete avvaledu — inka sign-in page lone undhi. Browser lo open chesi sign in chesi malli setup run cheyyi (step: sign-in).")
+        if mode == "unknown":
+            # Not on an auth form any more — likely signed in. Continue
+            # to key creation below.
+            pass
+    elif mode == "email-first":
+        if not fill(page, _AUTH_EMAIL, email):
+            return _fail(f"{name} signup form lo email field kanipinchaledu (step: signup form). Take Control tho try cheyyi.")
+        click(page, ["button[type='submit']", "button:has-text('Continue')", "button:has-text('Sign up')", "button:has-text('Create account')"])
+        page.wait_for_timeout(3000)
+        maybe_captcha(page)
+        if check_stop():
+            return _stopped()
+        # The password field appears after Continue — or SSO buttons do.
+        ctrls2 = wait_for_auth_form(page, cfg, timeout_s=30)
+        if ctrls2 is None:
+            return _fail(f"{name} — email tarvatha next step load avvaledu (step: signup form). Take Control tho try cheyyi.")
+        if ctrls2.get("stopped"):
+            return _stopped()
+        mode2 = detect_auth_mode(ctrls2)
+        if mode2 == "sso-only":
+            if not pause_for_signin(page, cfg):
+                return _stopped()
+            if check_stop():
+                return _stopped()
+        elif mode2 in ("email-password", "email-first"):
+            if not fill(page, _AUTH_PASS, password):
+                return _fail(f"{name} signup form lo password field kanipinchaledu (step: signup form). Take Control tho try cheyyi.")
+            click(page, ["button[type='submit']", "button:has-text('Continue')", "button:has-text('Sign up')", "button:has-text('Create account')"])
+            page.wait_for_timeout(4000)
+        # mode2 == "unknown": no auth form any more — proceed to key creation.
+    elif mode == "email-password":
+        ok = fill(page, _AUTH_EMAIL, email)
+        ok = fill(page, _AUTH_PASS, password) and ok
+        if not ok:
+            return _fail(f"{name} signup form kanipinchaledu — site layout marindhi (step: signup form). Take Control tho try cheyyi.")
+        click(page, ["button[type='submit']", "button:has-text('Sign up')", "button:has-text('Create account')", "button:has-text('Continue')"])
+        page.wait_for_timeout(4000)
+        maybe_captcha(page)
+        if check_stop():
+            return _stopped()
+    # else mode == "unknown": the auth form vanished (already signed in,
+    # or a redirect) — proceed; the steps below fail clearly if not.
+    # The account may already exist: the page says so instead of signing
+    # up. The runner cannot know that account's password — surface the
+    # sign-in step with the login URL instead of looping.
+    if _page_says(page, ["already exists", "already have an account", "already registered"]):
+        login_url = cfg.get("login_url") or cfg["url"]
+        progress("running", "signin", f"{name} account already undhi — sign in chesthunna.", login_url)
+        page.goto(login_url, timeout=60000)
+        page.wait_for_timeout(2500)
+        if not pause_for_signin(page, cfg, note=f"{name} account already undhi — browser lo open chesi sign in cheyu, tarvatha Continue nokku, migilina anni nene chestha."):
+            return _stopped()
+        if check_stop():
+            return _stopped()
     sms = maybe_sms(page, job)
     if sms is False:
         return _stopped()
@@ -663,9 +889,11 @@ def flow_cloudflare(page, job, cfg):
 
 FLOWS = {
     "groq": {"name": "Groq", "url": "https://console.groq.com/signup",
+             "login_url": "https://console.groq.com/login",
              "keys_url": "https://console.groq.com/keys", "flow": "email",
              "key_patterns": [r"(gsk_[A-Za-z0-9]{20,})"]},
     "openrouter": {"name": "OpenRouter", "url": "https://openrouter.ai/sign-up",
+                   "login_url": "https://openrouter.ai/sign-in",
                    "keys_url": "https://openrouter.ai/keys", "flow": "email",
                    "key_patterns": [r"(sk-or-v1-[A-Za-z0-9\-]{20,})", r"(sk-or-[A-Za-z0-9\-]{20,})"]},
     "gemini": {"name": "Gemini", "url": "https://aistudio.google.com/",
