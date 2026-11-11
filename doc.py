@@ -805,6 +805,102 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
     C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=cy, acc=acc, words=words)
 
 
+# v35 (Ajju 2026-11-11: effects fall ONE ON TOP OF ANOTHER through the whole
+# video — Hark: "animation = math formulas, ONE effect at a time").
+# Effect durations (s) for the layer transforms in effects.py.
+ENTER_DUR = {"fade_in": 0.3, "pop_in": 0.35, "slide_in": 0.4, "rise_in": 0.45,
+             "drop_in": 0.6, "zoom_in_blur": 0.4, "wipe_in": 0.4, "iris_in": 0.45,
+             "spin_in": 0.5, "flip_in": 0.45, "glitch_in": 0.35}
+EMPH_DUR = {"punch": 0.3, "shake": 0.3, "pulse": 0.8, "wiggle": 0.5, "glow": 0.5}
+# Visual kinds whose build-in animates with the spoken words / time (draw-on,
+# count-up, type-out, fill, pins) — the build-in IS the motion, so no layer
+# transform is ever applied on top of it. All visuals_lib kinds animate; the
+# create.py kinds listed here animate with words/time too. Anything NOT here
+# (versus, quote_card, stick_figure, toggle, phone_buzz, icon_row, lower_third,
+# strike, curve) is treated as static and gets a single enter/emphasis instead.
+WORD_TIMED_VISUALS = {
+    # visuals_lib (all 23 kinds animate): document, bracket_bars, four,
+    # question, card, watch, stamp_cta, india_map, world_dots, + the rest.
+    "balance_scale", "bracket_bars", "card", "document", "film_camera",
+    "filmstrip", "four", "india_map", "magnifier", "newspaper", "photo_frame",
+    "polaroid", "product_packet", "question", "receipt", "source_line",
+    "speech_bubble", "stamp_cta", "timeline_cards", "typewriter_page",
+    "warning_sign", "watch", "world_dots",
+    # create.py kinds that animate with words/time.
+    "counter", "donut", "dot_grid", "clock", "bar", "bar_compare", "graph",
+    "gauge", "battery", "calendar", "list", "checklist", "chat", "check",
+    "heart", "arrows_steps", "warning", "stamp", "packets", "india_map",
+}
+# Hit types where a punch/shake AT the hit word is the point (a single
+# transform). All other hit types use the enter as the single motion.
+PUNCH_HIT_TYPES = {"number", "percent", "shock", "warning"}
+
+def pick_one_effect(sc, idx, pop_t):
+    """v35: decide the SINGLE motion effect for a scene (Hark: ONE effect at a
+    time). Returns {vis, vis_name, vis_start, vis_dur, label_delay} and logs
+    the choice on sc['_effect_choice'] so the frame-QC audit can verify it.
+    - vis: "build_in" (the visual animates itself — no layer transform),
+      "enter" (one enter transform), "emphasis" (one punch/shake at the hit
+      word), "fx_" (one custom per-video emphasis from video_fx.py).
+    - vis_start: the pt offset at which the visual motion starts. For scenes
+      after the first it is delayed past the transition tail (TR/2), so the
+      cut finishes BEFORE the new scene's motion starts.
+    - label_delay: the pt offset at which the label's word pops start — the
+      label is sequenced AFTER the visual's motion, never at the same instant.
+      The label is always an alpha-only fade (its word pops); it never gets a
+      layer transform, so it cannot clash with the visual.
+    - "pulse" is continuous (it never ends) so it can never be "one effect at
+      a time" — it is mapped to "punch" whenever it would be chosen."""
+    kind = sc.get("visual") or ""
+    # The visual that will actually draw: custom vis_ > library visual >
+    # mapped VL visual > plan kind. A custom vis_ always animates (the
+    # codegen writes animated vis_ functions).
+    if sc.get("custom_vis"):
+        is_word_timed = True
+    else:
+        _vk = sc.get("lib_visual") or _VIS_NAME_MAP.get(kind) or kind
+        is_word_timed = _vk in WORD_TIMED_VISUALS
+    # The transition's second half runs loc in [0, TR/2] — a new scene's
+    # motion must not start before it ends. vis_start is in pt-time
+    # (pt = t - pop_t), so the earliest start is max(0, TR/2 - pop_t).
+    tr_tail = TR / 2 if idx > 0 else 0.0
+    earliest = max(0.0, tr_tail - pop_t)
+    hit_type = sc.get("hit_type") or hit_type_of(sc)
+    if is_word_timed:
+        # The build-in (word-timed / draw-on) IS the motion. No enter, no
+        # emphasis, no custom fx_ on top of it. The label pops start 0.35 s
+        # after the hit word, once the build-in's opening has settled.
+        choice = {"vis": "build_in", "vis_name": kind, "vis_start": 0.0,
+                  "vis_dur": float(sc["d"]), "label_delay": 0.35}
+    elif hit_type in PUNCH_HIT_TYPES:
+        emph = sc.get("emphasis") or "punch"
+        if emph.startswith("fx_") and VIDEO_FX is not None and callable(getattr(VIDEO_FX, emph, None)):
+            choice = {"vis": "fx_", "vis_name": emph, "vis_start": earliest,
+                      "vis_dur": 0.3, "label_delay": earliest + 0.3 + 0.05}
+        elif emph in FX_LAYER_EMPHASIS:
+            if emph == "pulse":
+                emph = "punch"
+            _d = EMPH_DUR.get(emph, 0.3)
+            choice = {"vis": "emphasis", "vis_name": emph, "vis_start": earliest,
+                      "vis_dur": _d, "label_delay": earliest + _d + 0.05}
+        else:
+            enter = sc.get("enter") or "pop_in"
+            if enter not in FX_LAYER_ENTER:
+                enter = "pop_in"
+            _d = ENTER_DUR.get(enter, 0.35)
+            choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
+                      "vis_dur": _d, "label_delay": earliest + _d + 0.05}
+    else:
+        enter = sc.get("enter") or "pop_in"
+        if enter not in FX_LAYER_ENTER:
+            enter = "pop_in"
+        _d = ENTER_DUR.get(enter, 0.35)
+        choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
+                  "vis_dur": _d, "label_delay": earliest + _d + 0.05}
+    sc["_effect_choice"] = choice
+    return choice
+
+
 def scene_frame(p, idx, t):
     sc = p["scenes"][idx]; n = len(p["scenes"]); mood = sc["mood"]
     # v25: the look + title seed drive the palette, chapter card, layout and move.
@@ -845,6 +941,14 @@ def scene_frame(p, idx, t):
     # content layer. This is the fix for "the same old effect on every scene":
     # the motion now comes from Hark's library, picked by meaning, max 2x/video.
     pt = max(0.0, t - float(sc.get("pop_t", 0.0) or 0.0))
+    # v35 (Ajju: effects stack one on top of another — Hark: ONE effect at a
+    # time). The choice is made ONCE here, before the layout draws anything,
+    # so the visual and the label can never be given two motions at once.
+    _ch = pick_one_effect(sc, idx, float(sc.get("pop_t", 0.0) or 0.0))
+    # The label's word pops are delayed by label_delay (sequenced AFTER the
+    # visual's motion). label_t is the label's own clock; before the delay
+    # has elapsed it is 0 and the label is invisible.
+    label_t = max(0.0, pt - _ch["label_delay"])
     layout = (idx + seed) % 4
     vlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     vd = ImageDraw.Draw(vlay, "RGBA")
@@ -855,36 +959,35 @@ def scene_frame(p, idx, t):
     nolabel = sc.get("visual") == "stamp"
     if layout == 1:  # full-bleed
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 900, acc)
-        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
+        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
     elif layout == 2:  # centered big word, visual small below
-        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
+        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 750, acc)
     elif layout == 3:  # split
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 650, acc)
         d.rectangle([(120, 1080), (W - 120, 1088)], fill=acc)
-        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
+        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
     else:  # standard
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 800, acc)
-        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
-    enter = sc.get("enter") or "pop_in"
-    emph = sc.get("emphasis") or "punch"
-    label_enter = sc.get("label_enter") or "pop_in"
-    if enter in FX_LAYER_ENTER:
-        vlay = getattr(FX, enter)(vlay, pt, 0)
-    if emph in FX_LAYER_EMPHASIS:
-        # pulse is continuous (its 3rd arg is period, not the hit time) — the
-        # other emphasis effects take (L, t, at) with at = the hit word time.
-        if emph == "pulse":
-            vlay = FX.pulse(vlay, pt)
-        else:
-            vlay = getattr(FX, emph)(vlay, pt, 0)
-    elif emph and emph.startswith("fx_") and VIDEO_FX is not None:
-        # v29b: a custom per-video emphasis from video_fx.py — (layer, t, start, dur).
-        fn = getattr(VIDEO_FX, emph, None)
-        if callable(fn):
-            vlay = fn(vlay, pt, 0, sc["d"])
-    if label_enter in FX_LAYER_ENTER:
-        llay = getattr(FX, label_enter)(llay, pt, 0)
+        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
+    # v35: ONE motion effect on the visual layer — the choice made above by
+    # pick_one_effect(). "build_in" means the visual animates itself (word-
+    # timed / draw-on) and NO layer transform is applied on top of it; that
+    # was the stacking (enter + emphasis + build-in all at once, plus the
+    # transition across the cut). "enter" / "emphasis" / "fx_" is the single
+    # transform, started after the transition tail (vis_start). The label
+    # gets NO layer transform at all — its motion is its word-by-word pops
+    # (label(), delayed by label_delay above), so it can never clash with
+    # the visual. The camera stays STATIC (v33).
+    if _ch["vis"] == "enter":
+        vlay = getattr(FX, _ch["vis_name"])(vlay, pt, _ch["vis_start"])
+    elif _ch["vis"] == "emphasis":
+        vlay = getattr(FX, _ch["vis_name"])(vlay, pt, _ch["vis_start"])
+    elif _ch["vis"] == "fx_":
+        _fn = getattr(VIDEO_FX, _ch["vis_name"], None)
+        if callable(_fn):
+            vlay = _fn(vlay, pt, _ch["vis_start"], sc["d"])
+    # "build_in": no transform — the visual's own animation is the motion.
     lay.alpha_composite(vlay)
     lay.alpha_composite(llay)
     # v32 (Blind): the source line — a short official credit under the label
