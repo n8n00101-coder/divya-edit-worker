@@ -340,7 +340,7 @@ const PROVIDERS = {
   facebook:  { title: "Facebook connect",  desc: "Page lo post cheyadaniki" },
   telegram:  { title: "Telegram connect",  desc: "Telegram lo kuda Divya" },
 };
-const GSCOPE = { youtube: "openid email https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly", google: "openid email profile" };
+const GSCOPE = { youtube: "openid email https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly", google: "openid email profile https://www.googleapis.com/auth/gmail.readonly" };
 const MSCOPE = { instagram: "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management", facebook: "pages_show_list,pages_manage_posts,pages_read_engagement" };
 
 async function connectMenu(env, user) {
@@ -401,6 +401,12 @@ async function oauthRoutes(env, url) {
         a = { uid, name: String(prof?.name || email.split("@")[0]).slice(0, 60), email, phone: "", pphone: "", pw: "", pwv: 1, created: Date.now(), google: true };
         await acctPut(env, a); await env.KV.put(`em:${email}`, uid);
       }
+      // v40 (R19): store the Google OAuth token under the app user id so the
+      // Worker itself can read verification mail server-side (fetchVerifyLink)
+      // and feed the magic link to the setup runner. nid matches appAuth's
+      // derivation for a: sessions (a.phone || "u_"+uid). Never logged.
+      const nid = a.phone || ("u_" + a.uid);
+      await env.KV.put(`tok:${nid}:google`, JSON.stringify({ ...tok, at: Date.now(), who: email }));
       return Response.redirect("https://divya-app.n8n00101.workers.dev/?gtoken=" + encodeURIComponent(await newSession(env, a)), 302);
     }
     await env.KV.put(`tok:${s.user}:${s.prov}`, JSON.stringify({ ...tok, at: Date.now(), who }));
