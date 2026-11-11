@@ -850,19 +850,22 @@ def scene_frame(p, idx, t):
     vd = ImageDraw.Draw(vlay, "RGBA")
     llay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     ld = ImageDraw.Draw(llay, "RGBA")
+    # v34: the stamp visual itself carries the word (e.g. BANNED) — drawing
+    # the scene label too duplicates it (v33 dup-text rule), so skip it.
+    nolabel = sc.get("visual") == "stamp"
     if layout == 1:  # full-bleed
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 900, acc)
-        label(ld, sc["label"], pt, acc, idx, look)
+        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
     elif layout == 2:  # centered big word, visual small below
-        label(ld, sc["label"], pt, acc, idx, look)
+        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 750, acc)
     elif layout == 3:  # split
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 650, acc)
         d.rectangle([(120, 1080), (W - 120, 1088)], fill=acc)
-        label(ld, sc["label"], pt, acc, idx, look)
+        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
     else:  # standard
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 800, acc)
-        label(ld, sc["label"], pt, acc, idx, look)
+        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
     enter = sc.get("enter") or "pop_in"
     emph = sc.get("emphasis") or "punch"
     label_enter = sc.get("label_enter") or "pop_in"

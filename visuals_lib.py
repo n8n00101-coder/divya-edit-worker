@@ -400,12 +400,15 @@ def vis_four(t, st=0, d=1.0, n=4, accent=Y, cx=W/2, cy=640, words=None):
         p = _ob(_p(t, st+k*.12, .35))
         if p <= 0: continue
         red = k == 0 and (t - st) > hot_t
-        spr = _person(RED if red else (200, 200, 205), 1.6)
-        L.alpha_composite(place(spr, cx-330+k*220, cy, scale=p, alpha=min(1, p+.01)))
+        spr = _person(RED if red else (200, 200, 205), 1.3)
+        # 720-wide layer: 4 people at spacing 160 (cx-240..cx+240) with a
+        # 117-wide sprite fit with margin; 220 spacing + 1.6 scale overflowed
+        # and cut the 1st/4th person off the frame edges.
+        L.alpha_composite(place(spr, cx-240+k*160, cy, scale=p, alpha=min(1, p+.01)))
     if (t - st) > hot_t:
         q = _oe(_p(t, st+hot_t, .3))
         dr = ImageDraw.Draw(L)
-        dr.rounded_rectangle([cx-330-95, cy-170, cx-330+95, cy+170], 20, outline=RED+(255,), width=int(2+5*q))
+        dr.rounded_rectangle([cx-240-85, cy-170, cx-240+85, cy+170], 20, outline=RED+(255,), width=int(2+5*q))
     return L
 
 @reg("question", ["question", "safe", "hook", "doubt", "risk", "wonder"])
@@ -433,29 +436,31 @@ def vis_question(t, st=0, d=1.0, pack_text="TOBACCO", accent=Y, cx=W/2, cy=640, 
 def vis_card(t, st=0, d=1.0, title="NATIONAL TOBACCO QUITLINE", subtitle="Ministry of Health & Family Welfare \u00b7 Toll free",
              number="1800-11-2356", footer="Free counselling in 16 languages", accent=Y, cx=W/2, cy=640, words=None):
     """A contact/helpline card: cream card, title, divider, the phone number
-    typed out character by character + a yellow marker sweep (Hark `card`)."""
+    typed out character by character + a yellow marker sweep (Hark `card`).
+    620 wide so it fits the 720-wide layer with margin (860 overflowed and
+    cut the title + number off both frame edges)."""
     p = _oe(_p(t, st, .4))
     if p <= 0: return _L()
-    w, h = 860, 520
+    w, h = 620, 440
     o = Image.new("RGBA", (w, h), (0, 0, 0, 0)); dr = ImageDraw.Draw(o)
-    dr.rectangle([22, 26, 852, 516], fill=(0, 0, 0, 120)); dr.rectangle([10, 10, 840, 500], fill=(232, 226, 210, 255))
-    dr.text((50, 45), title, font=_font(40, "small"), fill=INK+(255,))
-    dr.text((50, 100), subtitle, font=_font(24, "small"), fill=(170, 40, 40, 255))
-    dr.line([50, 145, 800, 145], fill=(120, 120, 120, 255), width=2)
+    dr.rectangle([18, 22, 612, 436], fill=(0, 0, 0, 120)); dr.rectangle([8, 8, 604, 428], fill=(232, 226, 210, 255))
+    dr.text((40, 35), title, font=_font(30, "small"), fill=INK+(255,))
+    dr.text((40, 85), subtitle, font=_font(18, "small"), fill=(170, 40, 40, 255))
+    dr.line([40, 125, 580, 125], fill=(120, 120, 120, 255), width=2)
     # the number types out from the first digit word (Hark word_t); 1.8 s.
     _dig = [o2 for (o2, _dd, w2) in (words or []) if any(c.isdigit() for c in str(w2))]
     ts = _dig[0] if _dig else .5
     n = int(len(number)*min(1, max(0, (t-st-ts)/1.8))) if (t-st) > ts else 0
-    fm = _font(92, "mono")
+    fm = _font(72, "mono")
     if n > 0:
         if (t-st) > ts+1.9:
             q = _oe(_p(t, st+ts+1.9, .35))
-            dr.rectangle([46, 205, 46+(dr.textlength(number, font=fm)+12)*q, 320], fill=(245, 205, 40, 255))
-        dr.text((52, 210), number[:n], font=fm, fill=(25, 25, 25, 255))
+            dr.rectangle([36, 165, 36+(dr.textlength(number, font=fm)+12)*q, 265], fill=(245, 205, 40, 255))
+        dr.text((42, 170), number[:n], font=fm, fill=(25, 25, 25, 255))
         if int(t*4) % 2 == 0 and n < len(number):
             hw = dr.textlength(number[:n], font=fm)
-            dr.rectangle([56+hw, 215, 62+hw, 300], fill=(25, 25, 25, 255))
-    dr.text((50, 380), footer, font=_font(30, "small"), fill=(60, 60, 60, 255))
+            dr.rectangle([46+hw, 175, 52+hw, 255], fill=(25, 25, 25, 255))
+    dr.text((40, 350), footer, font=_font(26, "small"), fill=(60, 60, 60, 255))
     o = texture(o, 8)
     return place(shadow(o), cx, cy+(1-p)*120, rot=-2, alpha=p)
 
@@ -475,11 +480,10 @@ def vis_watch(t, st=0, d=1.0, seconds=25, stamp="25 SECONDS", accent=Y, cx=W/2, 
     dd.line([c[0], c[1], c[0]+(R-40)*math.sin(sweep), c[1]-(R-40)*math.cos(sweep)], fill=Y+(255,), width=10)
     dd.ellipse([c[0]-16, c[1]-16, c[0]+16, c[1]+16], fill=Y+(255,))
     L.alpha_composite(place(sub, cx, cy-30, scale=.85+.15*a, alpha=a))
-    _ni = _num_word_idx(words)
-    if _ni is not None and (t-st) > _word_t(words, _ni):
-        q = _ob(_p(t, st+_word_t(words, _ni), .3))
-        dr = ImageDraw.Draw(L)
-        dr.text((cx, cy+390), stamp, font=_font(110), fill=Y+(255,), anchor="mm")
+    # v34 fix: the stamp text ("25 SECONDS") is NOT drawn here — the scene
+    # label below the visual already shows it (v33 dup-text rule). The watch
+    # face + sweeping red sector + hand is the visual; the label carries the
+    # number.
     return L
 
 @reg("stamp_cta", ["cta", "quit", "stop", "today", "follow", "action", "stamp"])

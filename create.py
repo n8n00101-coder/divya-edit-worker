@@ -289,9 +289,8 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None, words=None)
         an = math.radians(-90 + sweep)
         d.line([(cx, cy), (cx + (R - 40) * math.cos(an), cy + (R - 40) * math.sin(an))], fill=YEL, width=10)
         d.ellipse([cx - 16, cy - 16, cx + 16, cy + 16], fill=YEL)
-        _st = wp if wp is not None else ease((t - 1.0) / 0.3)
-        if _st > 0 and value:
-            d.text((cx, cy + R + 90), str(value)[:12].upper(), font=font(110), fill=YEL, anchor="mm")
+        # v34 fix: the value text is NOT drawn here — the scene label below
+        # the visual already shows it (v33 dup-text rule).
     elif kind == "stamp":  # a rotated stamp slamming in + shake (Hark `stamp`)
         word = (value or "BANNED")[:12].upper()
         q = ease((t - 0.5) / 0.2)
