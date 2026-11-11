@@ -1134,24 +1134,19 @@ async function doPostInstagram(env, n, o, en = false) {
     return appJson(req, { ok: true, deleted });
   }
   if (p === "gmail/verify" && req.method === "GET") {
-    // R19: read the newest verification mail via the connected Google token.
-    // TODO(scope): the Google OAuth app must include gmail.readonly; the current
-    // GSCOPE.google ("openid email profile") cannot read mail — until the scope is
-    // added, this returns needs_scope and the app falls back to the one manual tap.
-    const rec = JSON.parse((await env.KV.get(`tok:${u.n}:google`)) || "null");
-    if (!rec?.access_token) return appJson(req, { ok: false, needs_scope: true, error: lang === "en" ? "Gmail is not connected." : "Gmail connect avvaledu." }, 400);
-    const q = String(url.searchParams.get("q") || "verify").slice(0, 120);
-    const list = await (await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q + " newer_than:1d")}&maxResults=1`, { headers: { Authorization: "Bearer " + rec.access_token } })).json().catch(() => ({}));
-    if (list.error?.status === 401) return appJson(req, { ok: false, error: lang === "en" ? "Gmail token expired — reconnect Google." : "Gmail token expire ayyindi — Google malli connect cheyyi." }, 401);
-    const id = list.messages?.[0]?.id;
-    if (!id) return appJson(req, { ok: false, error: "verification mail kanipinchaledu." }, 404);
-    const msg = await (await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, { headers: { Authorization: "Bearer " + rec.access_token } })).json().catch(() => ({}));
-    const b64 = (msg.payload?.parts || []).map(x => x.body?.data || "").join("") + (msg.payload?.body?.data || "");
-    let text = "";
-    try { text = atob(b64.replace(/-/g, "+").replace(/_/g, "/")); } catch {}
-    const m = text.match(/https?:\/\/[^\s"'<>]+(?:verify|confirm|activate)[^\s"'<>]*/i) || text.match(/https?:\/\/[^\s"'<>]+/);
-    if (!m) return appJson(req, { ok: false, error: "link kanipinchaledu." }, 404);
-    return appJson(req, { ok: true, link: m[0], from: (msg.payload?.headers || []).find(h => h.name === "From")?.value || "" });
+    // v40 (R19): "did the verification mail arrive?" check ONLY. The link
+    // itself is NEVER returned here — it lives server-side on the setup job
+    // record for the runner only. Uses googleToken() (refresh) + the
+    // recursive body walk + provider matchers from fetchVerifyLink().
+    const tok = await googleToken(env, u.n);
+    if (!tok) return appJson(req, { ok: false, needs_scope: true, error: lang === "en" ? "Gmail is not connected." : "Gmail connect avvaledu." }, 400);
+    const provParam = String(url.searchParams.get("provider") || "").trim().toLowerCase();
+    const qParam = String(url.searchParams.get("q") || "").toLowerCase();
+    const provider = provParam || (qParam.includes("groq") ? "groq" : qParam.includes("openrouter") ? "openrouter" : qParam.includes("cloudflare") ? "cloudflare" : "generic");
+    const r = await fetchVerifyLink(env, u.n, provider, null, 0, { window: "1d" });
+    if (r.reason === "needs-scope") return appJson(req, { ok: false, needs_scope: true, error: "Gmail read permission kavali — okkasari allow cheyyi." });
+    if (!r.ok) return appJson(req, { ok: false, error: r.reason === "no-mail-yet" ? "verification mail kanipinchaledu." : "Gmail read avvaledu." }, r.reason === "no-mail-yet" ? 404 : 502);
+    return appJson(req, { ok: true, found: true, from: r.from || "", subject: r.subject || "" });
   }
   if (p === "post/instagram" && req.method === "POST") {
     if (!body.confirm) return appJson(req, { ok: false, needs_confirm: true, error: lang === "en" ? "Confirm to post this reel to your Instagram account." : "Ee reel ni nee Instagram lo post cheyala? Confirm cheyyi." }, 400);
@@ -2153,6 +2148,185 @@ async function autoCheckAll(env) {
       } catch {}
     }
   } catch {}
+}
+// ===== v40 (R19): Worker-side verification-mail reader =====
+// The setup runner pauses on an email verification (Groq/OpenRouter/
+// Cloudflare magic link). The agent's Gmail tool redacts sign-in links,
+// so the link can never travel agent -> runner. Instead the WORKER reads
+// the user's Gmail itself (gmail.readonly scope, token stored at
+// tok:<n>:google on Google login / Connect) and feeds the link to the
+// runner server-side, on the job record only. The link/code is NEVER
+// logged, NEVER stored in any log KV, and NEVER returned by any
+// client-facing API — the only place it appears is the job record
+// (setupjob:<job>, 2-day TTL) returned by setup/runner/job to the runner
+// (x-runner-key auth). setup/status strips it via stripJobSecrets().
+async function googleToken(env, n) {
+  // Same refresh pattern as ytToken: expired + refresh_token -> refresh
+  // via oauth2.googleapis.com/token, store back, return the fresh token.
+  // No refresh token / refresh fails -> null (caller surfaces re-consent).
+  const t = JSON.parse((await env.KV.get(`tok:${n}:google`)) || "null");
+  if (!t || !t.access_token) return null;
+  if (t.expires_in && t.at && Date.now() - t.at > (t.expires_in - 300) * 1000) {
+    if (!t.refresh_token) return null;
+    const nt = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) })).json().catch(() => ({}));
+    if (!nt.access_token) return null;
+    const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in };
+    await env.KV.put(`tok:${n}:google`, JSON.stringify(merged));
+    return merged;
+  }
+  return t;
+}
+const VERIFY_PROVIDERS = {
+  // domains: preferred link hosts (magic links live here); from/subj:
+  // sender + subject keywords for the matcher; q: Gmail list query;
+  // mode "and" = from AND subj must match, "or" = either matches.
+  groq: { domains: ["groq.com", "stytch"], from: ["noreply@groq.com"], subj: ["login request", "groq"], q: "from:noreply@groq.com", mode: "and" },
+  openrouter: { domains: ["openrouter.ai", "clerk"], from: ["openrouter"], subj: ["openrouter", "verify"], q: "OpenRouter", mode: "or" },
+  cloudflare: { domains: ["cloudflare.com"], from: ["cloudflare"], subj: ["verify", "confirm", "cloudflare"], q: "from:cloudflare", mode: "and" },
+  generic: { domains: [], from: [], subj: ["verify", "confirm", "activate", "login"], q: "verify", mode: "or" },
+};
+function gmailHeader(msg, name) {
+  return (msg.payload?.headers || []).find(h => String(h.name || "").toLowerCase() === name)?.value || "";
+}
+function b64urlDecode(s) {
+  const b64 = String(s || "").replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
+  try { return atob(b64 + pad); } catch { return ""; }
+}
+function gmailWalkParts(part, out) {
+  // RECURSIVE body walk: multipart/mixed -> multipart/alternative ->
+  // text/plain + text/html at any depth (the old gmail/verify only
+  // joined top-level parts and missed nested bodies).
+  if (!part) return;
+  const mime = String(part.mimeType || "");
+  if (mime === "text/plain" || mime === "text/html") { out.push({ mime, data: part.body?.data || "" }); return; }
+  for (const sub of part.parts || []) gmailWalkParts(sub, out);
+}
+function gmailBodyText(msg) {
+  const parts = []; gmailWalkParts(msg.payload, parts);
+  const plain = parts.filter(p => p.mime === "text/plain").map(p => b64urlDecode(p.data)).join("\n");
+  if (plain.trim()) return plain;
+  const html = parts.filter(p => p.mime === "text/html").map(p => b64urlDecode(p.data)).join("\n");
+  return html.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+}
+function gmailPickLink(text, domains) {
+  const urls = [...new Set((String(text).match(/https:\/\/[^\s"'<>\)\]]+/g) || []).map(u => u.replace(/[.,;:!?]+$/, "").replace(/&amp;/g, "&")))];
+  if (!urls.length) return "";
+  const pref = [...(domains || []), "stytch"];
+  const hostHas = u => { try { const h = new URL(u).hostname.toLowerCase(); return pref.some(d => h.includes(d)); } catch { return false; } };
+  const kw = /verify|confirm|activate|magic|login|signin/i;
+  return urls.find(u => hostHas(u)) || urls.find(u => kw.test(u)) || urls[0] || "";
+}
+function gmailPickCode(text) {
+  // First standalone 6-digit number near verify/code/confirm — not a
+  // year (4 digits) and not part of a longer number (\D boundaries).
+  // Returns "" when no candidate sits near the keywords (never feed a
+  // random 6-digit number such as an order id).
+  const t = String(text || "");
+  const re = /(?:^|\D)(\d{6})(?:\D|$)/g;
+  const cands = []; let m;
+  while ((m = re.exec(t))) cands.push({ code: m[1], i: m.index });
+  if (!cands.length) return "";
+  const near = cands.find(c => /verif|code|confirm/i.test(t.slice(Math.max(0, c.i - 60), c.i + 70)));
+  return near ? near.code : "";
+}
+async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
+  // Server-side only. Returns {ok:true, link|code, from, subject} or
+  // {ok:false, reason: "no-gmail-token"|"needs-scope"|"no-mail-yet"|"gmail-error"}.
+  // The link/code is returned ONLY to in-Worker callers (job feed /
+  // gmail/verify presence check) — never to the app.
+  const tok = await googleToken(env, n);
+  if (!tok) return { ok: false, reason: "no-gmail-token" };
+  const m = VERIFY_PROVIDERS[String(provider || "").toLowerCase()] || VERIFY_PROVIDERS.generic;
+  const window = (opts && opts.window) || "2h";
+  const auth = { Authorization: "Bearer " + tok.access_token };
+  let list;
+  try {
+    const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(m.q + " newer_than:" + window)}&maxResults=5`, { headers: auth });
+    list = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const em = String(list.error?.message || "");
+      if (r.status === 403 || /insufficientPermissions/i.test(em)) return { ok: false, reason: "needs-scope" };
+      return { ok: false, reason: "gmail-error" };
+    }
+  } catch { return { ok: false, reason: "gmail-error" }; }
+  const ids = (list.messages || []).map(x => x.id).filter(Boolean);
+  if (!ids.length) return { ok: false, reason: "no-mail-yet" };
+  // Recency guard: only a mail from THIS run. pauseStart = later of the
+  // pause time (job.upd at pause, captured as pausedAt), the job start
+  // and the chain start, minus a 5-min grace — the provider sends the
+  // mail the moment the runner submits the form, which can be seconds
+  // BEFORE the runner notices the "check your email" page and pauses.
+  const pauseStart = Math.max((job && job.pausedAt) || 0, (job && job.at) || 0, chainAt || 0) - 5 * 60 * 1000;
+  for (const id of ids) {
+    let msg;
+    try {
+      const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, { headers: auth });
+      msg = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (r.status === 403 || /insufficientPermissions/i.test(String(msg.error?.message || ""))) return { ok: false, reason: "needs-scope" };
+        continue;
+      }
+    } catch { continue; }
+    const from = gmailHeader(msg, "from").toLowerCase();
+    const subject = gmailHeader(msg, "subject").toLowerCase();
+    const fromOk = !m.from.length || m.from.some(s => from.includes(s));
+    const subjOk = !m.subj.length || m.subj.some(s => subject.includes(s));
+    if (m.mode === "and" ? !(fromOk && subjOk) : !(fromOk || subjOk)) continue;
+    if (job && Number(msg.internalDate || 0) <= pauseStart) continue; // old mail from a previous run
+    const text = gmailBodyText(msg);
+    const link = gmailPickLink(text, m.domains);
+    if (link) return { ok: true, link, from: gmailHeader(msg, "from"), subject: gmailHeader(msg, "subject") };
+    const code = gmailPickCode(text);
+    if (code) return { ok: true, code, from: gmailHeader(msg, "from"), subject: gmailHeader(msg, "subject") };
+  }
+  return { ok: false, reason: "no-mail-yet" };
+}
+async function maybeFeedVerifyLink(env, job, chainAt) {
+  // Throttled (45s) feed attempt for a job paused on email verification.
+  // Success: verifyLink/verifyCode set, job flips back to running (the
+  // runner's poll loop opens the link in its own browser). Failure:
+  // mailFetch + mailFetchAt recorded, job stays paused. Never throws —
+  // a mail-fetch exception must never break the runner's polling.
+  try {
+    if (!job || job.state !== "paused" || (job.pauseReason || "email") !== "email") return job;
+    if (job.verifyLink || job.verifyCode) return job;
+    if (job.mailFetchAt && Date.now() - job.mailFetchAt < 45000) return job;
+    const r = await fetchVerifyLink(env, job.user, job.provider, job, chainAt);
+    job.mailFetchAt = Date.now();
+    if (r.ok && (r.link || r.code)) {
+      if (r.link) job.verifyLink = r.link;
+      if (r.code) job.verifyCode = r.code;
+      job.state = "running"; job.pauseReason = ""; job.note = ""; job.resumedAt = Date.now(); job.mailFetch = "ok";
+      delete job.pausedAt;
+    } else {
+      job.mailFetch = r.reason || "gmail-error";
+    }
+    job.upd = Date.now();
+    await env.KV.put(`setupjob:${job.job}`, JSON.stringify(job), { expirationTtl: 86400 * 2 });
+    return job;
+  } catch { return job; }
+}
+async function gmailStateFor(env, n, job) {
+  // setup/status `gmail` field for the app's re-consent card. Carries no
+  // link/code — only the state + provider.
+  const provider = (job && job.provider) || null;
+  if (job && (job.verifyLink || job.verifyCode)) return { state: "ok", provider };
+  const mf = (job && job.mailFetch) || "";
+  if (mf === "no-gmail-token") return { state: "no-token", provider };
+  if (mf === "needs-scope") return { state: "needs-scope", provider };
+  if (mf === "no-mail-yet") return { state: "no-mail-yet", provider };
+  if (mf === "gmail-error") return { state: "error", provider };
+  const tok = JSON.parse((await env.KV.get(`tok:${n}:google`)) || "null");
+  if (!tok || !tok.access_token) return { state: "no-token", provider };
+  return { state: "no-mail-yet", provider };
+}
+function stripJobSecrets(j) {
+  // setup/status returns the current job to the APP — the magic link /
+  // SMS code must never travel there (runner-only, via setup/runner/job).
+  if (!j) return j;
+  const { verifyLink, verifyCode, smsCode, ...rest } = j;
+  return rest;
 }
 async function appSetupUser(req, env, u, p, body, lang) {
   const en = lang === "en";
