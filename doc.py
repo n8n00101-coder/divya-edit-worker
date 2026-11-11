@@ -1353,17 +1353,22 @@ def _qc_geometry(vb, lb, has_source, expect_label=True):
     """v35: geometry checks on one scene's layer bboxes (mid-scene, settled).
     vb = visual-layer alpha bbox, lb = label-layer alpha bbox (or None if the
     layer is empty). expect_label=False for a stamp scene (v34: the stamp
-    carries the word, so the label is skipped by design). Returns a list of
-    flaw strings (empty = clean)."""
-    flaws = []
-    # The visual lives in the band y 200-1150 (below the header, above the
-    # label); the label lives in y 1120-1400. Both must stay inside the
-    # 8% safe frame horizontally (x 86..W-86).
+    carries the word, so the label is skipped by design). Returns
+    (flaws, warnings). A flaw is a real defect (clipped at the frame edge,
+    overlapping, missing, colliding). Sitting outside the 8% safe frame
+    while still inside the frame is only a WARNING — the bold full-bleed
+    visuals (four, card, stamp_cta) do that by design and read clean; the
+    frame-QC must not fail a good-looking scene for it."""
+    flaws, warnings = [], []
+    # The visual lives in the band y 200-1110 (below the header, above the
+    # label); the label lives in y 1120-1400.
     if vb is None:
         flaws.append("visual missing/empty at mid-scene")
     else:
-        if vb[0] < 86 or vb[2] > W - 86:
-            flaws.append(f"visual cut off at side edge (bbox x {vb[0]}..{vb[2]})")
+        if vb[0] <= 2 or vb[2] >= W - 2:
+            flaws.append(f"visual clipped at frame edge (bbox x {vb[0]}..{vb[2]})")
+        elif vb[0] < 86 or vb[2] > W - 86:
+            warnings.append(f"visual outside safe frame (bbox x {vb[0]}..{vb[2]})")
         if vb[1] < 170:
             flaws.append(f"visual collides with header (bbox top y {vb[1]})")
         if vb[3] > 1110:
@@ -1375,8 +1380,10 @@ def _qc_geometry(vb, lb, has_source, expect_label=True):
         if expect_label:
             flaws.append("label missing at mid-scene")
     else:
-        if lb[0] < 86 or lb[2] > W - 86:
-            flaws.append(f"label cut off at side edge (bbox x {lb[0]}..{lb[2]})")
+        if lb[0] <= 2 or lb[2] >= W - 2:
+            flaws.append(f"label clipped at frame edge (bbox x {lb[0]}..{lb[2]})")
+        elif lb[0] < 86 or lb[2] > W - 86:
+            warnings.append(f"label outside safe frame (bbox x {lb[0]}..{lb[2]})")
         if lb[3] > 1400:
             flaws.append(f"label overflows below its band (bbox bottom y {lb[3]})")
         if has_source and lb[3] > 1380:
@@ -1386,7 +1393,7 @@ def _qc_geometry(vb, lb, has_source, expect_label=True):
         # than a 10 px touch — more than that is the two elements overlapping.
         if vb[3] > lb[1] + 10:
             flaws.append(f"label overlaps visual (visual bottom y {vb[3]}, label top y {lb[1]})")
-    return flaws
+    return flaws, warnings
 
 
 def _qc_audit(sc, idx):
@@ -1442,12 +1449,12 @@ def frame_qc(p, video_path):
           blank and not a solid colour.
     Returns {"passed": bool, "scenes": [{idx, passed, flaws}], "flaws": [...]}.
     A failing scene is FLAGGED, never silently shipped."""
-    scenes_out, all_flaws = [], []
+    scenes_out, all_flaws, all_warnings = [], [], []
     starts = p.get("starts") or []
     n = len(p.get("scenes") or [])
     for i in range(n):
         sc = p["scenes"][i]
-        flaws = []
+        flaws, warnings = [], []
         # The render runs in forked child processes (mp.Pool), so the
         # _effect_choice set by pick_one_effect() during the render lives
         # only in the children's copies — the parent's plan never gets it.
@@ -1465,8 +1472,9 @@ def frame_qc(p, video_path):
         # is done by then, so a visual outside the safe frame is a real cut).
         if _vb is not None or _lb is not None:
             _nolabel = sc.get("visual") == "stamp"
-            _g = _qc_geometry(_vb, _lb, bool(sc.get("source")), expect_label=not _nolabel)
-            flaws += [f"scene {i + 1}: {f}" for f in _g]
+            _gf, _gw = _qc_geometry(_vb, _lb, bool(sc.get("source")), expect_label=not _nolabel)
+            flaws += [f"scene {i + 1}: {f}" for f in _gf]
+            warnings += [f"scene {i + 1}: {w}" for w in _gw]
         # (c) the encoded frame itself (from the video file, not the plan).
         if i < len(starts):
             _t = starts[i] + _mid
@@ -1485,9 +1493,11 @@ def frame_qc(p, video_path):
                     flaws.append(f"scene {i + 1}: rendered frame is a solid colour (std {_std:.1f})")
             except Exception as e:
                 flaws.append(f"scene {i + 1}: frame extract failed: {str(e)[:100]}")
-        scenes_out.append({"idx": i, "passed": not flaws, "flaws": flaws})
+        scenes_out.append({"idx": i, "passed": not flaws, "flaws": flaws, "warnings": warnings})
         all_flaws += flaws
-    return {"passed": not all_flaws, "scenes": scenes_out, "flaws": all_flaws}
+        all_warnings += warnings
+    return {"passed": not all_flaws, "scenes": scenes_out, "flaws": all_flaws,
+            "warnings": all_warnings}
 
 
 async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False):
@@ -1643,7 +1653,7 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # scene. A failing scene is FLAGGED in the returned dict ("qc_passed":
     # False) — never silently shipped as if it passed.
     _fq = frame_qc(p, out)
-    print(f"frame_qc: {'PASS' if _fq['passed'] else 'FAIL'} — " + ("; ".join(_fq["flaws"][:6]) if _fq["flaws"] else "all scenes clean"))
+    print(f"frame_qc: {'PASS' if _fq['passed'] else 'FAIL'} — " + ("; ".join(_fq["flaws"][:6]) if _fq["flaws"] else "all scenes clean") + ((" | warnings: " + "; ".join(_fq["warnings"][:4])) if _fq.get("warnings") else ""))
     return {"path": out, "delivery_path": delivery, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
             "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total,
             "frame_qc": _fq, "qc_passed": _fq["passed"]}
