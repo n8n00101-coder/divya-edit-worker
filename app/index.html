@@ -217,6 +217,14 @@
       <!-- SETUP -->
       <section id="s-setup" class="screen" data-title="sSetup">
         <div class="scroll pad">
+          <!-- v39 (D4): live setup-run state. The page used to show only the
+               6 key rows, so a run that died hours ago still looked like it
+               was "running" in chat. Filled by loadSetupState(). -->
+          <div class="card note" id="setupStateCard" hidden>
+            <p><b id="setupStateTitle"></b></p>
+            <p class="muted small" id="setupStateSub"></p>
+            <button class="btn secondary" id="setupRetryBtn" data-t="setupRetry" hidden></button>
+          </div>
           <p class="muted" data-t="setupIntro"></p>
           <!-- R48: plain-words explainer — Divya does everything with one allow
                (accounts, API keys, captchas, server). The user is asked for
