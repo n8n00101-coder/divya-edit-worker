@@ -709,15 +709,17 @@ _SBG = {}
 
 def _fit_above_label(lay):
     # v32 (Blind): fit a 1080x1920 visual layer's CONTENT into the band
-    # y 200-1150 (below the header, above the label at y 1190-1360). Scale +
-    # shift so the content fits the band and is centred in it; a layer that
-    # already fits is returned unchanged. (A document layer went from bbox
-    # bottom 1471 to 1150, top 200, in the v32 session test.)
+    # y 200-1110 (below the header, above the label at y 1190-1360). v35:
+    # the band ended at 1150 but the label text reaches up to y~1137, so a
+    # tall visual filling to 1150 overlapped the label's top by ~13 px (the
+    # frame-QC caught it). 1110 leaves a clear gap. Scale + shift so the
+    # content fits the band and is centred in it; a layer that already fits
+    # is returned unchanged.
     bb = lay.getbbox()
     if not bb:
         return lay
     top, bot = bb[1], bb[3]
-    lo, hi = 200, 1150
+    lo, hi = 200, 1110
     if top >= lo and bot <= hi:
         return lay
     bh = bot - top
@@ -805,7 +807,119 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
     C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=cy, acc=acc, words=words)
 
 
-def scene_frame(p, idx, t):
+# v35 (Ajju 2026-11-11: effects fall ONE ON TOP OF ANOTHER through the whole
+# video — Hark: "animation = math formulas, ONE effect at a time").
+# Effect durations (s) for the layer transforms in effects.py.
+ENTER_DUR = {"fade_in": 0.3, "pop_in": 0.35, "slide_in": 0.4, "rise_in": 0.45,
+             "drop_in": 0.6, "zoom_in_blur": 0.4, "wipe_in": 0.4, "iris_in": 0.45,
+             "spin_in": 0.5, "flip_in": 0.45, "glitch_in": 0.35}
+EMPH_DUR = {"punch": 0.3, "shake": 0.3, "pulse": 0.8, "wiggle": 0.5, "glow": 0.5}
+# Visual kinds whose build-in animates with the spoken words / time (draw-on,
+# count-up, type-out, fill, pins) — the build-in IS the motion, so no layer
+# transform is ever applied on top of it. All visuals_lib kinds animate; the
+# create.py kinds listed here animate with words/time too. Anything NOT here
+# (versus, quote_card, stick_figure, toggle, phone_buzz, icon_row, lower_third,
+# strike, curve) is treated as static and gets a single enter/emphasis instead.
+WORD_TIMED_VISUALS = {
+    # visuals_lib (all 23 kinds animate): document, bracket_bars, four,
+    # question, card, watch, stamp_cta, india_map, world_dots, + the rest.
+    "balance_scale", "bracket_bars", "card", "document", "film_camera",
+    "filmstrip", "four", "india_map", "magnifier", "newspaper", "photo_frame",
+    "polaroid", "product_packet", "question", "receipt", "source_line",
+    "speech_bubble", "stamp_cta", "timeline_cards", "typewriter_page",
+    "warning_sign", "watch", "world_dots",
+    # create.py kinds that animate with words/time.
+    "counter", "donut", "dot_grid", "clock", "bar", "bar_compare", "graph",
+    "gauge", "battery", "calendar", "list", "checklist", "chat", "check",
+    "heart", "arrows_steps", "warning", "stamp", "packets", "india_map",
+}
+# Hit types where a punch/shake AT the hit word is the point (a single
+# transform). All other hit types use the enter as the single motion.
+PUNCH_HIT_TYPES = {"number", "percent", "shock", "warning"}
+
+def pick_one_effect(sc, idx, pop_t):
+    """v35: decide the SINGLE motion effect for a scene (Hark: ONE effect at a
+    time). Returns {vis, vis_name, vis_start, vis_dur, label_start} and logs
+    the choice on sc['_effect_choice'] so the frame-QC audit can verify it.
+    - vis: "build_in" (the visual animates itself — no layer transform),
+      "enter" (one enter transform), "emphasis" (one punch/shake at the hit
+      word), "fx_" (one custom per-video emphasis from video_fx.py).
+    - vis_start: the pt offset at which the visual motion starts. For scenes
+      after the first it is delayed past the transition tail (TR/2), so the
+      cut finishes BEFORE the new scene's motion starts.
+    - label_start: the SCENE-local time at which the label's word pops
+      start. For a build-in it is a fixed early time (just after the
+      transition tail) so the label is present from the start of the scene
+      no matter how late the hit word falls; for a layer transform it is
+      after the motion ends. The label is always an alpha-only fade (its
+      word pops); it never gets a layer transform, so it cannot clash with
+      the visual.
+    - "pulse" is continuous (it never ends) so it can never be "one effect at
+      a time" — it is mapped to "punch" whenever it would be chosen."""
+    kind = sc.get("visual") or ""
+    # The visual that will actually draw: custom vis_ > library visual >
+    # mapped VL visual > plan kind. A custom vis_ always animates (the
+    # codegen writes animated vis_ functions).
+    if sc.get("custom_vis"):
+        is_word_timed = True
+    else:
+        _vk = sc.get("lib_visual") or _VIS_NAME_MAP.get(kind) or kind
+        is_word_timed = _vk in WORD_TIMED_VISUALS
+    # The transition's second half runs loc in [0, TR/2] — a new scene's
+    # motion must not start before it ends. vis_start is in pt-time
+    # (pt = t - pop_t), so the earliest start is max(0, TR/2 - pop_t).
+    tr_tail = TR / 2 if idx > 0 else 0.0
+    earliest = max(0.0, tr_tail - pop_t)
+    hit_type = sc.get("hit_type") or hit_type_of(sc)
+    if is_word_timed:
+        # The build-in (word-timed / draw-on) IS the motion. No enter, no
+        # emphasis, no custom fx_ on top of it. The label starts at a fixed
+        # early scene time (just after the transition tail) — NOT after the
+        # hit word: the hit word can fall 4 s into a 5 s scene, and a label
+        # tied to it would be missing at mid-scene (the frame-QC caught
+        # this on sleep scene 3). The label is the scene's headline; it
+        # must be present from the start of the scene.
+        choice = {"vis": "build_in", "vis_name": kind, "vis_start": 0.0,
+                  "vis_dur": float(sc["d"]), "label": "fade_in",
+                  "label_start": (TR / 2 if idx > 0 else 0.0) + 0.15}
+    elif hit_type in PUNCH_HIT_TYPES:
+        emph = sc.get("emphasis") or "punch"
+        if emph.startswith("fx_") and VIDEO_FX is not None and callable(getattr(VIDEO_FX, emph, None)):
+            choice = {"vis": "fx_", "vis_name": emph, "vis_start": earliest,
+                      "vis_dur": 0.3, "label": "fade_in",
+                      "label_start": pop_t + earliest + 0.3 + 0.05}
+        elif emph in FX_LAYER_EMPHASIS:
+            if emph == "pulse":
+                emph = "punch"
+            _d = EMPH_DUR.get(emph, 0.3)
+            choice = {"vis": "emphasis", "vis_name": emph, "vis_start": earliest,
+                      "vis_dur": _d, "label": "fade_in",
+                      "label_start": pop_t + earliest + _d + 0.05}
+        else:
+            enter = sc.get("enter") or "pop_in"
+            if enter not in FX_LAYER_ENTER:
+                enter = "pop_in"
+            _d = ENTER_DUR.get(enter, 0.35)
+            choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
+                      "vis_dur": _d, "label": "fade_in",
+                      "label_start": pop_t + earliest + _d + 0.05}
+    else:
+        enter = sc.get("enter") or "pop_in"
+        if enter not in FX_LAYER_ENTER:
+            enter = "pop_in"
+        _d = ENTER_DUR.get(enter, 0.35)
+        choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
+                  "vis_dur": _d, "label": "fade_in",
+                  "label_start": pop_t + earliest + _d + 0.05}
+    sc["_effect_choice"] = choice
+    return choice
+
+
+def scene_frame(p, idx, t, return_layers=False):
+    # return_layers (v35 frame-QC): also return the visual/label layer alpha
+    # bboxes + the effect choice, so the QC can check geometry (overlap,
+    # cutoff, collisions) on the actual layers instead of guessing from a
+    # flat composited frame. Returns (rgb, vlay_bbox, llay_bbox, choice).
     sc = p["scenes"][idx]; n = len(p["scenes"]); mood = sc["mood"]
     # v25: the look + title seed drive the palette, chapter card, layout and move.
     look = p.get("look", "A"); seed = p.get("seed", 0)
@@ -845,6 +959,15 @@ def scene_frame(p, idx, t):
     # content layer. This is the fix for "the same old effect on every scene":
     # the motion now comes from Hark's library, picked by meaning, max 2x/video.
     pt = max(0.0, t - float(sc.get("pop_t", 0.0) or 0.0))
+    # v35 (Ajju: effects stack one on top of another — Hark: ONE effect at a
+    # time). The choice is made ONCE here, before the layout draws anything,
+    # so the visual and the label can never be given two motions at once.
+    _ch = pick_one_effect(sc, idx, float(sc.get("pop_t", 0.0) or 0.0))
+    # The label's word pops start at label_start (a SCENE-local time, not
+    # a delay after the hit word — a late hit word must not hide the label
+    # for half the scene). label_t is the label's own clock; before
+    # label_start it is 0 and the label is invisible.
+    label_t = max(0.0, t - _ch.get("label_start", 0.35))
     layout = (idx + seed) % 4
     vlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     vd = ImageDraw.Draw(vlay, "RGBA")
@@ -855,36 +978,40 @@ def scene_frame(p, idx, t):
     nolabel = sc.get("visual") == "stamp"
     if layout == 1:  # full-bleed
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 900, acc)
-        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
+        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
     elif layout == 2:  # centered big word, visual small below
-        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
+        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 750, acc)
     elif layout == 3:  # split
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 650, acc)
         d.rectangle([(120, 1080), (W - 120, 1088)], fill=acc)
-        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
+        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
     else:  # standard
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 800, acc)
-        label(ld, sc["label"], pt, acc, idx, look) if not nolabel else None
-    enter = sc.get("enter") or "pop_in"
-    emph = sc.get("emphasis") or "punch"
-    label_enter = sc.get("label_enter") or "pop_in"
-    if enter in FX_LAYER_ENTER:
-        vlay = getattr(FX, enter)(vlay, pt, 0)
-    if emph in FX_LAYER_EMPHASIS:
-        # pulse is continuous (its 3rd arg is period, not the hit time) — the
-        # other emphasis effects take (L, t, at) with at = the hit word time.
-        if emph == "pulse":
-            vlay = FX.pulse(vlay, pt)
-        else:
-            vlay = getattr(FX, emph)(vlay, pt, 0)
-    elif emph and emph.startswith("fx_") and VIDEO_FX is not None:
-        # v29b: a custom per-video emphasis from video_fx.py — (layer, t, start, dur).
-        fn = getattr(VIDEO_FX, emph, None)
-        if callable(fn):
-            vlay = fn(vlay, pt, 0, sc["d"])
-    if label_enter in FX_LAYER_ENTER:
-        llay = getattr(FX, label_enter)(llay, pt, 0)
+        label(ld, sc["label"], label_t, acc, idx, look) if not nolabel else None
+    # v35: ONE motion effect on the visual layer — the choice made above by
+    # pick_one_effect(). "build_in" means the visual animates itself (word-
+    # timed / draw-on) and NO layer transform is applied on top of it; that
+    # was the stacking (enter + emphasis + build-in all at once, plus the
+    # transition across the cut). "enter" / "emphasis" / "fx_" is the single
+    # transform, started after the transition tail (vis_start). The label
+    # gets NO layer transform at all — its motion is its word-by-word pops
+    # (label(), starting at label_start above), so it can never clash with
+    # the visual. The camera stays STATIC (v33).
+    if _ch["vis"] == "enter":
+        vlay = getattr(FX, _ch["vis_name"])(vlay, pt, _ch["vis_start"])
+    elif _ch["vis"] == "emphasis":
+        vlay = getattr(FX, _ch["vis_name"])(vlay, pt, _ch["vis_start"])
+    elif _ch["vis"] == "fx_":
+        _fn = getattr(VIDEO_FX, _ch["vis_name"], None)
+        if callable(_fn):
+            vlay = _fn(vlay, pt, _ch["vis_start"], sc["d"])
+    # "build_in": no transform — the visual's own animation is the motion.
+    # v35 frame-QC: the alpha bboxes of the two layers (their real extents
+    # after the single effect was applied) — captured here, before they are
+    # composited onto the content layer.
+    _vb = vlay.getchannel("A").getbbox()
+    _lb = llay.getchannel("A").getbbox()
     lay.alpha_composite(vlay)
     lay.alpha_composite(llay)
     # v32 (Blind): the source line — a short official credit under the label
@@ -915,8 +1042,11 @@ def scene_frame(p, idx, t):
     # A zoom running through the whole video is not a professional edit, and
     # the constant push-in is what made every video feel the same. The
     # camera() function stays (unused) for reference; motion now comes only
-    # from the per-scene ENTER/EMPHASIS effects and the visual's own build-in.
-    return Image.alpha_composite(bg, lay).convert("RGB")
+    # from the visual's own build-in (v35: one effect at a time).
+    _img = Image.alpha_composite(bg, lay).convert("RGB")
+    if return_layers:
+        return _img, _vb, _lb, sc.get("_effect_choice")
+    return _img
 
 def camera(im, idx, t, d, mood, move="push"):
     # v29: the camera move VARIES per scene (push / pan / whip / drift / parallax),
@@ -1219,6 +1349,157 @@ def preview_sheet(p, wd):
     return out
 
 
+def _qc_geometry(vb, lb, has_source, expect_label=True):
+    """v35: geometry checks on one scene's layer bboxes (mid-scene, settled).
+    vb = visual-layer alpha bbox, lb = label-layer alpha bbox (or None if the
+    layer is empty). expect_label=False for a stamp scene (v34: the stamp
+    carries the word, so the label is skipped by design). Returns
+    (flaws, warnings). A flaw is a real defect (clipped at the frame edge,
+    overlapping, missing, colliding). Sitting outside the 8% safe frame
+    while still inside the frame is only a WARNING — the bold full-bleed
+    visuals (four, card, stamp_cta) do that by design and read clean; the
+    frame-QC must not fail a good-looking scene for it."""
+    flaws, warnings = [], []
+    # The visual lives in the band y 200-1110 (below the header, above the
+    # label); the label lives in y 1120-1400.
+    if vb is None:
+        flaws.append("visual missing/empty at mid-scene")
+    else:
+        if vb[0] <= 2 or vb[2] >= W - 2:
+            flaws.append(f"visual clipped at frame edge (bbox x {vb[0]}..{vb[2]})")
+        elif vb[0] < 86 or vb[2] > W - 86:
+            warnings.append(f"visual outside safe frame (bbox x {vb[0]}..{vb[2]})")
+        if vb[1] < 170:
+            flaws.append(f"visual collides with header (bbox top y {vb[1]})")
+        if vb[3] > 1110:
+            flaws.append(f"visual overflows into label band (bbox bottom y {vb[3]})")
+    if lb is None:
+        # A missing label at mid-scene is a flaw — unless the scene is a
+        # stamp visual (expect_label=False), where the label is skipped by
+        # design because the stamp itself carries the word.
+        if expect_label:
+            flaws.append("label missing at mid-scene")
+    else:
+        if lb[0] <= 2 or lb[2] >= W - 2:
+            flaws.append(f"label clipped at frame edge (bbox x {lb[0]}..{lb[2]})")
+        elif lb[0] < 86 or lb[2] > W - 86:
+            warnings.append(f"label outside safe frame (bbox x {lb[0]}..{lb[2]})")
+        if lb[3] > 1400:
+            flaws.append(f"label overflows below its band (bbox bottom y {lb[3]})")
+        if has_source and lb[3] > 1380:
+            flaws.append(f"label collides with source line (bbox bottom y {lb[3]})")
+    if vb is not None and lb is not None and expect_label:
+        # The visual's bottom must not push into the label's top by more
+        # than a 10 px touch — more than that is the two elements overlapping.
+        if vb[3] > lb[1] + 10:
+            flaws.append(f"label overlaps visual (visual bottom y {vb[3]}, label top y {lb[1]})")
+    return flaws, warnings
+
+
+def _qc_audit(sc, idx):
+    """v35: verify the one-effect decision for one scene (the stacking audit).
+    Returns a list of flaw strings (empty = clean)."""
+    flaws = []
+    ch = sc.get("_effect_choice")
+    if not ch:
+        return ["no effect choice logged (pick_one_effect never ran)"]
+    if ch.get("vis") not in ("build_in", "enter", "emphasis", "fx_"):
+        flaws.append(f"visual motion is not a single choice: {ch.get('vis')}")
+    if ch.get("label") != "fade_in":
+        flaws.append(f"label motion is not fade_in: {ch.get('label')}")
+    # The motion must start after the transition tail (TR/2) for scenes
+    # after the first — otherwise the cut and the motion stack. This applies
+    # only to a LAYER transform (enter/emphasis/fx_): for a build_in there is
+    # no layer transform at all — the build-in IS the scene's entrance, and
+    # the crossfade is the scene arriving, so they do not stack on the same
+    # layer (the frames at the cuts confirm they read clean). Delaying a
+    # build-in would desync it from its hit word, which v34 timed it to.
+    pop_t = float(sc.get("pop_t", 0.0) or 0.0)
+    if ch.get("vis") != "build_in" and idx > 0 and ch.get("vis_start", 0.0) < max(0.0, TR / 2 - pop_t) - 0.01:
+        flaws.append("visual motion starts inside the transition tail")
+    # The label must be sequenced after the visual's motion (never at the
+    # same instant) and must be present early in the scene. For a build-in
+    # the label starts at a fixed early scene time (just after the
+    # transition tail); otherwise it starts after the motion ends (scene
+    # time = pop_t + vis_start + vis_dur).
+    if ch.get("vis") == "build_in":
+        _earliest = (TR / 2 if idx > 0 else 0.0) + 0.1
+        if ch.get("label_start", 0.0) < _earliest:
+            flaws.append("label starts inside the transition tail")
+        if ch.get("label_start", 0.0) > 1.0:
+            flaws.append("label starts too late in the scene")
+    else:
+        _end = pop_t + ch.get("vis_start", 0.0) + ch.get("vis_dur", 0.35)
+        if ch.get("label_start", 0.0) < _end - 0.05:
+            flaws.append("label starts before the visual motion ends")
+    return flaws
+
+
+def frame_qc(p, video_path):
+    """v35 (Ajju: "Divya is not checking at all"). Automated post-render
+    frame check. The old team_qc scores the PLAN text and never looks at a
+    rendered frame — that is why stacked effects shipped. This checks the
+    actual rendered output, per scene:
+      (a) the effect audit — exactly one motion per layer, sequenced, no
+          motion overlapping the transition tail;
+      (b) the layer geometry at mid-scene (the settled state) — visual and
+          label present, inside the safe frame, not overlapping each other,
+          not colliding with the header or the source line;
+      (c) the encoded frames themselves — sampled from the video file, not
+          blank and not a solid colour.
+    Returns {"passed": bool, "scenes": [{idx, passed, flaws}], "flaws": [...]}.
+    A failing scene is FLAGGED, never silently shipped."""
+    scenes_out, all_flaws, all_warnings = [], [], []
+    starts = p.get("starts") or []
+    n = len(p.get("scenes") or [])
+    for i in range(n):
+        sc = p["scenes"][i]
+        flaws, warnings = [], []
+        # The render runs in forked child processes (mp.Pool), so the
+        # _effect_choice set by pick_one_effect() during the render lives
+        # only in the children's copies — the parent's plan never gets it.
+        # Call scene_frame() HERE (in the parent) first, so it populates
+        # _effect_choice, THEN run the audit on it.
+        _mid = float(sc.get("d", 1.0) or 1.0) / 2
+        try:
+            _img, _vb, _lb, _ch = scene_frame(p, i, _mid, return_layers=True)
+        except Exception as e:
+            _vb, _lb = None, None
+            flaws.append(f"scene {i + 1}: geometry check failed to run: {str(e)[:100]}")
+        # (a) the effect audit (the stacking check, on the decision itself).
+        flaws += [f"scene {i + 1}: {f}" for f in _qc_audit(sc, i)]
+        # (b) the layer geometry at mid-scene (the settled state — the enter
+        # is done by then, so a visual outside the safe frame is a real cut).
+        if _vb is not None or _lb is not None:
+            _nolabel = sc.get("visual") == "stamp"
+            _gf, _gw = _qc_geometry(_vb, _lb, bool(sc.get("source")), expect_label=not _nolabel)
+            flaws += [f"scene {i + 1}: {f}" for f in _gf]
+            warnings += [f"scene {i + 1}: {w}" for w in _gw]
+        # (c) the encoded frame itself (from the video file, not the plan).
+        if i < len(starts):
+            _t = starts[i] + _mid
+            _fp = os.path.join(tempfile.gettempdir(), f"v35_qc_{i}.jpg")
+            try:
+                subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{_t:.2f}",
+                                "-i", video_path, "-frames:v", "1", "-vf", "scale=270:-1",
+                                _fp], check=True, timeout=60)
+                _im = np.asarray(Image.open(_fp).convert("L"), dtype=np.float32)
+                _mean, _std = float(_im.mean()), float(_im.std())
+                if _mean < 8:
+                    flaws.append(f"scene {i + 1}: rendered frame is blank/black (mean {_mean:.1f})")
+                elif _mean > 245:
+                    flaws.append(f"scene {i + 1}: rendered frame is blown out (mean {_mean:.1f})")
+                elif _std < 5:
+                    flaws.append(f"scene {i + 1}: rendered frame is a solid colour (std {_std:.1f})")
+            except Exception as e:
+                flaws.append(f"scene {i + 1}: frame extract failed: {str(e)[:100]}")
+        scenes_out.append({"idx": i, "passed": not flaws, "flaws": flaws, "warnings": warnings})
+        all_flaws += flaws
+        all_warnings += warnings
+    return {"passed": not all_flaws, "scenes": scenes_out, "flaws": all_flaws,
+            "warnings": all_warnings}
+
+
 async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False):
     global _P
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
@@ -1365,5 +1646,14 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     delivery = f"{wd}/divya_doc_delivery.mp4"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/raw.mp4", "-i", f"{wd}/mix.wav", "-vf", vf, "-c:v", "libx264", "-preset", "medium",
                     "-crf", "26", "-maxrate", "2300k", "-bufsize", "4600k", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", delivery], check=True)
+    # v35 (Ajju: "Divya is not checking at all"): automated frame-level QC
+    # AFTER the render. The old team_qc scores the PLAN text and never looks
+    # at a rendered frame — that is why stacked effects shipped. frame_qc
+    # checks the effect audit + the layer geometry + the encoded frames, per
+    # scene. A failing scene is FLAGGED in the returned dict ("qc_passed":
+    # False) — never silently shipped as if it passed.
+    _fq = frame_qc(p, out)
+    print(f"frame_qc: {'PASS' if _fq['passed'] else 'FAIL'} — " + ("; ".join(_fq["flaws"][:6]) if _fq["flaws"] else "all scenes clean") + ((" | warnings: " + "; ".join(_fq["warnings"][:4])) if _fq.get("warnings") else ""))
     return {"path": out, "delivery_path": delivery, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
-            "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total}
+            "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total,
+            "frame_qc": _fq, "qc_passed": _fq["passed"]}
