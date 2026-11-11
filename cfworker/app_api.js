@@ -175,10 +175,17 @@ async function appTalk(env, u, text, lang, voiceId) {
     h.push({ role: "assistant", content: r.reply }); await remember(env, u.n, h);
     return { reply: r.reply, action: r.action, intent: r.intent, video_started: false, premium_required: !!r.premium_required, brain: u.via || "shared" };
   }
+  // v37 (fix B): API-key / provider / "AI down" questions never reach the
+  // model — answer with the guided Setup flow instead.
+  if (isSetupQuestion(text)) {
+    const sg = setupGuideReply(lang);
+    h.push({ role: "assistant", content: sg }); await remember(env, u.n, h);
+    return { reply: sg, video_started: false, premium_required: false, brain: u.via || "shared" };
+  }
   let ans, mm;
   if (resumeBrief) { ans = lang === "en" ? "Starting your video now." : "Nee video start chesthunna."; mm = [null, resumeBrief]; }
   else {
-    ans = await userBrain(env, u, [{ role: "system", content: appSys(u.owner, lang) }, ...h]);
+    ans = await userBrain(env, u, [{ role: "system", content: appSys(u.owner, lang) }, ...h], lang);
     mm = ans.match(/\[\[\s*CREATE\s*:\s*([^\]]*)\]\]/i);
     ans = ans.replace(/\[\[[^\]]*\]\]/g, "").replace(/\*\*|__|^#+\s*/gm, "").trim();
     if (!mm && (forceCreate || isNoVideoEditOrder(text))) { mm = [null, cleanText]; ans = lang === "en" ? "Starting now — I'll make everything A to Z myself: script, visuals, voice, captions, edit." : "Sare, start chesa — script, visuals, voice, captions, edit, motham nene A to Z chestha. Ready ayyaka ikkade pampistha."; }
@@ -201,8 +208,8 @@ async function appTalk(env, u, text, lang, voiceId) {
   }
   if (go && await env.KV.get(`busy:${u.n}`)) { ans = lang === "en" ? "One video is already being made. I'll start the next one after it arrives." : "Okka video already tayaru avuthondi. Adi vachaka next di start chestha."; go = false; }
   let premium_required = false;
-  if (go) { const tk = await tokSpend(env, u.n, videoCost(parseMins(mm && mm[1]))); if (!tk.ok) { ans = tokMsg(lang, tk); go = false; } }
-  h.push({ role: "assistant", content: ans }); await remember(env, u.n, h);
+  let tk = null, cost = 0;
+  if (go) { cost = videoCost(parseMins(mm && mm[1])); tk = await tokSpend(env, u.n, cost); if (!tk.ok) { ans = tokMsg(lang, tk); go = false; } }
   if (go) {
     let brief = (mm[1] || "AUTO").trim() || "AUTO";
     // R34: the video voice-over uses the user's picked app voice gender
@@ -211,8 +218,13 @@ async function appTalk(env, u, text, lang, voiceId) {
     if (vg) brief += ` Voice-over gender: ${vg}.`;
     const bpRaw = await env.KV.get(`bp:${u.n}`);
     if (bpRaw) { try { brief += " Style blueprint: " + blueprintLine(JSON.parse(bpRaw)) + "."; await env.KV.delete(`bp:${u.n}`); } catch {} }
-    sc = await startCreate(env, u.n, brief); started = !!sc; if (started) await vidCount(env, u.n); if (started) await env.KV.put(`appjob:${u.n}`, JSON.stringify({ at: Date.now(), brief: brief.slice(0, 200), job: sc.job, num: sc.num }), { expirationTtl: 86400 * 2 });
+    sc = await startCreate(env, u.n, brief); started = !!sc;
+    if (started) { await vidCount(env, u.n); await env.KV.put(`appjob:${u.n}`, JSON.stringify({ at: Date.now(), brief: brief.slice(0, 200), job: sc.job, num: sc.num }), { expirationTtl: 86400 * 2 }); }
+    // v37 (fix F): the "started" reply is only true once the job is queued.
+    // A failed dispatch replaces it with an honest failure + token refund.
+    else { await tokRefund(env, u.n, tk, cost); ans = lang === "en" ? "The video machine didn't start — try again in a few minutes. Your tokens were returned." : "Video machine start avvaledu — konchem sepu tarvatha malli try cheyyi. Nee tokens venakki ichesa."; }
   }
+  h.push({ role: "assistant", content: ans }); await remember(env, u.n, h);
   return { reply: ans, video_started: started, video_job: sc?.job || null, video_num: sc?.num || null, premium_required, brain: u.via || "shared" };
 }
 
@@ -420,7 +432,7 @@ async function appApi(req, env, url) {
   if (p === "logout" && req.method === "POST") { await env.KV.delete(`sess:${(req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim()}`); return appJson(req, { ok: true }); }
   if (p === "me") { const a = u.acct; try { if (!(await env.KV.get(`joined:${u.n}`))) await env.KV.put(`joined:${u.n}`, String(Date.now())); } catch {} return appJson(req, { ok: true, number: a ? (a.phone || "") : u.n, owner: u.owner, premium: await isPremium(env, u.n), account: a ? { name: a.name, email: a.email, phone: a.phone || "", phone_pending: a.pphone || "" } : null }); }
   if (p.startsWith("account/") && req.method === "POST") return acctPrivate(req, env, u, p, body);
-  if (p === "plan") { const bal = await tokBalance(env, u.n); const own = !!((await env.KV.get(`ukey:${u.n}:groq`)) || (await env.KV.get(`ukey:${u.n}:openrouter`))); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = !!(await env.KV.get(`planvoice:${u.n}`).catch(() => null)); return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, edits_limit: Math.floor(TOK.WEEKLY_FREE / TOK.PER_MIN), edits_used: Math.floor(bal.weekSpent / TOK.PER_MIN), edits_left: bal.videosWeek, period: "week", unlimited: bal.unlimited, brain: own ? "own" : "shared", video_backend: "shared", pro: "soon" }); }
+  if (p === "plan") { const bal = await tokBalance(env, u.n); const own = !!((await env.KV.get(`ukey:${u.n}:groq`)) || (await env.KV.get(`ukey:${u.n}:openrouter`))); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = PLANS[pid].voice; /* v37: voice assistant included in every plan (was a planvoice KV flag / ₹49 add-on) */ return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, edits_limit: Math.floor(TOK.WEEKLY_FREE / TOK.PER_MIN), edits_used: Math.floor(bal.weekSpent / TOK.PER_MIN), edits_left: bal.videosWeek, period: "week", unlimited: bal.unlimited, brain: own ? "own" : "shared", video_backend: "shared", pro: "soon" }); }
   if (p === "assist" && req.method === "POST") return appJson(req, await appAssist(env, u, body, lang));
   if (p.startsWith("setup/")) return appJson(req, await appSetupUser(req, env, u, p, body, lang));
   if (p.startsWith("keys")) return appKeys(req, env, u, p, body, lang);
@@ -487,7 +499,7 @@ async function appApi(req, env, url) {
     const parts = [String(body.topic || "").trim() || "AUTO (you pick a fresh topic)", body.language && `voice language ${body.language}`, body.voice && `${body.voice} voice`, body.length && `length ${body.length}`, body.style && `style ${body.style}`].filter(Boolean);
     const brief = parts.join(", ").slice(0, 600);
     const sc = await startCreate(env, u.n, brief);
-    if (!sc) return appJson(req, { ok: false, error: "Video machine start avvaledu. Konchem sepu tarvatha try cheyyi." }, 502);
+    if (!sc) { await tokRefund(env, u.n, tk, videoCost(parseMins(body.length))); return appJson(req, { ok: false, error: "Video machine start avvaledu. Konchem sepu tarvatha try cheyyi." }, 502); }
     await env.KV.put(`appjob:${u.n}`, JSON.stringify({ at: Date.now(), brief, job: sc.job, num: sc.num }), { expirationTtl: 86400 * 2 });
     const h = await history(env, u.n); h.push({ role: "user", content: `[app] video create: ${brief}` }, { role: "assistant", content: "Sare, start chesa. Ready ayyaka WhatsApp lo pampistha." }); await remember(env, u.n, h);
     return appJson(req, { ok: true, started: true, job: sc.job, num: sc.num });
@@ -792,10 +804,27 @@ async function chatWithFallback(env, u, messages) {
   u.via = "none";
   return "";
 }
-async function userBrain(env, u, messages) {
+// v37: API-key / provider / "AI down" questions are answered structurally —
+// NEVER sent to the model. The model once refused one of these with
+// "Sorry, I can't help with that", and a dead-end refusal is worse than no
+// answer: the user gets the guided Setup flow instead.
+const SETUP_Q_RX = /\bapi[- ]?keys?\b|\bais?\b.{0,25}\b(down|pani\s*cheyy|work\s*avva|providers?)\b|providers?\s+down\b|bring\s+(the\s+)?(api\s+)?keys?\b|keys?\s+(kavali|theesko|teeskoni|ivvu|create|ela|lu)\b|key\s+(setup|create|ela)\b|free\s+(ai|key|keys?)\b|setup\s+(keys?|api|ai|account)\b|\bgroq\b|\bopenrouter\b|\bgemini\b/i;
+function isSetupQuestion(text) {
+  const t = String(text || "");
+  if (isCreateOrder(t) || isNoVideoEditOrder(t)) return false; // a video order is still a video order
+  return SETUP_Q_RX.test(t);
+}
+function setupGuideReply(lang) {
+  if (lang === "en") return "The shared AI is busy right now — its free limit is full, so it can't answer at the moment. It clears on its own in a bit, and you can try again. For no more limits, add your own FREE key in Setup (#/setup): 1) Groq — groq.com, log in, API Keys, Create, paste the key here. 2) Or OpenRouter (openrouter.ai) or Gemini (aistudio.google.com) — also free. Divya tests the key and uses your key first. Your key stays encrypted and is never shown to anyone.";
+  return "Shared AI ippudu busy ga undhi — free limit full ayyindhi, konchem sepu tarvatha thane clear avuthundi, malli try cheyachu. Ee problem malli raakunda, nee own FREE key add chesko — Setup lo (#/setup) step-by-step undhi: 1) Groq — groq.com lo login chesi, API Keys lo Create, key ikkada paste cheyyi. 2) Leda OpenRouter (openrouter.ai) leda Gemini (aistudio.google.com) — anni free. Key ni nene test chesi, mundu nee key ne vadutha. Nee key encrypted ga untundi, evariki kanipinchadhu.";
+}
+async function userBrain(env, u, messages, lang = "te") {
   const out = await chatWithFallback(env, u, messages);
   if (out) return stripReasoning(out);
-  return "AI providers anni down unnayi ippudu — konchem aagi malli try cheyyi. / All AI providers are down right now — please try again in a bit.";
+  // v37 (fix A): never a dead-end "providers down, try again later" — say
+  // plainly the shared AI is rate-limited right now and point at the
+  // guided Setup flow, so the user always has a next step.
+  return setupGuideReply(lang);
 }
 // Free plan: FREE_EDITS (default 10) video edits per calendar month (IST). Owner + friend numbers: unlimited.
 const istMonth = () => new Date(Date.now() + 19800000).toISOString().slice(0, 7);
@@ -805,7 +834,7 @@ const istMonth = () => new Date(Date.now() + 19800000).toISOString().slice(0, 7)
 // Owners + friends: unlimited. Referral: 1,000,000 both sides, 48h window, never expires.
 // Costs: chat 5,000 · assist 10,000 · voice 25,000/min · image 50,000 · video 100,000/min (short = 100K, 10-min = 1M).
 // Rupee rate: 1M tokens = ₹19 (100K = ₹1.9 ≈ ₹2). Packs: ₹19→1M, ₹38→2M, ₹95→5M, ₹190→10M (one-time, never expire).
-// Plans (25% below pack value): Starter ₹29, Creator ₹129, Studio ₹319, voice +₹49/mo, max ₹368/mo.
+// Plans (25% below pack value): Starter ₹29, Creator ₹129, Studio ₹319 — voice assistant included in every plan (v37, was +₹49/mo add-on).
 const TOK = {
   WEEKLY_FREE: 500_000, PRO_WEEKLY: 2_500_000, REF_REWARD: 1_000_000,
   COST: { chat: 5000, assist: 10000, voice: 25000, image: 50000, video_edit: 100000, video_create: 100000 },
@@ -815,12 +844,12 @@ const videoCost = mins => TOK.PER_MIN * Math.max(1, Math.ceil(mins || 1)); // 1 
 const lenToMins = len => ({ "30s": 1, "60s": 1, "3m": 3, "10m": 10, full: 10, auto: 1 }[len] || 1); // "full" charged as 10 min (source duration unknown at order time)
 const parseMins = s => { const m = String(s || "").match(/(\d+)\s*(?:min|mins|minute|minutes|nimisham|nimishalu|nims?)/i); return m ? parseInt(m[1], 10) : 1; };
 const PLANS = {
-  free:    { name: "Free",    monthly: 0,   grant: 0,           voice: false },
-  starter: { name: "Starter", monthly: 29,  grant: 2_000_000,   voice: false },
-  creator: { name: "Creator", monthly: 129, grant: 9_000_000,   voice: false },
-  studio:  { name: "Studio",  monthly: 319, grant: 22_500_000,  voice: false },
+  free:    { name: "Free",    monthly: 0,   grant: 0,           voice: true },
+  starter: { name: "Starter", monthly: 29,  grant: 2_000_000,   voice: true },
+  creator: { name: "Creator", monthly: 129, grant: 9_000_000,   voice: true },
+  studio:  { name: "Studio",  monthly: 319, grant: 22_500_000,  voice: true },
 };
-const VOICE_MONTHLY = 49; // voice assistant add-on, any plan
+const VOICE_MONTHLY = 49; // LEGACY (v37): voice is now included in every plan — kept only so older app builds reading voice_monthly don't break; never show it as an add-on.
 const istWeek = () => { const d = new Date(Date.now() + 19800000); const day = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - day); return d.toISOString().slice(0, 10); }; // Monday (IST)
 const istWeekEnd = () => { const d = new Date(istWeek() + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 7); return d.toISOString().slice(0, 10); };
 async function tokNum(env, k, def = 0) { try { return Math.max(0, parseInt((await env.KV.get(k)) || String(def), 10) || 0); } catch { return def; } }
@@ -842,6 +871,17 @@ async function tokSpend(env, n, cost) {
     if (bal.planLeft >= cost) { await env.KV.put(`tokplan:${n}:${istMonth()}`, String(bal.planLeft - cost), { expirationTtl: 86400 * 40 }); return { ok: true, via: "plan", left: bal.planLeft - cost }; }
     return { ok: false, need: cost, have: bal.weekLeft + bal.pool + bal.planLeft, bal };
   } catch (e) { try { await env.KV.put("dbg:tok", new Date().toISOString() + " " + String(e).slice(0, 200), { expirationTtl: 86400 }); } catch {} return { ok: true, via: "error" }; }
+}
+// v37 (fix F): refund a token spend when the video machine failed to start —
+// the user must never pay for a job that never queued. Reverses the exact
+// bucket tokSpend used.
+async function tokRefund(env, n, r, cost) {
+  if (!r || !r.ok || !r.via || r.via === "unlimited" || r.via === "error") return;
+  try {
+    if (r.via === "weekly") await env.KV.put(`tokw:${n}:${istWeek()}`, String(Math.max(0, (await tokNum(env, `tokw:${n}:${istWeek()}`)) - cost)), { expirationTtl: 86400 * 8 });
+    else if (r.via === "pool") await env.KV.put(`tokp:${n}`, String((await tokNum(env, `tokp:${n}`)) + cost));
+    else if (r.via === "plan") await env.KV.put(`tokplan:${n}:${istMonth()}`, String((await tokNum(env, `tokplan:${n}:${istMonth()}`)) + cost), { expirationTtl: 86400 * 40 });
+  } catch {}
 }
 const tokMsg = (lang, r) => lang === "en" ? `Not enough tokens: this needs ${(r.need || 0).toLocaleString("en-IN")} tokens, you have ${(r.have || 0).toLocaleString("en-IN")}. Free tokens reset every Monday.` : `Tokens saripovu: deeniki ${(r.need || 0).toLocaleString("en-IN")} tokens kavali, neeku ${(r.have || 0).toLocaleString("en-IN")} unnayi. Free tokens prathi Monday reset avthayi.`;
 async function tokPlanId(env, n) { const p = await env.KV.get(`plan:${n}`).catch(() => null); return PLANS[p] ? p : "free"; }

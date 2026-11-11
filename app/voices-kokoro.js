@@ -43,6 +43,12 @@ async function kokoroLoad() {
 /* Fire-and-forget warm-up (called after login) so the first voice reply does
  * not wait on the ~90 MB download. Failures land in kokoroStatus(). */
 function kokoroWarm() { return kokoroLoad(); }
+/* v37: retry after a failed load — resets the failed state so kokoroLoad()
+ * starts a fresh import + download instead of staying failed until reload. */
+function kokoroRetry() {
+  if (kokoroState === "failed") { kokoroLoading = null; kokoroState = "idle"; kokoroError = ""; }
+  return kokoroLoad();
+}
 /* Pick the Kokoro voice for a catalog voice + text. Devanagari text uses the
  * voice's own kokoroHi id (Kokoro has only hf_alpha/hf_beta + hm_omega/hm_psi,
  * so Hindi replies vary by voice + rate, not by 20 distinct models — honest
@@ -53,7 +59,15 @@ function kokoroVoiceFor(voice, text) {
   let id;
   if (/[\u0900-\u097F]/.test(text || "")) id = (voice && voice.kokoroHi) || KOKORO_HI[gender];
   else id = (voice && voice.kokoro) || KOKORO_FALLBACK[gender];
-  if (kokoroVoices && !kokoroVoices.includes(id)) id = KOKORO_FALLBACK[gender];
+  // v37: validate ONLY against a real, non-empty string list. An empty list
+  // (list_voices() returning []) used to fail includes() for EVERY voice and
+  // collapse all 20 catalog voices to the single fallback voice per gender —
+  // exactly the "only one voice plays" complaint. A missing/unreadable list
+  // keeps the catalog id as-is instead of collapsing.
+  if (Array.isArray(kokoroVoices) && kokoroVoices.length) {
+    const names = kokoroVoices.map(v => typeof v === "string" ? v : (v && (v.id || v.name || v.voice))).filter(Boolean);
+    if (names.length && !names.includes(id)) id = KOKORO_FALLBACK[gender];
+  }
   return id;
 }
 async function kokoroSpeak(text, voice) {
