@@ -1925,7 +1925,7 @@ async function setupWatchdog(env, n, chain) {
   const mins = Math.max(1, Math.round((Date.now() - last) / 60000));
   const fin = { state: "stalled", done: chain.done || [], failed: chain.failed || [],
     provider: cur.provider, note: (cur.note || "") + ` — runner nunchi ${mins} min nunchi update ledu (setup aagipoyindhi).`,
-    lastStep: cur.step || "", lastUrl: cur.url || "", at: Date.now(), geminiVerify: (chain && chain.geminiNeedsVerify) || null };
+    lastStep: cur.step || "", lastUrl: cur.url || "", at: Date.now(), geminiVerify: (chain && chain.geminiNeedsVerify) || null, failReason: (chain && chain.failReason) || null };
   await env.KV.put(`setupdone:${n}`, JSON.stringify(fin), { expirationTtl: 86400 });
   await env.KV.delete(`setupchain:${n}`);
   return fin;
@@ -1981,7 +1981,7 @@ function setupSteps(chain, cur, fin, keys, lang) {
       else st = cur.state === "failed" ? "failed" : "running";
     }
     else if (!chain && fin && (fin.state === "failed" || fin.state === "stalled") && fin.provider === id) st = "failed";
-    const txt = setupStepText(id, st, lang, (cur && cur.provider === id ? cur.note : "") || (fin ? fin.note || "" : ""), kind);
+    const txt = setupStepText(id, st, lang, (cur && cur.provider === id ? cur.note : "") || (fin ? fin.note || "" : "") || (chain && chain.failReason && chain.failReason[id]) || (fin && fin.failReason && fin.failReason[id]) || "", kind);
     return { id, name: SETUP_PROVIDERS[id].name, state: st, kind, note: txt, text: txt };
   });
 }
@@ -2631,7 +2631,7 @@ async function setupStartNext(env, n) {
   // v24: record the outcome before deleting the chain — otherwise the app has
   // nothing to show when the setup ends (the mini-box just vanished).
   // v38 merge fix: if NO provider produced a key, the run failed (not done).
-  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
+  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, failReason: chain.failReason || null, ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
   const job = setupJobId();
   const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
   await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
@@ -2663,6 +2663,11 @@ async function setupStartNext(env, n) {
       rec.note = String(prov.reason || "failed").slice(0, 200);
       chain.failed = chain.failed || [];
       if (!chain.failed.includes("gemini")) chain.failed.push("gemini");
+      // Keep the reason on the chain so setupSteps can show WHY it failed
+      // (it only reads the CURRENT job's note, which by then belongs to
+      // the next provider).
+      chain.failReason = chain.failReason || {};
+      chain.failReason.gemini = String(prov.reason || "failed").slice(0, 80);
     }
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
