@@ -2042,7 +2042,11 @@ async function maybeAutoCheck(env, n, email, force) {
   await env.KV.put(`setupautolast:${n}`, String(now), { expirationTtl: 86400 * 2 });
   const consent = JSON.parse((await env.KV.get(`setupconsent:${n}`)) || "null");
   if (!consent) {
-    await autoLogAppend(env, n, { provider: "", action: "skipped", why: "one-tap allow expired or missing — needs one tap in Setup", result: "needs-consent" });
+    // A brand-new user who never gave the allow gets no log spam — the
+    // login-time setup prompt is the ask. Log only when an EXISTING user
+    // (previous setup, or real usage) has a lapsed allow.
+    const hadSetup = !!(await env.KV.get(`setupdone:${n}`)) || !!(await env.KV.get(`joined:${n}`));
+    if (hadSetup) await autoLogAppend(env, n, { provider: "", action: "skipped", why: "one-tap allow expired or missing — needs one tap in Setup", result: "needs-consent" });
     return { checked: true, action: "needs-consent" };
   }
   const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
@@ -2062,7 +2066,7 @@ async function maybeAutoCheck(env, n, email, force) {
     // change, or usage pressing against the free tiers with no free
     // provider left to add (honest limit — Divya cannot invent a 4th
     // free provider).
-    if (usage.usagePct >= 90 && usage.enough && !usage.unlimited) {
+    if (usage.usagePct >= 90 && usage.enough) {
       await autoLogAppend(env, n, { provider: "", action: "checked", why: `usage ${usage.usagePct}% of weekly allowance — anni free providers already set up, inka free keys levu`, result: "maxed" });
     }
     return { checked: true, action: "none", health, usage, skippedCool };
