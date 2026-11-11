@@ -889,6 +889,19 @@ function renderSetupBox(d) {
   const stalled = state === "stalled" || d.stalled === true;
   const pausedStep = steps ? steps.find(s => String(s.state || "").toLowerCase() === "paused") : (cur && cur.state === "paused" ? cur : null);
   const title = done ? t("setupDone") : failed ? t("setupFailed") : stalled ? t("setupStalled") : pausedStep ? t("setupPaused") : t("setupRunning");
+  // v40: Worker-side Gmail read (R19 gmail.readonly) — setup/status carries
+  // d.gmail = {state: "ok"|"no-token"|"needs-scope"|"no-mail-yet"|"error",
+  // provider}. The Worker reads the verification mail itself and feeds the
+  // link to the runner server-side; the app NEVER renders a verification link.
+  const gmail = d.gmail || null;
+  const gstate = gmail ? String(gmail.state || "").toLowerCase() : "";
+  const gmailNeeds = gstate === "needs-scope" || gstate === "no-token";
+  const gmailWaiting = gstate === "no-mail-yet";
+  const gmailError = gstate === "error";
+  // Email-kind pause = any pause that is not SMS / sign-in / captcha; that
+  // is the one whose old "tap the link" line the v40 Worker path replaces.
+  const pauseKind = pausedStep ? String(pausedStep.kind || pausedStep.pause || "").toLowerCase() : "";
+  const pauseIsEmail = !!pausedStep && !["sms", "phone", "code", "signin", "captcha"].includes(pauseKind);
   // "Waiting on you" lives ONLY on the paused step (email link / SMS code).
   const newPause = pausedStep ? { id: pausedStep.id || pausedStep.provider || "" } : null;
   if (JSON.stringify(newPause) !== JSON.stringify(setupPause)) { setupPause = newPause; if (cur === "setup") renderSteps(); }
@@ -898,18 +911,34 @@ function renderSetupBox(d) {
     if (pausedStep) {
       // v39: every pause kind gets its own plain line — signin (open the
       // provider page and sign in) and captcha included, not just email/SMS.
-      const kind = String(pausedStep.kind || pausedStep.pause || "").toLowerCase();
-      const line = kind === "sms" || kind === "phone" || kind === "code" ? t("setupPauseSms")
+      // v40: on the email path the Worker reads the mail itself, so the old
+      // "tap the link" line must NOT show — waiting / error replace it, and
+      // needs-scope gets the re-consent card below instead of any line.
+      const kind = pauseKind;
+      let line = null;
+      if (pauseIsEmail && gmailWaiting) line = t("gmailWaitMail");
+      else if (pauseIsEmail && gmailError) line = t("gmailReadErr");
+      else if (!(pauseIsEmail && gmailNeeds)) line = kind === "sms" || kind === "phone" || kind === "code" ? t("setupPauseSms")
         : kind === "signin" ? t("setupPauseSignin")
         : kind === "captcha" ? t("setupPauseCaptcha")
         : t("setupPauseEmail");
-      html += `<div>${esc(line)}</div>`;
+      if (line) html += `<div>${esc(line)}</div>`;
     }
     if (stalled && d.finished && d.finished.note) html += `<div class="muted small">${esc(d.finished.note)}</div>`;
   } else {
     html += `<div class="muted small">${esc(cur.site || "")} · ${esc(cur.step || "")}</div>` +
       (cur.note ? `<div>${esc(cur.note)}</div>` : "") +
       `<div class="muted small">${esc((d.providers || []).join(" → "))}${d.done && d.done.length ? " · ✓ " + d.done.join(", ") : ""}</div>`;
+  }
+  // v40: Gmail re-consent card — shown only when the Worker reports it
+  // cannot read mail yet (needs-scope / no-token). One button, same
+  // connect/link google flow as the Connect page; the Worker requests the
+  // gmail.readonly scope, Google shows consent once, and pollSetup() picks
+  // up the new state so the setup resumes on its own. Never shown when
+  // gmail.state is "ok" — and renderSetupBox only runs for an active setup,
+  // so a user who never started setup is never nagged.
+  if (gmailNeeds) {
+    html += `<div class="card note" data-gmail-consent><b>${esc(t("gmailConsentT"))}</b><div>${esc(t("gmailConsentLine"))}</div><div class="act"><button class="pill" data-a="gmail">${esc(t("gmailAllowBtn"))}</button></div></div>`;
   }
   // v39: the sign-in page to open comes from the server's action (or the
   // current job's URL) — a paused-signin step without an open button is
@@ -934,6 +963,9 @@ function renderSetupBox(d) {
   if (open) open.onclick = () => { if (actionUrl) window.open(actionUrl, "_blank"); };
   const didIt = setupBoxEl.querySelector('[data-a="done"]');
   if (didIt) didIt.onclick = async () => { await api("setup/continue", { method: "POST", json: {} }); pollSetup(); };
+  // v40: the re-consent button re-uses the Connect Google flow.
+  const gmailBtn = setupBoxEl.querySelector('[data-a="gmail"]');
+  if (gmailBtn) gmailBtn.onclick = () => connectLink("google");
   const retry = setupBoxEl.querySelector('[data-a="retry"]');
   if (retry) retry.onclick = () => startOneTapSetup();
   const take = setupBoxEl.querySelector('[data-a="take"]');
@@ -956,6 +988,9 @@ async function pollSetup() {
     try { d = await api("setup/status"); } catch {}
     if (!d || !d.ok) return;
     if (Array.isArray(d.autoLog)) { lastAutoLog = d.autoLog; renderAutoLog(); }
+    // v40: keep the Setup-screen Gmail card live while polling (it hides
+    // itself once gmail.state turns "ok" or the run finishes).
+    if (cur === "setup") renderGmailConsentCard(d);
     // v38 shape carries d.state ("done"/"running"/"paused"/"failed"); pre-v38
     // shape carries d.finished. Either way, a finished run ends polling.
     // v39: "stalled" is terminal too.
