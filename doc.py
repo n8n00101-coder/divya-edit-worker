@@ -5,13 +5,14 @@ LLM story plan (hook -> context -> twist -> payoff -> CTA, per-scene mood) -> hu
 6 transition kinds -> procedural cinematic music + whoosh/boom SFX, ducked under voice -> word-timed karaoke
 captions (libass) -> film grade (vignette + grain). Rendered in parallel processes. Free, CPU only.
 v29: Hark's effects.py (Blind) — 14 ENTER, 11 EMPHASIS, 12 TRANSITIONS, picked by the hit word's meaning, max 2x per video."""
-import asyncio, json, math, multiprocessing as mp, os, random, re, subprocess, sys, tempfile, wave
+import asyncio, inspect, json, math, multiprocessing as mp, os, random, re, subprocess, sys, tempfile, wave
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import create as C
 import effects as FX  # v29: Hark's effects library (Blind, divya-v26-effects.zip) — 14 ENTER, 11 EMPHASIS, 12 TRANSITIONS, 10 easings
 import transitions_lib as TL  # v29b: Hark's 379-transition library (Blind, divya-v29-transitions.zip) — 40 families, incl. 3D
-import teams  # v30+v31: Divya's own team (Hark's "teams" method) — role-based sub-agents, parallel tasks, merge + QC
+import visuals_lib as VL  # v32: Blind's rich-visual library (18 real objects, scene_bg, pick_vis)
+import codegen as CG  # v32: Divya's adapter for Blind's divya_codegen.py (per-video tr_/fx_/vis_ code)
 # v29b: transitions slower than 200 ms/frame at 1080x1920 (measured on this VM;
 # the render is offline + parallel, but these 10 would dominate it). Excluded
 # from the pick pool; 369 remain.
@@ -53,7 +54,7 @@ LOOKS = {
           "fx_tag": "space", "moves": ["push", "pan", "drift"],
           "desc": "deep navy to teal gradient, cyan/amber accent, thin line diagrams, animated plots, clean sans — lightning, physics, how-things-work"},
     "B": {"name": "myth", "top": (10, 10, 10), "bot": (24, 24, 24),
-          "accents": [(255, 40, 40), (255, 210, 0)], "font": "anton", "chapter": "stamp",
+          "accents": [(255, 40, 40), (255, 210, 0)], "font": "bebas", "chapter": "stamp",
           "ease": "hard", "motion": "cut", "bg": "flat",
           "motion_personality": "snappy pops", "transition_family": "hard cut + stamp slam",
           "fx_tag": "warning", "moves": ["push", "whip"],
@@ -76,6 +77,26 @@ LOOKS = {
 # centered visuals can take any camera move.
 WIDE_VISUALS = {"versus", "bar", "bar_compare", "graph", "list", "checklist",
                 "arrows_steps", "dot_grid", "calendar", "chat", "battery"}
+# v32 (M8, Mark's fact-type -> visual table, 1a1c9017ef4ff629 §1): a scene's
+# FACT TYPE picks its visual kind FIRST, before the LLM's own pick — so a
+# number scene is *guaranteed* a counter, a % scene a donut, a myth scene a
+# strike-through. Deterministic, and it makes the plan auditable. Applied in
+# plan() (fact_type_of). "place" is left to the codegen (VL india_map), which
+# has a real map; the 25-kind library has none.
+FACT_VISUALS = {
+    "number": "counter", "percent": "donut", "time": "clock", "ban": "warning",
+    "list": "list", "comparison": "versus", "myth": "strike", "quote": "quote_card",
+}
+# v32 (M9): one SFX per scene, picked from the fact type (surfaced in the
+# plan; the audio mix uses the mood-based whoosh/boom as now).
+SCENE_SFX = {
+    "number": "pop", "percent": "pop", "time": "tick", "ban": "stamp",
+    "list": "pop", "comparison": "whoosh", "myth": "glitch", "quote": "type",
+    "warning": "boom", "shock": "boom", "growth": "rise", "drop": "fall",
+    "money": "coin", "health": "beat", "space": "whoosh", "funny": "boing",
+    "calm": "soft",
+}
+
 # v29: FX enter/emphasis effects that transform a whole RGBA layer (L, t, st).
 # typewriter/draw_on_line/stagger draw their own content, so they are not used
 # as layer effects here. The rest are chosen by the scene's hit_type tag.
@@ -110,6 +131,23 @@ def hit_type_of(s):
     if any(w in txt for w in ("space", "lightning", "science", "sky", "star", "planet")): return "space"
     if any(w in txt for w in ("funny", "laugh", "joke")): return "funny"
     return "calm"
+
+
+def fact_type_of(s):
+    # v32 (M8): the scene's FACT TYPE (for FACT_VISUALS). Determined from the
+    # label + value + voice-over, in the same spirit as hit_type_of but for
+    # the visual kind, not the effect.
+    txt = (str(s.get("label", "")) + " " + str(s.get("vo", ""))).lower()
+    val = str(s.get("value", ""))
+    if "%" in val or "%" in txt: return "percent"
+    if any(c.isdigit() for c in val): return "number"
+    if any(w in txt for w in ("ban", "banned", "prohibit", "prohibited", "illegal", "banned")): return "ban"
+    if any(w in txt for w in ("clock", "time", "year", "years", "day", "days", "hour", "minute", "am", "pm", "ago", "history", "ancient")): return "time"
+    if any(w in txt for w in ("first", "second", "third", "three things", "three ways", "steps", "ways")): return "list"
+    if any(w in txt for w in (" vs ", "versus", " than ", "better", "worse", "compare", "compared")): return "comparison"
+    if any(w in txt for w in ("myth", "lie", "lies", "fake", "wrong", "never", "secret", "myths")): return "myth"
+    if any(w in txt for w in ("said", "says", "quote", "law", "rule", "according", "study", "report")): return "quote"
+    return ""
 
 
 def pick_look(brief, recent="", recent_styles=None):
@@ -157,7 +195,12 @@ def pick_look(brief, recent="", recent_styles=None):
 def look_seed(title, brief=""):
     import zlib
     return zlib.crc32((str(title or "") + "|" + str(brief or "")).encode()) & 0x7FFFFFFF
+# v32 (M12, Mark 1a1c1028211d08d1 §3): en-US-ChristopherNeural, rate -8%,
+# pitch -4Hz, "calm, deep" — the English male voice for calm/motivational
+# topics. make_video() switches to it for calm/majority-calm or
+# motivational briefs; tts() applies the -8%/-4Hz override.
 VOICES = {("en", "male"): "en-US-AndrewMultilingualNeural", ("en", "female"): "en-US-AvaMultilingualNeural",
+          ("en", "male_calm"): "en-US-ChristopherNeural",
           ("te", "male"): "te-IN-MohanNeural", ("te", "female"): "te-IN-ShrutiNeural",
           ("hi", "male"): "hi-IN-MadhurNeural", ("hi", "female"): "hi-IN-SwaraNeural"}
 
@@ -166,7 +209,8 @@ Return ONLY JSON:
 {"topic": "...", "title": "<2-5 word English title, caps>", "lang": "en|te|hi", "voice": "male|female",
  "caption": "<post caption with 3-5 hashtags>",
  "scenes": [{"vo": "...", "label": "<1-3 word ENGLISH punch label, caps>", "mood": "calm|tense|hopeful|sad|excited|mystery",
-             "visual": "<one of %s>", "value": "<short number/word for the visual>"}]}
+             "visual": "<one of %s>", "value": "<short number/word for the visual>",
+             "source": "<short official source for the fact/number, e.g. WHO 2023, Govt of India 2012, Harvard 2020, or empty>"}]}
 DESIGN LOOK (v25, Hark aesthetic variety): {look} — design every scene for this look: palette, background,
 visuals and chapter style all follow it. A science: graph/clock/counter/bar visuals, diagram labels.
 B myth/safety: warning/versus/check visuals, stamp chapter cards, huge bold labels.
@@ -183,7 +227,8 @@ size the total vo words to the target duration. 9-14 scenes, each vo 6-22 words.
 Writing: documentary storytelling that sounds like a real human talking to a friend - contractions, short punchy sentences,
 rhetorical questions, a surprising fact or tension in the first line (hook), then context, a twist, the payoff, and a short
 call to follow at the end. Use commas, "..." and dashes for natural pauses. No emojis, no hashtags in vo. Vary the mood per scene to
-build an emotional arc. Each visual must literally show the line's idea (battery=energy, chat=messages/people, graph=growth or fall,
+build an emotional arc. When a scene states a fact or a number, put its short official source (WHO, Govt of India, Harvard, RBI, Census)
+in the source field; leave it empty when there is no fact. Each visual must literally show the line's idea (battery=energy, chat=messages/people, graph=growth or fall,
 clock=time, calendar=days, warning=danger/mistake, check=right way, versus=comparison, counter=a number, list=steps, heart=love/health,
 bar=progress, dot_grid/donut=a percentage of people, gauge=a level, toggle=on/off, phone_buzz=phone notifications,
 stick_figure=a person/feeling, quote_card=a quote, arrows_steps=a process, checklist=steps, document=a report,
@@ -224,9 +269,13 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
         if s.get("mood") not in MOODS: s["mood"] = "calm"
         s["label"] = re.sub(r"[^A-Z0-9 %!?'&-]", "", str(s.get("label", "")).upper())[:20] or "WAIT"
         s["value"] = str(s.get("value", ""))[:8]
+        s["source"] = str(s.get("source", "") or "")[:40]
     p["scenes"] = sc
     p["lang"] = p.get("lang") if p.get("lang") in ("en", "te", "hi") else "te"
-    p["title"] = re.sub(r"[^A-Z0-9 %!?'&-]", "", str(p.get("title", "")).upper())[:26] or "WATCH THIS"
+    # v32 (Blind): the title is NOT truncated to 26 chars any more — header()
+    # wraps it on word boundaries into 2 lines instead (a mid-word cut was a
+    # defect Blind flagged: "PHANTOM VIBRAT").
+    p["title"] = re.sub(r"[^A-Z0-9 %!?'&-]", "", str(p.get("title", "")).upper()) or "WATCH THIS"
     # v25: the look + a title seed (so no two videos match inside a look).
     # v27: the style plan (motion personality + transition family) rides with it.
     p["look"] = look
@@ -258,6 +307,30 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
                         for j in range(max(0, len(sc) - 1))]
     p["transition_families"] = [TL.family(n) for n in p["transitions"]]
     p["fx_used"] = used
+    # v32 (Blind): the background KIND changes per scene — but ONLY when the
+    # mood changes (Hark's per-section bg rule). It rotates through VL's 9
+    # kinds, starting from the title seed, so consecutive same-mood scenes
+    # keep one bg and a mood change reads as a new section.
+    _kinds = list(VL.SCENE_BG)
+    _ki = p["seed"] % len(_kinds)
+    _prev_mood = None
+    for s in sc:
+        if s["mood"] != _prev_mood:
+            _ki = (_ki + 1) % len(_kinds)
+            _prev_mood = s["mood"]
+        s["bg_kind"] = _kinds[_ki]
+    # v32 (M8): the fact type picks the visual kind FIRST (deterministic).
+    for s in sc:
+        ft = fact_type_of(s)
+        s["fact_type"] = ft
+        if ft in FACT_VISUALS:
+            s["visual"] = FACT_VISUALS[ft]
+    # v32 (M9): surface the per-cut transition + one SFX per scene in the
+    # plan (the codegen's PLAN call already picks per-cut transitions; the
+    # transition here is the one that brings the viewer INTO the scene).
+    for i, s in enumerate(sc):
+        s["transition"] = p["transitions"][i - 1] if 0 < i <= len(p["transitions"]) else ""
+        s["sfx"] = SCENE_SFX.get(s.get("fact_type") or s.get("hit_type") or "calm", "pop")
     return p
 
 
@@ -265,6 +338,8 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
 async def tts(text, voice, mood, out):
     import edge_tts
     rate, pitch = MOODS[mood][3]
+    if voice == "en-US-ChristopherNeural":  # v32 (M12, Mark): calm, deep
+        rate, pitch = "-8%", "-4Hz"
     last = None
     for attempt in range(4):
         try:
@@ -309,8 +384,46 @@ def serif(s):
     return _ser[s]
 
 
+_mont, _beb = {}, {}
+def montserrat(s):
+    # v32 (M7, Mark): Montserrat — the BODY font the prompts already promise
+    # (runner.py + divya.js). hark-kit/Montserrat.ttf (variable font, loads
+    # at its Regular instance); falls back to the repo fonts/ copy, then Anton.
+    s = max(8, int(s))
+    if s not in _mont:
+        for p in [os.path.join(HERE, "hark-kit", "Montserrat.ttf"),
+                  os.path.join(FONTS, "Montserrat.ttf")]:
+            if os.path.exists(p):
+                _f = ImageFont.truetype(p, s)
+                try:  # the variable font defaults to Thin — pick SemiBold
+                    _f.set_variation_by_name("SemiBold")
+                except Exception:
+                    pass
+                _mont[s] = _f; break
+        else:
+            _mont[s] = anton(s)
+    return _mont[s]
+
+
+def bebas(s):
+    # v32 (M7, Mark): Bebas Neue — the condensed HEADLINE font. Look B
+    # ("huge bold condensed type") uses it; the other looks keep Anton.
+    s = max(8, int(s))
+    if s not in _beb:
+        for p in [os.path.join(HERE, "hark-kit", "BebasNeue.ttf"),
+                  os.path.join(FONTS, "BebasNeue.ttf")]:
+            if os.path.exists(p):
+                _beb[s] = ImageFont.truetype(p, s); break
+        else:
+            _beb[s] = anton(s)
+    return _beb[s]
+
+
 def look_font(look, s):
-    return serif(s) if LOOKS.get(look, {}).get("font") == "serif" else anton(s)
+    _f = LOOKS.get(look, {}).get("font")
+    if _f == "serif": return serif(s)
+    if _f == "bebas": return bebas(s)
+    return anton(s)
 
 
 def ease_look(look, x):
@@ -430,55 +543,177 @@ def label(d, text, t, acc, idx, look=None):
         d.rectangle([(W - total) / 2, 1350, (W - total) / 2 + ul, 1360], fill=acc)
 
 
+def wrap_title(title, max_w, d, start=34, min_s=20):
+    # v32 (Blind): wrap the title on WORD boundaries into <= 2 lines, shrinking
+    # the font 34->20 until it fits. Never cuts a word mid-way — the old
+    # title[:26] cut "PHANTOM VIBRATION" to "PHANTOM VIBRAT". Returns
+    # (lines, size). If it still does not fit in 2 lines at the smallest size,
+    # the extra words are dropped, never cut.
+    words = title.split()
+    for size in range(start, min_s - 1, -1):
+        f = montserrat(size)
+        lines, cur = [], ""
+        for w in words:
+            test = (cur + " " + w).strip()
+            if d.textlength(test, font=f) <= max_w:
+                cur = test
+            else:
+                if cur: lines.append(cur)
+                cur = w
+        if cur: lines.append(cur)
+        if len(lines) <= 2:
+            return lines, size
+    f = montserrat(min_s)
+    lines, cur = [], ""
+    for w in words:
+        test = (cur + " " + w).strip()
+        if d.textlength(test, font=f) <= max_w:
+            cur = test
+        else:
+            if cur: lines.append(cur)
+            if len(lines) == 2: break
+            cur = w
+    if cur and len(lines) < 2: lines.append(cur)
+    return lines[:2], min_s
+
+
 def header(d, p, idx, n, t, sc_d, acc, look=None):
     # v25: chapter cards vary by look — A "FIG 01" diagram label, B rotated STAMP,
     # C drops the chapter labels entirely (minimal), D a big NUMBER counter.
     # v27 (Hark kit safe box): content inside 8% left/right — x starts at 120
     # (11%) so it stays inside 8% even after the max 1.035 content-layer zoom.
+    # v32: the title wraps on word boundaries (wrap_title) instead of the
+    # [:26] cut; the progress bar drops to y=162 when the title needs 2 lines.
     ch = LOOKS.get(look, {}).get("chapter", "fig")
     seg = (W - 240) / n
-    def progress():
+    def progress(two=False):
+        y = 162 if two else 150
         for i in range(n):
             x0 = 120 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
-            d.rectangle([x0, 150, x0 + seg - 8, 156], fill=(60, 60, 70))
-            if fill: d.rectangle([x0, 150, x0 + (seg - 8) * fill, 156], fill=acc)
+            d.rectangle([x0, y, x0 + seg - 8, y + 6], fill=(60, 60, 70))
+            if fill: d.rectangle([x0, y, x0 + (seg - 8) * fill, y + 6], fill=acc)
+    def title_at(x, max_w, size=34):
+        lines, sz = wrap_title(p["title"], max_w, d, start=size)
+        for k, ln in enumerate(lines):
+            d.text((x, 92 + k * 36), ln, font=montserrat(sz), fill=(225, 225, 230))
+        return len(lines) > 1
     if ch == "none":
-        f = C.font(30)
-        d.text((120, 92), p["title"][:26], font=f, fill=(225, 225, 230))
+        title_at(120, W - 240, size=30)
         return
     if ch == "stamp":
         f = C.font(34)
         box = (120, 84, 240, 132)
         d.rectangle(box, outline=acc, width=5)
         d.text((138, 92), f"{idx + 1:02d}", font=f, fill=acc)
-        d.text((270, 92), p["title"][:26], font=f, fill=(225, 225, 230))
-        progress()
+        two = title_at(270, W - 120 - 270)
+        progress(two)
         return
     if ch == "counter":
         f = anton(64)
         d.text((120, 74), f"{idx + 1:02d}", font=f, fill=acc)
-        d.text((220, 92), p["title"][:26], font=C.font(34), fill=(225, 225, 230))
-        progress()
+        two = title_at(220, W - 120 - 220)
+        progress(two)
         return
     # fig (A, default): "FIG 01" + a thin diagram tick
     f = C.font(34)
     d.text((120, 92), f"FIG {idx + 1:02d}", font=f, fill=acc)
     d.line([(250, 108), (290, 108)], fill=acc, width=4); d.ellipse([286, 104, 294, 112], fill=acc)
-    d.text((310, 92), p["title"][:26], font=f, fill=(225, 225, 230))
-    progress()
+    two = title_at(310, W - 120 - 310)
+    progress(two)
+
+# v32: plan visual kind -> visuals_lib name (used when the plan's kind has a
+# richer VL equivalent; the scene's stored lib_visual wins over this map).
+_VIS_NAME_MAP = {
+    "document": "document", "polaroid": "polaroid", "warning": "warning_sign",
+    "bar": "bracket_bars", "bar_compare": "bracket_bars", "versus": "balance_scale",
+}
+# v32: cached upscaled scene_bg layers, per bg_kind (built once per process).
+_SBG = {}
+
+
+def _fit_above_label(lay):
+    # v32 (Blind): fit a 1080x1920 visual layer's CONTENT into the band
+    # y 200-1150 (below the header, above the label at y 1190-1360). Scale +
+    # shift so the content fits the band and is centred in it; a layer that
+    # already fits is returned unchanged. (A document layer went from bbox
+    # bottom 1471 to 1150, top 200, in the v32 session test.)
+    bb = lay.getbbox()
+    if not bb:
+        return lay
+    top, bot = bb[1], bb[3]
+    lo, hi = 200, 1150
+    if top >= lo and bot <= hi:
+        return lay
+    bh = bot - top
+    span = hi - lo
+    s = min(1.0, span / max(1, bh))
+    if s < 1.0:
+        nw, nh = int(lay.size[0] * s), int(lay.size[1] * s)
+        lay = lay.resize((nw, nh), Image.BICUBIC)
+    out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    bb = lay.getbbox()
+    if not bb:
+        return out
+    top, bot = bb[1], bb[3]
+    bh = bot - top
+    dy = lo + (span - bh) // 2 - top
+    dx = (W - lay.size[0]) // 2
+    out.alpha_composite(lay, (dx, dy))
+    return out
+
+
+def _call_lib_vis(name, t, st, d, acc):
+    # v32: call a visuals_lib VIS function. accent= is passed as a KEYWORD
+    # only when the function accepts it (inspect.signature) — the 18
+    # functions have VARYING signatures (vis_warning takes no accent).
+    fn = VL.VIS[name]
+    if "accent" in inspect.signature(fn).parameters:
+        return fn(t, st, d, accent=acc)
+    return fn(t, st, d)
+
 
 def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
-    # v30: a custom per-video visual (video_visuals.py, written by the Visual
-    # Artist) replaces the library visual for this scene when present; else
-    # the 25-kind library (create.draw_visual). A failed custom visual falls
-    # back to the library so one bad function never kills the scene.
-    fn = SCENE_VISUALS.get(idx)
-    if callable(fn):
+    # v32 (Blind codegen): the visual chain — 1) a custom per-video vis_
+    # from video_fx.py (ideas.json, passed the sandbox), 2) a library visual
+    # from visuals_lib (the ideas' "library:<name>", a sandbox fallback, or
+    # the plan kind mapped through _VIS_NAME_MAP), 3) the 25-kind library
+    # (create.draw_visual). A failed custom visual falls back to the library
+    # so one bad function never kills the scene. An EMPTY layer is NOT a
+    # failure (the visual is still building in before its hit word) — only
+    # an exception or a wrong-size result falls back.
+    def _place720(lay720):
+        # 720x1280 -> 1080x1920, then fit above the label band.
+        if lay720 is None or lay720.size != (720, 1280):
+            return False
+        vlay.alpha_composite(_fit_above_label(lay720.resize((W, H), Image.BICUBIC)))
+        return True
+    # 1) custom vis_ from video_fx.py (Blind interface: (t, st, d, accent))
+    cv = sc.get("custom_vis")
+    if cv and VIDEO_FX is not None:
+        fn = getattr(VIDEO_FX, cv, None)
+        if fn is not None:
+            try:
+                if _place720(fn(pt, 0.0, sc["d"], acc)):
+                    return
+            except Exception as e:
+                print(f"custom vis {cv} scene {idx} failed: {str(e)[:120]}")
+    # 2) a stored library visual (the ideas' choice, or a sandbox fallback)
+    lv = sc.get("lib_visual")
+    if lv and lv in VL.VIS:
         try:
-            fn(vd, W, H, acc, pt)
-            return
+            if _place720(_call_lib_vis(lv, pt, 0.0, sc["d"], acc)):
+                return
         except Exception as e:
-            print(f"custom visual scene {idx} failed: {str(e)[:150]}")
+            print(f"library vis {lv} scene {idx} failed: {str(e)[:120]}")
+    # 2b) the plan kind, mapped to a VL visual
+    mv = _VIS_NAME_MAP.get(sc["visual"])
+    if mv and mv in VL.VIS:
+        try:
+            if _place720(_call_lib_vis(mv, pt, 0.0, sc["d"], acc)):
+                return
+        except Exception as e:
+            print(f"mapped vis {mv} scene {idx} failed: {str(e)[:120]}")
+    # 3) the 25-kind library (create.draw_visual)
     C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=cy, acc=acc)
 
 
@@ -494,6 +729,16 @@ def scene_frame(p, idx, t):
     # "background colour zooms" complaint — Divya's old camera cropped the WHOLE
     # frame (bg + content), so the bg zoomed and content went outside the screen.
     bg = background(mood, look).convert("RGBA")
+    # v32 (Blind): per-scene background kind (changes only when the mood
+    # changes, set in plan()) — VL.scene_bg upscaled, 35% alpha over the
+    # look bg, cached per kind in _SBG.
+    _bk = sc.get("bg_kind")
+    if _bk and _bk in VL.SCENE_BG:
+        if _bk not in _SBG:
+            _sb = VL.scene_bg(_bk).resize((W, H), Image.BICUBIC).convert("RGBA")
+            _sb.putalpha(_sb.split()[3].point(lambda v: int(v * 0.35)))
+            _SBG[_bk] = _sb
+        bg.alpha_composite(_SBG[_bk])
     lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     for (x, y, r, sp) in PART:
         yy = (y - t * sp - idx * 140) % (H + 200) - 100
@@ -516,7 +761,7 @@ def scene_frame(p, idx, t):
         label(ld, sc["label"], pt, acc, idx, look)
     elif layout == 2:  # centered big word, visual small below
         label(ld, sc["label"], pt, acc, idx, look)
-        draw_scene_visual(vd, vlay, p, idx, sc, pt, 1500, acc)
+        draw_scene_visual(vd, vlay, p, idx, sc, pt, 750, acc)
     elif layout == 3:  # split
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 650, acc)
         d.rectangle([(120, 1080), (W - 120, 1088)], fill=acc)
@@ -545,6 +790,17 @@ def scene_frame(p, idx, t):
         llay = getattr(FX, label_enter)(llay, pt, 0)
     lay.alpha_composite(vlay)
     lay.alpha_composite(llay)
+    # v32 (Blind): the source line — a short official credit under the label
+    # (VL.vis_source at y=930 in 720 coords -> ~1400 after upscale, above
+    # the caption band). Only when the scene states a sourced fact.
+    _src = sc.get("source")
+    if _src:
+        try:
+            _sl = VL.VIS["source_line"](pt, 0.0, sc["d"], text=f"Source: {_src}", y=930, accent=acc)
+            if _sl is not None and _sl.size == (720, 1280):
+                lay.alpha_composite(_sl.resize((W, H), Image.BICUBIC))
+        except Exception as e:
+            print(f"source_line scene {idx} failed: {str(e)[:100]}")
     # v26: the pawn character is REMOVED — Ajju calls it 'ah chess board shipai';
     # a fixed mascot in every scene of every video is not an edit, and it has
     # nothing to do with the topic. Scenes now carry only the topic's own visuals.
@@ -746,198 +1002,89 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 import importlib.util
 import subprocess as _sp
 
-VIDEO_FX_PROMPT = (
-    "You are writing NEW motion code for this one video. Topic: {topic}. "
-    "Mood: {mood}. Topic objects: {objects}. Scenes with hit words: {scenes}. "
-    "Families used in the last 5 videos (do not use): {recent_families}.\n\n"
-    "Write video_fx.py with 3 to 6 functions:\n"
-    "- tr_*(A, B, p) for scene changes, each shaped like a topic object "
-    "(rings from a phone, a page from a book, a coin flip for money, a heartbeat line for health).\n"
-    "- fx_*(layer, t, start, dur) for the hit word of a scene.\n"
-    "Use only math, random, numpy, PIL, effects, transitions_lib. Build from their primitives.\n"
-    "p=0 must return A, p=1 must return B. Keep content inside the safe box. Under 200 ms per frame.\n"
-    "Above each function write one comment: which sentence it serves and why it fits.\n"
-    "Return only the Python file."
-)
-
-def _sandbox_ok(path):
-    # Run the adapted fx_sandbox.py (1080x1920, 200 ms/frame) on the file.
-    # Returns (ok, detail) — detail is the sandbox JSON or the raw error.
-    sb = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fx_sandbox.py")
-    try:
-        r = _sp.run([sys.executable, sb, path], capture_output=True, text=True, timeout=180)
-        out = (r.stdout or "").strip()
-        dd = json.loads(out[out.index("{"):])
-        return bool(dd.get("ok")), dd
-    except Exception as e:
-        return False, str(e)
-
-def _plan_context(p, recent_families=()):
-    # Shared context for the team's prompts: topic, look, objects, scenes.
-    topic = p.get("title", "WATCH THIS")
-    mood = LOOKS.get(p.get("look"), {}).get("name", p.get("look", ""))
-    words = [w for w in re.split(r"[^A-Z0-9]+", topic.upper()) if len(w) > 3]
-    objs = sorted(set(words + [s.get("visual", "") for s in p["scenes"]]))[:8]
-    scenes = "; ".join(
-        f"{s.get('label', '')}: {s.get('vo', '')[:60]} (hit: {s.get('hit_type', '')})"
-        for s in p["scenes"])
-    return {"topic": topic, "mood": mood, "objects": ", ".join(objs) or "none",
-            "scenes": scenes, "recent_families": ", ".join(recent_families) or "none"}
-
-
-def _extract_code(raw):
-    m = re.search(r"```(?:python)?\s*([\s\S]*?)```", raw)
-    return (m.group(1) if m else raw).strip()
-
-
-def video_fx_prompt(p, recent_families=()):
-    ctx = _plan_context(p, recent_families)
-    return VIDEO_FX_PROMPT.format(**ctx)
-
-
-def load_video_fx(p, wd, code):
-    # Write video_fx.py, sandbox-test it, load it into VIDEO_FX, apply the
-    # custom tr_/fx_ to the plan. Returns (count, error) — count 0 = library
-    # fallback, error is the sandbox detail when it failed.
+def load_video_fx(p, wd):
+    # v32 (Blind codegen): the per-video code (video_fx.py) was already written
+    # + sandbox-tested by codegen.run() into wd/video_fx.py, with
+    # codegen_result.json + ideas.json beside it. This LOADS it and applies
+    # the ideas.json mapping EXACTLY — transitions by "between", fx by
+    # "scene", vis by "scene" — using ONLY p["codegen"]["passed_custom"]
+    # (functions that passed the sandbox). A custom function that failed the
+    # sandbox is replaced by its library fallback from codegen_result.
+    # Returns (n_custom, n_fallback) for the notify line.
+    # NOTE: main's v30+v31 crew never actually ran — doc.py has no
+    # `import teams`, so the crew raised NameError inside the try and fell
+    # back to the single-agent path every time. v32 drops the crew entirely.
     global VIDEO_FX
     VIDEO_FX = None
-    if not code or not code.startswith(("import ", "from ", "#", "def ")):
-        return 0, "no Python code returned"
-    path = os.path.join(wd, "video_fx.py")
-    with open(path, "w") as f:
-        f.write(code)
-    ok, detail = _sandbox_ok(path)
-    if not ok:
-        return 0, str(detail)
-    spec = importlib.util.spec_from_file_location("video_fx", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    VIDEO_FX = mod
-    tr_names = [n for n in dir(mod) if n.startswith("tr_") and callable(getattr(mod, n))]
-    fx_names = [n for n in dir(mod) if n.startswith("fx_") and callable(getattr(mod, n))]
-    # custom transitions replace the first boundaries; custom fx_
-    # replace the library emphasis on the first scenes.
-    for i, name in enumerate(tr_names):
-        if i < len(p.get("transitions", [])):
-            p["transitions"][i] = name
-    for i, name in enumerate(fx_names):
-        if i < len(p["scenes"]):
-            p["scenes"][i]["emphasis"] = name
-    p["video_fx"] = {"tr": tr_names, "fx": fx_names}
-    return len(tr_names) + len(fx_names), ""
-
-
-def gen_video_fx(p, chat, wd, recent_families=()):
-    # Single-agent path (kept for the fallback): ask the LLM for video_fx.py,
-    # sandbox-test it, max 2 retries with the error fed back. Returns the
-    # number of custom functions loaded (0 = library fallback).
-    prompt = video_fx_prompt(p, recent_families)
-    err = None
-    for attempt in range(3):  # 1 try + 2 retries
-        try:
-            raw = chat([{"role": "system", "content": "You output Python code only, no markdown fences."},
-                        {"role": "user", "content": prompt if attempt == 0 else
-                         f"The sandbox rejected your code: {err}. Fix it and return the full corrected video_fx.py."}])
-        except Exception as e:
-            err = str(e)
-            continue
-        n, err = load_video_fx(p, wd, _extract_code(raw))
-        if n:
-            return n
-    return 0
-
-
-# ---------------- per-video custom visuals (v30) ----------------
-# Hark writes a NEW scene function per video (render.py s0-s7): a map for the
-# Gutka video, a newspaper for the male-gaze video, a scale for the tobacco
-# video — never a generic shape when a specific object fits. Blind only sent
-# ONE video's scene code (phantom vibration: phone/bell/arcs/stick/brain), so
-# Divya's Visual Artist writes the scene code fresh per video, sandbox-tested,
-# max 2 retries, else the 25-kind library (create.draw_visual).
-VIDEO_VISUALS_PROMPT = (
-    "You are writing NEW visual code for this one video. Topic: {topic}. "
-    "Mood: {mood}. Scenes: {scenes}.\n\n"
-    "Write video_visuals.py with ONE function per scene, in order: "
-    "def vis_0(d, w, h, acc, t): ...  def vis_1(d, w, h, acc, t): ...\n"
-    "d = PIL ImageDraw on a blank 1080x1920 RGBA layer; w=1080, h=1920; "
-    "acc = the accent colour (r, g, b); t = seconds into the scene.\n"
-    "Draw the scene's OWN object in code — a map, a document with real text, "
-    "a newspaper, packets, a scale, a chart, a diagram — whatever the "
-    "sentence needs. Never a generic bar/dot grid when a specific object "
-    "fits. Use only math, random, numpy, PIL. Fonts: headlines use "
-    "ImageFont.truetype('hark-kit/Anton.ttf', size), body text uses "
-    "'hark-kit/Oswald.ttf' — plain 'Anton.ttf' is NOT found and falls back "
-    "to a tiny bitmap font, so always use the hark-kit/ path. Keep content "
-    "inside the safe box (8% sides, 10% top/bottom). Under 200 ms per call. "
-    "Above each function write one comment: which sentence it serves and why "
-    "it fits.\n"
-    "Return only the Python file."
-)
-
-# v30: the per-scene custom visual functions, loaded from video_visuals.py.
-# scene_frame() calls them instead of the library visual when present.
-SCENE_VISUALS = {}
-
-
-def _visuals_sandbox_ok(path, n_scenes):
-    # Run visuals_sandbox.py (1080x1920, 200 ms/call, safe box) on the file.
-    sb = os.path.join(os.path.dirname(os.path.abspath(__file__)), "visuals_sandbox.py")
+    cg = p.get("codegen") or {}
+    passed = set(cg.get("passed_custom") or [])
+    fb = cg.get("fallback_from_library") or {}
+    ideas_path = os.path.join(wd, "ideas.json")
+    fx_path = os.path.join(wd, "video_fx.py")
+    if not os.path.exists(ideas_path) or not os.path.exists(fx_path):
+        return 0, 0
     try:
-        r = _sp.run([sys.executable, sb, path, str(n_scenes)], capture_output=True, text=True, timeout=180)
-        out = (r.stdout or "").strip()
-        dd = json.loads(out[out.index("{"):])
-        return bool(dd.get("ok")), dd
+        spec = importlib.util.spec_from_file_location("video_fx", fx_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        VIDEO_FX = mod
     except Exception as e:
-        return False, str(e)
-
-
-def video_visuals_prompt(p):
-    ctx = _plan_context(p)
-    return VIDEO_VISUALS_PROMPT.format(topic=ctx["topic"], mood=ctx["mood"], scenes=ctx["scenes"])
-
-
-def load_video_visuals(p, wd, code):
-    # Write video_visuals.py, sandbox-test it, load the vis_ functions into
-    # SCENE_VISUALS (scene idx -> function). Returns (count, error).
-    global SCENE_VISUALS
-    SCENE_VISUALS = {}
-    if not code or not code.startswith(("import ", "from ", "#", "def ")):
-        return 0, "no Python code returned"
-    path = os.path.join(wd, "video_visuals.py")
-    with open(path, "w") as f:
-        f.write(code)
-    n = len(p["scenes"])
-    ok, detail = _visuals_sandbox_ok(path, n)
-    if not ok:
-        return 0, str(detail)
-    spec = importlib.util.spec_from_file_location("video_visuals", path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    names = sorted(n for n in dir(mod) if n.startswith("vis_") and callable(getattr(mod, n)))
-    for i, name in enumerate(names):
-        if i < n:
-            SCENE_VISUALS[i] = getattr(mod, name)
-    p["video_visuals"] = names
-    return len(SCENE_VISUALS), ""
-
-
-def gen_video_visuals(p, chat, wd):
-    # Single-agent path (fallback): ask for video_visuals.py, sandbox-test,
-    # max 2 retries. Returns the number of custom visuals loaded (0 = library).
-    prompt = video_visuals_prompt(p)
-    err = None
-    for attempt in range(3):
-        try:
-            raw = chat([{"role": "system", "content": "You output Python code only, no markdown fences."},
-                        {"role": "user", "content": prompt if attempt == 0 else
-                         f"The sandbox rejected your code: {err}. Fix it and return the full corrected video_visuals.py."}])
-        except Exception as e:
-            err = str(e)
+        print(f"load_video_fx: cannot import video_fx.py: {str(e)[:150]}")
+        VIDEO_FX = None
+    try:
+        ideas = json.load(open(ideas_path))
+    except Exception as e:
+        print(f"load_video_fx: cannot read ideas.json: {str(e)[:150]}")
+        return 0, 0
+    n_custom = n_fb = 0
+    tr_used, fx_used, vis_used = [], [], []
+    # transitions: "between": [a, b] (1-based) -> boundary a-1
+    for it in ideas.get("transitions", []):
+        fn = it.get("fn", "")
+        a = (it.get("between") or [0])[0]
+        bi = a - 1
+        if bi < 0 or bi >= len(p.get("transitions", [])):
             continue
-        n, err = load_video_visuals(p, wd, _extract_code(raw))
-        if n:
-            return n
-    return 0
+        if fn in passed:
+            p["transitions"][bi] = fn
+            tr_used.append(fn); n_custom += 1
+        elif fn in fb:
+            p["transitions"][bi] = fb[fn]
+            n_fb += 1
+    # scene fx: "scene": N (1-based) -> scene N-1
+    for it in ideas.get("scene_fx", []):
+        fn = it.get("fn", "")
+        si = (it.get("scene") or 0) - 1
+        if si < 0 or si >= len(p["scenes"]):
+            continue
+        if fn in passed:
+            p["scenes"][si]["emphasis"] = fn
+            fx_used.append(fn); n_custom += 1
+        elif fn in fb:
+            p["scenes"][si]["emphasis"] = fb[fn]
+            n_fb += 1
+    # visuals: "scene": N -> scene N-1; fn is a custom vis_ OR "library:<name>"
+    for it in ideas.get("visuals", []):
+        fn = it.get("fn", "")
+        si = (it.get("scene") or 0) - 1
+        if si < 0 or si >= len(p["scenes"]):
+            continue
+        if fn.startswith("library:"):
+            p["scenes"][si]["lib_visual"] = fn[len("library:"):]
+            n_fb += 1
+        elif fn in passed:
+            p["scenes"][si]["custom_vis"] = fn
+            vis_used.append(fn); n_custom += 1
+        elif fn in fb:
+            _f = fb[fn]
+            # a failed vis_ falls back to "visuals_lib:<name>"
+            p["scenes"][si]["lib_visual"] = _f[len("visuals_lib:"):] if _f.startswith("visuals_lib:") else _f
+            n_fb += 1
+    p["video_fx"] = {"tr": tr_used, "fx": fx_used}
+    p["video_visuals"] = vis_used
+    print(f"load_video_fx: {n_custom} custom (tr {tr_used}, fx {fx_used}, vis {vis_used}) + {n_fb} library fallbacks")
+    return n_custom, n_fb
+
 
 def qc_prompt(p):
     # The QC Reviewer's task: score each scene 1-5, name what is wrong.
@@ -950,39 +1097,40 @@ def qc_prompt(p):
             f"<what is wrong, or OK>.")
 
 
-async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None):
+async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=()):
     global _P
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
-    p = plan(brief, chat, recent, recent_styles)
-    # v30+v31 (Hark's teams): the crew works in PARALLEL — Visual Artist
-    # writes video_visuals.py, Effects Artist writes video_fx.py, QC Reviewer
-    # scores the plan. The orchestrator (this function) merges: visuals +
-    # effects are sandbox-tested and loaded, the QC verdict rides in the plan.
-    # A member that produces nothing falls back to the single-agent retry,
-    # then to the library — so one bad agent never kills the video.
-    n_fx = n_vis = 0
+    p = plan(brief, chat, recent, recent_styles, recent_families)
+    # v32 (Blind codegen): ONE engine writes tr_/fx_/vis_ in a single call
+    # (codegen.run: PLAN -> CODE -> sandbox -> fix x2 -> library fallback),
+    # while the QC scores the plan in parallel. A failed custom function
+    # falls back to the library — one bad function never kills the video.
+    n_custom = n_fb = 0
     try:
-        crew = teams.Crew(
-            [teams.VISUAL_ARTIST, teams.EFFECTS_ARTIST, teams.QC_REVIEWER],
-            [teams.Task(video_visuals_prompt(p), "video_visuals.py (Python code only)", teams.VISUAL_ARTIST),
-             teams.Task(video_fx_prompt(p), "video_fx.py (Python code only)", teams.EFFECTS_ARTIST),
-             teams.Task(qc_prompt(p), "one line per scene: <number> <score> <what is wrong, or OK>", teams.QC_REVIEWER)],
-            chat)
-        res = crew.kickoff()
-        n_vis, _e1 = load_video_visuals(p, wd, _extract_code(res.get("Visual Artist", "")))
-        n_fx, _e2 = load_video_fx(p, wd, _extract_code(res.get("Effects Artist", "")))
-        p["team_qc"] = res.get("QC Reviewer", "")
+        import concurrent.futures as _cf
+        with _cf.ThreadPoolExecutor(max_workers=2) as ex:
+            fut_cg = ex.submit(CG.run, p, chat, wd, recent_families)
+            fut_qc = ex.submit(chat, [{"role": "system", "content": "You score video scenes 1-5, one line per scene."},
+                                      {"role": "user", "content": qc_prompt(p)}])
+            fut_cg.result()
+            p["team_qc"] = fut_qc.result()
+        n_custom, n_fb = load_video_fx(p, wd)
     except Exception as e:
-        print("team kickoff failed:", str(e)[:200])
-    if not n_vis:
-        n_vis = gen_video_visuals(p, chat, wd)
-    if not n_fx:
-        n_fx = gen_video_fx(p, chat, wd)
-    if notify and (n_fx or n_vis):
-        await notify(f"Team: {n_vis} custom visuals + {n_fx} custom effects for this video.")
+        print("codegen failed:", str(e)[:200])
+    if notify and (n_custom or n_fb):
+        await notify(f"Codegen: {n_custom} custom functions + {n_fb} library fallbacks for this video.")
     voice = VOICES.get((p["lang"], p.get("voice", "male")), VOICES[(p["lang"], "male")])
+    # v32 (M12, Mark): ChristopherNeural (-8%, -4Hz, "calm, deep") for
+    # calm/motivational English videos — majority-calm moods, or a brief
+    # about motivation/discipline/calm. tts() applies the -8%/-4Hz override.
+    _moods = [s.get("mood") for s in p["scenes"]]
+    _br = str(brief).lower()
+    if (p["lang"] == "en" and p.get("voice", "male") == "male" and
+            (_moods.count("calm") >= len(_moods) / 2 or
+             any(w in _br for w in ("motivat", "discipline", "calm", "focus", "habit")))):
+        voice = VOICES[("en", "male_calm")]
     if notify: await notify(f"Script ready: {p['title']} ({len(p['scenes'])} scenes, {p['lang']}). Voice, animation, music chestunna.")
-    gap = 0.32
+    gap = 0.45  # v32 (M13, Mark 1a1c1028211d08d1 §1 step 6): 0.45 s breathing room per scene
     for i, s in enumerate(p["scenes"]):
         a = f"{wd}/vo{i}.mp3"; s["words"] = await tts(s["vo"], voice, s["mood"], a)
         s["audio"] = a; s["adur"] = dur(a); s["d"] = s["adur"] + gap
@@ -1043,7 +1191,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/voice.wav", "-i", f"{wd}/music.wav", "-i", f"{wd}/music_sfx.wav", "-filter_complex",
                     "[0:a]asplit[v1][v2];[1:a]volume=0.55[m];[m][v2]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=350[md];"
                     "[v1]highpass=f=70,acompressor=threshold=0.1:ratio=3,volume=1.5[vv];[2:a]volume=0.55[sx];"
-                    "[vv][md][sx]amix=inputs=3:normalize=0,alimiter=limit=0.95[o]", "-map", "[o]", "-ar", str(SR), f"{wd}/mix.wav"], check=True)
+                    # v32 (M6, Mark): final loudnorm -14 LUFS (was alimiter)
+                    "[vv][md][sx]amix=inputs=3:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[o]", "-map", "[o]", "-ar", str(SR), f"{wd}/mix.wav"], check=True)
     # video, parallel chunks
     _P = p; nf = int(total * FPS); k = workers or max(1, min(4, os.cpu_count() or 1))
     cuts = [nf * i // k for i in range(k + 1)]

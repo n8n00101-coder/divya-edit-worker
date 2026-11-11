@@ -10,7 +10,7 @@ W, H, FPS = 1080, 1920, 30
 BG, RED, WHITE, GREEN, YEL, GREY = (12, 12, 14), (235, 50, 60), (240, 240, 240), (60, 210, 120), (250, 205, 60), (90, 90, 100)
 VISUALS = ["counter", "bar", "chat", "check", "warning", "graph", "clock", "heart", "battery", "calendar", "list", "versus",
            "dot_grid", "donut", "gauge", "toggle", "phone_buzz", "stick_figure", "quote_card", "arrows_steps",
-           "checklist", "document", "polaroid", "icon_row", "bar_compare"]
+           "checklist", "document", "polaroid", "icon_row", "bar_compare", "strike", "curve"]
 FONTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 VOICES = {"male": "te-IN-MohanNeural", "female": "te-IN-ShrutiNeural"}
 # Engine switch for create mode: env DIVYA_ENGINE=v3 -> doc3.py (engine v3), anything else -> doc.py (v2, default).
@@ -39,7 +39,8 @@ Rules: 6-9 scenes. Scene 1 = strong hook question. Last scene = takeaway + follo
 check for good habits, versus for comparisons, counter for numbers, list for steps, heart for love/health, bar for progress,
 dot_grid for a percentage of people, donut for a percentage ring, gauge for a level/meter, toggle for on/off, phone_buzz for phone
 notifications, stick_figure for a person/feeling, quote_card for a quote, arrows_steps for a process, checklist for a to-do,
-document for a report/study, polaroid for a memory/photo, icon_row for a set of items, bar_compare for two numbers compared).
+document for a report/study, polaroid for a memory/photo, icon_row for a set of items, bar_compare for two numbers compared,
+strike for a myth/lie to cross out, curve for exponential growth (1%% better every day).
 If the owner did not give a clear topic (e.g. "nuvve select chesko", "any topic", empty), YOU pick one fresh, high-retention
 topic for a Telugu faceless channel (psychology, relationships, money habits, health hacks, motivation, tech tips, facts) — avoid
 these recent topics: {recent}. Also add "topic": "<the topic you chose>" to the JSON.
@@ -334,6 +335,45 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None):
         rrect(d, (140, cy - 160, 140 + (W - 280) * min(p1, 1), cy - 60), 16, fill=acc)
         d.text((140, cy + 20), f"{a2}", font=font(80), fill=GREY)
         rrect(d, (140, cy + 120, 140 + (W - 280) * min(p2, 1), cy + 220), 16, fill=GREY)
+    # ---- v32 (M4/M5/M14 + M1, Mark's motivation short): the three graphics
+    # Divya was missing — strike-through, exponential curve, lower-third.
+    elif kind == "curve":  # exponential growth 1.01^x, axis labels, endpoint dot (1.01^365 = 37x)
+        d.line([(cx - 380, cy + 260), (cx + 400, cy + 260)], fill=WHITE, width=5)
+        d.line([(cx - 380, cy + 260), (cx - 380, cy - 260)], fill=WHITE, width=5)
+        n = max(2, int(101 * a) + 1)
+        pts = [(cx - 380 + i * 7.6, cy + 250 - ((1.01 ** (i * 3.65)) - 1) / 36.8 * 480) for i in range(n)]
+        d.line(pts, fill=YEL, width=12, joint="curve")
+        x, y = pts[-1]
+        d.ellipse([x - 20, y - 20, x + 20, y + 20], fill=YEL)
+        d.text((cx - 370, cy + 280), "DAY 1", font=font(50), fill=GREY)
+        d.text((cx + 230, cy + 280), "DAY 365", font=font(50), fill=GREY)
+        if value:
+            center_text(d, cy - 330, str(value)[:6], font(90), YEL)
+    elif kind == "strike":  # a word crossed out — red line, slight angle ("Not MONDAY")
+        word = (value or "MONDAY")[:12].upper()
+        f = font(130)
+        w = d.textlength(word, font=f)
+        k = pop((t - 0.3) / 0.4)
+        if k > 0:
+            d.text((cx, cy), word, font=font(int(130 * (0.6 + 0.4 * k))), fill=GREY, anchor="mm")
+        q = ease((t - 0.6) / 0.3)  # the red strike grows left to right, right end 10 px higher
+        if q > 0:
+            x0, x1 = cx - w / 2 - 20, cx + w / 2 + 20
+            d.line([(x0, cy + 5), (x0 + (x1 - x0) * q, cy + 5 - 10 * q)], fill=(220, 50, 50), width=14)
+    elif kind == "lower_third":  # documentary name + title bar, bottom-left (value: "Name | Title")
+        parts = [x.strip() for x in str(value or "").split("|")]
+        name = parts[0][:24] if parts and parts[0] else "DIVYA"
+        title = parts[1][:32] if len(parts) > 1 else ""
+        k = ease(t / 0.4)
+        y0, y1 = 1500, 1650
+        w = 620 * k
+        if w > 10:
+            rrect(d, (120, y0, 120 + w, y1), 12, fill=(20, 20, 24))
+            d.rectangle([120, y0, 132, y1], fill=acc)
+            if k > 0.8:
+                d.text((160, y0 + 18), name, font=font(64), fill=WHITE)
+                if title:
+                    d.text((160, y0 + 90), title, font=font(44), fill=GREY)
 
 
 def frame(p, idx, sc, t, total_sc):

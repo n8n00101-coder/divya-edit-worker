@@ -94,18 +94,19 @@ SCRIPT_WRITER = Agent(
     "You write short, visual, fact-checked explainer scripts. One sentence = "
     "one scene (2-4s). Hook in the first 2s. No filler.")
 
-VISUAL_ARTIST = Agent(
-    "Visual Artist",
-    "Draw each scene's visual in code (PIL), shaped like the topic's objects.",
-    "You draw visuals pixel-by-pixel in Python (PIL ImageDraw): maps, "
-    "documents, packets, charts, diagrams — whatever the sentence needs. "
-    "Never a generic shape when a specific object fits.")
-
-EFFECTS_ARTIST = Agent(
-    "Effects Artist",
-    "Write the video's custom motion code (transitions + emphasis).",
-    "You write new tr_* and fx_* functions per video from the effects and "
-    "transitions libraries' primitives. One effect at a time, on the hit word.")
+# v32 (Blind codegen): the Visual Artist + Effects Artist are ONE role now —
+# Blind's engine writes tr_/fx_/vis_ in a SINGLE call (divya_codegen.py:
+# PLAN picks the objects, CODE writes the file). doc.make_video no longer
+# runs a crew; it calls codegen.run() directly, so this role is kept for
+# the record / for any future team use, not for the live path.
+CODEGEN = Agent(
+    "Codegen",
+    "Write the video's custom motion + visual code (tr_/fx_/vis_) in ONE file.",
+    "You write a new video_fx.py per video from the effects, transitions and "
+    "visuals libraries' primitives: tr_* shaped like the topic's objects, "
+    "fx_* on the hit word, vis_* drawing the scene's own object in code. "
+    "One effect at a time, on the hit word. Never a generic shape when a "
+    "specific object fits.")
 
 QC_REVIEWER = Agent(
     "QC Reviewer",
