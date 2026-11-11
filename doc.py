@@ -45,20 +45,27 @@ MOODS = {  # top, bottom, accent, (rate, pitch)
 # look is never repeated. Constants only: 9:16 safe margins, big readable captions,
 # one idea per scene, one accent colour at a time.
 LOOKS = {
-    "A": {"name": "science", "top": (8, 24, 48), "bot": (6, 60, 70),
-          "accents": [(60, 200, 230), (255, 180, 60)], "font": "anton", "chapter": "none",
-          "ease": "smooth", "motion": "push", "bg": "gradient", "grain": 5,
-          "motion_personality": "smooth glides", "transition_family": "zoom through the diagram",
-          # v29 (Hark's effects.py): the look's transition TAG picks from FX.TRANSITIONS;
-          # the camera moves are for narrow visuals only (WIDE_VISUALS get push-in).
-          "fx_tag": "space", "moves": ["push", "pan", "drift"],
-          "desc": "deep navy to teal gradient, cyan/amber accent, thin line diagrams, animated plots, clean sans — lightning, physics, how-things-work"},
-    "B": {"name": "myth", "top": (10, 10, 10), "bot": (24, 24, 24),
-          "accents": [(255, 40, 40), (255, 210, 0)], "font": "bebas", "chapter": "none",
+    # v36 (Blind D — two topics must look different): the 4 looks are now
+    # A Investigative (paper, stamps, red/black), B Science/health (clean,
+    # blue/teal, diagrams), C Story/emotional (warm, photo frames, soft
+    # light), D Data/money (charts, count-ups, green/yellow). Gutka -> A,
+    # sleep -> B. Different font pairing, accent colour, layout and
+    # transition family per look. The camera is STATIC in every look — the
+    # "motion" fields below are the design personality, not camera moves
+    # (Ajju's no-zoom ban, v33).
+    "A": {"name": "investigative", "top": (28, 22, 18), "bot": (12, 10, 10),
+          "accents": [(255, 40, 40), (255, 210, 0)], "font": "anton", "chapter": "none",
           "ease": "hard", "motion": "cut", "bg": "flat", "grain": 4,
           "motion_personality": "snappy pops", "transition_family": "hard cut + stamp slam",
-          "fx_tag": "warning", "moves": ["push", "whip"],
-          "desc": "high-contrast black and white, one hot red or yellow accent, huge bold condensed type, hard cuts, stamp/strike-through — myths, warnings, versus"},
+          # v29 (Hark's effects.py): the look's transition TAG picks from FX.TRANSITIONS.
+          "fx_tag": "warning", "moves": ["cut", "stamp"],
+          "desc": "paper, stamps, red/black — investigations, bans, scams, law, myths busted"},
+    "B": {"name": "science", "top": (8, 24, 48), "bot": (6, 60, 70),
+          "accents": [(60, 200, 230), (255, 180, 60)], "font": "anton", "chapter": "none",
+          "ease": "smooth", "motion": "push", "bg": "gradient", "grain": 5,
+          "motion_personality": "smooth glides", "transition_family": "diagram wipe / clock wipe",
+          "fx_tag": "space", "moves": ["wipe", "clock"],
+          "desc": "clean blue/teal, diagrams — science, health, body, how things work"},
     "C": {"name": "story", "top": (40, 30, 20), "bot": (24, 18, 12),
           "accents": [(250, 230, 200), (230, 120, 50), (60, 170, 160)], "font": "serif", "chapter": "none",
           "ease": "slow", "motion": "push", "bg": "warm", "grain": 7,
@@ -82,14 +89,19 @@ WIDE_VISUALS = {"versus", "bar", "bar_compare", "graph", "list", "checklist",
 # same. Health = dark red clinical, science = deep blue diagrams, motivation =
 # warm gold film grain, history = sepia + warm grain, money = green/black ledger.
 TOPIC_FAMILIES = {
-    "health": {"look": "B", "grain": 6, "desc": "dark red clinical — health, body, disease, tobacco, sleep, food"},
-    "science": {"look": "A", "grain": 5, "desc": "deep blue diagrams — science, physics, space, how things work"},
+    # v36 (Blind D): investigative -> A (checked FIRST — a ban/scam/law topic
+    # is always investigative), health + science -> B, motivation + history
+    # -> C, money -> D.
+    "investigative": {"look": "A", "grain": 4, "desc": "paper, stamps, red/black — ban, scam, law, court, myth, lie, danger, warning"},
+    "health": {"look": "B", "grain": 6, "desc": "clean blue/teal — health, body, disease, sleep, food"},
+    "science": {"look": "B", "grain": 5, "desc": "clean blue/teal diagrams — science, physics, space, how things work"},
     "motivation": {"look": "C", "grain": 7, "desc": "warm gold film grain — motivation, habits, discipline, focus"},
     "history": {"look": "C", "grain": 8, "desc": "sepia + warm grain — history, ancient, legend, culture"},
     "money": {"look": "D", "grain": 4, "desc": "green/black ledger — money, finance, price, salary, business"},
 }
 _FAMILY_WORDS = {
-    "health": ["health", "tobacco", "gutka", "smoking", "sleep", "food", "diet", "disease", "doctor", "body", "heart", "brain", "cancer", "medicine", "drug", "alcohol", "exercise", "weight"],
+    "investigative": ["ban", "banned", "prohibit", "illegal", "scam", "fraud", "law", "court", "myth", "lie", "lies", "danger", "warning", "tobacco", "gutka", "smoking", "alcohol", "drugs", "exposed", "secret", "truth", "fake"],
+    "health": ["health", "sleep", "food", "diet", "disease", "doctor", "body", "heart", "brain", "cancer", "medicine", "drug", "exercise", "weight"],
     "science": ["science", "physics", "lightning", "thunder", "space", "atom", "energy", "earth", "planet", "gravity", "biology", "experiment", "ocean", "volcano", "electric", "sound", "light", "weather"],
     "motivation": ["motivat", "discipline", "habit", "focus", "success", "goal", "mindset", "confidence", "routine", "productiv", "willpower", "consist"],
     "history": ["history", "ancient", "king", "queen", "war", "empire", "legend", "temple", "kingdom", "dynasty", "century", "historic", "civilization", "archaeolog"],
@@ -99,9 +111,16 @@ _FAMILY_WORDS = {
 
 def topic_family(brief):
     # v34: the topic family from the brief's keywords (most hits wins). "" = none.
+    # v36 (Blind D): "investigative" is checked FIRST — any ban/scam/law/
+    # court/myth/lie/danger/warning word makes the topic investigative
+    # (look A), whatever else it matches. Then the most-hits rule.
     text = (brief or "").lower()
+    if any(w in text for w in _FAMILY_WORDS["investigative"]):
+        return "investigative"
     best, best_n = "", 0
     for fam, words in _FAMILY_WORDS.items():
+        if fam == "investigative":
+            continue
         n = sum(1 for w in words if w in text)
         if n > best_n:
             best, best_n = fam, n
@@ -142,8 +161,11 @@ FX_LAYER_ENTER = ["fade_in", "pop_in", "slide_in", "rise_in", "drop_in",
                   "zoom_in_blur", "wipe_in", "iris_in", "spin_in", "flip_in", "glitch_in"]
 FX_LAYER_EMPHASIS = ["punch", "shake", "pulse", "wiggle", "glow"]
 _LOOK_WORDS = {
-    "A": ["lightning", "thunder", "physics", "science", "how", "why", "earth", "space", "atom", "energy", "water", "rain", "magnet", "gravity", "biology", "brain", "body", "experiment", "plant", "animal", "sky", "sun", "moon", "weather", "electric", "sound", "light", "ocean", "volcano"],
-    "B": ["myth", "myths", "safety", "warning", "danger", "scam", "lie", "lies", "truth", "vs", "versus", "debate", "ban", "never", "don't", "mistake", "wrong", "fact", "fake", "car", "seat belt", "belt", "helmet", "rule", "law", "court", "tobacco", "gutka", "smoking", "alcohol", "drugs", "effects", "risk", "risks", "health"],
+    # v36 (Blind D): A = investigative (ban/scam/law/myth/lie/danger/warning),
+    # B = science + health (clean blue/teal). Gutka ("banned" + "gutka") -> A;
+    # sleep ("sleep") -> B.
+    "A": ["myth", "myths", "safety", "warning", "danger", "scam", "lie", "lies", "truth", "vs", "versus", "debate", "ban", "banned", "never", "don't", "mistake", "wrong", "fact", "fake", "car", "seat belt", "belt", "helmet", "rule", "law", "court", "tobacco", "gutka", "smoking", "alcohol", "drugs", "effects", "risk", "risks", "illegal", "prohibit"],
+    "B": ["lightning", "thunder", "physics", "science", "how", "why", "earth", "space", "atom", "energy", "water", "rain", "magnet", "gravity", "biology", "brain", "body", "experiment", "plant", "animal", "sky", "sun", "moon", "weather", "electric", "sound", "light", "ocean", "volcano", "health", "sleep", "food", "diet", "disease", "doctor", "heart", "cancer", "medicine", "exercise", "weight"],
     "C": ["story", "movie", "cinema", "history", "culture", "emotion", "love", "king", "queen", "war", "ancient", "legend", "film", "song", "festival", "hero", "empire", "temple", "village", "family", "mother", "father", "kingdom", "princess", "poet", "dance"],
     "D": ["ai", "tech", "money", "finance", "data", "stat", "app", "phone", "computer", "robot", "crypto", "stock", "price", "users", "percent", "growth", "startup", "internet", "software", "code", "digital", "online", "bank", "rupee", "dollar", "salary", "job", "business"],
 }
@@ -196,18 +218,52 @@ def fact_type_of(s):
     return ""
 
 
-def pick_look(brief, recent="", recent_styles=None):
+# v36 (Blind D — never the same look as the previous video; store the last
+# 5 looks): the CODE side is a JSON file store (an audit trail) — the live
+# Worker KV wiring is PENDING Ajju's go, so the Worker does NOT read/write
+# KV for this. The runner sets DIVYA_LAST_LOOKS to a path in its workdir;
+# otherwise the store lives at ~/workspace/divya-last-looks.json.
+def _last_looks_path():
+    return os.environ.get("DIVYA_LAST_LOOKS") or os.path.expanduser("~/workspace/divya-last-looks.json")
+
+
+def load_last_looks(path=None):
+    try:
+        with open(path or _last_looks_path()) as f:
+            data = json.load(f)
+        return [s for s in (data if isinstance(data, list) else data.get("looks", [])) if s in LOOKS][-5:]
+    except Exception:
+        return []
+
+
+def record_look(look, path=None):
+    if look not in LOOKS:
+        return
+    p = path or _last_looks_path()
+    looks = load_last_looks(p) + [look]
+    try:
+        with open(p, "w") as f:
+            json.dump({"looks": looks[-5:], "updated": __import__("datetime").datetime.now().isoformat()}, f)
+    except Exception:
+        pass
+
+
+def pick_look(brief, recent="", recent_styles=None, last_looks=None):
     """Topic mood -> design system (A/B/C/D). Never repeats the last 5 videos'
     looks: the Worker stores each finished video's look in KV (styles:<user>,
     most recent last) and passes the last 5 here as `recent_styles`. The kit's
     rule — the style plan must differ from the last 5 (palette + motion +
-    transition). Deterministic — never random."""
+    transition). Deterministic — never random. v36: `last_looks` (from the
+    JSON store, load_last_looks) is consulted the same way — the code-side
+    record until the Worker KV wiring lands (pending Ajju's go)."""
     import zlib
     text = (brief or "").lower()
     scores = {k: sum(1 for w in words if w in text) for k, words in _LOOK_WORDS.items()}
     best = max(LOOKS, key=lambda k: scores[k])  # ties -> A (first), the safe default
+    # v36: the JSON last-looks store counts as "used" too (same as KV).
+    _ll = [s for s in (last_looks or []) if s in LOOKS][-5:]
     if recent_styles:
-        used = [s for s in (recent_styles or []) if s in LOOKS][-5:]
+        used = [s for s in (recent_styles or []) if s in LOOKS][-5:] + _ll
         if best in used:
             # prefer a look NOT used in the last 5 (by keyword score);
             # if all 4 are used, take the least recently used one.
@@ -221,7 +277,7 @@ def pick_look(brief, recent="", recent_styles=None):
     # Fallback (no KV styles yet): derive the look of each of the last 5 topics
     # from the topic words (same keyword scoring) and avoid all of them. The
     # Worker passes the last 15 topics in `recent`, most recent last.
-    used = []
+    used = _ll
     if recent:
         last = [s.strip() for s in str(recent).split(";") if s.strip()][-5:]
         for tp in last:
@@ -334,12 +390,15 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
     # v27 (Hark kit style plan): the look also carries a motion personality +
     # transition family from the topic mood, so the motion differs per video too.
     # v28: recent_styles (the last 5 looks, from KV) keeps the look from repeating.
-    look = pick_look(brief, recent, recent_styles)
+    # v36: the JSON last-looks store counts the same way (the KV wiring is
+    # pending Ajju's go — the file store is the code-side record).
+    _ll = load_last_looks()
+    look = pick_look(brief, recent, recent_styles, last_looks=_ll)
     # v34 (Hark blueprint §4): the TOPIC FAMILY picks the design system, so
     # two videos on different topics cannot look the same. The family's look
-    # wins unless it was used in the last 5 videos (recent_styles).
+    # wins unless it was used in the last 5 videos (recent_styles / last-looks).
     fam = topic_family(brief)
-    if fam and TOPIC_FAMILIES[fam]["look"] not in (recent_styles or []):
+    if fam and TOPIC_FAMILIES[fam]["look"] not in (recent_styles or []) and TOPIC_FAMILIES[fam]["look"] not in _ll:
         look = TOPIC_FAMILIES[fam]["look"]
     look_line = (f"DESIGN LOOK {look} ({LOOKS[look]['name']}): {LOOKS[look]['desc']}. "
                  f"Motion personality: {LOOKS[look]['motion_personality']}. "
@@ -1865,6 +1924,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # False) — never silently shipped as if it passed.
     _fq = frame_qc(p, out)
     print(f"frame_qc: {'PASS' if _fq['passed'] else 'FAIL'} — " + ("; ".join(_fq["flaws"][:6]) if _fq["flaws"] else "all scenes clean") + ((" | warnings: " + "; ".join(_fq["warnings"][:4])) if _fq.get("warnings") else ""))
+    # v36 (Blind D): record this video's look so the next video never repeats it.
+    record_look(p.get("look"))
     return {"path": out, "delivery_path": delivery, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
             "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total,
             "frame_qc": _fq, "qc_passed": _fq["passed"]}
