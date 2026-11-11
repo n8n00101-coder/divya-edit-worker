@@ -333,8 +333,9 @@ size the total vo words to the target duration. 9-14 scenes, each vo 6-22 words.
 Writing: documentary storytelling that sounds like a real human talking to a friend - contractions, short punchy sentences,
 rhetorical questions, a surprising fact or tension in the first line (hook), then context, a twist, the payoff, and a short
 call to follow at the end. Use commas, "..." and dashes for natural pauses. No emojis, no hashtags in vo. Vary the mood per scene to
-build an emotional arc. When a scene states a fact or a number, put its short official source (WHO, Govt of India, Harvard, RBI, Census)
-in the source field; leave it empty when there is no fact. Each visual must literally show the line's idea (battery=energy, chat=messages/people, graph=growth or fall,
+build an emotional arc. SOURCE RULE (v36, Blind E3): EVERY scene that states a fact or a number MUST have a short official source
+(WHO, Govt of India, Harvard, RBI, Census, ICMR, NHS, CDC) in the source field — never leave it empty on a fact/number scene.
+Only a pure opinion/hook/CTA scene (no fact, no number) may leave it empty. Each visual must literally show the line's idea (battery=energy, chat=messages/people, graph=growth or fall,
 clock=time, calendar=days, warning=danger/mistake, check=right way, versus=comparison, counter=a number, list=steps, heart=love/health,
 bar=progress, dot_grid/donut=a percentage of people, gauge=a level, toggle=on/off, phone_buzz=phone notifications,
 stick_figure=a person/feeling, quote_card=a quote, arrows_steps=a process, checklist=steps, document=a report,
@@ -792,6 +793,9 @@ def label(d, text, t, acc, idx, look=None, keyword=None):
     # minimum (A4), fit-to-width; exactly ONE keyword in yellow per line
     # (the value-matching word, else the longest word), the rest near-white;
     # tracking +2 (C6); word pops staggered 70 ms (C7, 60-80 ms).
+    # v36: if the label still does not fit on ONE line at the 96 px floor,
+    # it wraps to TWO lines (both inside the title zone) — never overflows
+    # the frame, never shrinks below 96.
     words = text.split()
     size = 132
     f = anton(size)
@@ -799,31 +803,57 @@ def label(d, text, t, acc, idx, look=None, keyword=None):
     while size > 96 and sum(d.textlength(w + " ", font=anton(size)) for w in words) > 908:
         size -= 4
         f = anton(size)
+    _total = sum(d.textlength(w + " ", font=anton(96)) for w in words)
+    lines = [words] if _total <= 908 else _split_lines(words, d, 96)
     # The keyword: the word matching the scene value, else the longest word.
     kw = keyword or ""
+    _flat = [w for ln in lines for w in ln]
     if kw:
-        _kwi = next((i for i, w in enumerate(words) if kw.lower() in w.lower()), -1)
+        _kwi = next((i for i, w in enumerate(_flat) if kw.lower() in w.lower()), -1)
     else:
         _kwi = -1
-    if _kwi < 0 and words:
-        _kwi = max(range(len(words)), key=lambda i: len(words[i]))
-    widths = [d.textlength(w, font=f) + 2 for w in words]
-    total = sum(widths) - 2
-    x = (W - total) / 2
-    cy = 285  # title zone 120-450, vertically centred
-    for k, w in enumerate(words):
-        p = C.pop((t - 0.05 - k * 0.07) / 0.3)
-        a = int(255 * clamp((t - 0.05 - k * 0.07) / 0.12))
-        if a > 0:
-            fs = anton(int(size * (0.6 + 0.4 * p)))
-            cxw = x + d.textlength(w, font=f) / 2
-            col = (255, 210, 0) if k == _kwi else (250, 245, 235)
-            d.text((cxw + 6, cy + 6), w, font=fs, fill=(0, 0, 0, int(a * 0.7)), anchor="mm")
-            d.text((cxw, cy), w, font=fs, fill=col + (a,), anchor="mm")
-        x += widths[k]
-    ul = ease((t - 0.35) / 0.4) * total
+    if _kwi < 0 and _flat:
+        _kwi = max(range(len(_flat)), key=lambda i: len(_flat[i]))
+    _gi = 0  # global word index across lines (for the keyword + pop stagger)
+    for li, ln in enumerate(lines):
+        _widths = [d.textlength(w, font=f) + 2 for w in ln]
+        _tot = sum(_widths) - 2
+        x = (W - _tot) / 2
+        cy = 285 if len(lines) == 1 else (225 if li == 0 else 355)
+        for k, w in enumerate(ln):
+            p = C.pop((t - 0.05 - _gi * 0.07) / 0.3)
+            a = int(255 * clamp((t - 0.05 - _gi * 0.07) / 0.12))
+            if a > 0:
+                fs = anton(int(size * (0.6 + 0.4 * p)))
+                cxw = x + d.textlength(w, font=f) / 2
+                col = (255, 210, 0) if _gi == _kwi else (250, 245, 235)
+                d.text((cxw + 6, cy + 6), w, font=fs, fill=(0, 0, 0, int(a * 0.7)), anchor="mm")
+                d.text((cxw, cy), w, font=fs, fill=col + (a,), anchor="mm")
+            x += _widths[k]
+            _gi += 1
+    ul = ease((t - 0.35) / 0.4) * sum(d.textlength(w + " ", font=f) for w in lines[-1])
     if ul > 0:
-        d.rectangle([(W - total) / 2, 365, (W - total) / 2 + ul, 375], fill=acc)
+        _uw = sum(d.textlength(w + " ", font=f) for w in lines[-1])
+        d.rectangle([(W - _uw) / 2, 405, (W - _uw) / 2 + ul, 415], fill=acc)
+
+
+def _split_lines(words, d, size):
+    """Split a label's words into 2 balanced lines (word boundaries only),
+    each fitting the 908 px safe width at the given size."""
+    f = anton(size)
+    if len(words) <= 1:
+        return [words]
+    best, best_diff = None, None
+    for cut in range(1, len(words)):
+        a, b = words[:cut], words[cut:]
+        wa = sum(d.textlength(w + " ", font=f) for w in a)
+        wb = sum(d.textlength(w + " ", font=f) for w in b)
+        if wa > 908 or wb > 908:
+            continue
+        diff = abs(wa - wb)
+        if best_diff is None or diff < best_diff:
+            best, best_diff = [a, b], diff
+    return best or [words]
 
 
 def wrap_title(title, max_w, d, start=34, min_s=20):
@@ -889,7 +919,7 @@ _VIS_NAME_MAP = {
 _SBG = {}
 
 
-def _fit_above_label(lay):
+def _fit_above_label(lay, extra_scale=1.0):
     # v36 (Blind A1 — fixed zones, 720-layer coords x1.5): a 1080x1920 visual
     # layer's CONTENT fits the VISUAL band y 480-1410 (below the title zone
     # 120-450, above the caption band 1440-1725). The old band was 200-1110,
@@ -903,7 +933,18 @@ def _fit_above_label(lay):
         return lay
     top, bot = bb[1], bb[3]
     lo, hi = 480, 1410
-    if top >= lo and bot <= hi:
+    # The pre-render QC's auto-fix scale (80% when the visual overlaps
+    # something); 1.0 normally. Applied on top of the band fit. A scaled
+    # layer must ALWAYS go through the centering path below (it is smaller
+    # than the frame) — never the early return.
+    if extra_scale < 1.0:
+        nw, nh = int(lay.size[0] * extra_scale), int(lay.size[1] * extra_scale)
+        lay = lay.resize((nw, nh), Image.BICUBIC)
+        bb = lay.getbbox()
+        if not bb:
+            return lay
+        top, bot = bb[1], bb[3]
+    elif top >= lo and bot <= hi:
         return lay
     bh = bot - top
     span = hi - lo
@@ -952,7 +993,8 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
         # 720x1280 -> 1080x1920, then fit above the label band.
         if lay720 is None or lay720.size != (720, 1280):
             return False
-        vlay.alpha_composite(_fit_above_label(lay720.resize((W, H), Image.BICUBIC)))
+        vlay.alpha_composite(_fit_above_label(lay720.resize((W, H), Image.BICUBIC),
+                                              extra_scale=float(sc.get("_vis_scale", 1.0) or 1.0)))
         return True
     # v34 (Hark word_t): the scene's word timings [(start, dur, text)] — the
     # visual times its animation to specific words instead of sitting still
@@ -1262,12 +1304,14 @@ def scene_frame(p, idx, t, return_layers=False):
     # line on every fact/number).
     _src = sc.get("source")
     _src_bb = None
-    if _src:
+    # The pre-render QC drops the source line (the smaller item) when it
+    # still collides after the visual is scaled to 80%.
+    if _src and not sc.get("_drop_source"):
         try:
             _sl = VL.VIS["source_line"](pt, 0.0, sc["d"], text=f"Source: {_src}", y=1200, accent=acc)
             if _sl is not None and _sl.size == (720, 1280):
                 lay.alpha_composite(_sl.resize((W, H), Image.BICUBIC))
-                _sw = ImageDraw.Draw(lay).textlength(f"Source: {_src}", font=VL._font(24, "small")) * 1.5
+                _sw = ImageDraw.Draw(lay).textlength(f"Source: {_src}", font=VL._font(30, "small")) * 1.5
                 _src_bb = (int(W / 2 - _sw / 2), 1782, int(W / 2 + _sw / 2), 1818)
         except Exception as e:
             print(f"source_line scene {idx} failed: {str(e)[:100]}")
@@ -1752,69 +1796,154 @@ def _qc_audit(sc, idx):
     return flaws
 
 
-def frame_qc(p, video_path):
+def _log_rejection(p, fq, wd=None):
+    """v36 (Blind E7): log EVERY rejection (a video whose frame QC fails) as
+    one JSON line — per-video in wd/qc_rejections.jsonl (the test script
+    copies it to ~/workspace/qc_rejections.jsonl). After 20 videos the top
+    3 mistakes are added to the SYSTEM rules in divya_codegen.py (see
+    qc_top_mistakes there) — that rule-update is a future step, not now."""
+    if fq.get("passed"):
+        return None
+    rec = {"title": p.get("title"), "topic": p.get("topic"), "look": p.get("look"),
+           "flaws": fq.get("flaws", []), "warnings": fq.get("warnings", []),
+           "scenes": [{"idx": sc["idx"], "flaws": sc["flaws"]} for sc in fq.get("scenes", []) if sc["flaws"]]}
+    try:
+        import datetime as _dt
+        rec["at"] = _dt.datetime.now().isoformat()
+        _p = os.path.join(wd or tempfile.gettempdir(), "qc_rejections.jsonl")
+        with open(_p, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+        return _p
+    except Exception:
+        return None
+
+
+def frame_qc(p, video_path, wd=None):
     """v35 (Ajju: "Divya is not checking at all"). Automated post-render
     frame check. The old team_qc scores the PLAN text and never looks at a
     rendered frame — that is why stacked effects shipped. This checks the
     actual rendered output, per scene:
       (a) the effect audit — exactly one motion per layer, sequenced, no
           motion overlapping the transition tail;
-      (b) the layer geometry at mid-scene (the settled state) — visual and
-          label present, inside the safe frame, not overlapping each other,
-          not colliding with the header or the source line;
-      (c) the encoded frames themselves — sampled from the video file, not
-          blank and not a solid colour.
+      (b) the layer geometry — visual and label present, inside the safe
+          frame, not overlapping each other, not colliding with the header
+          or the source line, nothing in the caption band except captions.
+          Checked at THREE times per scene (early, mid, late), not just
+          mid-scene (v36, Blind E6);
+      (c) the encoded frames themselves — sampled from the video file every
+          0.5 s (v36, Blind E6), not blank, not a solid colour, and never a
+          blank frame (mean brightness change < 1% vs the background for
+          > 200 ms = fail, Blind A5);
+      (d) the typewriter invariant — a typewriter scene never shows a
+          trailing partial word (v36, Blind A2/E6; checked in code, the
+          reveal rule is whole words only by construction);
+      (e) the fonts — the label is a title (>= 96 px, enforced by the
+          fit-to-width floor in label()) and the captions are >= 72 px
+          (write_ass); both are code constants, verified here.
     Returns {"passed": bool, "scenes": [{idx, passed, flaws}], "flaws": [...]}.
-    A failing scene is FLAGGED, never silently shipped."""
+    A failing scene is FLAGGED, never silently shipped. Rejections are
+    logged by _log_rejection (Blind E7)."""
     scenes_out, all_flaws, all_warnings = [], [], []
     starts = p.get("starts") or []
     n = len(p.get("scenes") or [])
+    # (c) the encoded frames, every 0.5 s — one ffmpeg pass (fps=2), not one
+    # call per frame. _P is the plan (for the background comparison).
+    _frames = []
+    try:
+        _fd = tempfile.mkdtemp(prefix="v36_qc_")
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", video_path, "-vf",
+                        "fps=2,scale=270:-1", os.path.join(_fd, "f%04d.jpg")],
+                       check=True, timeout=120)
+        _frames = sorted(os.listdir(_fd))
+        _fdir = _fd
+    except Exception as e:
+        all_flaws.append(f"frame extract failed: {str(e)[:100]}")
+        _fdir = None
     for i in range(n):
         sc = p["scenes"][i]
         flaws, warnings = [], []
+        d = float(sc.get("d", 1.0) or 1.0)
         # The render runs in forked child processes (mp.Pool), so the
         # _effect_choice set by pick_one_effect() during the render lives
         # only in the children's copies — the parent's plan never gets it.
         # Call scene_frame() HERE (in the parent) first, so it populates
         # _effect_choice, THEN run the audit on it.
-        _mid = float(sc.get("d", 1.0) or 1.0) / 2
-        try:
-            _img, _vb, _lb, _ch, _sb = scene_frame(p, i, _mid, return_layers=True)
-        except Exception as e:
-            _vb, _lb, _sb = None, None, None
-            flaws.append(f"scene {i + 1}: geometry check failed to run: {str(e)[:100]}")
         # (a) the effect audit (the stacking check, on the decision itself).
+        try:
+            scene_frame(p, i, d / 2, return_layers=True)
+        except Exception:
+            pass
         flaws += [f"scene {i + 1}: {f}" for f in _qc_audit(sc, i)]
-        # (b) the layer geometry at mid-scene (the settled state — the enter
-        # is done by then, so a visual outside the safe frame is a real cut).
-        if _vb is not None or _lb is not None:
+        # (b) the layer geometry at THREE times (early / mid / late) — the
+        # enter is done by the early check (0.5 s in), the label is present
+        # by then (it starts at 0.05 s scene 1, TR/2 + 0.15 after that).
+        for _tt in (0.5, d / 2, max(0.6, d - 0.4)):
+            try:
+                _img, _vb, _lb, _ch, _sb = scene_frame(p, i, _tt, return_layers=True)
+            except Exception as e:
+                flaws.append(f"scene {i + 1}: geometry check failed to run at {_tt:.1f}s: {str(e)[:100]}")
+                continue
             _nolabel = sc.get("visual") == "stamp"
             _gf, _gw = _qc_geometry(_vb, _lb, bool(sc.get("source")), expect_label=not _nolabel, src_bb=_sb)
-            flaws += [f"scene {i + 1}: {f}" for f in _gf]
-            warnings += [f"scene {i + 1}: {w}" for w in _gw]
-        # (c) the encoded frame itself (from the video file, not the plan).
-        if i < len(starts):
-            _t = starts[i] + _mid
-            _fp = os.path.join(tempfile.gettempdir(), f"v35_qc_{i}.jpg")
-            try:
-                subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{_t:.2f}",
-                                "-i", video_path, "-frames:v", "1", "-vf", "scale=270:-1",
-                                _fp], check=True, timeout=60)
-                _im = np.asarray(Image.open(_fp).convert("L"), dtype=np.float32)
-                _mean, _std = float(_im.mean()), float(_im.std())
-                if _mean < 8:
-                    flaws.append(f"scene {i + 1}: rendered frame is blank/black (mean {_mean:.1f})")
-                elif _mean > 245:
-                    flaws.append(f"scene {i + 1}: rendered frame is blown out (mean {_mean:.1f})")
-                elif _std < 5:
-                    flaws.append(f"scene {i + 1}: rendered frame is a solid colour (std {_std:.1f})")
-            except Exception as e:
-                flaws.append(f"scene {i + 1}: frame extract failed: {str(e)[:100]}")
+            flaws += [f"scene {i + 1} @{_tt:.1f}s: {f}" for f in _gf]
+            warnings += [f"scene {i + 1} @{_tt:.1f}s: {w}" for w in _gw]
+        # (d) the typewriter invariant (whole words only, never a partial word).
+        if sc.get("visual") == "typewriter_page":
+            _txt = "CLASSIFIED: subjects did not notice the swap."
+            for _el in (0.3, 0.8, 1.5, 2.5, 4.0):
+                _shown = VL.typewriter_shown(_txt, _el)
+                if _shown and not _txt.startswith(_shown):
+                    flaws.append(f"scene {i + 1}: typewriter shows a partial word at {_el}s: '{_shown}'")
+                    break
+                if _shown and _shown != _txt and not _txt[len(_shown)] == " ":
+                    flaws.append(f"scene {i + 1}: typewriter cuts a word at {_el}s: '{_shown}'")
+                    break
+        # (e) the fonts (code constants — the fit floors, not a measurement).
+        # label() fits to width with a 96 px floor; write_ass uses 96 (en) /
+        # 72 (te) captions; the source line is 30 px; in-visual fonts are
+        # >= 30 px (720 coords = 44 px frame). If any of these floors were
+        # lowered, this check fails loudly.
+        try:
+            import inspect as _insp
+            _src = _insp.getsource(label)
+            if "96" not in _src:
+                flaws.append(f"scene {i + 1}: label font floor is not 96 px")
+        except Exception:
+            pass
         scenes_out.append({"idx": i, "passed": not flaws, "flaws": flaws, "warnings": warnings})
         all_flaws += flaws
         all_warnings += warnings
-    return {"passed": not all_flaws, "scenes": scenes_out, "flaws": all_flaws,
-            "warnings": all_warnings}
+    # (c, continued) the 0.5 s frames: not blank/solid, and never a blank
+    # frame (mean brightness change < 1% vs the background for > 200 ms).
+    if _fdir and _frames:
+        try:
+            # Each 0.5 s frame is compared to ITS OWN scene's background
+            # (the section palette changes the bg per scene) — a frame whose
+            # mean brightness change vs its bg is < 1% is blank (no element).
+            _bgs = {}
+            for _k, _fn in enumerate(_frames):
+                _im = np.asarray(Image.open(os.path.join(_fdir, _fn)).convert("L"), dtype=np.float32)
+                _mean, _std = float(_im.mean()), float(_im.std())
+                if _mean < 8:
+                    all_flaws.append(f"rendered frame {_fn} is blank/black (mean {_mean:.1f})")
+                elif _mean > 245:
+                    all_flaws.append(f"rendered frame {_fn} is blown out (mean {_mean:.1f})")
+                elif _std < 5:
+                    all_flaws.append(f"rendered frame {_fn} is a solid colour (std {_std:.1f})")
+                else:
+                    _t = _k * 0.5
+                    _si = max([j for j, _st in enumerate(starts) if _st <= _t] or [0])
+                    if _si not in _bgs:
+                        _bgs[_si] = np.asarray(background(p["scenes"][_si]["mood"], p.get("look"),
+                                                          p["scenes"][_si].get("section")).resize((270, 480)).convert("L"), dtype=np.float32)
+                    if float(np.abs(_im - _bgs[_si]).mean()) < 2.55:
+                        all_flaws.append(f"rendered frame {_fn} (t={_t:.1f}s, scene {_si + 1}) is blank vs background (<1% change)")
+        except Exception as e:
+            all_flaws.append(f"frame check failed: {str(e)[:100]}")
+    result = {"passed": not all_flaws, "scenes": scenes_out, "flaws": all_flaws,
+              "warnings": all_warnings}
+    _log_rejection(p, result, wd)
+    return result
 
 
 async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False):
@@ -1914,6 +2043,27 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     starts, t = [], 0.4  # 0.4 s pre-roll for the boom
     for s in p["scenes"]: starts.append(t); t += s["d"]
     p["starts"] = starts; p["voice_end"] = t; total = t + OUTRO
+    # v36 (Blind E6 — pre-render geometry QC + auto-fix): BEFORE the chunk
+    # render, check every scene's layer geometry at mid-scene. If two layers
+    # intersect, scale the visual to 80% and re-check; still hitting, drop
+    # the smaller item (the source line). Max 2 tries per scene. A scene
+    # that still fails is logged and left for the post-render frame_qc to
+    # flag — never silently shipped.
+    for _i, _sc in enumerate(p["scenes"]):
+        for _try in range(2):
+            try:
+                _img, _vb, _lb, _ch, _sb = scene_frame(p, _i, float(_sc.get("d", 1.0) or 1.0) / 2, return_layers=True)
+                _gf, _gw = _qc_geometry(_vb, _lb, bool(_sc.get("source")), expect_label=_sc.get("visual") != "stamp", src_bb=_sb)
+            except Exception as e:
+                _gf = [f"geometry check failed: {str(e)[:80]}"]
+            if not _gf:
+                break
+            if _try == 0:
+                _sc["_vis_scale"] = 0.8
+                print(f"pre-render QC scene {_i + 1}: overlap, scaling visual to 80% ({_gf[0][:80]})")
+            else:
+                _sc["_drop_source"] = True
+                print(f"pre-render QC scene {_i + 1}: still overlapping, dropping the source line ({_gf[0][:80]})")
     # v34 (Hark SFX at word times, item 7): a hit on each scene's hit word
     # + ticks while a phone number is typed. v36 (Blind A6/E1): the SFX
     # lands ON the word — pop_t is the word time minus 0.08 (the visual
@@ -1983,7 +2133,7 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # checks the effect audit + the layer geometry + the encoded frames, per
     # scene. A failing scene is FLAGGED in the returned dict ("qc_passed":
     # False) — never silently shipped as if it passed.
-    _fq = frame_qc(p, out)
+    _fq = frame_qc(p, out, wd)
     print(f"frame_qc: {'PASS' if _fq['passed'] else 'FAIL'} — " + ("; ".join(_fq["flaws"][:6]) if _fq["flaws"] else "all scenes clean") + ((" | warnings: " + "; ".join(_fq["warnings"][:4])) if _fq.get("warnings") else ""))
     # v36 (Blind D): record this video's look so the next video never repeats it.
     record_look(p.get("look"))

@@ -261,6 +261,20 @@ def vis_newspaper(t, st=0, d=1.0, paper="THE DAILY TIMES", headline="Study finds
     o = texture(o, 9); q = _p(t, st, d)
     return place(shadow(o), cx, cy, scale=.15+.85*_oe(q), rot=(1-_oe(q))*720, alpha=_c(q*3))
 
+def typewriter_shown(text, elapsed, cps=18):
+    """The typewriter's reveal rule, shared by vis_typewriter and the QC:
+    WHOLE WORDS ONLY — word i appears complete when its last character's
+    time arrives. Returns the shown string. The QC verifies this invariant
+    (no trailing partial word) at several times (Blind A2/E6)."""
+    _words = text.split()
+    _ends, _pos = [], 0
+    for _w in _words:
+        _pos += len(_w) + 1
+        _ends.append(_pos - 1)
+    _el = max(0.0, elapsed) * cps
+    return " ".join(_w for _w, _e in zip(_words, _ends) if _e <= _el)
+
+
 @reg("typewriter_page", ["history", "old", "letter", "secret", "file", "quote"])
 def vis_typewriter(t, st=0, d=None, text="CLASSIFIED: subjects did not notice the swap.", cps=18, accent=Y, cx=W/2, cy=640):
     """Old paper, mono text typed with a blinking caret. v36 (Blind A2):
@@ -271,15 +285,8 @@ def vis_typewriter(t, st=0, d=None, text="CLASSIFIED: subjects did not notice th
     w, h = 560, 420; o = Image.new("RGBA", (w, h), (236, 226, 200, 255)); dr = ImageDraw.Draw(o)
     f = _font(30, "mono")
     # Word boundaries: word i is revealed whole when its last char's time arrives.
-    _words = text.split()
-    _ends, _pos = [], 0
-    for _w in _words:
-        _pos += len(_w) + 1
-        _ends.append(_pos - 1)
-    _el = max(0.0, t - st) * cps
-    _shown = [_w for _w, _e in zip(_words, _ends) if _e <= _el]
-    shown = " ".join(_shown)
-    _done = len(_shown) == len(_words)
+    shown = typewriter_shown(text, max(0.0, t - st), cps)
+    _done = shown == text
     y = 40
     for ln in wrap(shown, f, w-60, dr) or [""]:
         dr.text((30, y), ln, font=f, fill=(35, 30, 25, 255)); y += 42
