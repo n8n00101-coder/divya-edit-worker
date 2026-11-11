@@ -791,7 +791,7 @@ def flow_email_signup(page, job, cfg):
                 if pause_for_email_verify(page, job, cfg):
                     pass  # verified + signed in — fall through to key creation
                 else:
-                    return _fail(f"{name} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).")
+                    return _fail(f"{name} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).", extra={"no_retry": True})
             else:
                 return _fail(f"{name} — email tarvatha next step load avvaledu (step: signup form). Take Control tho try cheyyi.")
         if ctrls2.get("stopped"):
@@ -848,7 +848,7 @@ def flow_email_signup(page, job, cfg):
     # (session must land here) and verifies the console before proceeding.
     if _page_says(page, VERIFY_NEEDLES):
         if not pause_for_email_verify(page, job, cfg):
-            return _fail(f"{cfg['name']} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).")
+            return _fail(f"{cfg['name']} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).", extra={"no_retry": True})
     if check_stop():
         return _stopped()
     progress("running", "api-key", "API key create chesthunna.", page.url)
@@ -941,7 +941,7 @@ def flow_cloudflare(page, job, cfg):
     # Email verification pause (same as the other providers, v39 C7).
     if _page_says(page, VERIFY_NEEDLES):
         if not pause_for_email_verify(page, job, cfg):
-            return _fail(f"{cfg['name']} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).")
+            return _fail(f"{cfg['name']} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).", extra={"no_retry": True})
     if check_stop():
         return _stopped()
     # (b) API token with Workers deploy permissions, via the dashboard.
@@ -1044,6 +1044,10 @@ def run_provider(browser, job, cfg, provider):
             except Exception:
                 pass
         if last["status"] in ("done", "stopped"):
+            return last
+        # v39 C7: a verification-resume failure must NOT retry — retrying
+        # re-submits the email, sends another magic link and pauses again.
+        if (last.get("extra") or {}).get("no_retry"):
             return last
         # "failed": retry once (bounded), then give up on THIS provider only.
     return last
