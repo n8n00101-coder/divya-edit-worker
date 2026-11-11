@@ -113,11 +113,12 @@
         <li><a href="#/history" data-r="history"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4"/></svg><span data-t="sHistory"></span></a></li>
         <li><a href="#/voice" data-r="voice"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg><span data-t="sVoice"></span></a></li>
         <li><a href="#/connect" data-r="connect"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span data-t="sConnect"></span></a></li>
-        <li><a href="#/setup" data-r="setup"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><span data-t="sSetup"></span></a></li>
         <li><a href="#/plan" data-r="plan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/></svg><span data-t="sPlan"></span></a></li>
         <li><a href="#/download" data-r="download"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg><span data-t="sDownload"></span></a></li>
         <li><a href="#/profile" data-r="profile"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span data-t="sProfile"></span></a></li>
         <li><a href="#/settings" data-r="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span data-t="sSettings"></span></a></li>
+        <!-- v37: Setup goes LAST (before logout) — it is a one-time screen, not a daily destination. -->
+        <li><a href="#/setup" data-r="setup"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><span data-t="sSetup"></span></a></li>
         <li><button id="drawerLogout"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l-5-5 5-5M5 12h11"/></svg><span data-t="logout"></span></button></li>
       </ul>
     </nav>
@@ -137,10 +138,11 @@
             <li><a href="#/history"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4z"/><path d="M8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4"/></svg><span data-t="gHistory"></span></a></li>
             <li><a href="#/voice"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12h2M6 8v8M10 5v14M14 8v8M18 10v4M22 12h0"/></svg><span data-t="gVoice"></span></a></li>
             <li><a href="#/connect"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span data-t="gConnect"></span></a></li>
-            <li><a href="#/setup"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><span data-t="gSetup"></span></a></li>
             <li><a href="#/plan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/></svg><span data-t="gPlan"></span></a></li>
             <li><a href="#/download"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg><span data-t="gDownload"></span></a></li>
             <li><a href="#/settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span data-t="gSettings"></span></a></li>
+            <!-- v37: Setup goes LAST in the quick-action grid. -->
+            <li><a href="#/setup"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg><span data-t="gSetup"></span></a></li>
           </ul>
           <div class="card job" id="homeJob" aria-live="polite">
             <div class="job-row"><span class="pulse idle" id="homeJobDot" aria-hidden="true"></span><div><b id="homeJobTitle" data-t="noJob"></b><div class="muted small" id="homeJobSub" data-t="noJobSub"></div></div></div>
@@ -216,6 +218,16 @@
       <section id="s-setup" class="screen" data-title="sSetup">
         <div class="scroll pad">
           <p class="muted" data-t="setupIntro"></p>
+          <!-- v37: plain-words explainer — what Divya does vs what YOU must do
+               (create the free account, copy the key, complete any captcha /
+               verification yourself). Divya never creates accounts silently. -->
+          <div class="card note small" id="setupHow">
+            <p><b data-t="setupHowT"></b></p>
+            <p><b data-t="setupHowDivyaT"></b> <span data-t="setupHowDivya"></span></p>
+            <p><b data-t="setupHowYouT"></b> <span data-t="setupHowYou"></span></p>
+            <p><b data-t="setupHowAfterT"></b> <span data-t="setupHowAfter"></span></p>
+            <p class="muted" data-t="setupHowNote"></p>
+          </div>
           <button class="btn primary" id="oneTapBtn" data-t="setupOneTap"></button>
           <p class="muted small" data-t="setupConsent"></p>
           <div class="list">
@@ -224,6 +236,7 @@
           <label class="consent"><input type="checkbox" id="consent"><span data-t="consent"></span></label>
           <button class="btn secondary" id="guideBtn" data-t="guideBtn"></button>
           <ol class="steps" id="steps"></ol>
+          <p class="muted small" data-t="setupStepNote"></p>
           <div class="card note small">
             <p><b data-t="serverTitle"></b> <span data-t="serverText"></span></p>
             <p class="muted" data-t="noPasswords"></p>
