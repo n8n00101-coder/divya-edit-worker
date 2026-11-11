@@ -5,11 +5,23 @@ LLM story plan (hook -> context -> twist -> payoff -> CTA, per-scene mood) -> hu
 6 transition kinds -> procedural cinematic music + whoosh/boom SFX, ducked under voice -> word-timed karaoke
 captions (libass) -> film grade (vignette + grain). Rendered in parallel processes. Free, CPU only.
 v29: Hark's effects.py (Blind) — 14 ENTER, 11 EMPHASIS, 12 TRANSITIONS, picked by the hit word's meaning, max 2x per video."""
-import asyncio, json, math, multiprocessing as mp, os, random, re, subprocess, tempfile, wave
+import asyncio, json, math, multiprocessing as mp, os, random, re, subprocess, sys, tempfile, wave
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 import create as C
 import effects as FX  # v29: Hark's effects library (Blind, divya-v26-effects.zip) — 14 ENTER, 11 EMPHASIS, 12 TRANSITIONS, 10 easings
+import transitions_lib as TL  # v29b: Hark's 379-transition library (Blind, divya-v29-transitions.zip) — 40 families, incl. 3D
+# v29b: transitions slower than 200 ms/frame at 1080x1920 (measured on this VM;
+# the render is offline + parallel, but these 10 would dominate it). Excluded
+# from the pick pool; 369 remain.
+TL_SLOW = {"wipe_0_hard_smooth", "heart_in", "zigzag_180_n6", "zoom_through_1.6_expo",
+           "spin_zoom_0.6_smooth", "spin_zoom_0.6_expo", "spin_zoom_1.0_smooth",
+           "spin_zoom_1.0_expo", "spin_zoom_1.6_smooth", "spin_zoom_1.6_expo"}
+TL_FAST = [e for e in TL.REGISTRY if e["name"] not in TL_SLOW]
+TL_BY_NAME = {e["name"]: e["fn"] for e in TL_FAST}
+# v29b: the per-video custom effects module (video_fx.py, written by the LLM,
+# sandbox-tested). Set by make_video(); None = library fallback only.
+VIDEO_FX = None
 
 
 W, H, FPS = 1080, 1920, 30
@@ -180,7 +192,16 @@ history mysteries, science facts, money habits, health, tech, motivation). Avoid
 Owner request: """ % C.VISUALS
 
 
-def plan(brief, chat, recent="", recent_styles=None):
+def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
+    # v25: the TOPIC MOOD picks the design system (A/B/C/D) FIRST, so the LLM
+    # designs every scene for that look — never one fixed style.
+    # v27 (Hark kit style plan): the look also carries a motion personality +
+    # transition family from the topic mood, so the motion differs per video too.
+    # v28: recent_styles (the last 5 looks, from KV) keeps the look from repeating.
+    # v29b: recent_families (transition families used in the last 5 videos, from
+    # KV) keeps the TRANSITIONS from repeating too — step 7 of
+    # DIVYA_NEW_CODE_EVERY_VIDEO.md. Empty until the Worker KV wiring lands
+    # (needs Ajju's go); within-video no-repeat already works via `tl_used`.
     # v25: the TOPIC MOOD picks the design system (A/B/C/D) FIRST, so the LLM
     # designs every scene for that look — never one fixed style.
     # v27 (Hark kit style plan): the look also carries a motion personality +
@@ -225,9 +246,16 @@ def plan(brief, chat, recent="", recent_styles=None):
         s["enter"] = FX.pick(enter_l, [s["hit_type"]], used)
         s["emphasis"] = FX.pick(emph_l, [s["hit_type"]], used)
         s["label_enter"] = FX.pick(enter_l, [s["hit_type"]], used)
-    # one transition per scene boundary, from the look's topic tag (guide s2)
+    # one transition per scene boundary, from the look's topic tag (guide s2).
+    # v29b: Hark's 379-transition library — TL.pick_transition never repeats a
+    # NAME in one video and skips families from the last 5 videos (recent_families,
+    # from KV once the Worker wiring lands). Tags come from the look's fx_tag.
     tag = LOOKS[look].get("fx_tag", "calm")
-    p["transitions"] = [FX.pick(FX.TRANSITIONS, [tag], used) for _ in range(max(0, len(sc) - 1))]
+    tl_used = set()
+    p["transitions"] = [TL.pick_transition(tags={tag}, used=tl_used,
+                        seed=p["seed"] + j, recent_families=recent_families)["name"]
+                        for j in range(max(0, len(sc) - 1))]
+    p["transition_families"] = [TL.family(n) for n in p["transitions"]]
     p["fx_used"] = used
     return p
 
@@ -492,6 +520,11 @@ def scene_frame(p, idx, t):
             vlay = FX.pulse(vlay, pt)
         else:
             vlay = getattr(FX, emph)(vlay, pt, 0)
+    elif emph and emph.startswith("fx_") and VIDEO_FX is not None:
+        # v29b: a custom per-video emphasis from video_fx.py — (layer, t, start, dur).
+        fn = getattr(VIDEO_FX, emph, None)
+        if callable(fn):
+            vlay = fn(vlay, pt, 0, sc["d"])
     if label_enter in FX_LAYER_ENTER:
         llay = getattr(FX, label_enter)(llay, pt, 0)
     lay.alpha_composite(vlay)
@@ -558,13 +591,22 @@ def outro(p, t):
     return im
 
 def transition(a, b, p, name, acc):
-    # v29: Hark's 12 transitions (effects.py TRANSITIONS) replace the old 6-kind
-    # cycle. The transition NAME is chosen in plan() from the look's topic tag
-    # (guide s2: phone->screen_swipe, tech->glitch, space->zoom_through,
-    # money->coin_flip, health->heartbeat, history->paper_tear...), max 2x/video.
-    # FX's transition functions take (A, B, p) and return an RGB frame.
+    # v29b: Hark's 379-transition library (transitions_lib.py) replaces the
+    # 12-transition effects.py set. The NAME is chosen in plan() via
+    # TL.pick_transition (tags from the look, never reused in a video, families
+    # from the last 5 videos skipped). A name starting with "tr_" is a custom
+    # per-video function from video_fx.py (VIDEO_FX); anything else falls back
+    # to the old FX library. All take (A, B, p) and return an RGB frame.
+    p = clamp(p)
+    if name and name.startswith("tr_") and VIDEO_FX is not None:
+        fn = getattr(VIDEO_FX, name, None)
+        if callable(fn):
+            return fn(a, b, p)
+    fn = TL_BY_NAME.get(name)
+    if fn is not None:
+        return fn(a, b, p)
     fn = FX.TRANSITIONS.get(name, (FX.tr_crossfade, []))[0]
-    return fn(a, b, clamp(p))
+    return fn(a, b, p)
 
 def frame_at(p, T):
     st = p["starts"]; n = len(st); end = p["voice_end"]
@@ -678,10 +720,107 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
 
 # ---------------- main ----------------
+# ---------------- per-video custom effects (v29b) ----------------
+# DIVYA_NEW_CODE_EVERY_VIDEO.md (Blind): the library is only the toolbox — for
+# EACH video the LLM writes a NEW video_fx.py (3-6 functions) shaped like the
+# topic's own objects, sandbox-tested, max 2 retries, else library fallback.
+# Custom tr_ functions replace the first scene boundaries; custom fx_ functions
+# replace the library emphasis on the first scenes. VIDEO_FX is the loaded
+# module (None = library only).
+import importlib.util
+import subprocess as _sp
+
+VIDEO_FX_PROMPT = (
+    "You are writing NEW motion code for this one video. Topic: {topic}. "
+    "Mood: {mood}. Topic objects: {objects}. Scenes with hit words: {scenes}. "
+    "Families used in the last 5 videos (do not use): {recent_families}.\n\n"
+    "Write video_fx.py with 3 to 6 functions:\n"
+    "- tr_*(A, B, p) for scene changes, each shaped like a topic object "
+    "(rings from a phone, a page from a book, a coin flip for money, a heartbeat line for health).\n"
+    "- fx_*(layer, t, start, dur) for the hit word of a scene.\n"
+    "Use only math, random, numpy, PIL, effects, transitions_lib. Build from their primitives.\n"
+    "p=0 must return A, p=1 must return B. Keep content inside the safe box. Under 200 ms per frame.\n"
+    "Above each function write one comment: which sentence it serves and why it fits.\n"
+    "Return only the Python file."
+)
+
+def _sandbox_ok(path):
+    # Run the adapted fx_sandbox.py (1080x1920, 200 ms/frame) on the file.
+    # Returns (ok, detail) — detail is the sandbox JSON or the raw error.
+    sb = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fx_sandbox.py")
+    try:
+        r = _sp.run([sys.executable, sb, path], capture_output=True, text=True, timeout=180)
+        out = (r.stdout or "").strip()
+        dd = json.loads(out[out.index("{"):])
+        return bool(dd.get("ok")), dd
+    except Exception as e:
+        return False, str(e)
+
+def gen_video_fx(p, chat, wd, recent_families=()):
+    # Build the prompt from the plan, ask the LLM for video_fx.py, sandbox-test
+    # it (max 2 retries with the error fed back), load it into VIDEO_FX.
+    # Returns the number of custom functions loaded (0 = library fallback).
+    global VIDEO_FX
+    VIDEO_FX = None
+    topic = p.get("title", "WATCH THIS")
+    mood = LOOKS.get(p.get("look"), {}).get("name", p.get("look", ""))
+    words = [w for w in re.split(r"[^A-Z0-9]+", topic.upper()) if len(w) > 3]
+    objs = sorted(set(words + [s.get("visual", "") for s in p["scenes"]]))[:8]
+    scenes = "; ".join(
+        f"{s.get('label', '')}: {s.get('vo', '')[:60]} (hit: {s.get('hit_type', '')})"
+        for s in p["scenes"])
+    prompt = VIDEO_FX_PROMPT.format(
+        topic=topic, mood=mood, objects=", ".join(objs) or "none",
+        scenes=scenes, recent_families=", ".join(recent_families) or "none")
+    code = None
+    err = None
+    for attempt in range(3):  # 1 try + 2 retries
+        try:
+            raw = chat([{"role": "system", "content": "You output Python code only, no markdown fences."},
+                        {"role": "user", "content": prompt if attempt == 0 else
+                         f"The sandbox rejected your code: {err}. Fix it and return the full corrected video_fx.py."}])
+        except Exception as e:
+            err = str(e)
+            continue
+        m = re.search(r"```(?:python)?\s*([\s\S]*?)```", raw)
+        code = (m.group(1) if m else raw).strip()
+        if not code.startswith(("import ", "from ", "#", "def ")):
+            err = "no Python code returned"
+            continue
+        path = os.path.join(wd, "video_fx.py")
+        with open(path, "w") as f:
+            f.write(code)
+        ok, detail = _sandbox_ok(path)
+        if ok:
+            spec = importlib.util.spec_from_file_location("video_fx", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            VIDEO_FX = mod
+            tr_names = [n for n in dir(mod) if n.startswith("tr_") and callable(getattr(mod, n))]
+            fx_names = [n for n in dir(mod) if n.startswith("fx_") and callable(getattr(mod, n))]
+            # custom transitions replace the first boundaries; custom fx_
+            # replace the library emphasis on the first scenes.
+            for i, name in enumerate(tr_names):
+                if i < len(p.get("transitions", [])):
+                    p["transitions"][i] = name
+            for i, name in enumerate(fx_names):
+                if i < len(p["scenes"]):
+                    p["scenes"][i]["emphasis"] = name
+            p["video_fx"] = {"tr": tr_names, "fx": fx_names}
+            return len(tr_names) + len(fx_names)
+        err = str(detail)
+    return 0
+
 async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None):
     global _P
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
     p = plan(brief, chat, recent, recent_styles)
+    # v29b: per-video custom effects — the LLM writes a NEW video_fx.py for
+    # this topic, sandbox-tested, max 2 retries; 0 = library fallback.
+    n_fx = gen_video_fx(p, chat, wd)
+    if notify and n_fx:
+        await notify(f"Custom effects: {n_fx} new functions for this video "
+                     f"({', '.join(p.get('video_fx', {}).get('tr', []) + p.get('video_fx', {}).get('fx', []))}).")
     voice = VOICES.get((p["lang"], p.get("voice", "male")), VOICES[(p["lang"], "male")])
     if notify: await notify(f"Script ready: {p['title']} ({len(p['scenes'])} scenes, {p['lang']}). Voice, animation, music chestunna.")
     gap = 0.32
