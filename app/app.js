@@ -1481,7 +1481,8 @@ async function loadSetupState() {
   const card = $("#setupStateCard"); if (!card) return;
   let d = null;
   try { d = await api("setup/status"); } catch {}
-  if (!d || !d.ok) { card.hidden = true; return; }
+  if (!d || !d.ok) { renderGmailConsentCard(null); card.hidden = true; return; }
+  renderGmailConsentCard(d);
   const state = String(d.state || "").toLowerCase();
   const title = $("#setupStateTitle"), sub = $("#setupStateSub"), retry = $("#setupRetryBtn");
   const show = (t, s, canRetry) => { title.textContent = t; sub.textContent = s || ""; sub.hidden = !s; retry.hidden = !canRetry; card.hidden = false; };
@@ -1490,7 +1491,13 @@ async function loadSetupState() {
   if (state === "stalled" || d.stalled) return show(t("setupStalled"), t("setupStalledSub"), true);
   if (state.startsWith("paused")) {
     const step = (d.steps || []).find(s => s.state === "paused");
-    return show(t("setupPaused"), step ? step.note || "" : "");
+    // v40: on the email path the Worker reads the mail itself — the banner
+    // shows the waiting / retry line, never the old "tap the link" note.
+    const g = d.gmail ? String(d.gmail.state || "").toLowerCase() : "";
+    const kind = step ? String(step.kind || step.pause || "").toLowerCase() : "";
+    const emailKind = step && !["sms", "phone", "code", "signin", "captcha"].includes(kind);
+    const sub = emailKind && g === "no-mail-yet" ? t("gmailWaitMail") : emailKind && g === "error" ? t("gmailReadErr") : (step ? step.note || "" : "");
+    return show(t("setupPaused"), sub);
   }
   if (state === "running" || d.active) {
     const step = (d.steps || []).find(s => s.state === "running");
@@ -1498,7 +1505,29 @@ async function loadSetupState() {
   }
   card.hidden = true; // not-started: the one-tap button below is the CTA
 }
+/* v40: Gmail re-consent card on the Setup screen. Shown ONLY when the
+   Worker says it cannot read mail (needs-scope / no-token) AND a setup is
+   in progress (active / running / paused / stalled / failed, or needsSetup).
+   Hidden when gmail is ok, when setup is done, and when no setup ever ran
+   — a user who never started setup is never nagged. The button re-uses the
+   Connect Google flow (connect/link google); after consent, pollSetup()
+   picks up the new state and the setup resumes on its own. */
+function renderGmailConsentCard(d) {
+  const card = $("#gmailConsentCard"); if (!card) return;
+  const g = d && d.gmail ? String(d.gmail.state || "").toLowerCase() : "";
+  const needs = g === "needs-scope" || g === "no-token";
+  const state = d ? String(d.state || "").toLowerCase() : "";
+  const inSetup = !!(d && (d.active || d.needsSetup || d.steps || d.current || state === "running" || state.startsWith("paused") || state === "stalled" || state === "failed" || state === "stopped"));
+  const showCard = needs && inSetup && state !== "done";
+  card.hidden = !showCard;
+  if (showCard) {
+    $("#gmailConsentTitle").textContent = t("gmailConsentT");
+    $("#gmailConsentSub").textContent = t("gmailConsentLine");
+    $("#gmailConsentBtn").textContent = t("gmailAllowBtn");
+  }
+}
 $("#setupRetryBtn") && ($("#setupRetryBtn").onclick = () => startOneTapSetup());
+$("#gmailConsentBtn") && ($("#gmailConsentBtn").onclick = () => connectLink("google"));
 /* ---------- plan ---------- */
 async function loadPlan() { try { const d = await api("plan"); if (d.ok) { S.plan = d.plan; S.tok = d.tok || null; $("#planNow").textContent = t("planNow", d.plan, d.edits_left, d.edits_limit); showQuota(d.edits_left, d.edits_limit, d.edits_used); renderPlans(d); loadReferral(); if (cur === "profile") renderProfile(); } } catch {} }
 async function loadReferral() { try { const d = await api("referral/me"); if (d.ok) { $("#refCode").textContent = d.code; $("#refStatus").textContent = t("inviteStatus", d.invites, d.earned); } } catch {} }
