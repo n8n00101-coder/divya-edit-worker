@@ -109,6 +109,10 @@ def ease(t):
     t = max(0.0, min(1.0, t)); return 1 - (1 - t) ** 3
 
 
+def clamp(x, a=0.0, b=1.0):  # v34: was missing — _wprogress + card used it
+    return max(a, min(b, x))
+
+
 def pop(t):  # overshoot pop 0->1
     t = max(0.0, min(1.0, t)); return 1 + 2.2 * (t - 1) ** 3 + 1.2 * (t - 1) ** 2 if t < 1 else 1.0
 
