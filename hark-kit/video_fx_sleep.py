@@ -57,7 +57,8 @@ def vis_bed_phone(t, st=0, d=1.0, accent=(255, 210, 0)):
         dr.ellipse([gx - rr, gy - rr, gx + rr, gy + rr], fill=(80, 160, 255, 40))
     dr.rounded_rectangle([gx - 55, gy - 100, gx + 55, gy + 100], 14, fill=(20, 20, 30), outline=(150, 200, 255), width=4)
     dr.rectangle([gx - 40, gy - 80, gx + 40, gy + 60], fill=(120, 180, 255))
-    dr.text((360, 1050), "2 AM", font=_anton(72), fill=(150, 200, 255), anchor="mm")
+    # v33: no "2 AM" text here — the label already says "2 AM" (Ajju: the
+    # visual's text duplicated the label, not accurate).
     return lay
 
 # Scene 2 "The moon is up, but so are you": crescent moon + 5 stars, fading in.
@@ -98,14 +99,17 @@ def vis_clock(t, st=0, d=1.0, accent=(255, 210, 0)):
         an = i * math.pi / 6
         sd.line([(c + 160 * math.sin(an), c - 160 * math.cos(an)),
                  (c + 180 * math.sin(an), c - 180 * math.cos(an))], fill=(200, 200, 200), width=6)
-    # hour hand sweeps from 10 PM to 6 AM as the scene plays
+    # hour hand sweeps from 10 PM to 6 AM as the scene plays (v33: it used
+    # to start at 12 and end at ~8 — not the sleep window. 10 is at -5pi/6,
+    # 6 is at pi/2; the sweep is 4pi/3 = 8 hours.)
     q = _p(t, st, d)
-    ha = -math.pi / 2 + q * math.pi * 2 * (8 / 12)  # 8 hours of sweep
+    ha = -5 * math.pi / 6 + q * 4 * math.pi / 3
     sd.line([(c, c), (c + 120 * math.cos(ha), c + 120 * math.sin(ha))], fill=(255, 210, 0), width=12)
     sd.line([(c, c), (c + 170 * math.cos(-math.pi / 2 + 0.3), c + 170 * math.sin(-math.pi / 2 + 0.3))], fill=(255, 255, 255), width=8)
     sd.ellipse([c - 14, c - 14, c + 14, c + 14], fill=(255, 210, 0))
     lay.alpha_composite(sub, ((W - S) // 2, 480))
     dr = ImageDraw.Draw(lay)
-    dr.text((360, 1010), "8 HOURS", font=_anton(64), fill=(255, 210, 0), anchor="mm")
+    # v33: no "8 HOURS" text here — the label already says it. "10 PM - 6 AM"
+    # stays (it is different info: the sleep window).
     dr.text((360, 1090), "10 PM - 6 AM", font=_oswald(40), fill=(220, 220, 220), anchor="mm")
     return lay

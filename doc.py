@@ -46,7 +46,7 @@ MOODS = {  # top, bottom, accent, (rate, pitch)
 # one idea per scene, one accent colour at a time.
 LOOKS = {
     "A": {"name": "science", "top": (8, 24, 48), "bot": (6, 60, 70),
-          "accents": [(60, 200, 230), (255, 180, 60)], "font": "anton", "chapter": "fig",
+          "accents": [(60, 200, 230), (255, 180, 60)], "font": "anton", "chapter": "none",
           "ease": "smooth", "motion": "push", "bg": "gradient",
           "motion_personality": "smooth glides", "transition_family": "zoom through the diagram",
           # v29 (Hark's effects.py): the look's transition TAG picks from FX.TRANSITIONS;
@@ -54,7 +54,7 @@ LOOKS = {
           "fx_tag": "space", "moves": ["push", "pan", "drift"],
           "desc": "deep navy to teal gradient, cyan/amber accent, thin line diagrams, animated plots, clean sans — lightning, physics, how-things-work"},
     "B": {"name": "myth", "top": (10, 10, 10), "bot": (24, 24, 24),
-          "accents": [(255, 40, 40), (255, 210, 0)], "font": "bebas", "chapter": "stamp",
+          "accents": [(255, 40, 40), (255, 210, 0)], "font": "bebas", "chapter": "none",
           "ease": "hard", "motion": "cut", "bg": "flat",
           "motion_personality": "snappy pops", "transition_family": "hard cut + stamp slam",
           "fx_tag": "warning", "moves": ["push", "whip"],
@@ -66,7 +66,7 @@ LOOKS = {
           "fx_tag": "history", "moves": ["push", "drift"],
           "desc": "warm film grain, soft vignette, serif/elegant type, slow push-ins, cream/orange/teal grade, minimal text — movies, history, emotion"},
     "D": {"name": "tech", "top": (12, 14, 28), "bot": (8, 10, 22),
-          "accents": [(60, 255, 140), (170, 100, 255)], "font": "anton", "chapter": "counter",
+          "accents": [(60, 255, 140), (170, 100, 255)], "font": "anton", "chapter": "none",
           "ease": "snappy", "motion": "whip", "bg": "grid",
           "motion_personality": "snappy easing", "transition_family": "screen swipe / coin flip",
           "fx_tag": "tech", "moves": ["push", "pan", "whip"],
@@ -578,13 +578,13 @@ def wrap_title(title, max_w, d, start=34, min_s=20):
 
 
 def header(d, p, idx, n, t, sc_d, acc, look=None):
-    # v25: chapter cards vary by look — A "FIG 01" diagram label, B rotated STAMP,
-    # C drops the chapter labels entirely (minimal), D a big NUMBER counter.
-    # v27 (Hark kit safe box): content inside 8% left/right — x starts at 120
-    # (11%) so it stays inside 8% even after the max 1.035 content-layer zoom.
+    # v33 (Ajju 2026-11-11): NO chapter labels — "FIG 01 / FIG 02 ani ndhuku
+    # chupisthunnav". The header is the title only (wrapped, full width) +
+    # the progress bar. The old per-look chapter cards (FIG / stamp / counter)
+    # are deleted; look C already had "none" and now every look is the same.
+    # v27 (Hark kit safe box): content inside 8% left/right — x starts at 120.
     # v32: the title wraps on word boundaries (wrap_title) instead of the
     # [:26] cut; the progress bar drops to y=162 when the title needs 2 lines.
-    ch = LOOKS.get(look, {}).get("chapter", "fig")
     seg = (W - 240) / n
     def progress(two=False):
         y = 162 if two else 150
@@ -592,34 +592,10 @@ def header(d, p, idx, n, t, sc_d, acc, look=None):
             x0 = 120 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
             d.rectangle([x0, y, x0 + seg - 8, y + 6], fill=(60, 60, 70))
             if fill: d.rectangle([x0, y, x0 + (seg - 8) * fill, y + 6], fill=acc)
-    def title_at(x, max_w, size=34):
-        lines, sz = wrap_title(p["title"], max_w, d, start=size)
-        for k, ln in enumerate(lines):
-            d.text((x, 92 + k * 36), ln, font=montserrat(sz), fill=(225, 225, 230))
-        return len(lines) > 1
-    if ch == "none":
-        title_at(120, W - 240, size=30)
-        return
-    if ch == "stamp":
-        f = C.font(34)
-        box = (120, 84, 240, 132)
-        d.rectangle(box, outline=acc, width=5)
-        d.text((138, 92), f"{idx + 1:02d}", font=f, fill=acc)
-        two = title_at(270, W - 120 - 270)
-        progress(two)
-        return
-    if ch == "counter":
-        f = anton(64)
-        d.text((120, 74), f"{idx + 1:02d}", font=f, fill=acc)
-        two = title_at(220, W - 120 - 220)
-        progress(two)
-        return
-    # fig (A, default): "FIG 01" + a thin diagram tick
-    f = C.font(34)
-    d.text((120, 92), f"FIG {idx + 1:02d}", font=f, fill=acc)
-    d.line([(250, 108), (290, 108)], fill=acc, width=4); d.ellipse([286, 104, 294, 112], fill=acc)
-    two = title_at(310, W - 120 - 310)
-    progress(two)
+    lines, sz = wrap_title(p["title"], W - 240, d, start=34)
+    for k, ln in enumerate(lines):
+        d.text((120, 92 + k * 36), ln, font=montserrat(sz), fill=(225, 225, 230))
+    progress(len(lines) > 1)
 
 # v32: plan visual kind -> visuals_lib name (used when the plan's kind has a
 # richer VL equivalent; the scene's stored lib_visual wins over this map).
@@ -814,17 +790,11 @@ def scene_frame(p, idx, t):
         f = look_font(look, fs)
         for li, ln in enumerate(lines):
             w = d.textlength(ln, font=f); d.text(((W - w) / 2, 700 + li * 190 + 40 * (1 - k)), ln, font=f, fill=acc if li else (255, 255, 255))
-    # v29: the camera move VARIES per scene — but only for NARROW, centered
-    # visuals. Wide visuals (VS cards, bars, graphs) extend to the frame edges,
-    # so a pan/whip would push them off-screen (Ajju's complaint); they get a
-    # centered push-in only. No move on scenes under 1.5s.
-    if sc["d"] >= 1.5:
-        if sc.get("visual") in WIDE_VISUALS:
-            move = "push"
-        else:
-            moves = LOOKS[look].get("moves", ["push"])
-            move = moves[(idx + seed) % len(moves)]
-        lay = camera(lay, idx, t, sc["d"], mood, move)
+    # v33 (Ajju 2026-11-11): the camera is STATIC — no zoom/pan/whip/drift.
+    # A zoom running through the whole video is not a professional edit, and
+    # the constant push-in is what made every video feel the same. The
+    # camera() function stays (unused) for reference; motion now comes only
+    # from the per-scene ENTER/EMPHASIS effects and the visual's own build-in.
     return Image.alpha_composite(bg, lay).convert("RGB")
 
 def camera(im, idx, t, d, mood, move="push"):
