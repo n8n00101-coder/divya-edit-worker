@@ -871,18 +871,18 @@ def pick_one_effect(sc, idx, pop_t):
         # emphasis, no custom fx_ on top of it. The label pops start 0.35 s
         # after the hit word, once the build-in's opening has settled.
         choice = {"vis": "build_in", "vis_name": kind, "vis_start": 0.0,
-                  "vis_dur": float(sc["d"]), "label_delay": 0.35}
+                  "vis_dur": float(sc["d"]), "label": "fade_in", "label_delay": 0.35}
     elif hit_type in PUNCH_HIT_TYPES:
         emph = sc.get("emphasis") or "punch"
         if emph.startswith("fx_") and VIDEO_FX is not None and callable(getattr(VIDEO_FX, emph, None)):
             choice = {"vis": "fx_", "vis_name": emph, "vis_start": earliest,
-                      "vis_dur": 0.3, "label_delay": earliest + 0.3 + 0.05}
+                      "vis_dur": 0.3, "label": "fade_in", "label_delay": earliest + 0.3 + 0.05}
         elif emph in FX_LAYER_EMPHASIS:
             if emph == "pulse":
                 emph = "punch"
             _d = EMPH_DUR.get(emph, 0.3)
             choice = {"vis": "emphasis", "vis_name": emph, "vis_start": earliest,
-                      "vis_dur": _d, "label_delay": earliest + _d + 0.05}
+                      "vis_dur": _d, "label": "fade_in", "label_delay": earliest + _d + 0.05}
         else:
             enter = sc.get("enter") or "pop_in"
             if enter not in FX_LAYER_ENTER:
@@ -896,7 +896,7 @@ def pick_one_effect(sc, idx, pop_t):
             enter = "pop_in"
         _d = ENTER_DUR.get(enter, 0.35)
         choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
-                  "vis_dur": _d, "label_delay": earliest + _d + 0.05}
+                  "vis_dur": _d, "label": "fade_in", "label_delay": earliest + _d + 0.05}
     sc["_effect_choice"] = choice
     return choice
 
