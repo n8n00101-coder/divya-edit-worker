@@ -901,7 +901,11 @@ def pick_one_effect(sc, idx, pop_t):
     return choice
 
 
-def scene_frame(p, idx, t):
+def scene_frame(p, idx, t, return_layers=False):
+    # return_layers (v35 frame-QC): also return the visual/label layer alpha
+    # bboxes + the effect choice, so the QC can check geometry (overlap,
+    # cutoff, collisions) on the actual layers instead of guessing from a
+    # flat composited frame. Returns (rgb, vlay_bbox, llay_bbox, choice).
     sc = p["scenes"][idx]; n = len(p["scenes"]); mood = sc["mood"]
     # v25: the look + title seed drive the palette, chapter card, layout and move.
     look = p.get("look", "A"); seed = p.get("seed", 0)
@@ -988,6 +992,11 @@ def scene_frame(p, idx, t):
         if callable(_fn):
             vlay = _fn(vlay, pt, _ch["vis_start"], sc["d"])
     # "build_in": no transform — the visual's own animation is the motion.
+    # v35 frame-QC: the alpha bboxes of the two layers (their real extents
+    # after the single effect was applied) — captured here, before they are
+    # composited onto the content layer.
+    _vb = vlay.getchannel("A").getbbox()
+    _lb = llay.getchannel("A").getbbox()
     lay.alpha_composite(vlay)
     lay.alpha_composite(llay)
     # v32 (Blind): the source line — a short official credit under the label
@@ -1018,8 +1027,11 @@ def scene_frame(p, idx, t):
     # A zoom running through the whole video is not a professional edit, and
     # the constant push-in is what made every video feel the same. The
     # camera() function stays (unused) for reference; motion now comes only
-    # from the per-scene ENTER/EMPHASIS effects and the visual's own build-in.
-    return Image.alpha_composite(bg, lay).convert("RGB")
+    # from the visual's own build-in (v35: one effect at a time).
+    _img = Image.alpha_composite(bg, lay).convert("RGB")
+    if return_layers:
+        return _img, _vb, _lb, sc.get("_effect_choice")
+    return _img
 
 def camera(im, idx, t, d, mood, move="push"):
     # v29: the camera move VARIES per scene (push / pan / whip / drift / parallax),
@@ -1322,6 +1334,130 @@ def preview_sheet(p, wd):
     return out
 
 
+def _qc_geometry(vb, lb, has_source, expect_label=True):
+    """v35: geometry checks on one scene's layer bboxes (mid-scene, settled).
+    vb = visual-layer alpha bbox, lb = label-layer alpha bbox (or None if the
+    layer is empty). expect_label=False for a stamp scene (v34: the stamp
+    carries the word, so the label is skipped by design). Returns a list of
+    flaw strings (empty = clean)."""
+    flaws = []
+    # The visual lives in the band y 200-1150 (below the header, above the
+    # label); the label lives in y 1120-1400. Both must stay inside the
+    # 8% safe frame horizontally (x 86..W-86).
+    if vb is None:
+        flaws.append("visual missing/empty at mid-scene")
+    else:
+        if vb[0] < 86 or vb[2] > W - 86:
+            flaws.append(f"visual cut off at side edge (bbox x {vb[0]}..{vb[2]})")
+        if vb[1] < 170:
+            flaws.append(f"visual collides with header (bbox top y {vb[1]})")
+        if vb[3] > 1150:
+            flaws.append(f"visual overflows into label band (bbox bottom y {vb[3]})")
+    if lb is None:
+        # A missing label at mid-scene is a flaw — unless the scene is a
+        # stamp visual (expect_label=False), where the label is skipped by
+        # design because the stamp itself carries the word.
+        if expect_label:
+            flaws.append("label missing at mid-scene")
+    else:
+        if lb[0] < 86 or lb[2] > W - 86:
+            flaws.append(f"label cut off at side edge (bbox x {lb[0]}..{lb[2]})")
+        if lb[3] > 1400:
+            flaws.append(f"label overflows below its band (bbox bottom y {lb[3]})")
+        if has_source and lb[3] > 1380:
+            flaws.append(f"label collides with source line (bbox bottom y {lb[3]})")
+    if vb is not None and lb is not None and expect_label:
+        # The visual's bottom must not push into the label's top by more
+        # than a 10 px touch — more than that is the two elements overlapping.
+        if vb[3] > lb[1] + 10:
+            flaws.append(f"label overlaps visual (visual bottom y {vb[3]}, label top y {lb[1]})")
+    return flaws
+
+
+def _qc_audit(sc, idx):
+    """v35: verify the one-effect decision for one scene (the stacking audit).
+    Returns a list of flaw strings (empty = clean)."""
+    flaws = []
+    ch = sc.get("_effect_choice")
+    if not ch:
+        return ["no effect choice logged (pick_one_effect never ran)"]
+    if ch.get("vis") not in ("build_in", "enter", "emphasis", "fx_"):
+        flaws.append(f"visual motion is not a single choice: {ch.get('vis')}")
+    if ch.get("label") != "fade_in":
+        flaws.append(f"label motion is not fade_in: {ch.get('label')}")
+    # The motion must start after the transition tail (TR/2) for scenes
+    # after the first — otherwise the cut and the motion stack.
+    pop_t = float(sc.get("pop_t", 0.0) or 0.0)
+    if idx > 0 and ch.get("vis_start", 0.0) < max(0.0, TR / 2 - pop_t) - 0.01:
+        flaws.append("visual motion starts inside the transition tail")
+    # The label must be sequenced after the visual's motion (never at the
+    # same instant). For a build-in the label starts 0.35 s after the hit
+    # word; otherwise it starts after the motion ends.
+    if ch.get("vis") == "build_in":
+        if ch.get("label_delay", 0.0) < 0.3:
+            flaws.append("label starts too soon after the hit word")
+    else:
+        _end = ch.get("vis_start", 0.0) + ch.get("vis_dur", 0.35)
+        if ch.get("label_delay", 0.0) < _end - 0.05:
+            flaws.append("label starts before the visual motion ends")
+    return flaws
+
+
+def frame_qc(p, video_path):
+    """v35 (Ajju: "Divya is not checking at all"). Automated post-render
+    frame check. The old team_qc scores the PLAN text and never looks at a
+    rendered frame — that is why stacked effects shipped. This checks the
+    actual rendered output, per scene:
+      (a) the effect audit — exactly one motion per layer, sequenced, no
+          motion overlapping the transition tail;
+      (b) the layer geometry at mid-scene (the settled state) — visual and
+          label present, inside the safe frame, not overlapping each other,
+          not colliding with the header or the source line;
+      (c) the encoded frames themselves — sampled from the video file, not
+          blank and not a solid colour.
+    Returns {"passed": bool, "scenes": [{idx, passed, flaws}], "flaws": [...]}.
+    A failing scene is FLAGGED, never silently shipped."""
+    scenes_out, all_flaws = [], []
+    starts = p.get("starts") or []
+    n = len(p.get("scenes") or [])
+    for i in range(n):
+        sc = p["scenes"][i]
+        flaws = []
+        # (a) the effect audit (the stacking check, on the decision itself).
+        flaws += [f"scene {i + 1}: {f}" for f in _qc_audit(sc, i)]
+        # (b) the layer geometry at mid-scene (the settled state — the enter
+        # is done by then, so a visual outside the safe frame is a real cut).
+        _mid = float(sc.get("d", 1.0) or 1.0) / 2
+        try:
+            _img, _vb, _lb, _ch = scene_frame(p, i, _mid, return_layers=True)
+            _nolabel = sc.get("visual") == "stamp"
+            _g = _qc_geometry(_vb, _lb, bool(sc.get("source")), expect_label=not _nolabel)
+            flaws += [f"scene {i + 1}: {f}" for f in _g]
+        except Exception as e:
+            flaws.append(f"scene {i + 1}: geometry check failed to run: {str(e)[:100]}")
+        # (c) the encoded frame itself (from the video file, not the plan).
+        if i < len(starts):
+            _t = starts[i] + _mid
+            _fp = os.path.join(tempfile.gettempdir(), f"v35_qc_{i}.jpg")
+            try:
+                subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{_t:.2f}",
+                                "-i", video_path, "-frames:v", "1", "-vf", "scale=270:-1",
+                                _fp], check=True, timeout=60)
+                _im = np.asarray(Image.open(_fp).convert("L"), dtype=np.float32)
+                _mean, _std = float(_im.mean()), float(_im.std())
+                if _mean < 8:
+                    flaws.append(f"scene {i + 1}: rendered frame is blank/black (mean {_mean:.1f})")
+                elif _mean > 245:
+                    flaws.append(f"scene {i + 1}: rendered frame is blown out (mean {_mean:.1f})")
+                elif _std < 5:
+                    flaws.append(f"scene {i + 1}: rendered frame is a solid colour (std {_std:.1f})")
+            except Exception as e:
+                flaws.append(f"scene {i + 1}: frame extract failed: {str(e)[:100]}")
+        scenes_out.append({"idx": i, "passed": not flaws, "flaws": flaws})
+        all_flaws += flaws
+    return {"passed": not all_flaws, "scenes": scenes_out, "flaws": all_flaws}
+
+
 async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False):
     global _P
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
@@ -1468,5 +1604,14 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     delivery = f"{wd}/divya_doc_delivery.mp4"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/raw.mp4", "-i", f"{wd}/mix.wav", "-vf", vf, "-c:v", "libx264", "-preset", "medium",
                     "-crf", "26", "-maxrate", "2300k", "-bufsize", "4600k", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", delivery], check=True)
+    # v35 (Ajju: "Divya is not checking at all"): automated frame-level QC
+    # AFTER the render. The old team_qc scores the PLAN text and never looks
+    # at a rendered frame — that is why stacked effects shipped. frame_qc
+    # checks the effect audit + the layer geometry + the encoded frames, per
+    # scene. A failing scene is FLAGGED in the returned dict ("qc_passed":
+    # False) — never silently shipped as if it passed.
+    _fq = frame_qc(p, out)
+    print(f"frame_qc: {'PASS' if _fq['passed'] else 'FAIL'} — " + ("; ".join(_fq["flaws"][:6]) if _fq["flaws"] else "all scenes clean"))
     return {"path": out, "delivery_path": delivery, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
-            "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total}
+            "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total,
+            "frame_qc": _fq, "qc_passed": _fq["passed"]}
