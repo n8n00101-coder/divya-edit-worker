@@ -502,6 +502,7 @@ def _submit_error(page):
         txt = page.inner_text("body") or ""
         low = txt.lower()
         for phrase in ("not supported", "already exists", "already registered",
+                       "already in use", "marked as inactive", "is inactive",
                        "invalid email", "invalid password", "incorrect password",
                        "something went wrong", "is required", "must be at least"):
             i = low.find(phrase)
@@ -854,7 +855,7 @@ def try_login(page, job, cfg):
     ok = fill(page, _AUTH_PASS, job["pass"]) and ok
     if not ok:
         return False
-    click(page, ["button[type='submit']", "button:has-text('Log in')", "button:has-text('Sign in')", "button:has-text('Continue')"])
+    click_submit(page)
     page.wait_for_timeout(4000)
     maybe_captcha(page)
     if check_stop():
@@ -924,7 +925,7 @@ def flow_email_signup(page, job, cfg):
     elif mode == "email-first":
         if not fill(page, _AUTH_EMAIL, email):
             return _fail(f"{name} signup form lo email field kanipinchaledu (step: signup form). Take Control tho try cheyyi.")
-        click(page, ["button:has-text('Continue')", "button:has-text('Sign up')", "button:has-text('Create account')", "button[type='submit']"])
+        click_submit(page)
         page.wait_for_timeout(3000)
         maybe_captcha(page)
         if check_stop():
@@ -944,6 +945,9 @@ def flow_email_signup(page, job, cfg):
                 return _fail(f"{name} — email tarvatha next step load avvaledu (step: signup form). Take Control tho try cheyyi.")
         if ctrls2.get("stopped"):
             return _stopped()
+        err = _submit_error(page)
+        if err:
+            return _fail(f"{name} signup error: {err} (step: signup form).")
         mode2 = detect_auth_mode(ctrls2)
         if mode2 == "sso-only":
             if not pause_for_signin(page, cfg):
