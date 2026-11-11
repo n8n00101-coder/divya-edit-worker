@@ -48,7 +48,7 @@ const T = {
     callBtn: n => `Call ${n}`, waBtn: "WhatsApp open cheyyi", openBtn: n => `${n} open cheyyi`, playBtn: "YouTube lo vinu", openedTab: n => `${n} open chesa — kottha tab lo`, openedApp: n => `${n} open chesa`, openYTApp: "YouTube app open chesa ✓", ytNoApp: "YouTube app phone lo ledu — browser lo open chesa.", ytOpening: "YouTube app open chesthunna…", waApp: "WhatsApp app open chesa ✓", waNoApp: "WhatsApp app phone lo ledu — browser lo open chesa.", waOpening: "WhatsApp app open chesthunna…", updBanner: v => `Kotha version ${v} vachindi — Refresh cheyyi.`, updRefresh: "Refresh cheyyi", updCheck: "App update check cheyyi", updLatest: "App latest version lo undi ✓", openBlocked: "Browser open cheyanivvaledu — kindha link tap cheyyi", openOff: "Auto-open off lo undi — kindha link tap cheyyi", calBtn: "Google Calendar lo add cheyyi", subBtn: "Plans chudu", pickContact: "Contacts nunchi select", typeNumber: "Number type cheyyi",
     noNumber: n => `${n} number naa daggara ledu. "save ${n} 98xxxxxxxx" ani cheppu, leda contacts nunchi select cheyyi.`, askNumber: n => `${n} phone number?`, saved: (n, x) => `${n} number save chesa (+${x}). Ee phone lo matrame untundi.`,
     remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
-    connectNote: "Login page browser lo open avuthundi. Connect ayyaka ikkadiki tirigi raa.", connect: "Connect", connectedP: "Connected", soon: "Tvaralo", ytNoChannel: "Connect ayyindhi, kani ee account lo YouTube channel kanipinchaledu", connNoAccount: "Connect ayyindhi, kani account kanipinchaledu",
+    connectNote: "Login page browser lo open avuthundi. Connect ayyaka ikkadiki tirigi raa.", connect: "Connect", connectedP: "Connected", soon: "Tvaralo", ytNoChannel: "Connect ayyindhi, kani ee account lo YouTube channel kanipinchaledu", connNoAccount: "Connect ayyindhi, kani account kanipinchaledu", ytNoChannelShort: "Channel kanipinchaledu", connNoAccountShort: "Account kanipinchaledu",
     setupIntro: "Divya ni nee sontha accounts lo setup chestham — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (nee server). Divya anni chesthundhi — accounts, API keys, server setup — nee okka permission tho. Neeku emi cheyalsina pani undadhu.",
     googleRow: "Continue with Google", googleSub: "Nee email ni setup ki vaadutham", continueGoogle: "Continue", orLoginPw: "Leda password tho login cheyyi",
     consent: "Naa keys ni Divya encrypt chesi save chesi, naa requests kosam matrame vaadadaniki permission istunna.", guideBtn: "🔊 Voice tho manual setup",
@@ -102,7 +102,7 @@ const T = {
     callBtn: n => `Call ${n}`, waBtn: "Open WhatsApp", openBtn: n => `Open ${n}`, playBtn: "Listen on YouTube", openedTab: n => `Opened ${n} in a new tab`, openedApp: n => `Opened ${n}`, openYTApp: "Opened the YouTube app ✓", ytNoApp: "YouTube app isn't on this phone — opened in the browser instead.", ytOpening: "Opening the YouTube app…", waApp: "Opened the WhatsApp app ✓", waNoApp: "WhatsApp app isn't on this phone — opened in the browser instead.", waOpening: "Opening the WhatsApp app…", updBanner: v => `New version ${v} is out — refresh to get it.`, updRefresh: "Refresh", updCheck: "Check for app updates", updLatest: "App is on the latest version ✓", openBlocked: "Browser blocked it — tap the link below", openOff: "Auto-open is off — tap the link below", calBtn: "Add to Google Calendar", subBtn: "See plans", pickContact: "Pick from contacts", typeNumber: "Type number",
     noNumber: n => `I don't have ${n}'s number. Say "save ${n} 98xxxxxxxx", or pick from contacts.`, askNumber: n => `${n}'s phone number?`, saved: (n, x) => `Saved ${n} (+${x}). It stays on this phone only.`,
     remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
-    connectNote: "Sign-in opens in your browser. Come back here when done.", connect: "Connect", connectedP: "Connected", soon: "Soon", ytNoChannel: "Connected, but no YouTube channel found on this account", connNoAccount: "Connected, but no account found",
+    connectNote: "Sign-in opens in your browser. Come back here when done.", connect: "Connect", connectedP: "Connected", soon: "Soon", ytNoChannel: "Connected, but no YouTube channel found on this account", connNoAccount: "Connected, but no account found", ytNoChannelShort: "No channel found", connNoAccountShort: "No account found",
     setupIntro: "Divya sets itself up inside YOUR own accounts — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (your server). Divya does everything — accounts, API keys, server setup — with your one-time permission. You don't have to do anything.",
     googleRow: "Continue with Google", googleSub: "Uses your email for setup", continueGoogle: "Continue", orLoginPw: "Or log in with a password",
     consent: "I give Divya permission to save my keys encrypted and use them only for my requests.", guideBtn: "🔊 Manual setup by voice",
@@ -145,7 +145,7 @@ const T = {
     freeTitle: "फ्री:", freeList: "हफ़्ते में 5 शॉर्ट्स (फ्री), कॉल, WhatsApp मैसेज, ऐप्स/साइट खोलना, गाने, रिमाइंडर, समय, मौसम, छोटे सवाल।", proTitle: "प्रो:", proList: "अनलिमिटेड शॉर्ट्स, मल्टी-स्टेप एजेंट काम, लंबी रिसर्च, अकाउंट ऑटोमेशन।",
     voiceHonest: "Divya सिर्फ़ जब ऐप खुला हो और स्क्रीन पर हो, तब सुनती है (वेब ऐप बैकग्राउंड में नहीं सुनता)। कॉल/WhatsApp चुपचाप नहीं भेज सकती: डायलर या WhatsApp सब कुछ भरकर खोलती है, आप Call/Send दबाते हैं। वॉइस पहचान ब्राउज़र की सर्विस (Chrome में Google) से होती है।",
     callBtn: n => `कॉल करें ${n}`, waBtn: "WhatsApp खोलें", openBtn: n => `${n} खोलें`, playBtn: "YouTube पर सुनें", openedTab: n => `${n} naye tab mein khola`, openedApp: n => `${n} khola`, openYTApp: "YouTube ऐप खुल गया ✓", ytNoApp: "YouTube ऐप फ़ोन में नहीं है — ब्राउज़र में खोला।", ytOpening: "YouTube ऐप खोल रही हूँ…", waApp: "WhatsApp ऐप खुल गया ✓", waNoApp: "WhatsApp ऐप फ़ोन में नहीं है — ब्राउज़र में खोला।", waOpening: "WhatsApp ऐप खोल रही हूँ…", updBanner: v => `नया वर्शन ${v} आ गया — रिफ्रेश करें।`, updRefresh: "रिफ्रेश करें", updCheck: "ऐप अपडेट चेक करें", updLatest: "ऐप लेटेस्ट वर्शन पर है ✓", openBlocked: "Browser ne roka — neeche link dabao", openOff: "Auto-open band hai — neeche link dabao", calBtn: "Google Calendar में जोड़ें", subBtn: "प्लान देखें", pickContact: "कॉन्टैक्ट से चुनें", typeNumber: "नंबर टाइप करें", noNumber: n => `${n} का नंबर मेरे पास नहीं है। "${n} सेव करें 98xxxxxxxx" कहें, या कॉन्टैक्ट से चुनें।`, askNumber: n => `${n} का फ़ोन नंबर?`, saved: (n, x) => `${n} का नंबर सेव कर लिया (+${x})। यह सिर्फ़ इसी फ़ोन में रहेगा।`, remFire: t => `रिमाइंडर: ${t}`, notifTitle: "Divya रिमाइंडर",
-    connectNote: "लॉग इन पेज ब्राउज़र में खुलेगा। कनेक्ट होने के बाद यहाँ वापस आएँ।", connect: "कनेक्ट", connectedP: "कनेक्टेड", soon: "जल्द आ रहा है", ytNoChannel: "कनेक्टेड, लेकिन इस अकाउंट पर YouTube चैनल नहीं मिला", connNoAccount: "कनेक्टेड, लेकिन कोई अकाउंट नहीं मिला",
+    connectNote: "लॉग इन पेज ब्राउज़र में खुलेगा। कनेक्ट होने के बाद यहाँ वापस आएँ।", connect: "कनेक्ट", connectedP: "कनेक्टेड", soon: "जल्द आ रहा है", ytNoChannel: "कनेक्टेड, लेकिन इस अकाउंट पर YouTube चैनल नहीं मिला", connNoAccount: "कनेक्टेड, लेकिन कोई अकाउंट नहीं मिला", ytNoChannelShort: "चैनल नहीं मिला", connNoAccountShort: "अकाउंट नहीं मिला",
     setupIntro: "Divya आपके अपने accounts में setup हो जाती है — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (आपका server)। Divya सब कुछ करती है — accounts, API keys, server setup — आपकी एक बार की परमिशन से। आपको कुछ नहीं करना है।",
     googleRow: "Continue with Google", googleSub: "आपका ईमेल सेटअप के लिए इस्तेमाल होगा", continueGoogle: "जारी रखें", orLoginPw: "या पासवर्ड से लॉग इन करें",
     consent: "मैं Divya को अपनी keys एन्क्रिप्ट करके सेव करने और सिर्फ़ मेरी रिक्वेस्ट के लिए इस्तेमाल करने की परमिशन देता/देती हूँ।",
@@ -187,7 +187,7 @@ const T = {
     freeTitle: "Free:", freeList: "Hafte me 5 shorts (free), calls, WhatsApp message, apps/sites open, gaane, reminders, time, weather, chhote sawaal.", proTitle: "Pro:", proList: "unlimited shorts, multi-step agent kaam, long research, account automation.",
     voiceHonest: "Divya sirf jab app khula ho aur screen par ho, tab sunti hai (web app background me nahi sunta). Call/WhatsApp chupchaap nahi bhej sakti: dialer ya WhatsApp sab kuch bharkar kholti hai, aap Call/Send dabate hain. Voice pehchan browser ki service (Chrome me Google) se hoti hai.",
     callBtn: n => `Call karo ${n}`, waBtn: "WhatsApp kholo", openBtn: n => `${n} kholo`, playBtn: "YouTube par suno", openedTab: n => `${n} naye tab mein khola`, openedApp: n => `${n} khola`, openYTApp: "YouTube app khul gaya ✓", ytNoApp: "YouTube app phone mein nahi hai — browser mein khola.", ytOpening: "YouTube app khol rahi hoon…", waApp: "WhatsApp app khul gaya ✓", waNoApp: "WhatsApp app phone mein nahi hai — browser mein khola.", waOpening: "WhatsApp app khol rahi hoon…", updBanner: v => `Naya version ${v} aa gaya — refresh karo.`, updRefresh: "Refresh karo", updCheck: "App update check karo", updLatest: "App latest version par hai ✓", openBlocked: "Browser ne roka — neeche link dabao", openOff: "Auto-open band hai — neeche link dabao", calBtn: "Google Calendar me jodo", subBtn: "Plans dekho", pickContact: "Contacts se chuno", typeNumber: "Number type karo", noNumber: n => `${n} ka number mere paas nahi hai. "${n} save karo 98xxxxxxxx" kaho, ya contacts se chuno.`, askNumber: n => `${n} ka phone number?`, saved: (n, x) => `${n} ka number save kar liya (+${x}). Ye sirf isi phone me rahega.`, remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
-    connectNote: "Log in page browser me khulega. Connect hone ke baad yahan wapas aao.", connect: "Connect", connectedP: "Connected", soon: "Jald aa raha hai", ytNoChannel: "Connected, lekin is account par YouTube channel nahi mila", connNoAccount: "Connected, lekin koi account nahi mila",
+    connectNote: "Log in page browser me khulega. Connect hone ke baad yahan wapas aao.", connect: "Connect", connectedP: "Connected", soon: "Jald aa raha hai", ytNoChannel: "Connected, lekin is account par YouTube channel nahi mila", connNoAccount: "Connected, lekin koi account nahi mila", ytNoChannelShort: "Channel nahi mila", connNoAccountShort: "Account nahi mila",
     setupIntro: "Divya aapke apne accounts me setup ho jati hai — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (aapka server). Divya sab kuch karti hai — accounts, API keys, server setup — aapki ek baar ki permission se. Aapko kuch nahi karna hai.",
     googleRow: "Continue with Google", googleSub: "Aapka email setup ke liye use hoga", continueGoogle: "Continue", orLoginPw: "Ya password se log in karo",
     consent: "Main Divya ko apni keys encrypt karke save karne aur sirf meri requests ke liye use karne ki permission deta/deti hoon.",
@@ -379,7 +379,7 @@ function route() {
   if (name === "connect" || name === "settings") loadConnect();
   if (name === "home") loadStatus();
   if (name === "profile") { renderProfile(); loadPlan(); loadConnect(); }
-  if (name === "setup") { loadKeys(); loadConnect(); }
+  if (name === "setup") { loadKeys(); loadConnect(); loadSetupState(); }
   if (name === "history") loadVideos();
   if (name === "plan" || name === "home") loadPlan();
   if (name === "download") renderDownload();
@@ -434,12 +434,15 @@ function voiceStatusText() {
 }
 function renderVoiceList() {
   const el = $("#voiceList"); if (!el) return;
-  const group = g => `<h3 class="h3">${g === "F" ? t("vFemale") : t("vMale")}</h3>` + VOICES.filter(v => v.gender === g).map(v => `<div class="row"><button class="btn" style="flex:1;text-align:left" data-vid="${v.id}">${v.name} · <span class="muted small">${ageLabel(v.age)}</span>${S.voiceId === v.id ? " ✓" : ""}</button><button class="btn secondary" data-play="${v.id}" aria-label="Sample">▶</button></div>`).join("");
+  // v39 (D7): the voice name stays on ONE line (nowrap + ellipsis) so a
+  // label never wraps mid-phrase ("Arjun ·" / "Teenage"); the warning lines
+  // get .voice-note so they wrap fully instead of clipping at the edge.
+  const group = g => `<h3 class="h3">${g === "F" ? t("vFemale") : t("vMale")}</h3>` + VOICES.filter(v => v.gender === g).map(v => `<div class="row voice-row"><button class="btn voice-btn" data-vid="${v.id}"><span class="voice-label">${v.name} · <span class="muted small">${ageLabel(v.age)}</span>${S.voiceId === v.id ? " ✓" : ""}</span></button><button class="btn secondary voice-sample" data-play="${v.id}" aria-label="Sample">▶</button></div>`).join("");
   const kst = typeof kokoroStatus === "function" ? kokoroStatus() : { state: "unknown" };
-  el.innerHTML = `<p class="muted small" id="voiceStatus">${voiceStatusText()}</p>` +
+  el.innerHTML = `<p class="muted small voice-note" id="voiceStatus">${voiceStatusText()}</p>` +
     // v37: when Kokoro failed, say so and offer a retry — the old list just
     // sat there while every sample silently played the one phone voice.
-    (kst.state === "failed" ? `<button class="btn secondary" id="voiceRetry" type="button">${esc(t("voiceRetry"))}</button><p class="muted small">${esc(t("voiceRetryNote"))}</p>` : "") +
+    (kst.state === "failed" ? `<button class="btn secondary" id="voiceRetry" type="button">${esc(t("voiceRetry"))}</button><p class="muted small voice-note">${esc(t("voiceRetryNote"))}</p>` : "") +
     group("F") + group("M");
   const retry = $("#voiceRetry");
   if (retry) retry.onclick = () => {
@@ -846,8 +849,8 @@ function setupStepLabel(st) {
   const name = st.name || (KP[st.id] && KP[st.id].name) || st.id || st.site || "";
   const state = String(st.state || "").toLowerCase();
   const queued = state === "queued" || state === "pending" || state === "waiting";
-  const mark = state === "done" ? "✓ " : state === "paused" ? "⏸ " : state === "failed" ? "✗ " : queued ? "· " : "… ";
-  const word = state === "done" ? t("setupStepDone") : state === "paused" ? t("setupStepPaused") : state === "failed" ? t("setupStepFailed") : queued ? t("stepNot") : t("setupStepRunning");
+  const mark = state === "done" ? "✓ " : state === "paused" ? "⏸ " : state === "failed" ? "✗ " : state === "stalled" ? "⚠ " : queued ? "· " : "… ";
+  const word = state === "done" ? t("setupStepDone") : state === "paused" ? t("setupStepPaused") : state === "failed" ? t("setupStepFailed") : state === "stalled" ? t("setupStepStalled") : queued ? t("stepNot") : t("setupStepRunning");
   return `<div class="muted small">${esc(mark + name + ": " + word)}${st.note ? " — " + esc(st.note) : ""}</div>`;
 }
 function renderSetupBox(d) {
@@ -863,8 +866,9 @@ function renderSetupBox(d) {
   const state = String(d.state || (cur && cur.state) || (d.active ? "running" : "")).toLowerCase();
   const done = state === "done";
   const failed = state === "failed" || state === "stopped";
+  const stalled = state === "stalled" || d.stalled === true;
   const pausedStep = steps ? steps.find(s => String(s.state || "").toLowerCase() === "paused") : (cur && cur.state === "paused" ? cur : null);
-  const title = done ? t("setupDone") : failed ? t("setupFailed") : pausedStep ? t("setupPaused") : t("setupRunning");
+  const title = done ? t("setupDone") : failed ? t("setupFailed") : stalled ? t("setupStalled") : pausedStep ? t("setupPaused") : t("setupRunning");
   // "Waiting on you" lives ONLY on the paused step (email link / SMS code).
   const newPause = pausedStep ? { id: pausedStep.id || pausedStep.provider || "" } : null;
   if (JSON.stringify(newPause) !== JSON.stringify(setupPause)) { setupPause = newPause; if (cur === "setup") renderSteps(); }
@@ -882,11 +886,19 @@ function renderSetupBox(d) {
   }
   html += `<div class="act">` +
     (cur && cur.url ? `<button class="pill" data-a="open">${esc(t("setupOpen"))}</button>` : "") +
+    (stalled ? `<button class="pill" data-a="retry">${esc(t("setupRetry"))}</button>` : "") +
     (pausedStep ? `<button class="pill" data-a="done">${esc(t("setupDidIt"))}</button>` : "") +
     (cur && cur.state === "paused" && !pausedStep ? `<button class="pill" data-a="continue">${esc(t("setupContinue"))}</button>` : "") +
     `<button class="pill" data-a="take">${esc(t("setupTake"))}</button>` +
     `<button class="pill" data-a="stop">${esc(t("setupStop"))}</button></div>`;
   setupBoxEl.innerHTML = html;
+  if (stalled) {
+    const note = document.createElement("div");
+    note.textContent = t("setupStalledSub");
+    setupBoxEl.insertBefore(note, setupBoxEl.querySelector(".act"));
+  }
+  const retryBtn = setupBoxEl.querySelector('[data-a="retry"]');
+  if (retryBtn) retryBtn.onclick = () => startOneTapSetup();
   const open = setupBoxEl.querySelector('[data-a="open"]');
   if (open) open.onclick = () => { if (cur.url) window.open(cur.url, "_blank"); };
   const didIt = setupBoxEl.querySelector('[data-a="done"]');
@@ -932,6 +944,14 @@ async function pollSetup() {
         bubble("bot", line); saveChat();
         setupBoxEl = null;
       }
+      return;
+    }
+    // v39 (D4): a stalled run is terminal until the user retries — stop
+    // polling and show the stalled box (with Retry) instead of "running"
+    // forever. Paused runs keep polling: they wait on the user's one tap.
+    if (state === "stalled" || d.stalled) {
+      clearInterval(setupPoll); setupPoll = null;
+      renderSetupBox(d);
       return;
     }
     if (d.active || d.steps || d.current) renderSetupBox(d);
@@ -1152,7 +1172,7 @@ function setJob(kind, when, job) {
 function showQuota(left, limit, used) {
   S.quota = { left, limit, used };
   $("#homeQuotaNum").textContent = limit === null || limit === undefined ? "∞" : left;
-  $("#homeQuotaSub").textContent = S.tok ? t("tokSub", S.tok.weekLeft, S.tok.pool, S.tok.videosWeek, S.tok.weekEnds) : (limit === null || limit === undefined ? t("unlimitedSub") : t("quotaSub", used, limit));
+  $("#homeQuotaSub").textContent = S.tok ? t("tokSub", S.tok.weekLeft, S.tok.pool, S.tok.videosWeek, S.tok.weekEnds) : (limit === null || limit === undefined ? t("unlimitedSub") : t("quotaSub", left, limit));
   const eq = $("#editQuota"); if (eq) eq.textContent = t("editsLine", left, limit ?? null);
   $("#profEdits").textContent = limit === null || limit === undefined ? t("unlimited") : `${left}/${limit}`;
 }
@@ -1163,11 +1183,26 @@ async function loadStatus() {
     const d = await api("status"); if (!d.ok) return;
     if ("edits_limit" in d) showQuota(d.edits_left, d.edits_limit, d.edits_used);
     const ago = ts => { const m = Math.max(0, Math.round((Date.now() - new Date(ts)) / 60000)); return m < 60 ? `${m} min` : `${Math.round(m / 60)} h`; };
-    const j = d.job, r = d.runs?.[0]; let active = false;
-    if (j) { const k = j.state === "done" ? "done" : j.state === "failed" ? "fail" : j.state === "queued" ? "queued" : "run"; active = k === "queued" || k === "run"; setJob(k, ago(j.upd || j.at), j); }
-    else if (d.busy || (r && r.status !== "completed")) { active = true; setJob("run", r ? ago(r.created_at) : ""); }
-    else if (r) setJob(r.conclusion === "success" ? "done" : "fail", ago(r.updated_at));
-    else setJob(null);
+    // v39 (D2+D8): the Home card claims "Edit ready" ONLY from this user's
+    // own records — the last app edit (appedit) or the latest History entry
+    // (lastVideo). The old repo-wide GitHub-runs fallback said "Edit ready"
+    // for ANY recent successful edit.yml run, even another user's, while
+    // this user's History was empty. Runs are no longer used for the claim.
+    // Every age is labelled (ready/started/failed X ago), never a bare "25 h".
+    const j = d.job, lv = d.lastVideo; let active = false;
+    if (j) {
+      const k = j.state === "done" ? "done" : j.state === "failed" ? "fail" : j.state === "queued" ? "queued" : "run";
+      active = k === "queued" || k === "run";
+      const when = k === "done" ? t("jobReadyAgo", ago(j.upd || j.at)) : k === "fail" ? t("jobFailedAgo", ago(j.upd || j.at)) : t("jobStartedAgo", ago(j.at));
+      setJob(k, when, j);
+    } else if (d.busy) {
+      active = true;
+      setJob("run", lv ? t("jobStartedAgo", ago(lv.at)) : "");
+    } else if (lv) {
+      if (lv.state === "done") setJob("done", t("jobReadyAgo", ago(lv.doneAt || lv.at)));
+      else if (lv.state === "failed") setJob("fail", t("jobFailedAgo", ago(lv.failedAt || lv.at)));
+      else { active = true; setJob("run", t("jobStartedAgo", ago(lv.at))); }
+    } else setJob(null);
     if (cur === "home" && active) statusTimer = setTimeout(loadStatus, 10000);
   } catch {}
 }
@@ -1198,11 +1233,23 @@ async function loadConnect() {
   try {
     const d = await api("connect"); if (!d.ok) return; connData = d.providers;
     $("#connCount").textContent = $("#profConn").textContent = `${d.providers.filter(p => p.connected).length}/${d.providers.length}`;
-    $("#provList").innerHTML = d.providers.map(p => `<div class="row"><div class="prov"><div class="pi" aria-hidden="true">${esc(p.name[0])}</div><div class="pt"><b>${esc(p.name)}</b><span class="muted small">${esc(p.connected ? (p.who || t("connectedP")) : (PDESC[S.lang]?.[p.id] || p.desc))}</span></div></div>
-      ${p.connected ? `<span class="pill ok">✓ ${t("connectedP")}</span>` : p.ready ? `<button class="pill go" data-p="${p.id}" aria-label="${esc(t("connect") + " " + p.name)}">${t("connect")}</button>` : `<span class="pill wait">${t("soon")}</span>`}</div>`).join("");
+    $("#provList").innerHTML = d.providers.map(p => {
+      // v39 (D3): a provider can hold a token ("connected") yet have no usable
+      // account behind it (YouTube: no channel; Instagram: no Page-linked
+      // account). That is NOT a green ✓ — amber warning pill + honest line.
+      const noAcct = p.connected && p.noAccount;
+      const noAcctShort = p.id === "youtube" ? t("ytNoChannelShort") : t("connNoAccountShort");
+      const noAcctLong = p.id === "youtube" ? t("ytNoChannel") : t("connNoAccount");
+      const sub = noAcct ? noAcctLong : (p.connected ? (p.who || t("connectedP")) : (PDESC[S.lang]?.[p.id] || p.desc));
+      const pill = noAcct ? `<span class="pill wait">⚠ ${esc(noAcctShort)}</span>`
+        : p.connected ? `<span class="pill ok">✓ ${t("connectedP")}</span>`
+        : p.ready ? `<button class="pill go" data-p="${p.id}" aria-label="${esc(t("connect") + " " + p.name)}">${t("connect")}</button>`
+        : `<span class="pill wait">${t("soon")}</span>`;
+      return `<div class="row"><div class="prov"><div class="pi" aria-hidden="true">${esc(p.name[0])}</div><div class="pt"><b>${esc(p.name)}</b><span class="muted small">${esc(sub)}</span></div></div>${pill}</div>`;
+    }).join("");
     $$("#provList [data-p]").forEach(b => b.onclick = () => connectLink(b.dataset.p));
     const g = d.providers.find(p => p.id === "google");
-    if (g) { $("#gWho").textContent = g.connected ? (g.who || t("connectedP")) : t("googleSub"); $("#gBtn").hidden = !!g.connected || !g.ready; }
+    if (g) { $("#gWho").textContent = g.connected ? (g.noAccount ? t("connNoAccount") : (g.who || t("connectedP"))) : t("googleSub"); $("#gBtn").hidden = !!g.connected || !g.ready; }
   } catch {}
 }
 $("#gBtn").onclick = () => connectLink("google");
@@ -1334,8 +1381,34 @@ function setupNeedsFrom(d) {
   return !["groq", "openrouter", "gemini"].every(id => keys[id]);
 }
 
+/* v39 (D4): Setup page state banner — the page used to show only the 6 key
+   rows (all "Not set") with no word on the setup run itself, so a run that
+   died hours ago still looked "running" in chat. The banner shows the real
+   setup/status state; stalled/failed get a Retry that restarts one-tap setup. */
+async function loadSetupState() {
+  const card = $("#setupStateCard"); if (!card) return;
+  let d = null;
+  try { d = await api("setup/status"); } catch {}
+  if (!d || !d.ok) { card.hidden = true; return; }
+  const state = String(d.state || "").toLowerCase();
+  const title = $("#setupStateTitle"), sub = $("#setupStateSub"), retry = $("#setupRetryBtn");
+  const show = (t, s, canRetry) => { title.textContent = t; sub.textContent = s || ""; retry.hidden = !canRetry; card.hidden = false; };
+  if (state === "done") return show(t("setupDone"), "");
+  if (state === "failed" || state === "stopped") return show(t("setupFailed"), "", true);
+  if (state === "stalled" || d.stalled) return show(t("setupStalled"), t("setupStalledSub"), true);
+  if (state.startsWith("paused")) {
+    const step = (d.steps || []).find(s => s.state === "paused");
+    return show(t("setupPaused"), step ? step.note || "" : "");
+  }
+  if (state === "running" || d.active) {
+    const step = (d.steps || []).find(s => s.state === "running");
+    return show(t("setupRunning"), step ? step.note || "" : "");
+  }
+  card.hidden = true; // not-started: the one-tap button below is the CTA
+}
+$("#setupRetryBtn") && ($("#setupRetryBtn").onclick = () => startOneTapSetup());
 /* ---------- plan ---------- */
-async function loadPlan() { try { const d = await api("plan"); if (d.ok) { S.plan = d.plan; S.tok = d.tok || null; $("#planNow").textContent = t("planNow", d.plan, d.edits_used, d.edits_limit); showQuota(d.edits_left, d.edits_limit, d.edits_used); renderPlans(d); loadReferral(); if (cur === "profile") renderProfile(); } } catch {} }
+async function loadPlan() { try { const d = await api("plan"); if (d.ok) { S.plan = d.plan; S.tok = d.tok || null; $("#planNow").textContent = t("planNow", d.plan, d.edits_left, d.edits_limit); showQuota(d.edits_left, d.edits_limit, d.edits_used); renderPlans(d); loadReferral(); if (cur === "profile") renderProfile(); } } catch {} }
 async function loadReferral() { try { const d = await api("referral/me"); if (d.ok) { $("#refCode").textContent = d.code; $("#refStatus").textContent = t("inviteStatus", d.invites, d.earned); } } catch {} }
 /* v37: voice assistant is INCLUDED in every plan (Ajju) — the separate
    Rs.49/mo add-on line is gone. Each plan card shows the included line from
