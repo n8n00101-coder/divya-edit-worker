@@ -1168,6 +1168,20 @@ async function openKey(env, n, prov) {
     return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(iv), additionalData: te8(`${n}:${prov}`) }, k, unb64(ct)));
   } catch { return ""; }
 }
+async function openSetupPass(env, n) {
+  // v39 Phase 2: the generated provider-account password, sealed with the
+  // same KEK as API keys. The runner needs it to sign back in to an
+  // EXISTING account (auto-provision of a replacement key) — without it
+  // Divya could never re-enter an account it created. Never logged, never
+  // returned by any API; only sent to the runner over the authenticated
+  // runner channel (job record, x-runner-key), same as today.
+  try {
+    const rec = JSON.parse((await env.KV.get(`upass:${n}`)) || "null"); if (!rec?.ct) return "";
+    const k = await appKek(env); if (!k) return "";
+    const [iv, ct] = rec.ct.split(".");
+    return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(iv), additionalData: te8(`${n}:setup`) }, k, unb64(ct)));
+  } catch { return ""; }
+}
 async function storeKey(env, n, prov, key, res) {
   await env.KV.put(`ukey:${n}:${prov}`, JSON.stringify({ ct: await sealKey(env, n, prov, key), at: Date.now(), ok: true, who: res.who || "", tested: Date.now() }));
 }
@@ -2060,7 +2074,13 @@ async function maybeAutoCheck(env, n, email, force) {
   }
   const why = {};
   for (const id of candidates) why[id] = whyFor(id);
-  const autoChain = { providers: candidates, done: [], failed: [], current: null, email: em, pass: setupPass(), at: now, auto: true, why };
+  // v39: reuse the sealed setup password when one exists — the accounts
+  // this user already has were created with it, so the runner can sign
+  // back in and create a replacement key with no user action. A fresh
+  // password (no stored one, e.g. a pre-v39 setup) means an existing
+  // account falls back to the surfaced sign-in pause.
+  const storedPass = await openSetupPass(env, n);
+  const autoChain = { providers: candidates, done: [], failed: [], current: null, email: em, pass: storedPass || setupPass(), at: now, auto: true, why };
   await env.KV.put(`setupchain:${n}`, JSON.stringify(autoChain), { expirationTtl: 86400 * 7 });
   const next = await setupStartNext(env, n);
   if (!next.ok) {
@@ -2156,7 +2176,12 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // auto-provision loop (Phase 2) can re-run the chain later without
     // asking the user again.
     await env.KV.put(`setupconsent:${u.n}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ids, email }), { expirationTtl: 86400 * 7 });
-    const chain = { providers: ids, done: [], failed: [], current: null, email, pass: setupPass(), at: Date.now() };
+    const pass = setupPass();
+    const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now() };
+    // v39 Phase 2: seal the generated provider-account password so a later
+    // autonomous run can sign back in to the accounts this run creates
+    // (replacement keys). Sealed with the app KEK, never returned by any API.
+    try { await env.KV.put(`upass:${u.n}`, JSON.stringify({ ct: await sealKey(env, u.n, "setup", pass) }), { expirationTtl: 86400 * 365 }); } catch {}
     await env.KV.put(`setupchain:${u.n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
     const next = await setupStartNext(env, u.n);
     if (!next.ok) return next;

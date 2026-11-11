@@ -643,6 +643,41 @@ def pause_for_signin(page, cfg, note=None):
     return True
 
 
+def try_login(page, job, cfg):
+    """Sign in with the job's email+pass on the provider login page.
+
+    Used when the account already exists (auto-provision of a replacement
+    key reuses the sealed setup password, so this usually just works).
+    Returns True when the auth form is gone afterwards (signed in), False
+    when still on an auth page — the caller then surfaces the sign-in
+    pause instead of looping or hanging."""
+    login_url = cfg.get("login_url") or cfg["url"]
+    page.goto(login_url, timeout=60000)
+    page.wait_for_timeout(2500)
+    if check_stop():
+        return False
+    ctrls = wait_for_auth_form(page, cfg, timeout_s=30)
+    if ctrls is None or ctrls.get("stopped"):
+        return False
+    if detect_auth_mode(ctrls) == "sso-only":
+        return False
+    ok = fill(page, _AUTH_EMAIL, job["email"])
+    ok = fill(page, _AUTH_PASS, job["pass"]) and ok
+    if not ok:
+        return False
+    click(page, ["button[type='submit']", "button:has-text('Log in')", "button:has-text('Sign in')", "button:has-text('Continue')"])
+    page.wait_for_timeout(4000)
+    maybe_captcha(page)
+    if check_stop():
+        return False
+    if _page_says(page, ["dashboard", "api keys", "create api key", "log out", "sign out", "api key"]):
+        return True
+    ctrls2 = wait_for_auth_form(page, cfg, timeout_s=20)
+    if ctrls2 is None:
+        return True  # no auth form any more — signed in
+    return False
+
+
 def flow_email_signup(page, job, cfg):
     """Email-signup flow, v39: detect the rendered auth page first.
 
@@ -725,17 +760,24 @@ def flow_email_signup(page, job, cfg):
     # else mode == "unknown": the auth form vanished (already signed in,
     # or a redirect) — proceed; the steps below fail clearly if not.
     # The account may already exist: the page says so instead of signing
-    # up. The runner cannot know that account's password — surface the
-    # sign-in step with the login URL instead of looping.
+    # up. First try signing in with the job's password (an auto-provision
+    # run reuses the sealed setup password, so this usually just works).
+    # Only if that fails does the runner surface the sign-in step.
     if _page_says(page, ["already exists", "already have an account", "already registered"]):
-        login_url = cfg.get("login_url") or cfg["url"]
-        progress("running", "signin", f"{name} account already undhi — sign in chesthunna.", login_url)
-        page.goto(login_url, timeout=60000)
-        page.wait_for_timeout(2500)
-        if not pause_for_signin(page, cfg, note=f"{name} account already undhi — browser lo open chesi sign in cheyu, tarvatha Continue nokku, migilina anni nene chestha."):
-            return _stopped()
-        if check_stop():
-            return _stopped()
+        progress("running", "signin", f"{name} account already undhi — sign in chesthunna.", cfg.get("login_url") or cfg["url"])
+        if try_login(page, job, cfg):
+            progress("running", "signin", f"{name} sign-in ayyindhi — key create chesthunna.", page.url)
+        else:
+            if check_stop():
+                return _stopped()
+            if not pause_for_signin(page, cfg, note=f"{name} account already undhi — browser lo open chesi sign in cheyu, tarvatha Continue nokku, migilina anni nene chestha."):
+                return _stopped()
+            if check_stop():
+                return _stopped()
+            # After the user signs in + Continue, verify we are actually in.
+            ctrls3 = wait_for_auth_form(page, cfg, timeout_s=20)
+            if ctrls3 and not ctrls3.get("stopped") and detect_auth_mode(ctrls3) != "unknown":
+                return _fail(f"{name} sign-in complete avvaledu — inka sign-in page lone undhi. Browser lo open chesi sign in chesi malli setup run cheyyi (step: sign-in).")
     sms = maybe_sms(page, job)
     if sms is False:
         return _stopped()
