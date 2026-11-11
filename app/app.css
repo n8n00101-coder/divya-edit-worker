@@ -156,6 +156,9 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 
 /* voice */
 .voice{display:flex;flex-direction:column;align-items:stretch}
+/* v39: the Kokoro status / retry note must wrap, never clip mid-word
+ * (QA saw "sounds the sam…" cut off). */
+#voiceStatus,#voiceList .muted{overflow-wrap:anywhere;line-height:1.45}
 .orb-btn{align-self:center;width:200px;height:200px;border-radius:50%;display:grid;place-items:center;margin:8px 0 6px}
 .orb{position:relative;width:150px;height:150px;display:block}
 .orb b{position:absolute;inset:28px;border-radius:50%;background:radial-gradient(circle at 35% 30%,var(--bg),var(--text) 75%);box-shadow:0 0 30px color-mix(in srgb,var(--text) 25%,transparent);transition:transform .3s}
