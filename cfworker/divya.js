@@ -1839,6 +1839,39 @@ async function setupDispatch(env, job, provider) {
   const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/setup.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs: { job, provider } }) }).catch(() => null);
   return !!r && r.status === 204;
 }
+// v39 (setup-flow fix, 2026-11-11): a setup run must NEVER hang forever.
+// The live test proved the failure: the runner died/stalled at the Groq
+// sign-in page and nothing ever noticed — the chain stayed in KV, the app
+// showed "Setup running…" forever, and the previous session's stale card
+// showed the same. Every job record carries `upd` (last runner contact);
+// the watchdog below treats a run as STALLED when the runner goes silent
+// (10 min while running/queued — the runner posts progress far more often
+// than that, and heartbeats every ~15s while paused; 30 min while paused).
+// A stalled run is recorded in setupdone (state "stalled", last step +
+// reason) and the chain is cleared, so the app shows failed/stalled +
+// Retry instead of "running" forever. (Worker B owns the Setup PAGE
+// display of stalled/failed + Retry; this is the server-side state that
+// feeds it, plus the chat mini-box.)
+const SETUP_STALE_RUNNING_MS = 10 * 60 * 1000;
+const SETUP_STALE_PAUSED_MS = 30 * 60 * 1000;
+async function setupWatchdog(env, n, chain) {
+  // Returns the recorded setupdone entry when the active run is stale
+  // (and clears the chain), else null. Idempotent: once the chain is
+  // gone, later calls take the no-chain path.
+  if (!chain || !chain.current) return null;
+  const cur = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
+  if (!cur) return null;
+  const last = cur.upd || cur.at || 0;
+  const limit = cur.state === "paused" ? SETUP_STALE_PAUSED_MS : SETUP_STALE_RUNNING_MS;
+  if (Date.now() - last < limit) return null;
+  const mins = Math.max(1, Math.round((Date.now() - last) / 60000));
+  const fin = { state: "stalled", done: chain.done || [], failed: chain.failed || [],
+    provider: cur.provider, note: (cur.note || "") + ` — runner nunchi ${mins} min nunchi update ledu (setup aagipoyindhi).`,
+    lastStep: cur.step || "", lastUrl: cur.url || "", at: Date.now() };
+  await env.KV.put(`setupdone:${n}`, JSON.stringify(fin), { expirationTtl: 86400 });
+  await env.KV.delete(`setupchain:${n}`);
+  return fin;
+}
 // v38 (R48, items 1+6): setup state + per-step progress for the app's
 // login-time check and chat mini-box. States: not-started / running /
 // paused-email / paused-sms / done / failed.
@@ -1853,6 +1886,9 @@ function setupStateFor(chain, cur, fin, keys) {
   if (fin) {
     if (fin.state === "done") return "done";
     if (fin.state === "failed") return "failed";
+    // v39: a stalled run is a terminal state of its own — the app shows
+    // "stalled" + Retry, never "running" forever.
+    if (fin.state === "stalled") return "stalled";
     return (keys.groq || keys.openrouter || keys.gemini) ? "done" : "not-started";
   }
   return (keys.groq || keys.openrouter || keys.gemini) ? "done" : "not-started";
@@ -1885,7 +1921,7 @@ function setupSteps(chain, cur, fin, keys, lang) {
       if (cur.state === "paused") { st = "paused"; kind = cur.pauseReason || "email"; }
       else st = cur.state === "failed" ? "failed" : "running";
     }
-    else if (!chain && fin && fin.state === "failed" && fin.provider === id) st = "failed";
+    else if (!chain && fin && (fin.state === "failed" || fin.state === "stalled") && fin.provider === id) st = "failed";
     const txt = setupStepText(id, st, lang, (cur && cur.provider === id ? cur.note : "") || (fin ? fin.note || "" : ""), kind);
     return { id, name: SETUP_PROVIDERS[id].name, state: st, kind, note: txt, text: txt };
   });
@@ -1904,7 +1940,7 @@ async function setupFinalize(env, n, done) {
 async function appSetupUser(req, env, u, p, body, lang) {
   const en = lang === "en";
   if (p === "setup/status") {
-    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    let chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     const consent = JSON.parse((await env.KV.get(`setupconsent:${u.n}`)) || "null");
     const keys = {};
     for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${u.n}:${id}`)) keys[id] = true;
@@ -1915,6 +1951,17 @@ async function appSetupUser(req, env, u, p, body, lang) {
     const hasOwnAiKey = !!(keys.groq || keys.openrouter || keys.gemini);
     const sharedFallback = !!((env.GROQ_KEY || "") || env.OPENROUTER_KEY || env.GEMINI_KEY);
     const needsSetup = !hasOwnAiKey;
+    // v39: watchdog first — a run whose runner went silent is STALLED, not
+    // "running". The watchdog records setupdone + clears the chain, so the
+    // response below takes the finished path (state "stalled" + Retry).
+    if (chain) {
+      const stalled = await setupWatchdog(env, u.n, chain);
+      if (stalled) {
+        const state = setupStateFor(null, null, stalled, keys);
+        return { ok: true, active: false, consent: !!consent, finished: stalled, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang) };
+      }
+      chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    }
     // v24: when the chain is gone, report the recorded outcome (done/failed)
     // so the app can show it instead of the mini-box vanishing silently.
     if (!chain) {
@@ -1924,7 +1971,11 @@ async function appSetupUser(req, env, u, p, body, lang) {
     }
     const cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
     const state = setupStateFor(chain, cur, null, keys);
-    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys, needsSetup, sharedFallback, state, steps: setupSteps(chain, cur, null, keys, lang) };
+    // v39: the exact user step, when the run is waiting on one — kind +
+    // the page to open + the one plain line. The app renders this instead
+    // of a bare "Setup running…". Additive field; older app builds ignore it.
+    const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang) } : null;
+    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys, needsSetup, sharedFallback, state, steps: setupSteps(chain, cur, null, keys, lang), action };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
@@ -1932,9 +1983,23 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: en ? "Give an email for the new accounts." : "Kotha accounts kosam oka email ivvu." };
     const ids = (Array.isArray(body.providers) ? body.providers : ["groq", "openrouter", "gemini", "cloudflare"]).filter(id => SETUP_PROVIDERS[id]);
     if (!ids.length) return { ok: false, error: "no provider" };
+    // v39: never silently orphan a live run. A fresh active chain means a
+    // runner is working right now — say so instead of starting a second
+    // one (the live test's "button enabled again, as if nothing had
+    // happened" came from a fresh start overwriting a dead one). A stale
+    // chain is recorded as stalled first (watchdog), so its outcome is
+    // not lost when the new run replaces it.
+    const prev = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    if (prev) {
+      const stalled = await setupWatchdog(env, u.n, prev);
+      if (!stalled) return { ok: false, error: en ? "Setup is already running — wait for it to finish." : "Setup already nadusthondhi — ayye varaku wait cheyu.", alreadyRunning: true };
+    }
     // One allow: the user tapped "set up everything" — consent covers accounts,
     // API keys, captchas and the server step for this whole run.
-    await env.KV.put(`setupconsent:${u.n}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ids }), { expirationTtl: 86400 * 7 });
+    // v39: the email rides in the consent record too, so the autonomous
+    // auto-provision loop (Phase 2) can re-run the chain later without
+    // asking the user again.
+    await env.KV.put(`setupconsent:${u.n}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ids, email }), { expirationTtl: 86400 * 7 });
     const chain = { providers: ids, done: [], failed: [], current: null, email, pass: setupPass(), at: Date.now() };
     await env.KV.put(`setupchain:${u.n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
     const next = await setupStartNext(env, u.n);
@@ -1952,10 +2017,12 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // the email verification link tap, or the phone/SMS code. The runner
     // polls the job state and waits while it is "paused"; the user does the
     // one action, taps Continue, and the runner resumes on its own.
-    // Captchas are solved by the runner itself (audio on-device) — never a
-    // pause reason.
+    // v39: Take Control pauses are real too — "signin" (the user signs in
+    // on the provider page themselves) and "captcha" (image challenge with
+    // no audio alternative). The old code rejected both and the app's Take
+    // Control button silently recorded an "email" pause instead.
     const reason = String(body.reason || "email").trim().toLowerCase();
-    if (reason !== "email" && reason !== "sms") return { ok: false, error: en ? "Setup pauses only for the email link or the SMS code." : "Setup email link leda SMS code kosam matrame aaguthundi." };
+    if (!["email", "sms", "signin", "captcha"].includes(reason)) return { ok: false, error: en ? "Setup pauses only for the email link, the SMS code, a sign-in, or a captcha." : "Setup email link, SMS code, sign-in leda captcha kosam matrame aaguthundi." };
     const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     if (!chain || !chain.current) return { ok: false, error: "no job" };
     const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
@@ -2011,7 +2078,7 @@ async function appSetupRunner(req, env, p, url, body) {
     // Gemini Google sign-in). Store the reason as-is — never coerce a
     // captcha/signin pause into an email pause (that would tell the user
     // to tap an email link that does not exist).
-    if (state === "paused") { const pr = String(body.reason || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); }
+    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); }
     else if (state === "running") { rec.pauseReason = ""; }
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     // Chain: provider done → auto-start the next one with the same consent.
