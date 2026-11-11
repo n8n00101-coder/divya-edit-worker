@@ -914,9 +914,11 @@ function renderSetupBox(d) {
       // v40: on the email path the Worker reads the mail itself, so the old
       // "tap the link" line must NOT show — waiting / error replace it, and
       // needs-scope gets the re-consent card below instead of any line.
+      // gmail "ok" counts as waiting too: the Worker owns the mail, the
+      // user must never tap the link themselves.
       const kind = pauseKind;
       let line = null;
-      if (pauseIsEmail && gmailWaiting) line = t("gmailWaitMail");
+      if (pauseIsEmail && (gmailWaiting || gstate === "ok")) line = t("gmailWaitMail");
       else if (pauseIsEmail && gmailError) line = t("gmailReadErr");
       else if (!(pauseIsEmail && gmailNeeds)) line = kind === "sms" || kind === "phone" || kind === "code" ? t("setupPauseSms")
         : kind === "signin" ? t("setupPauseSignin")
@@ -1496,7 +1498,7 @@ async function loadSetupState() {
     const g = d.gmail ? String(d.gmail.state || "").toLowerCase() : "";
     const kind = step ? String(step.kind || step.pause || "").toLowerCase() : "";
     const emailKind = step && !["sms", "phone", "code", "signin", "captcha"].includes(kind);
-    const sub = emailKind && g === "no-mail-yet" ? t("gmailWaitMail") : emailKind && g === "error" ? t("gmailReadErr") : (step ? step.note || "" : "");
+    const sub = emailKind && (g === "no-mail-yet" || g === "ok") ? t("gmailWaitMail") : emailKind && g === "error" ? t("gmailReadErr") : (step ? step.note || "" : "");
     return show(t("setupPaused"), sub);
   }
   if (state === "running" || d.active) {
