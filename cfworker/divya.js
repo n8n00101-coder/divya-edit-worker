@@ -2350,7 +2350,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       if (stalled) {
         const state = setupStateFor(null, null, stalled, keys);
         const autoLog = await autoLogRead(env, u.n);
-        return { ok: true, active: false, consent: !!consent, finished: stalled, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), autoLog: autoLog.slice(0, 10) };
+        return { ok: true, active: false, consent: !!consent, finished: stalled, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), autoLog: autoLog.slice(0, 10) };
       }
       chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     }
@@ -2365,9 +2365,18 @@ async function appSetupUser(req, env, u, p, body, lang) {
       let auto = null;
       try { auto = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", false); } catch {}
       const autoLog = await autoLogRead(env, u.n);
-      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
+      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
     }
-    const cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
+    let cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
+    // v40 (R19): paused on email verification — try feeding the magic link
+    // server-side from Gmail (throttled inside maybeFeedVerifyLink, so the
+    // app's polling can't spam the Gmail API). Covers the case where the
+    // runner is not polling (e.g. after a runner timeout). Best-effort —
+    // a failure here never breaks setup/status.
+    if (cur && cur.state === "paused" && (cur.pauseReason || "email") === "email" && !cur.verifyLink && !cur.verifyCode) {
+      try { cur = await maybeFeedVerifyLink(env, cur, chain.at || 0); } catch {}
+    }
+    const gmail = await gmailStateFor(env, u.n, cur);
     let state = setupStateFor(chain, cur, null, keys);
     // v39 (D4): staleness — a run that reports "running" but has made no
     // progress for 30+ minutes is stalled, not running. The runner posts
@@ -2387,7 +2396,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // of a bare "Setup running…". Additive field; older app builds ignore it.
     const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang) } : null;
     const autoLog = await autoLogRead(env, u.n);
-    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, autoLog: autoLog.slice(0, 10) };
+    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, autoLog: autoLog.slice(0, 10) };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
@@ -2444,7 +2453,12 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (!chain || !chain.current) return { ok: false, error: "no job" };
     const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
     if (!j) return { ok: false, error: "no job" };
+    // v40: pausedAt = job.upd at pause (recency guard for the mail reader).
+    // Set only on the transition into paused — the runner heartbeats while
+    // paused, and re-stamping it would push the guard past the real mail.
+    const wasPaused = j.state === "paused";
     j.state = "paused"; j.pauseReason = reason; j.note = setupPauseLine(reason, lang); j.upd = Date.now();
+    if (!wasPaused) j.pausedAt = Date.now();
     await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
     return { ok: true, reason, message: j.note };
   }
@@ -2457,6 +2471,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
     if (!j) return { ok: false, error: "no job" };
     j.state = "running"; j.note = ""; j.pauseReason = ""; j.resumedAt = Date.now(); j.upd = Date.now();
+    delete j.pausedAt; // v40: pause over, recency guard resets for the next pause
     // v39 C7: the resume can carry what the runner needs to finish the
     // paused step — the magic-link URL (job.verifyLink, opened in the
     // runner's own browser so the session lands there) or an SMS code
@@ -2501,9 +2516,21 @@ async function appSetupRunner(req, env, p, url, body) {
   const job = String(url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, "");
   const rec = job ? JSON.parse((await env.KV.get(`setupjob:${job}`)) || "null") : null;
   if (!rec) return new Response("missing", { status: 404 });
-  if (p === "setup/runner/job") return Response.json({ ok: true, job: rec });
+  if (p === "setup/runner/job") {
+    // v40 (R19): paused on email verification — feed the magic link
+    // server-side from the user's Gmail (never through the agent's
+    // redacted tool layer). Best-effort; never breaks the runner's poll.
+    if (rec.state === "paused" && (rec.pauseReason || "email") === "email" && !rec.verifyLink && !rec.verifyCode) {
+      let chainAt = 0;
+      try { const ch = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null"); chainAt = ch?.at || 0; } catch {}
+      const updated = await maybeFeedVerifyLink(env, rec, chainAt);
+      return Response.json({ ok: true, job: updated });
+    }
+    return Response.json({ ok: true, job: rec });
+  }
   if (p === "setup/runner/progress" && req.method === "POST") {
     const state = ["queued", "running", "paused", "done", "failed", "stopped"].includes(body.state) ? body.state : "running";
+    const prevState = rec.state;
     rec.state = state; rec.step = String(body.step || rec.step || "").slice(0, 80); rec.note = String(body.note || "").slice(0, 300); rec.url = String(body.url || rec.url || "").slice(0, 500); rec.upd = Date.now();
     // v38 merge fix: the runner reports pauses with a reason. Email/SMS are
     // the only two the user must act on; captcha/signin are last-resort
@@ -2511,8 +2538,8 @@ async function appSetupRunner(req, env, p, url, body) {
     // Gemini Google sign-in). Store the reason as-is — never coerce a
     // captcha/signin pause into an email pause (that would tell the user
     // to tap an email link that does not exist).
-    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); }
-    else if (state === "running") { rec.pauseReason = ""; }
+    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); if (prevState !== "paused") rec.pausedAt = Date.now(); /* v40: job.upd at pause, for the mail recency guard */ }
+    else if (state === "running") { rec.pauseReason = ""; delete rec.pausedAt; }
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     // Chain: provider done → auto-start the next one with the same consent.
     if (state === "done") {
