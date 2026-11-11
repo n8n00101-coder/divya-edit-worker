@@ -640,6 +640,22 @@ def detect_auth_mode(ctrls):
     return "unknown"
 
 
+def goto(page, url, timeout=60000, tries=3):
+    """Navigate with retries. The egress proxy intermittently stalls a fresh
+    Chromium connection (net::ERR_TIMED_OUT on the HTML itself); a fresh
+    navigation usually clears it. Returns True on success, False after all
+    tries. Callers fail clearly on False (the step is named)."""
+    for attempt in range(1, tries + 1):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            return True
+        except Exception as e:
+            print(f"goto attempt {attempt}/{tries} failed for {url}: {e}")
+            if attempt < tries:
+                page.wait_for_timeout(2000)
+    return False
+
+
 def pause_for_email_verify(page, job, cfg):
     """Magic-link verification pause (v39 C7): Groq (Stytch) sends a link
     instead of a password step. Pause with reason=email so the app surfaces
@@ -658,7 +674,7 @@ def pause_for_email_verify(page, job, cfg):
     if link.startswith("http"):
         progress("running", "verify-link", f"{name} verification link open chesthunna — sign in avthundhi.", link)
         try:
-            page.goto(link, timeout=60000)
+            goto(page, link)
         except Exception:
             pass
         # The link may redirect (Stytch discovery) — give it up to 30s to
@@ -670,7 +686,7 @@ def pause_for_email_verify(page, job, cfg):
             if _page_says(page, ["dashboard", "api keys", "create api key", "log out", "sign out"]):
                 break
     try:
-        page.goto(cfg["keys_url"], timeout=60000)
+        goto(page, cfg["keys_url"])
     except Exception:
         pass
     page.wait_for_timeout(3000)
@@ -704,7 +720,8 @@ def try_login(page, job, cfg):
     when still on an auth page — the caller then surfaces the sign-in
     pause instead of looping or hanging."""
     login_url = cfg.get("login_url") or cfg["url"]
-    page.goto(login_url, timeout=60000)
+    if not goto(page, login_url):
+        return False
     page.wait_for_timeout(2500)
     if check_stop():
         return False
@@ -740,7 +757,8 @@ def flow_email_signup(page, job, cfg):
     email, password = job["email"], job["pass"]
     name = cfg["name"]
     progress("running", "signup", f"{name} account create chesthunna.", cfg["url"])
-    page.goto(cfg["url"], timeout=60000)
+    if not goto(page, cfg["url"]):
+        return _fail(f"{name} sign-in page load avvaledu — site open avvaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
     page.wait_for_timeout(1500)
     if check_stop():
         return _stopped()
@@ -852,7 +870,7 @@ def flow_email_signup(page, job, cfg):
     if check_stop():
         return _stopped()
     progress("running", "api-key", "API key create chesthunna.", page.url)
-    page.goto(cfg["keys_url"], timeout=60000)
+    goto(page, cfg["keys_url"])
     page.wait_for_timeout(2500)
     maybe_captcha(page)
     click(page, ["button:has-text('Create')", "button:has-text('New key')", "button:has-text('Generate')", "button:has-text('Create API key')", "button:has-text('Create key')"])
@@ -876,7 +894,8 @@ def flow_google(page, job, cfg):
     """Google-OAuth provider (Gemini): the headless browser has no Google
     session, so pause at sign-in for Take Control, then resume and take the key."""
     progress("running", "signin", f"{cfg['name']} — Google sign-in kosam pause avthundhi.", cfg["url"])
-    page.goto(cfg["url"], timeout=60000)
+    if not goto(page, cfg["url"]):
+        return _fail(f"{cfg['name']} page load avvaledu — site open avvaledu (step: sign-in page, {cfg['url']}).")
     page.wait_for_timeout(2500)
     click(page, ["button:has-text('Sign in')", "a:has-text('Sign in')", "button:has-text('Get started')"])
     page.wait_for_timeout(3000)
@@ -887,7 +906,7 @@ def flow_google(page, job, cfg):
     if check_stop():
         return _stopped()
     progress("running", "api-key", "API key create chesthunna.", page.url)
-    page.goto(cfg["keys_url"], timeout=60000)
+    goto(page, cfg["keys_url"])
     page.wait_for_timeout(2500)
     click(page, ["button:has-text('Create API key')", "button:has-text('Get API key')", "button:has-text('Create')"])
     page.wait_for_timeout(4000)
@@ -905,7 +924,8 @@ def flow_cloudflare(page, job, cfg):
     layout change is diagnosable, never a silent hang."""
     email, password = job["email"], job["pass"]
     progress("running", "signup", "Cloudflare account create chesthunna.", cfg["url"])
-    page.goto(cfg["url"], timeout=60000)
+    if not goto(page, cfg["url"]):
+        return _fail("Cloudflare signup page load avvaledu — site open avvaledu (step: signup page).")
     page.wait_for_timeout(2500)
     if check_stop():
         return _stopped()
@@ -924,7 +944,7 @@ def flow_cloudflare(page, job, cfg):
     # Idempotent: if the account already exists, sign in instead of signing up.
     if _page_says(page, ["already exists", "already have an account", "already registered"]):
         progress("running", "signin", "Cloudflare account already undhi — sign in chesthunna.", cfg["login_url"])
-        page.goto(cfg["login_url"], timeout=60000)
+        goto(page, cfg["login_url"])
         page.wait_for_timeout(2500)
         ok = fill(page, ["input[type='email']", "input[name='email']", "input[placeholder*='email' i]"], email)
         ok = fill(page, ["input[type='password']", "input[name='password']"], password) and ok
@@ -946,7 +966,7 @@ def flow_cloudflare(page, job, cfg):
         return _stopped()
     # (b) API token with Workers deploy permissions, via the dashboard.
     progress("running", "api-token", "Cloudflare API token create chesthunna.", cfg["keys_url"])
-    page.goto(cfg["keys_url"], timeout=60000)
+    goto(page, cfg["keys_url"])
     page.wait_for_timeout(2500)
     maybe_captcha(page)
     if check_stop():
