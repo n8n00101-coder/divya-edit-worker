@@ -175,8 +175,8 @@ async function appTalk(env, u, text, lang, voiceId) {
     h.push({ role: "assistant", content: r.reply }); await remember(env, u.n, h);
     return { reply: r.reply, action: r.action, intent: r.intent, video_started: false, premium_required: !!r.premium_required, brain: u.via || "shared" };
   }
-  // v37 (fix B): API-key / provider / "AI down" questions never reach the
-  // model — answer with the guided Setup flow instead.
+  // v38 (R48): API-key / provider / "AI down" questions never reach the
+  // model — answer with the R48 one-allow Setup flow instead.
   if (isSetupQuestion(text)) {
     const sg = setupGuideReply(lang);
     h.push({ role: "assistant", content: sg }); await remember(env, u.n, h);
@@ -804,27 +804,56 @@ async function chatWithFallback(env, u, messages) {
   u.via = "none";
   return "";
 }
-// v37: API-key / provider / "AI down" questions are answered structurally —
-// NEVER sent to the model. The model once refused one of these with
-// "Sorry, I can't help with that", and a dead-end refusal is worse than no
-// answer: the user gets the guided Setup flow instead.
-const SETUP_Q_RX = /\bapi[- ]?keys?\b|\bais?\b.{0,25}\b(down|pani\s*cheyy|work\s*avva|providers?)\b|providers?\s+down\b|bring\s+(the\s+)?(api\s+)?keys?\b|keys?\s+(kavali|theesko|teeskoni|ivvu|create|ela|lu)\b|key\s+(setup|create|ela)\b|free\s+(ai|key|keys?)\b|setup\s+(keys?|api|ai|account)\b|\bgroq\b|\bopenrouter\b|\bgemini\b/i;
+// v38 (R48): API-key / provider / "AI down" questions are answered
+// structurally — NEVER sent to the model. The model once refused one of
+// these with "Sorry, I can't help with that", and a dead-end refusal is
+// worse than no answer: the user gets the R48 one-allow Setup flow
+// instead. R48 WINS over R18: Divya creates the accounts, API keys and
+// server setup itself on one allow — the user does NO work except, only
+// if needed, ONE email-link tap or ONE SMS code.
+const SETUP_Q_RX = /\bapi[- ]?keys?\b|\bais?\b.{0,25}\b(down|pani\s*cheyy|work\s*avva|providers?)\b|providers?\s+down\b|bring\s+(the\s+)?(api\s+)?keys?\b|keys?\s+(kavali|theesko|teeskoni|ivvu|create|ela|lu)\b|key\s+(setup|create|ela)\b|free\s+(ai|key|keys?)\b|setup\s+(keys?|api|ai|account|start|cheyu|cheyyi|ela|enti|status|progress|malli)\b|\bgroq\b|\bopenrouter\b|\bgemini\b|\bcloudflare\b/i;
 function isSetupQuestion(text) {
   const t = String(text || "");
   if (isCreateOrder(t) || isNoVideoEditOrder(t)) return false; // a video order is still a video order
   return SETUP_Q_RX.test(t);
 }
 function setupGuideReply(lang) {
-  if (lang === "en") return "The shared AI is busy right now — its free limit is full, so it can't answer at the moment. It clears on its own in a bit, and you can try again. For no more limits, add your own FREE key in Setup (#/setup): 1) Groq — groq.com, log in, API Keys, Create, paste the key here. 2) Or OpenRouter (openrouter.ai) or Gemini (aistudio.google.com) — also free. Divya tests the key and uses your key first. Your key stays encrypted and is never shown to anyone.";
-  return "Shared AI ippudu busy ga undhi — free limit full ayyindhi, konchem sepu tarvatha thane clear avuthundi, malli try cheyachu. Ee problem malli raakunda, nee own FREE key add chesko — Setup lo (#/setup) step-by-step undhi: 1) Groq — groq.com lo login chesi, API Keys lo Create, key ikkada paste cheyyi. 2) Leda OpenRouter (openrouter.ai) leda Gemini (aistudio.google.com) — anni free. Key ni nene test chesi, mundu nee key ne vadutha. Nee key encrypted ga untundi, evariki kanipinchadhu.";
+  if (lang === "en") return "The shared AI is busy right now — its free limit is full, so it can't answer at the moment. It clears on its own in a bit, and you can try again. For no more limits, give one allow in Setup (#/setup) — Divya does everything: accounts, API keys, server setup, all in the background. You don't have to do anything. Only if needed: tap the verification link in your email once, and I'll do the rest. If an SMS code arrives on your phone, type that code once, and I'll do the rest. Your keys stay encrypted and are never shown to anyone.";
+  return "Shared AI ippudu busy ga undhi — free limit full ayyindhi, konchem sepu tarvatha thane clear avuthundi, malli try cheyachu. Ee problem malli raakunda, Setup lo (#/setup) okka allow ivvu — Divya anni chesthundhi: accounts, API keys, server setup, anni background lo. Neeku emi cheyalsina pani undadhu. Okka vishayam matrame, avasaram vasthe: nee email lo vachina link ni okkasari tap cheyu, migilina anni nene chestha. Phone ki SMS code vasthe, aa code okkasari type cheyu, migilina anni nene chestha. Nee keys encrypted ga untayi, evariki kanipinchavu.";
+}
+// v38 (R48): the ONLY two things the user ever has to do in setup, each as
+// one plain line — never phrased as "user work".
+function setupPauseLine(reason, lang) {
+  const en = lang === "en";
+  if (reason === "sms") return en ? "Type the SMS code from your phone once, and I'll do the rest." : "Nee phone ki vachina SMS code ni okkasari type cheyu, migilina anni nene chestha.";
+  return en ? "Tap the link in your email once, and I'll do the rest." : "Nee email lo vachina link ni okkasari tap cheyu, migilina anni nene chestha.";
+}
+function setupMissingKeyReply(lang) {
+  if (lang === "en") return "Setup finished, but I couldn't find a working key — one of the accounts didn't complete. Run setup again? Tap 'Run setup again' in Setup (#/setup) and I'll do the rest.";
+  return "Setup ayyindhi kani naaku pani chese key dorakaledu — accounts lo edo okati complete avvaledu. Setup ni malli run cheyala? Setup lo (#/setup) 'Setup malli cheyu' ani tap cheyu, migilina anni nene chestha.";
+}
+async function hasUsableOwnKey(env, n) {
+  for (const prov of ["groq", "openrouter", "gemini"]) { try { if (await openKey(env, n, prov)) return true; } catch {} }
+  return false;
+}
+// v38 (R48, item 5): the all-providers-failed fallback. Setup done but no
+// usable key = say so plainly and offer a re-run, never a dead end.
+async function setupFallbackReply(env, n, lang) {
+  try {
+    const fin = JSON.parse((await env.KV.get(`setupdone:${n}`)) || "null");
+    if (fin && fin.state === "done" && !(await hasUsableOwnKey(env, n))) return setupMissingKeyReply(lang);
+  } catch {}
+  return setupGuideReply(lang);
 }
 async function userBrain(env, u, messages, lang = "te") {
   const out = await chatWithFallback(env, u, messages);
   if (out) return stripReasoning(out);
-  // v37 (fix A): never a dead-end "providers down, try again later" — say
-  // plainly the shared AI is rate-limited right now and point at the
-  // guided Setup flow, so the user always has a next step.
-  return setupGuideReply(lang);
+  // v37 (fix A) + v38 (R48): never a dead-end "providers down, try again
+  // later" — say plainly the shared AI is rate-limited right now and point
+  // at the R48 one-allow Setup, so the user always has a next step. If
+  // setup already finished but no working key was found, say THAT plainly
+  // and offer to re-run setup instead of a dead end.
+  return setupFallbackReply(env, u.n, lang);
 }
 // Free plan: FREE_EDITS (default 10) video edits per calendar month (IST). Owner + friend numbers: unlimited.
 const istMonth = () => new Date(Date.now() + 19800000).toISOString().slice(0, 7);
@@ -1367,14 +1396,20 @@ async function appRunner(req, env, p, url, body) {
   }
   return new Response("not found", { status: 404 });
 }
-// ===== R48: one-tap setup + Muse-style background browser =====
+// ===== R48: one-tap setup + Muse-style background browser (v38 — R48 WINS over R18) =====
+// Ajju decided 2026-11-11: Divya itself creates EVERYTHING — accounts, API
+// keys, server setup — with just the user's ONE allow. The user does NO work.
 // One allow covers the whole chain (accounts + API keys + captchas + server).
 // The background browser is the GitHub runner + Playwright headless Chromium
 // (free on public repos). The Worker dispatches setup.yml; the runner drives
 // the signup/key flows and posts progress + keys back. The chat mini-box
-// polls setup/status. Captchas: audio challenge solved on-device by the
-// runner (faster-whisper); image challenge pauses for Take Control (no
-// vision). Never a third-party captcha service, never silent.
+// polls setup/status (needsSetup + per-step progress). Captchas: audio
+// challenge solved on-device by the runner (faster-whisper). The ONLY two
+// things the user ever does, and only if needed: tap the email verification
+// link once, or type the phone SMS code once — then setup resumes on its
+// own. Never a third-party captcha service, never silent. Cloudflare
+// (server) is the last step of the chain, after the API-key providers —
+// the runner-side flow_cloudflare() posts its token back via setup/runner/key.
 const SETUP_PROVIDERS = {
   groq: { name: "Groq", site: "console.groq.com", url: "https://console.groq.com/signup", flow: "email" },
   openrouter: { name: "OpenRouter", site: "openrouter.ai", url: "https://openrouter.ai/sign-up", flow: "email" },
@@ -1387,6 +1422,53 @@ async function setupDispatch(env, job, provider) {
   const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/setup.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs: { job, provider } }) }).catch(() => null);
   return !!r && r.status === 204;
 }
+// v38 (R48, items 1+6): setup state + per-step progress for the app's
+// login-time check and chat mini-box. States: not-started / running /
+// paused-email / paused-sms / done / failed.
+function setupStateFor(chain, cur, fin, keys) {
+  if (chain) {
+    if (cur && cur.state === "paused") return cur.pauseReason === "sms" ? "paused-sms" : "paused-email";
+    return "running";
+  }
+  if (fin) {
+    if (fin.state === "done") return "done";
+    if (fin.state === "failed") return "failed";
+    return (keys.groq || keys.openrouter || keys.gemini) ? "done" : "not-started";
+  }
+  return (keys.groq || keys.openrouter || keys.gemini) ? "done" : "not-started";
+}
+function setupStepText(id, st, lang, note) {
+  const name = SETUP_PROVIDERS[id] ? SETUP_PROVIDERS[id].name : id;
+  const en = lang === "en";
+  if (st === "done") return en ? `${name} ready — key saved.` : `${name} ready — key save ayyindhi.`;
+  if (st === "running") return en ? `${name} setup is running…` : `${name} setup nadusthondhi…`;
+  if (st === "paused-email") return setupPauseLine("email", lang);
+  if (st === "paused-sms") return setupPauseLine("sms", lang);
+  if (st === "failed") return en ? `${name} setup failed${note ? " — " + note : ""}.` : `${name} setup fail ayyindhi${note ? " — " + note : ""}.`;
+  return en ? `${name} — waiting.` : `${name} — wait chesthondhi.`;
+}
+function setupSteps(chain, cur, fin, keys, lang) {
+  const ids = chain ? chain.providers : Object.keys(SETUP_PROVIDERS);
+  const doneSet = new Set(chain ? chain.done : ((fin && fin.done) || []));
+  return ids.map(id => {
+    let st = "pending";
+    if (doneSet.has(id) || keys[id]) st = "done";
+    else if (chain && cur && cur.provider === id) st = cur.state === "paused" ? (cur.pauseReason === "sms" ? "paused-sms" : "paused-email") : (cur.state === "failed" ? "failed" : "running");
+    else if (!chain && fin && fin.state === "failed" && fin.provider === id) st = "failed";
+    return { id, name: SETUP_PROVIDERS[id].name, state: st, text: setupStepText(id, st, lang, (cur && cur.provider === id ? cur.note : "") || (fin ? fin.note || "" : "")) };
+  });
+}
+// v38 (R48, item 5): when the chain finishes, the account must already
+// have everything chat needs. Weekly quota is derived from TOK (500K,
+// Monday reset — no KV init needed), but the referral code and the join
+// timestamp must exist in KV so the referral flow works from day one.
+async function setupFinalize(env, n, done) {
+  const code = await refRegister(env, n);
+  try { if (!(await env.KV.get(`joined:${n}`))) await env.KV.put(`joined:${n}`, String(Date.now())); } catch {}
+  const keys = {};
+  for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${n}:${id}`)) keys[id] = true;
+  return { referralCode: code, weeklyFree: TOK.WEEKLY_FREE, weekEnds: istWeekEnd(), keys };
+}
 async function appSetupUser(req, env, u, p, body, lang) {
   const en = lang === "en";
   if (p === "setup/status") {
@@ -1394,17 +1476,29 @@ async function appSetupUser(req, env, u, p, body, lang) {
     const consent = JSON.parse((await env.KV.get(`setupconsent:${u.n}`)) || "null");
     const keys = {};
     for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${u.n}:${id}`)) keys[id] = true;
+    // v38 (R48, item 1): login-time setup-needed check. A fresh account has
+    // no own AI key stored; the shared fallback is rate-limited, so it does
+    // not count as "set up". sharedFallback only reports whether a shared
+    // key is even configured (it can still be rate-limited).
+    const hasOwnAiKey = !!(keys.groq || keys.openrouter || keys.gemini);
+    const sharedFallback = !!((env.GROQ_KEY || "") || env.OPENROUTER_KEY || env.GEMINI_KEY);
+    const needsSetup = !hasOwnAiKey;
     // v24: when the chain is gone, report the recorded outcome (done/failed)
     // so the app can show it instead of the mini-box vanishing silently.
-    if (!chain) { const fin = JSON.parse((await env.KV.get(`setupdone:${u.n}`)) || "null"); return { ok: true, active: false, consent: !!consent, finished: fin, keys }; }
+    if (!chain) {
+      const fin = JSON.parse((await env.KV.get(`setupdone:${u.n}`)) || "null");
+      const state = setupStateFor(null, null, fin, keys);
+      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang) };
+    }
     const cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
-    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys };
+    const state = setupStateFor(chain, cur, null, keys);
+    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys, needsSetup, sharedFallback, state, steps: setupSteps(chain, cur, null, keys, lang) };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
     const email = String(body.email || (u.acct && u.acct.email) || "").trim().slice(0, 120);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: en ? "Give an email for the new accounts." : "Kotha accounts kosam oka email ivvu." };
-    const ids = (Array.isArray(body.providers) ? body.providers : ["groq", "openrouter", "gemini"]).filter(id => SETUP_PROVIDERS[id]);
+    const ids = (Array.isArray(body.providers) ? body.providers : ["groq", "openrouter", "gemini", "cloudflare"]).filter(id => SETUP_PROVIDERS[id]);
     if (!ids.length) return { ok: false, error: "no provider" };
     // One allow: the user tapped "set up everything" — consent covers accounts,
     // API keys, captchas and the server step for this whole run.
@@ -1422,24 +1516,31 @@ async function appSetupUser(req, env, u, p, body, lang) {
     return { ok: true };
   }
   if (p === "setup/pause" && req.method === "POST") {
-    // Take Control: pause the background browser at the current step. The
-    // runner polls the job state and waits while it is "paused".
+    // v38 (R48, item 7): pause ONLY for the two unavoidable user actions —
+    // the email verification link tap, or the phone/SMS code. The runner
+    // polls the job state and waits while it is "paused"; the user does the
+    // one action, taps Continue, and the runner resumes on its own.
+    // Captchas are solved by the runner itself (audio on-device) — never a
+    // pause reason.
+    const reason = String(body.reason || "email").trim().toLowerCase();
+    if (reason !== "email" && reason !== "sms") return { ok: false, error: en ? "Setup pauses only for the email link or the SMS code." : "Setup email link leda SMS code kosam matrame aaguthundi." };
     const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     if (!chain || !chain.current) return { ok: false, error: "no job" };
     const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
     if (!j) return { ok: false, error: "no job" };
-    j.state = "paused"; j.upd = Date.now();
+    j.state = "paused"; j.pauseReason = reason; j.note = setupPauseLine(reason, lang); j.upd = Date.now();
     await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
-    return { ok: true };
+    return { ok: true, reason, message: j.note };
   }
   if (p === "setup/continue" && req.method === "POST") {
-    // Resume after a pause (email verified / Google signed in by hand). The
-    // runner polls the job state and resumes when it flips to "running".
+    // Resume after a pause (email link tapped / SMS code entered). The
+    // runner polls setup/runner/job and resumes when the job flips back to
+    // "running" — no further user action needed after this one tap.
     const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     if (!chain || !chain.current) return { ok: false, error: "no job" };
     const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
     if (!j) return { ok: false, error: "no job" };
-    j.state = "running"; j.note = ""; j.upd = Date.now();
+    j.state = "running"; j.note = ""; j.pauseReason = ""; j.resumedAt = Date.now(); j.upd = Date.now();
     await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
     return { ok: true };
   }
@@ -1451,7 +1552,7 @@ async function setupStartNext(env, n) {
   const nextId = chain.providers.find(id => !chain.done.includes(id));
   // v24: record the outcome before deleting the chain — otherwise the app has
   // nothing to show when the setup ends (the mini-box just vanished).
-  if (!nextId) { await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: "done", done: chain.done, at: Date.now() }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
+  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: "done", done: chain.done, at: Date.now(), ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
   const job = setupJobId();
   const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
   await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
@@ -1470,6 +1571,10 @@ async function appSetupRunner(req, env, p, url, body) {
   if (p === "setup/runner/progress" && req.method === "POST") {
     const state = ["queued", "running", "paused", "done", "failed", "stopped"].includes(body.state) ? body.state : "running";
     rec.state = state; rec.step = String(body.step || rec.step || "").slice(0, 80); rec.note = String(body.note || "").slice(0, 300); rec.url = String(body.url || rec.url || "").slice(0, 500); rec.upd = Date.now();
+    // v38 (R48): the runner reports pauses with a reason — only the two
+    // unavoidable ones (email link / SMS code) are valid pause reasons.
+    if (state === "paused") { const pr = String(body.reason || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = (pr === "sms" ? "sms" : "email"); if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); }
+    else if (state === "running") { rec.pauseReason = ""; }
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     // Chain: provider done → auto-start the next one with the same consent.
     if (state === "done") {
@@ -1480,12 +1585,18 @@ async function appSetupRunner(req, env, p, url, body) {
     return Response.json({ ok: true });
   }
   if (p === "setup/runner/key" && req.method === "POST") {
-    const key = String(body.key || "").trim();
-    if (key.length < 10 || key.length > 500) return new Response("bad key", { status: 400 });
-    // Stored as the user's own key (same ukey: slot the Plan tab reads).
+    // v38 (R48, items 4+5): the runner posts the key it created (Cloudflare
+    // posts it as `token`). It MUST land sealed in the same ukey: slot the
+    // manual key flow uses — openKey() only reads sealed records, so a raw
+    // KV put here used to make runner keys invisible to chatWithFallback()
+    // (the "AI providers down" failure for a fresh user after setup).
     // Never returned in chat and never logged — only the owner can use it.
-    await env.KV.put(`ukey:${rec.user}:${rec.provider}`, key);
-    return Response.json({ ok: true });
+    const key = String(body.key || body.token || "").trim();
+    if (key.length < 10 || key.length > 500) return new Response("bad key", { status: 400 });
+    if (!env.APP_KEK) return new Response("key storage not ready", { status: 503 });
+    try { await storeKey(env, rec.user, rec.provider, key, { who: String(body.who || rec.provider || "") }); }
+    catch (e) { return new Response("key storage failed", { status: 500 }); }
+    return Response.json({ ok: true, provider: rec.provider, sealed: true });
   }
   return new Response("not found", { status: 404 });
 }
