@@ -106,20 +106,25 @@ def vis_moon(t, st=0, d=1.0, accent=(255, 210, 0)):
 # 70% of the scene, THEN jumps back to 10 PM as the phone lights up (the
 # phone glow brightens for the last 30% — the screen stealing the sleep back).
 def vis_clock(t, st=0, d=1.0, accent=(255, 210, 0)):
+    # v36 fix: the whole visual must fit the visual band (layer y 320-940)
+    # or the sandbox rejects it ("visual leaves safe box") and the codegen
+    # falls back to a library card — which drew the tobacco quitline in the
+    # sleep video. Clock face 360 at y 440-800, window text at 850, the
+    # glowing phone (after the jump-back) as a small icon at y 880-940.
     W, H = 720, 1280
     lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     k = _eio((t - st) / 0.5)
     if k <= 0: return lay
     # sub-layer: the clock face
-    S = 420
+    S = 360
     sub = Image.new("RGBA", (S, S), (0, 0, 0, 0))
     sd = ImageDraw.Draw(sub)
     c = S // 2
-    sd.ellipse([20, 20, S - 20, S - 20], outline=(255, 255, 255), width=10)
+    sd.ellipse([16, 16, S - 16, S - 16], outline=(255, 255, 255), width=9)
     for i in range(12):
         an = i * math.pi / 6
-        sd.line([(c + 160 * math.sin(an), c - 160 * math.cos(an)),
-                 (c + 180 * math.sin(an), c - 180 * math.cos(an))], fill=(200, 200, 200), width=6)
+        sd.line([(c + 138 * math.sin(an), c - 138 * math.cos(an)),
+                 (c + 156 * math.sin(an), c - 156 * math.cos(an))], fill=(200, 200, 200), width=5)
     # hour hand sweeps from 10 PM to 6 AM as the scene plays (v33: it used
     # to start at 12 and end at ~8 — not the sleep window. 10 is at -5pi/6,
     # 6 is at pi/2; the sweep is 4pi/3 = 8 hours.) v36: the sweep finishes
@@ -130,21 +135,22 @@ def vis_clock(t, st=0, d=1.0, accent=(255, 210, 0)):
         ha = -5 * math.pi / 6 + (q / 0.7) * 4 * math.pi / 3
     else:
         ha = -5 * math.pi / 6
-    sd.line([(c, c), (c + 120 * math.cos(ha), c + 120 * math.sin(ha))], fill=(255, 210, 0), width=12)
-    sd.line([(c, c), (c + 170 * math.cos(-math.pi / 2 + 0.3), c + 170 * math.sin(-math.pi / 2 + 0.3))], fill=(255, 255, 255), width=8)
-    sd.ellipse([c - 14, c - 14, c + 14, c + 14], fill=(255, 210, 0))
-    lay.alpha_composite(sub, ((W - S) // 2, 480))
+    sd.line([(c, c), (c + 102 * math.cos(ha), c + 102 * math.sin(ha))], fill=(255, 210, 0), width=11)
+    sd.line([(c, c), (c + 145 * math.cos(-math.pi / 2 + 0.3), c + 145 * math.sin(-math.pi / 2 + 0.3))], fill=(255, 255, 255), width=7)
+    sd.ellipse([c - 12, c - 12, c + 12, c + 12], fill=(255, 210, 0))
+    lay.alpha_composite(sub, ((W - S) // 2, 440))
     dr = ImageDraw.Draw(lay)
     # v33: no "8 HOURS" text here — the label already says it. "10 PM - 6 AM"
-    # stays (it is different info: the sleep window).
-    dr.text((360, 1090), "10 PM - 6 AM", font=_oswald(40), fill=(220, 220, 220), anchor="mm")
+    # stays (it is different info: the sleep window). v36: inside the band.
+    dr.text((360, 848), "10 PM - 6 AM", font=_oswald(36), fill=(220, 220, 220), anchor="mm")
     # v36: after the jump-back, the phone lights up below the clock — a
-    # glowing phone screen (the sleep thief), brightening over the last 30%.
+    # small glowing phone icon (the sleep thief), brightening over the last
+    # 30%. Kept inside the visual band (y <= 940): phone y 878-938.
     if q >= 0.7:
         gq = _eio((q - 0.7) / 0.3)
-        gx, gy = 360, 1180
-        for rr in range(int(30 + 90 * gq), 10, -20):
+        gx, gy = 360, 908
+        for rr in range(int(24 + 48 * gq), 8, -16):
             dr.ellipse([gx - rr, gy - rr, gx + rr, gy + rr], fill=(80, 160, 255, int(50 * gq)))
-        dr.rounded_rectangle([gx - 34, gy - 58, gx + 34, gy + 58], 10, fill=(20, 20, 30), outline=(150, 200, 255), width=3)
-        dr.rectangle([gx - 24, gy - 44, gx + 24, gy + 40], fill=(120, 180, 255, int(255 * gq)))
+        dr.rounded_rectangle([gx - 22, gy - 30, gx + 22, gy + 30], 8, fill=(20, 20, 30), outline=(150, 200, 255), width=3)
+        dr.rectangle([gx - 15, gy - 22, gx + 15, gy + 22], fill=(120, 180, 255, int(255 * gq)))
     return lay

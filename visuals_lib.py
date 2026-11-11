@@ -568,7 +568,7 @@ def vis_question(t, st=0, d=1.0, pack_text="TOBACCO", accent=Y, cx=W/2, cy=640, 
         L.alpha_composite(place(q, cx+170, cy-30, scale=p))
     return L
 
-@reg("card", ["phone", "helpline", "quitline", "call", "contact", "number", "help"])
+@reg("card", ["helpline", "quitline"])
 def vis_card(t, st=0, d=1.0, title="NATIONAL TOBACCO QUITLINE", subtitle="Ministry of Health & Family Welfare \u00b7 Toll free",
              number="1800-11-2356", footer="Free counselling in 16 languages", accent=Y, cx=W/2, cy=640, words=None):
     """A contact/helpline card: cream card, title, divider, the phone number
