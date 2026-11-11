@@ -289,6 +289,36 @@ history mysteries, science facts, money habits, health, tech, motivation). Avoid
 Owner request: """ % C.VISUALS
 
 
+# v36 (Blind B3 — scene-specific transitions from the 379 library, picked by
+# the TOPIC OBJECT of the incoming scene, not one family per video):
+# gutka: packet tear wipe, smoke dissolve, stamp cut; sleep: blink
+# close-open, clock wipe. "phone-screen zoom" is SKIPPED (Ajju's no-zoom
+# ban) — a push is used for phone scenes instead. Never the same transition
+# twice in a row, max 2 uses per video (enforced in plan()).
+TOPIC_TRANSITIONS = [
+    (("ban", "stamp"), "flash_white"),                    # stamp cut
+    (("time", "clock"), "clock_0_cw"),                    # clock wipe
+    (("phone", "card"), "push_right_smooth"),             # phone (push, not zoom)
+    (("place", "document", "packet", "map"), "3d_page_turn_right_smooth"),  # packet tear / paper tear
+    (("myth", "smoke"), "noise_dissolve_x1_s2"),          # smoke dissolve
+    (("number", "money", "bill"), "wipe_0_hard_expo"),    # hard wipe for a number/bill reveal
+    (("comparison", "versus"), "cover_right_smooth"),     # comparison cover
+    (("warning",), "flash_white"),                        # hard flash for a warning
+    (("list", "moon", "sleep"), "blinds_8_h"),            # blink close-open
+]
+
+
+def _topic_transition_name(sc):
+    # The transition INTO this scene, from its topic object (fact type,
+    # visual kind, voice-over keywords). Returns a TL name or None.
+    txt = (str(sc.get("visual", "")) + " " + str(sc.get("fact_type", "")) + " " +
+           str(sc.get("vo", "")) + " " + str(sc.get("label", ""))).lower()
+    for keys, name in TOPIC_TRANSITIONS:
+        if any(k in txt for k in keys) and name in TL_BY_NAME:
+            return name
+    return None
+
+
 def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
     # v25: the TOPIC MOOD picks the design system (A/B/C/D) FIRST, so the LLM
     # designs every scene for that look — never one fixed style.
@@ -360,11 +390,26 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
     # v29b: Hark's 379-transition library — TL.pick_transition never repeats a
     # NAME in one video and skips families from the last 5 videos (recent_families,
     # from KV once the Worker wiring lands). Tags come from the look's fx_tag.
+    # v36 (Blind B3): the transition INTO a scene is picked by that scene's
+    # TOPIC OBJECT first (packet tear, smoke dissolve, stamp cut, blink,
+    # clock wipe...); never the same transition twice in a row, max 2 uses
+    # per video. Only when no topic object matches does the look's tag pick.
     tag = LOOKS[look].get("fx_tag", "calm")
     tl_used = set()
-    p["transitions"] = [TL.pick_transition(tags={tag}, used=tl_used,
-                        seed=p["seed"] + j, recent_families=recent_families)["name"]
-                        for j in range(max(0, len(sc) - 1))]
+    _tr_counts = {}
+    _trans = []
+    for j in range(max(0, len(sc) - 1)):
+        _name = _topic_transition_name(sc[j + 1])
+        # Never the same transition twice in a row, max 2 uses per video.
+        if _name and ((_trans and _trans[-1] == _name) or _tr_counts.get(_name, 0) >= 2):
+            _name = None
+        if _name is None:
+            _name = TL.pick_transition(tags={tag}, used=tl_used,
+                                       seed=p["seed"] + j, recent_families=recent_families)["name"]
+        tl_used.add(_name)
+        _tr_counts[_name] = _tr_counts.get(_name, 0) + 1
+        _trans.append(_name)
+    p["transitions"] = _trans
     p["transition_families"] = [TL.family(n) for n in p["transitions"]]
     p["fx_used"] = used
     # v32 (Blind): the background KIND changes per scene — but ONLY when the
@@ -966,6 +1011,12 @@ def pick_one_effect(sc, idx, pop_t):
                   "vis_dur": _d, "label": "fade_in",
                   "label_start": label_start}
     sc["_effect_choice"] = choice
+    # v36 (Blind B2 — "ban" -> stamp slams with a screen shake, 6 px, 120 ms):
+    # the shake is part of the slam (one combined effect, not a second
+    # motion). It fires at the hit word (pop_t, scene time) and lasts 0.12 s.
+    # The camera stays static — this is a 120 ms jolt at the slam, not a move.
+    if sc.get("fact_type") == "ban" or kind in ("stamp", "stamp_cta"):
+        choice["shake_at"] = pop_t
     return choice
 
 
@@ -1115,6 +1166,16 @@ def scene_frame(p, idx, t, return_layers=False):
     # camera() function stays (unused) for reference; motion now comes only
     # from the visual's own build-in (v35: one effect at a time).
     _img = Image.alpha_composite(bg, lay).convert("RGB")
+    # v36 (Blind B2): the stamp-slam screen shake — 6 px, 120 ms, at the
+    # hit word (recorded as shake_at in the effect choice). A jolt, not a
+    # camera move: the frame is offset by +/-6 px on alternate frames.
+    _shake_at = (sc.get("_effect_choice") or {}).get("shake_at")
+    if _shake_at is not None and _shake_at <= t < _shake_at + 0.12:
+        _dx = 6 if int(t * 60) % 2 == 0 else -6
+        _dy = -6 if int(t * 60) % 2 == 0 else 6
+        _shaken = Image.new("RGB", (W, H), (0, 0, 0))
+        _shaken.paste(_img, (_dx, _dy))
+        _img = _shaken
     if return_layers:
         return _img, _vb, _lb, sc.get("_effect_choice"), _src_bb
     return _img

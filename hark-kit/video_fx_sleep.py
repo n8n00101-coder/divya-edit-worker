@@ -84,6 +84,9 @@ def vis_moon(t, st=0, d=1.0, accent=(255, 210, 0)):
 
 # Scene 4 "Eight hours is the prescription": a clock, 10 PM to 6 AM, hour hand sweeps.
 # Built on a sub-layer and placed (a full-layer redraw per frame is wasteful).
+# v36 (Blind B2 — story-synced): the hand sweeps 10 PM -> 6 AM over the first
+# 70% of the scene, THEN jumps back to 10 PM as the phone lights up (the
+# phone glow brightens for the last 30% — the screen stealing the sleep back).
 def vis_clock(t, st=0, d=1.0, accent=(255, 210, 0)):
     W, H = 720, 1280
     lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -101,9 +104,14 @@ def vis_clock(t, st=0, d=1.0, accent=(255, 210, 0)):
                  (c + 180 * math.sin(an), c - 180 * math.cos(an))], fill=(200, 200, 200), width=6)
     # hour hand sweeps from 10 PM to 6 AM as the scene plays (v33: it used
     # to start at 12 and end at ~8 — not the sleep window. 10 is at -5pi/6,
-    # 6 is at pi/2; the sweep is 4pi/3 = 8 hours.)
+    # 6 is at pi/2; the sweep is 4pi/3 = 8 hours.) v36: the sweep finishes
+    # at 70% of the scene; then the hand JUMPS BACK to 10 PM (the phone
+    # lights up and steals the sleep again).
     q = _p(t, st, d)
-    ha = -5 * math.pi / 6 + q * 4 * math.pi / 3
+    if q < 0.7:
+        ha = -5 * math.pi / 6 + (q / 0.7) * 4 * math.pi / 3
+    else:
+        ha = -5 * math.pi / 6
     sd.line([(c, c), (c + 120 * math.cos(ha), c + 120 * math.sin(ha))], fill=(255, 210, 0), width=12)
     sd.line([(c, c), (c + 170 * math.cos(-math.pi / 2 + 0.3), c + 170 * math.sin(-math.pi / 2 + 0.3))], fill=(255, 255, 255), width=8)
     sd.ellipse([c - 14, c - 14, c + 14, c + 14], fill=(255, 210, 0))
@@ -112,4 +120,13 @@ def vis_clock(t, st=0, d=1.0, accent=(255, 210, 0)):
     # v33: no "8 HOURS" text here — the label already says it. "10 PM - 6 AM"
     # stays (it is different info: the sleep window).
     dr.text((360, 1090), "10 PM - 6 AM", font=_oswald(40), fill=(220, 220, 220), anchor="mm")
+    # v36: after the jump-back, the phone lights up below the clock — a
+    # glowing phone screen (the sleep thief), brightening over the last 30%.
+    if q >= 0.7:
+        gq = _eio((q - 0.7) / 0.3)
+        gx, gy = 360, 1180
+        for rr in range(int(30 + 90 * gq), 10, -20):
+            dr.ellipse([gx - rr, gy - rr, gx + rr, gy + rr], fill=(80, 160, 255, int(50 * gq)))
+        dr.rounded_rectangle([gx - 34, gy - 58, gx + 34, gy + 58], 10, fill=(20, 20, 30), outline=(150, 200, 255), width=3)
+        dr.rectangle([gx - 24, gy - 44, gx + 24, gy + 40], fill=(120, 180, 255, int(255 * gq)))
     return lay

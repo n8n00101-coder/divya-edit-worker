@@ -303,10 +303,34 @@ def vis_filmstrip(t, st=0, d=2.0, frames=4, accent=Y, y=640, speed=120, colors=(
     return L
 
 @reg("balance_scale", ["compare", "justice", "law", "weigh", "choice", "versus", "fair"])
-def vis_scale(t, st=0, d=1.2, left="COST", right="HEALTH", tilt=-14, accent=Y, cx=W/2, cy=700):
-    """Scale builds, then tilts toward the heavier side with a damped wobble."""
+def vis_scale(t, st=0, d=1.2, left="COST", right="HEALTH", tilt=-14, accent=Y, cx=W/2, cy=700, words=None):
+    """Scale builds upright, then tips toward the heavier side ON the
+    comparative word (B2, Blind): "more"/"less"/"than" — or the side's own
+    word ("cost"/"health") — starts the tip. Before that word the scale is
+    level; the tip is a damped wobble to the final tilt. v36: words= is the
+    scene's word timings; without it the tip falls back to 60% of the scene."""
     L = _L(); dr = ImageDraw.Draw(L); q = _p(t, st, d); col = (225, 225, 235, 255)
-    a = math.radians(tilt*(1-math.exp(-4*q)*math.cos(10*q)) if q > 0 else 0)
+    # The tip word: a comparative ("more"/"less"/"than"/"versus") or the
+    # heavier side's word. Tip direction: the COST side down (tilt -14) when
+    # the word is "cost"; the HEALTH side down (tilt +14) when it is
+    # "health" or a bare comparative (the point of the scene is that health
+    # outweighs the cost).
+    _tip_t, _tip_dir = None, -1
+    if words:
+        for i, (o, _dd, w) in enumerate(words):
+            ww = str(w).strip().lower().strip(".,!?\"'")
+            if ww in ("more", "less", "than", "versus", "vs"):
+                _tip_t = float(o); _tip_dir = -1; break
+            if ww == "cost":
+                _tip_t = float(o); _tip_dir = 1; break
+            if ww == "health":
+                _tip_t = float(o); _tip_dir = -1; break
+    if _tip_t is None:
+        _tip_t = d * 0.6
+    # The tilt: 0 until the tip word, then a damped wobble to the final tilt.
+    _tq = _p(t, st + _tip_t, 0.45)
+    _tilt = tilt * _tip_dir * (1 - math.exp(-4 * _tq) * math.cos(10 * _tq)) if _tq > 0 else 0
+    a = math.radians(_tilt)
     dr.polygon([(cx-90, cy+300), (cx+90, cy+300), (cx, cy+260)], fill=col); dr.rectangle((cx-8, cy-10, cx+8, cy+270), fill=col)
     # v35: the arm (230) + pan radius (95) put the pans at x 35..685 in the
     # 720 layer — upscaled 1.5x that is x 52..1028 in 1080, outside the safe
