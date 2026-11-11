@@ -320,10 +320,29 @@ def maybe_captcha(page):
     """If a captcha is showing, try to solve it with the user's one-allow
     consent. Audio-first, always; if an audio alternative exists, use it
     (one retry). Only a challenge with NO audio alternative pauses for
-    Take Control. Returns True when the page is clear (or was solved)."""
+    Take Control. Returns True when the page is clear (or was solved).
+    v39 C7d: a provider's security iframe merely EXISTING (Stripe's
+    invisible hCaptcha, always on the page) is not a challenge — only act
+    when a captcha iframe is actually VISIBLE, or challenge text shows."""
     try:
-        has = page.locator("iframe[src*='recaptcha'], iframe[src*='hcaptcha'], iframe[title*='captcha' i]").count() > 0
-        if not has:
+        vis = False
+        for sel in ("iframe[src*='recaptcha']", "iframe[src*='hcaptcha']", "iframe[title*='captcha' i]"):
+            try:
+                loc = page.locator(sel)
+                for i in range(min(loc.count(), 4)):
+                    if loc.nth(i).is_visible():
+                        vis = True
+                        break
+                if vis:
+                    break
+            except Exception:
+                pass
+        if not vis:
+            try:
+                vis = page.locator("text=verify you are human, text=I'm not a robot, text=select all images").first.is_visible()
+            except Exception:
+                vis = False
+        if not vis:
             return True
         progress("running", "captcha", "Captcha vachindhi — ne permission tho solve chesthunna.", page.url)
         if solve_audio_captcha(page):
@@ -842,7 +861,7 @@ def flow_email_signup(page, job, cfg):
     # up. First try signing in with the job's password (an auto-provision
     # run reuses the sealed setup password, so this usually just works).
     # Only if that fails does the runner surface the sign-in step.
-    if _page_says(page, ["already exists", "already have an account", "already registered"]):
+    if _page_says(page, ["already exists", "already registered", "account already exists", "email already in use", "email is already registered", "an account with this email"]):
         progress("running", "signin", f"{name} account already undhi — sign in chesthunna.", cfg.get("login_url") or cfg["url"])
         if try_login(page, job, cfg):
             progress("running", "signin", f"{name} sign-in ayyindhi — key create chesthunna.", page.url)
@@ -942,7 +961,7 @@ def flow_cloudflare(page, job, cfg):
     if check_stop():
         return _stopped()
     # Idempotent: if the account already exists, sign in instead of signing up.
-    if _page_says(page, ["already exists", "already have an account", "already registered"]):
+    if _page_says(page, ["already exists", "already registered", "account already exists", "email already in use", "email is already registered", "an account with this email"]):
         progress("running", "signin", "Cloudflare account already undhi — sign in chesthunna.", cfg["login_url"])
         goto(page, cfg["login_url"])
         page.wait_for_timeout(2500)
