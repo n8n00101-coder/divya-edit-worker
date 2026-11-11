@@ -379,7 +379,7 @@ async function oauthRoutes(env, url) {
     if (url.pathname === "/oauth/google") {
       tok = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ code, client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, redirect_uri: base + "/oauth/google", grant_type: "authorization_code" }) })).json();
       if (!tok.access_token) return page("Google connect fail: " + (tok.error_description || tok.error || "unknown"));
-      if (s.prov === "youtube") { const c = await (await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); who = c.items?.[0]?.snippet?.title ? `channel "${c.items[0].snippet.title}"` : "(ee account lo YouTube channel kanipinchaledu)"; }
+      if (s.prov === "youtube") { const c = await (await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); const chTitle = c.items?.[0]?.snippet?.title; who = chTitle ? `channel "${chTitle}"` : "(ee account lo YouTube channel kanipinchaledu)"; if (!chTitle) tok.noChannel = true; /* v39 (D3): token held, no channel behind it */ }
       else { prof = await (await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); who = prof.email || ""; }
     } else {
       tok = await (await fetch(`${G}/oauth/access_token?` + new URLSearchParams({ client_id: env.FB_APP_ID, client_secret: env.FB_APP_SECRET, redirect_uri: base + "/oauth/meta", code }))).json();
@@ -389,6 +389,7 @@ async function oauthRoutes(env, url) {
       const pg = await (await fetch(`${G}/me/accounts?fields=name,instagram_business_account{username}&access_token=${tok.access_token}`)).json();
       const ig = (pg.data || []).map(p => p.instagram_business_account?.username).filter(Boolean);
       who = s.prov === "instagram" ? (ig.length ? "@" + ig.join(", @") : "(Facebook Page ki link aina Instagram professional account kanipinchaledu)") : ((pg.data || []).map(p => p.name).join(", ") || "(Page kanipinchaledu)");
+      if (/kanipinchaledu/i.test(who)) tok.noChannel = true; /* v39 (D3): token held, no usable account behind it */
     }
     // Google LOGIN (app login screen): no WhatsApp user — find-or-create the account by Google email, then send the session token back to the app.
     if (s.login) {
@@ -682,6 +683,26 @@ async function histNumForJob(env, job) {
   const [n, num] = ref.split(":");
   return { n, num: parseInt(num, 10) };
 }
+// v39 (D2): backfill a missing History entry from the real per-user edit
+// record (appedit). Shared by the videos + status endpoints so both see the
+// same list; the entry is built from the real record, never invented. Only
+// 3 KV reads when there is nothing to backfill (appedit, the numbered slot,
+// the job mapping) — cheap enough to run on every status poll.
+async function histBackfillAppEdit(env, n) {
+  const st = JSON.parse((await env.KV.get(`appedit:${n}`)) || "null");
+  if (!st || !st.num) return null;
+  if (await histGet(env, n, st.num)) return null;
+  if (st.job) { const ref = await histNumForJob(env, st.job); if (ref) return null; }
+  const kindEn = (EDIT_KINDS[st.kind] && EDIT_KINDS[st.kind].en) || st.kind || "edit";
+  const title = ((st.note || "").split(/[.!?\n]/)[0] || `${kindEn} — ${st.lang || ""}`).slice(0, 80);
+  const e = { n: st.num, job: st.job || "", title, topic: (st.note || kindEn).slice(0, 200), kind: st.kind || "", lang: st.lang || "", length: st.length || "", at: st.at || Date.now(), state: st.state || "editing", name: st.name || "video", template: null, notes: (st.note || "").slice(0, 300), has_result: !!st.has_result, yt: null, ig: null };
+  await histPut(env, n, e);
+  // the counter must cover the backfilled number, or histList (which walks
+  // down from the counter) will never see the entry.
+  const c = parseInt((await env.KV.get(`histcount:${n}`)) || "0", 10);
+  if (c < st.num) await env.KV.put(`histcount:${n}`, String(st.num));
+  return e;
+}
 async function histMarkPosted(env, n, num, where, data) {
   const e = await histGet(env, n, num); if (!e) return;
   if (where === "yt") e.yt = data; else e.ig = data;
@@ -893,9 +914,14 @@ async function appApi(req, env, url) {
   if (p === "result") return appResult(req, env, u, url);
   if (p === "videos") {
     const list = await histList(env, u.n, 20);
+    // v39 (D2): backfill — a real per-user edit record (appedit) with no
+    // History entry (created before History writes existed, or a missed
+    // write) must still show in History; shared helper, same as status.
+    const backfilled = await histBackfillAppEdit(env, u.n);
+    if (backfilled) { list.push(backfilled); list.sort((a, b) => b.n - a.n); }
     // v24: the History list renders data-watch="${v.job}" — the map MUST carry
     // job, or every Watch/Download fetches result?job=undefined and 404s.
-    return appJson(req, { ok: true, videos: list.map(e => ({ n: e.n, job: e.job, title: e.title, topic: e.topic, kind: e.kind, lang: e.lang, length: e.length, at: e.at, state: e.state, name: e.name, template: e.template, has_result: !!e.has_result, yt: e.yt, ig: e.ig })) });
+    return appJson(req, { ok: true, videos: list.map(e => ({ n: e.n, job: e.job, title: e.title, topic: e.topic, kind: e.kind, lang: e.lang, length: e.length, at: e.at, state: e.state, name: e.name, template: e.template, has_result: !!e.has_result, yt: e.yt, ig: e.ig, doneAt: e.doneAt || null, failedAt: e.failedAt || null })) });
   }
   if (p.startsWith("videos/")) {
     const num = parseInt(p.slice(7), 10);
@@ -925,8 +951,15 @@ async function appApi(req, env, url) {
       if (r && r.ok) runs = ((await r.json()).workflow_runs || []).map(x => ({ status: x.status, conclusion: x.conclusion, created_at: x.created_at, updated_at: x.updated_at }));
     }
     const job = JSON.parse((await env.KV.get(`appedit:${u.n}`)) || "null");
+    // v39 (D2): the Home card's "Edit ready" claim must come from this user's
+    // own History, not the repo-wide runs list — the latest History entry
+    // (backfilled first, so status and videos can never disagree).
+    await histBackfillAppEdit(env, u.n);
+    const lvList = await histList(env, u.n, 1);
+    const lv = lvList[0] || null;
+    const lastVideo = lv ? { n: lv.n, job: lv.job, state: lv.state, at: lv.at, doneAt: lv.doneAt || null, failedAt: lv.failedAt || null, has_result: !!lv.has_result } : null;
     const bal = await tokBalance(env, u.n);
-    return appJson(req, { ok: true, busy, last, runs: job ? [] : runs, job, edits_left: bal.videosWeek, edits_limit: Math.floor(TOK.WEEKLY_FREE / TOK.PER_MIN), edits_used: Math.floor(bal.weekSpent / TOK.PER_MIN), tok: bal });
+    return appJson(req, { ok: true, busy, last, runs: job ? [] : runs, job, lastVideo, edits_left: bal.videosWeek, edits_limit: Math.floor(TOK.WEEKLY_FREE / TOK.PER_MIN), edits_used: Math.floor(bal.weekSpent / TOK.PER_MIN), tok: bal });
   }
   if (p === "tokens") { return appJson(req, { ok: true, tok: await tokBalance(env, u.n) }); }
   if (p === "referral/me") { return appJson(req, { ok: true, ...(await refInfo(env, u.n)) }); }
@@ -940,7 +973,12 @@ async function appApi(req, env, url) {
     const list = await Promise.all(Object.entries(PROVIDERS).map(async ([id, pr]) => {
       const t = JSON.parse((await env.KV.get(`tok:${u.n}:${id}`)) || "null");
       const ready = !!((GSCOPE[id] && env.GOOGLE_CLIENT_ID) || (MSCOPE[id] && env.FB_APP_SECRET) || (id === "telegram" && env.TG_BOT));
-      return { id, name: pr.title.replace(" connect", ""), desc: pr.desc, connected: !!t, who: t?.who || "", ready };
+      // v39 (D3): "connected" with no usable account behind it (YouTube token
+      // but no channel; Instagram token but no Page-linked account) must not
+      // render as a green ✓. Flag it; old records carry the Telugu
+      // "kanipinchaledu" marker in `who` instead of the flag.
+      const noAccount = !!t && (t.noChannel === true || /kanipinchaledu/i.test(t.who || ""));
+      return { id, name: pr.title.replace(" connect", ""), desc: pr.desc, connected: !!t, who: t?.who || "", ready, noAccount };
     }));
     return appJson(req, { ok: true, providers: list });
   }
@@ -1798,7 +1836,7 @@ async function appRunner(req, env, p, url, body) {
     await save({ state, note: String(body.note || "").slice(0, 300) });
     if (state !== "running") { await env.KV.delete(`busy:${n}`); await env.KV.delete(`upl:${job}`); }
     if (state === "failed" && st && st.job === job && !st.refunded) { const qk = `vmon:${n}:${istMonth()}`; const c = parseInt((await env.KV.get(qk)) || "0", 10); if (c > 0) await env.KV.put(qk, String(c - 1), { expirationTtl: 86400 * 40 }); await save({ state, note: String(body.note || "").slice(0, 300), refunded: true }); } // a failed edit doesn't use up a free edit
-    if (state === "failed") { const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job); if (ref) { const e2 = await histGet(env, ref.n, ref.num); if (e2) { e2.state = "failed"; await histPut(env, ref.n, e2); } } }
+    if (state === "failed") { const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job); if (ref) { const e2 = await histGet(env, ref.n, ref.num); if (e2) { e2.state = "failed"; e2.failedAt = Date.now(); /* v39 (D8): label the age honestly */ await histPut(env, ref.n, e2); } } }
     return Response.json({ ok: true });
   }
   if (p === "runner/result" && req.method === "POST") {
@@ -1807,7 +1845,7 @@ async function appRunner(req, env, p, url, body) {
     await save({ state: "done", has_result: true, size: b.byteLength, note: String(url.searchParams.get("note") || "").slice(0, 300) });
     const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job);
     const e2 = ref ? await histGet(env, ref.n, ref.num) : null;
-    if (e2) { e2.state = "done"; e2.size = b.byteLength; e2.has_result = true; e2.note = String(url.searchParams.get("note") || "").slice(0, 300); await histPut(env, ref.n, e2); }
+    if (e2) { e2.state = "done"; e2.doneAt = Date.now(); /* v39 (D8): completion time, so "ready X ago" is honest */ e2.size = b.byteLength; e2.has_result = true; e2.note = String(url.searchParams.get("note") || "").slice(0, 300); await histPut(env, ref.n, e2); }
     await env.KV.delete(`busy:${n}`); await env.KV.delete(`upl:${job}`);
     return Response.json({ ok: true });
   }
@@ -1867,6 +1905,7 @@ function setupStepText(id, st, lang, note, kind) {
   // app which line to show (email link / SMS code / captcha / sign-in).
   if (st === "paused") return setupPauseLine(kind || "email", lang);
   if (st === "failed") return en ? `${name} setup failed${note ? " — " + note : ""}.` : `${name} setup fail ayyindhi${note ? " — " + note : ""}.`;
+  if (st === "stalled") return en ? `${name} setup stalled — no progress for over 30 minutes.` : `${name} setup aagipoyindhi — 30 nimishalu nunchi progress ledu.`;
   return en ? `${name} — waiting.` : `${name} — wait chesthondhi.`;
 }
 function setupSteps(chain, cur, fin, keys, lang) {
@@ -1923,8 +1962,20 @@ async function appSetupUser(req, env, u, p, body, lang) {
       return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang) };
     }
     const cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
-    const state = setupStateFor(chain, cur, null, keys);
-    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys, needsSetup, sharedFallback, state, steps: setupSteps(chain, cur, null, keys, lang) };
+    let state = setupStateFor(chain, cur, null, keys);
+    // v39 (D4): staleness — a run that reports "running" but has made no
+    // progress for 30+ minutes is stalled, not running. The runner posts
+    // progress (setupjob.upd) on every step change; a pause waits on the
+    // user's one tap and is NEVER stale. Display state only — nothing here
+    // stops, restarts, or re-dispatches the run (that is the setup-flow
+    // owner's scope, not this status display).
+    const SETUP_STALE_MS = 30 * 60 * 1000;
+    const lastUpd = (cur && cur.upd) || chain.at || 0;
+    const stalled = state === "running" && lastUpd > 0 && (Date.now() - lastUpd) > SETUP_STALE_MS;
+    if (stalled) state = "stalled";
+    let steps = setupSteps(chain, cur, null, keys, lang);
+    if (stalled) steps = steps.map(s => s.state === "running" ? { ...s, state: "stalled", note: setupStepText(s.id, "stalled", lang), text: setupStepText(s.id, "stalled", lang) } : s);
+    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
@@ -2131,8 +2182,8 @@ export default {
         // a metadata entry when no entry exists for the job.
         try {
           const ref = job ? await histNumForJob(env, job) : null;
-          if (ref) { const e = await histGet(env, ref.n, ref.num); if (e) { e.title = String(topic).slice(0, 80); e.topic = String(topic).slice(0, 200); if (e.has_result) e.state = "done"; await histPut(env, ref.n, e); } }
-          else { const num = await histNext(env, to); await histPut(env, to, { n: num, job: "", title: String(topic).slice(0, 80), topic: String(topic).slice(0, 200), kind: "create", lang: "", length: "", at: Date.now(), state: "done", name: String(topic).slice(0, 80), src: "create", template: "", notes: "", has_result: false, yt: null, ig: null }); }
+          if (ref) { const e = await histGet(env, ref.n, ref.num); if (e) { e.title = String(topic).slice(0, 80); e.topic = String(topic).slice(0, 200); if (e.has_result && e.state !== "done") { e.state = "done"; e.doneAt = Date.now(); /* v39 (D8) */ } await histPut(env, ref.n, e); } }
+          else { const num = await histNext(env, to); await histPut(env, to, { n: num, job: "", title: String(topic).slice(0, 80), topic: String(topic).slice(0, 200), kind: "create", lang: "", length: "", at: Date.now(), state: "done", doneAt: Date.now(), name: String(topic).slice(0, 80), src: "create", template: "", notes: "", has_result: false, yt: null, ig: null }); }
         } catch {}
       }
       return Response.json({ ok: true });
