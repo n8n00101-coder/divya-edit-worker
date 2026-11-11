@@ -1354,8 +1354,13 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         out = small
     # v34 (Hark delivery, item 9): keep the CRF 23 master, then make a CRF 26
     # delivery copy (much smaller, faster to send) for sending to Ajju.
+    # NOTE: the delivery is encoded from the SAME raw source as the master
+    # (raw.mp4 + mix.wav + vf chain), NOT by re-encoding the master — a
+    # re-encode of the grainy CRF 23 master at CRF 26 came out LARGER than
+    # the master (1,290 kbps vs 1,080 kbps: the encoder chases the baked-in
+    # grain + quantisation noise). Same input + higher CRF = guaranteed smaller.
     delivery = f"{wd}/divya_doc_delivery.mp4"
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", out, "-c:v", "libx264", "-preset", "medium",
-                    "-crf", "26", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", delivery], check=True)
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/raw.mp4", "-i", f"{wd}/mix.wav", "-vf", vf, "-c:v", "libx264", "-preset", "medium",
+                    "-crf", "26", "-maxrate", "2300k", "-bufsize", "4600k", "-c:a", "aac", "-b:a", "128k", "-shortest", "-movflags", "+faststart", delivery], check=True)
     return {"path": out, "delivery_path": delivery, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
             "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total}
