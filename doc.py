@@ -889,7 +889,7 @@ def pick_one_effect(sc, idx, pop_t):
                 enter = "pop_in"
             _d = ENTER_DUR.get(enter, 0.35)
             choice = {"vis": "enter", "vis_name": enter, "vis_start": earliest,
-                      "vis_dur": _d, "label_delay": earliest + _d + 0.05}
+                      "vis_dur": _d, "label": "fade_in", "label_delay": earliest + _d + 0.05}
     else:
         enter = sc.get("enter") or "pop_in"
         if enter not in FX_LAYER_ENTER:
