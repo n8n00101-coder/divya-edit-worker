@@ -10,7 +10,9 @@ W, H, FPS = 1080, 1920, 30
 BG, RED, WHITE, GREEN, YEL, GREY = (12, 12, 14), (235, 50, 60), (240, 240, 240), (60, 210, 120), (250, 205, 60), (90, 90, 100)
 VISUALS = ["counter", "bar", "chat", "check", "warning", "graph", "clock", "heart", "battery", "calendar", "list", "versus",
            "dot_grid", "donut", "gauge", "toggle", "phone_buzz", "stick_figure", "quote_card", "arrows_steps",
-           "checklist", "document", "polaroid", "icon_row", "bar_compare", "strike", "curve"]
+           "checklist", "document", "polaroid", "icon_row", "bar_compare", "strike", "curve",
+           # v34 (Hark engine): four/question/card/watch + stamp/stamp_cta.
+           "four", "question", "card", "watch", "stamp", "stamp_cta"]
 FONTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
 VOICES = {"male": "te-IN-MohanNeural", "female": "te-IN-ShrutiNeural"}
 # Engine switch for create mode: env DIVYA_ENGINE=v3 -> doc3.py (engine v3), anything else -> doc.py (v2, default).
@@ -40,7 +42,9 @@ check for good habits, versus for comparisons, counter for numbers, list for ste
 dot_grid for a percentage of people, donut for a percentage ring, gauge for a level/meter, toggle for on/off, phone_buzz for phone
 notifications, stick_figure for a person/feeling, quote_card for a quote, arrows_steps for a process, checklist for a to-do,
 document for a report/study, polaroid for a memory/photo, icon_row for a set of items, bar_compare for two numbers compared,
-strike for a myth/lie to cross out, curve for exponential growth (1%% better every day).
+strike for a myth/lie to cross out, curve for exponential growth (1%% better every day),
+four for one-in-N people, question for a big question hook, card for a phone number or helpline,
+watch for a stopwatch or rate, stamp for a ban or verdict, stamp_cta for the final call to action.
 If the owner did not give a clear topic (e.g. "nuvve select chesko", "any topic", empty), YOU pick one fresh, high-retention
 topic for a Telugu faceless channel (psychology, relationships, money habits, health hacks, motivation, tech tips, facts) — avoid
 these recent topics: {recent}. Also add "topic": "<the topic you chose>" to the JSON.
@@ -105,6 +109,10 @@ def ease(t):
     t = max(0.0, min(1.0, t)); return 1 - (1 - t) ** 3
 
 
+def clamp(x, a=0.0, b=1.0):  # v34: was missing — _wprogress + card used it
+    return max(a, min(b, x))
+
+
 def pop(t):  # overshoot pop 0->1
     t = max(0.0, min(1.0, t)); return 1 + 2.2 * (t - 1) ** 3 + 1.2 * (t - 1) ** 2 if t < 1 else 1.0
 
@@ -130,12 +138,25 @@ def num_of(v, default=7):
     m = re.search(r"\d+", v or ""); return int(m.group(0)) if m else default
 
 
-def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None):
+def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None, words=None):
     # v25: optional accent (the look's accent) — defaults to RED for the old engine.
+    # v34 (Hark word_t): words = [(start, dur, text)] — the count/fill visuals
+    # run while the NUMBER word is spoken, instead of a fixed 0.8 s build-in.
     acc = acc or RED
     a = ease(t / 0.8)
+    _NUMW = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+             "eleven", "twelve", "twenty", "thirty", "fifty", "hundred", "thousand", "million",
+             "billion", "percent", "half", "double", "triple", "zero")
+    def _wprogress():
+        if not words: return None
+        for (o, dd, w) in words:
+            ww = str(w).strip().lower().strip(".,!?\"'")
+            if any(c.isdigit() for c in ww) or ww in _NUMW:
+                return clamp((t - o) / max(dd + 0.3, 0.1))
+        return None
+    wp = _wprogress()
     if kind == "counter":
-        n = num_of(value, 100); cur = int(n * a)
+        n = num_of(value, 100); cur = int(n * (wp if wp is not None else a))
         f = font(220); center_text(d, cy - 140, f"{cur}{'%' if '%' in value else ''}", f, acc)
     elif kind == "bar":
         p = num_of(value, 80) / 100 * a
@@ -215,10 +236,105 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None):
         center_text(d, cy - 50, "VS", font(90), YEL)
         d.text((230 - 300 * (1 - k), cy - 40), "✗", font=font(100), fill=acc)
         d.text((720 + 300 * (1 - k), cy - 40), "✓", font=font(100), fill=WHITE)
+    # ---- v34 (Hark engine): four / question / card / watch / stamp / stamp_cta.
+    elif kind == "four":  # people icons for "1 in N" facts (Hark `four`)
+        n = max(2, min(6, num_of(value, 4)))
+        _hot = wp if wp is not None else ease((t - 0.8) / 0.4)
+        for i in range(n):
+            k = pop((t - i * 0.15) / 0.35)
+            if k <= 0: continue
+            x = cx - (n - 1) * 110 + i * 220
+            col = acc if (i == 0 and _hot > 0) else WHITE
+            r = 55 * k
+            d.ellipse([x - r, cy - 260 * k, x + r, cy - 150 * k], fill=col)
+            d.rounded_rectangle([x - 70 * k, cy - 130 * k, x + 70 * k, cy + 130 * k], 30, fill=col)
+            if i == 0 and _hot > 0:
+                q = ease(_hot)
+                d.rounded_rectangle([x - 100, cy - 300, x + 100, cy + 170], 20, outline=acc, width=int(3 + 6 * q))
+    elif kind == "question":  # giant "?" over a blurred pack, wobbling (Hark `question`)
+        k = pop((t - 0.3) / 0.4)
+        if k > 0:
+            rrect(d, (cx - 260, cy - 330, cx + 260, cy + 330), 24, fill=(60, 20, 22))
+            d.text((cx, cy - 60), "TOBACCO", font=font(60), fill=(120, 90, 90), anchor="mm")
+            sh = math.sin(t * 14) * 6 if t > 0.9 else 0
+            d.text((cx + 60 + sh, cy + 40), "?", font=font(int(520 * (0.6 + 0.4 * k))), fill=YEL, anchor="mm")
+    elif kind == "card":  # contact/helpline card, number typed out + yellow marker (Hark `card`)
+        x0, y0, x1, y1 = cx - 420, cy - 260, cx + 420, cy + 260
+        rrect(d, (x0, y0, x1, y1), 20, fill=(232, 226, 210))
+        d.text((x0 + 40, y0 + 30), "CALL FOR HELP", font=font(48), fill=(30, 30, 30))
+        d.line([(x0 + 40, y0 + 110), (x1 - 40, y0 + 110)], fill=(120, 120, 120), width=3)
+        num = (value or "1800-11-2356").strip()
+        _dig = [o for (o, _dd, w) in (words or []) if any(c.isdigit() for c in str(w))]
+        _ts = _dig[0] if _dig else 0.5
+        n = int(len(num) * clamp((t - _ts) / 1.8))
+        n = max(0, min(len(num), n))
+        if n >= len(num) and n > 0:
+            q = ease((t - (_ts + 1.9)) / 0.35)
+            if q > 0:
+                wnum = d.textlength(num, font=font(88))
+                d.rectangle([x0 + 36, y0 + 150, x0 + 36 + (wnum + 12) * q, y0 + 250], fill=(245, 205, 40))
+        if n > 0:
+            d.text((x0 + 40, y0 + 150), num[:n], font=font(88), fill=(25, 25, 25))
+        d.text((x0 + 40, y1 - 70), "Free help, any time", font=font(44), fill=(60, 60, 60))
+    elif kind == "watch":  # stopwatch, red sector sweeps + stamp (Hark `watch`)
+        R = 250
+        _dur = (words[-1][0] + words[-1][1]) if words else 4.0
+        sweep = min(t / max(_dur - 0.3, 0.5), 1) * (25 / 60) * 360
+        if sweep > 1:
+            d.pieslice([cx - R + 20, cy - R + 20, cx + R - 20, cy + R - 20], -90, -90 + sweep, fill=(214, 40, 40))
+        d.ellipse([cx - R, cy - R, cx + R, cy + R], outline=WHITE, width=12)
+        for kk in range(12):
+            an = kk * math.pi / 6
+            d.line([(cx + (R - 25) * math.sin(an), cy - (R - 25) * math.cos(an)), (cx + (R - 6) * math.sin(an), cy - (R - 6) * math.cos(an))], fill=GREY, width=6)
+        an = math.radians(-90 + sweep)
+        d.line([(cx, cy), (cx + (R - 40) * math.cos(an), cy + (R - 40) * math.sin(an))], fill=YEL, width=10)
+        d.ellipse([cx - 16, cy - 16, cx + 16, cy + 16], fill=YEL)
+        # v34 fix: the value text is NOT drawn here — the scene label below
+        # the visual already shows it (v33 dup-text rule).
+    elif kind == "stamp":  # a rotated stamp slamming in + shake (Hark `stamp`)
+        word = (value or "BANNED")[:12].upper()
+        q = ease((t - 0.5) / 0.2)
+        if q > 0:
+            sh = 6 * math.sin(t * 50) if t < 1.0 else 0
+            f = font(110)
+            w = d.textlength(word, font=f) + 80
+            st = Image.new("RGBA", (int(w), 180), (0, 0, 0, 0))
+            ds = ImageDraw.Draw(st)
+            ds.rounded_rectangle([4, 4, w - 4, 176], 16, outline=acc + (255,), width=8)
+            ds.text((w / 2, 90), word, font=f, fill=acc + (255,), anchor="mm")
+            st = st.rotate(-12, expand=True, resample=Image.BICUBIC)
+            sc = 2.2 - 1.2 * q
+            st = st.resize((max(1, int(st.width * sc)), max(1, int(st.height * sc))), Image.BICUBIC)
+            if img.mode == "RGBA":
+                img.alpha_composite(st, (int(cx - st.width / 2 + sh), int(cy - st.height / 2)))
+            else:
+                img.paste(st, (int(cx - st.width / 2 + sh), int(cy - st.height / 2)), st)
+    elif kind == "stamp_cta":  # final call to action: stamp slams + red strike grows (Hark stamp CTA)
+        word = (value or "TODAY")[:12].upper()
+        q = ease((t - 0.4) / 0.2)
+        if q > 0:
+            sh = 6 * math.sin(t * 50) if t < 0.9 else 0
+            f = font(130)
+            w = d.textlength(word, font=f) + 90
+            st = Image.new("RGBA", (int(w), 200), (0, 0, 0, 0))
+            ds = ImageDraw.Draw(st)
+            ds.rounded_rectangle([4, 4, w - 4, 196], 18, outline=YEL + (255,), width=9)
+            ds.text((w / 2, 100), word, font=f, fill=YEL + (255,), anchor="mm")
+            st = st.rotate(-6, expand=True, resample=Image.BICUBIC)
+            sc = 2.4 - 1.4 * q
+            st = st.resize((max(1, int(st.width * sc)), max(1, int(st.height * sc))), Image.BICUBIC)
+            if img.mode == "RGBA":
+                img.alpha_composite(st, (int(cx - st.width / 2 + sh), int(cy - st.height / 2)))
+            else:
+                img.paste(st, (int(cx - st.width / 2 + sh), int(cy - st.height / 2)), st)
+        q2 = ease((t - 0.9) / 0.3)
+        if q2 > 0:
+            x0, x1 = cx - 380, cx + 380
+            d.line([(x0, cy + 220), (x0 + (x1 - x0) * q2, cy + 210)], fill=(220, 50, 50), width=14)
     # ---- v28 (Hark kit visual library): the kit's 18 visual types, grown from the
     # 12. Each one draws the LITERAL idea of the sentence (never a mascot).
     elif kind == "dot_grid":  # a percentage as 100 dots filling up (kit s3: 89%)
-        n = num_of(value, 89); shown = int(100 * a)
+        n = num_of(value, 89); shown = int(100 * (wp if wp is not None else a))
         center_text(d, cy - 380, f"{n}%", font(120), acc)
         for i in range(100):
             r, c = divmod(i, 10); x = cx - 225 + c * 50; y = cy - 200 + r * 50
@@ -229,9 +345,9 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None):
     elif kind == "donut":  # a ring that fills to N% (kit s5: 96x ring)
         n = num_of(value, 75); R = 220
         d.ellipse([cx - R, cy - R, cx + R, cy + R], outline=GREY, width=28)
-        ang = 360 * (n / 100) * a
+        ang = 360 * (n / 100) * (wp if wp is not None else a)
         if ang > 1: d.arc([cx - R, cy - R, cx + R, cy + R], -90, -90 + ang, fill=acc, width=28)
-        center_text(d, cy - 60, f"{int(n * a)}{'%' if '%' in value else ''}", font(140), acc)
+        center_text(d, cy - 60, f"{int(n * (wp if wp is not None else a))}{'%' if '%' in value else ''}", font(140), acc)
     elif kind == "gauge":  # a semicircular gauge with a needle
         n = num_of(value, 60); R = 280
         d.arc([cx - R, cy - R, cx + R, cy + R], 180, 360, fill=GREY, width=24)

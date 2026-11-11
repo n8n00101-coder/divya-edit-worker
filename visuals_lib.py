@@ -37,6 +37,19 @@ def _c(x): return max(0.0, min(1.0, x))
 def _p(t, st, d): return _c((t-st)/d) if d > 0 else float(t >= st)
 def _oe(x): return 1-(1-_c(x))**3
 def _ob(x, s=1.70158): x = _c(x)-1; return 1+(s+1)*x**3+s*x**2
+def _word_t(words, idx):
+    # v34 (Hark word_t): start time of word idx in [(start, dur, text), ...].
+    if not words: return 0.0
+    i = max(0, min(int(idx), len(words) - 1))
+    return float(words[i][0])
+def _num_word_idx(words):
+    # v34: index of the first word that is (or contains) a number.
+    if not words: return None
+    for i, (o, dd, w) in enumerate(words):
+        ww = str(w).strip().lower().strip(".,!?\"'")
+        if any(c.isdigit() for c in ww) or ww in ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "twenty", "thirty", "fifty", "hundred", "thousand", "million", "billion", "percent", "half"):
+            return i
+    return None
 def _L(): return Image.new("RGBA", (W, H), (0, 0, 0, 0))
 
 def texture(img, amount=10, seed=3):
@@ -147,11 +160,18 @@ def _doc_obj(title, lines, stamp, accent, w=520, h=680, highlight=1, seal=True):
 
 @reg("document", ["law", "rule", "ban", "government", "report", "study", "paper", "official"])
 def vis_document(t, st=0, d=1.0, title="NOTIFICATION", lines=("Sale of gutka and pan masala is prohibited.", "Ban applies to all states from 2012.", "Violators face fines and jail."),
-                 stamp="BANNED", accent=Y, highlight=0, cx=W/2, cy=640):
+                 stamp="BANNED", accent=Y, highlight=0, cx=W/2, cy=640, words=None):
     """Official paper slides up, the key line gets highlighted, a red stamp slams down."""
     q = _p(t, st, d*.5); doc = _doc_obj(title, lines, stamp, accent, highlight=highlight)
     L = place(shadow(doc), cx, cy+(1-_oe(q))*500, rot=-2*(1-_oe(q)))
-    sq = _p(t, st+d*.7, .25)
+    # v34 (Hark word_t): the stamp slams on the verdict word ("banned"/"ban"/
+    # "illegal"), not at a fixed 70% of the scene.
+    _st = None
+    if words:
+        for i, (o, _dd, w) in enumerate(words):
+            if str(w).strip().lower().strip(".,!?\"'") in ("banned", "ban", "illegal", "prohibited", "banned."):
+                _st = o; break
+    sq = _p(t, st + (_st if _st is not None else d*.7), .25)
     if stamp and sq > 0:
         s = Image.new("RGBA", (360, 120), (0, 0, 0, 0)); ds = ImageDraw.Draw(s)
         ds.rounded_rectangle((4, 4, 356, 116), 14, outline=RED+(255,), width=8)
@@ -269,7 +289,7 @@ def vis_scale(t, st=0, d=1.2, left="COST", right="HEALTH", tilt=-14, accent=Y, c
     return L
 
 @reg("bracket_bars", ["data", "compare", "study", "percent", "result", "chart"])
-def vis_bracket_bars(t, st=0, d=1.2, values=(23, 67), labels=("BEFORE", "AFTER"), note="+44%", accent=Y, base=960, hmax=520):
+def vis_bracket_bars(t, st=0, d=1.2, values=(23, 67), labels=("BEFORE", "AFTER"), note="+44%", accent=Y, base=960, hmax=520, words=None):
     """Bar chart where a bracket draws between two bars and the difference label pops."""
     L = _L(); dr = ImageDraw.Draw(L); n = len(values); bw = 140; gap = (W-160-n*bw)/max(1, n-1); mx = max(values)
     tops = []
@@ -277,7 +297,9 @@ def vis_bracket_bars(t, st=0, d=1.2, values=(23, 67), labels=("BEFORE", "AFTER")
         q = _oe(_p(t, st+i*.15, d*.6)); x = 80+i*(bw+gap); hh = hmax*v/mx*q; c = accent if i == n-1 else (110, 120, 140)
         dr.rectangle((x, base-hh, x+bw, base), fill=c+(255,)); dr.text((x+bw/2, base+40), labels[i], font=_font(32, "small"), fill=WHITE+(255,), anchor="mm")
         dr.text((x+bw/2, base-hh-30), f"{int(v*q)}%", font=_font(44), fill=WHITE+(255,), anchor="mm"); tops.append((x+bw/2, base-hmax*v/mx))
-    bq = _p(t, st+d*.75, .4)
+    # v34 (Hark word_t): the bracket + difference note pop on the number word.
+    _ni = _num_word_idx(words)
+    bq = _p(t, st + (_word_t(words, _ni) if _ni is not None else d*.75), .4)
     if bq > 0 and n >= 2:
         (x0, y0), (x1, y1) = tops[0], tops[-1]; yb = min(y0, y1)-110; xm = x0+(x1-x0)*_oe(bq)
         dr.line((x0, y0-70, x0, yb), fill=WHITE+(255,), width=4); dr.line((x0, yb, xm, yb), fill=WHITE+(255,), width=4)
@@ -359,6 +381,138 @@ def vis_warning(t, st=0, d=.5, text="!", col=(255, 200, 0), cx=W/2, cy=620, puls
 def vis_source(t, st=0, d=.4, text="Source: WHO, 2023", y=1110, accent=Y):
     """Small source credit that fades up at the bottom of the safe box (always add when a fact is shown)."""
     L = _L(); q = _oe(_p(t, st, d)); ImageDraw.Draw(L).text((W/2, y+(1-q)*20), text, font=_font(24, "small"), fill=(200, 200, 210, int(220*q)), anchor="mm"); return L
+
+# ============================ HARK ENGINE (v34) ============================
+def _person(col, s=1.0):
+    # v34 (Hark sprite_person): a flat person icon — head + body.
+    w, h = int(90*s), int(170*s); im = Image.new("RGBA", (w, h), (0, 0, 0, 0)); dr = ImageDraw.Draw(im)
+    dr.ellipse([w*.28, 0, w*.72, h*.26], fill=col); dr.rounded_rectangle([w*.1, h*.3, w*.9, h], int(w*.3), fill=col)
+    return im
+
+@reg("four", ["people", "one_in_n", "ratio", "adults", "population", "share"])
+def vis_four(t, st=0, d=1.0, n=4, accent=Y, cx=W/2, cy=640, words=None):
+    """People icons for '1 in N' facts: they pop in one by one; the 1st turns
+    red + gets a box when the 'one in N' word is spoken (Hark `four`)."""
+    L = _L()
+    _ni = _num_word_idx(words)
+    hot_t = _word_t(words, _ni) if _ni is not None else d*.6
+    for k in range(n):
+        p = _ob(_p(t, st+k*.12, .35))
+        if p <= 0: continue
+        red = k == 0 and (t - st) > hot_t
+        spr = _person(RED if red else (200, 200, 205), 1.3)
+        # 720-wide layer: 4 people at spacing 160 (cx-240..cx+240) with a
+        # 117-wide sprite fit with margin; 220 spacing + 1.6 scale overflowed
+        # and cut the 1st/4th person off the frame edges.
+        L.alpha_composite(place(spr, cx-240+k*160, cy, scale=p, alpha=min(1, p+.01)))
+    if (t - st) > hot_t:
+        q = _oe(_p(t, st+hot_t, .3))
+        dr = ImageDraw.Draw(L)
+        dr.rounded_rectangle([cx-240-85, cy-170, cx-240+85, cy+170], 20, outline=RED+(255,), width=int(2+5*q))
+    return L
+
+@reg("question", ["question", "safe", "hook", "doubt", "risk", "wonder"])
+def vis_question(t, st=0, d=1.0, pack_text="TOBACCO", accent=Y, cx=W/2, cy=640, words=None):
+    """A giant '?' over a blurred pack, wobbling (Hark `question`)."""
+    L = _L()
+    # the pack, blurred (drawn on its own layer, Gaussian-blurred, pasted)
+    pk = Image.new("RGBA", (380, 500), (0, 0, 0, 0)); dp = ImageDraw.Draw(pk)
+    dp.rounded_rectangle([8, 8, 372, 492], 16, fill=(170, 28, 30, 255))
+    dp.rectangle([8, 8, 372, 68], fill=(130, 18, 20, 255))
+    dp.ellipse([76, 168, 304, 298], fill=(60, 10, 10, 255))
+    dp.text((190, 220), pack_text, font=_font(54), fill=(240, 240, 240, 255), anchor="mm")
+    pk = pk.filter(ImageFilter.GaussianBlur(6))
+    L.alpha_composite(place(pk, cx-60, cy))
+    p = _ob(_p(t, st+.5, .4))
+    if p > 0:
+        q = Image.new("RGBA", (420, 560), (0, 0, 0, 0)); dq = ImageDraw.Draw(q)
+        dq.text((210, 280), "?", font=_font(520), fill=accent+(255,), anchor="mm")
+        sh = math.sin(t*14)*4 if (t-st) > 0.9 else 0
+        q = q.rotate(sh, expand=True, resample=Image.BICUBIC)
+        L.alpha_composite(place(q, cx+170, cy-30, scale=p))
+    return L
+
+@reg("card", ["phone", "helpline", "quitline", "call", "contact", "number", "help"])
+def vis_card(t, st=0, d=1.0, title="NATIONAL TOBACCO QUITLINE", subtitle="Ministry of Health & Family Welfare \u00b7 Toll free",
+             number="1800-11-2356", footer="Free counselling in 16 languages", accent=Y, cx=W/2, cy=640, words=None):
+    """A contact/helpline card: cream card, title, divider, the phone number
+    typed out character by character + a yellow marker sweep (Hark `card`).
+    620 wide so it fits the 720-wide layer with margin (860 overflowed and
+    cut the title + number off both frame edges)."""
+    p = _oe(_p(t, st, .4))
+    if p <= 0: return _L()
+    w, h = 620, 440
+    o = Image.new("RGBA", (w, h), (0, 0, 0, 0)); dr = ImageDraw.Draw(o)
+    dr.rectangle([18, 22, 612, 436], fill=(0, 0, 0, 120)); dr.rectangle([8, 8, 604, 428], fill=(232, 226, 210, 255))
+    dr.text((40, 35), title, font=_font(30, "small"), fill=INK+(255,))
+    dr.text((40, 85), subtitle, font=_font(18, "small"), fill=(170, 40, 40, 255))
+    dr.line([40, 125, 580, 125], fill=(120, 120, 120, 255), width=2)
+    # the number types out from the first digit word (Hark word_t); 1.8 s.
+    _dig = [o2 for (o2, _dd, w2) in (words or []) if any(c.isdigit() for c in str(w2))]
+    ts = _dig[0] if _dig else .5
+    n = int(len(number)*min(1, max(0, (t-st-ts)/1.8))) if (t-st) > ts else 0
+    fm = _font(72, "mono")
+    if n > 0:
+        if (t-st) > ts+1.9:
+            q = _oe(_p(t, st+ts+1.9, .35))
+            dr.rectangle([36, 165, 36+(dr.textlength(number, font=fm)+12)*q, 265], fill=(245, 205, 40, 255))
+        dr.text((42, 170), number[:n], font=fm, fill=(25, 25, 25, 255))
+        if int(t*4) % 2 == 0 and n < len(number):
+            hw = dr.textlength(number[:n], font=fm)
+            dr.rectangle([46+hw, 175, 52+hw, 255], fill=(25, 25, 25, 255))
+    dr.text((40, 350), footer, font=_font(26, "small"), fill=(60, 60, 60, 255))
+    o = texture(o, 8)
+    return place(shadow(o), cx, cy+(1-p)*120, rot=-2, alpha=p)
+
+@reg("watch", ["stopwatch", "rate", "seconds", "time", "every", "interval"])
+def vis_watch(t, st=0, d=1.0, seconds=25, stamp="25 SECONDS", accent=Y, cx=W/2, cy=640, words=None):
+    """A stopwatch with a sweeping red sector + a stamp when the rate word is
+    spoken (Hark `watch`). Divya's clock has static hands; this one sweeps."""
+    L = _L(); R = 250; a = _oe(_p(t, st, .4))
+    if a <= 0: return L
+    sub = Image.new("RGBA", (600, 700), (0, 0, 0, 0)); dd = ImageDraw.Draw(sub); c = (300, 380)
+    dd.rectangle([270, 60, 330, 110], fill=WHITE+(255,)); dd.ellipse([c[0]-R, c[1]-R, c[0]+R, c[1]+R], outline=WHITE+(255,), width=12)
+    for k in range(60):
+        an = k*math.pi/30; r1 = R-(30 if k % 5 == 0 else 15)
+        dd.line([c[0]+r1*math.sin(an), c[1]-r1*math.cos(an), c[0]+(R-6)*math.sin(an), c[1]-(R-6)*math.cos(an)], fill=WHITE+(255,), width=5 if k % 5 == 0 else 2)
+    sweep = min((t-st)/max(d-.3, .5), 1)*(seconds/60)*2*math.pi
+    dd.pieslice([c[0]-R+20, c[1]-R+20, c[0]+R-20, c[1]+R-20], -90, -90+math.degrees(sweep), fill=(214, 40, 40, 110))
+    dd.line([c[0], c[1], c[0]+(R-40)*math.sin(sweep), c[1]-(R-40)*math.cos(sweep)], fill=Y+(255,), width=10)
+    dd.ellipse([c[0]-16, c[1]-16, c[0]+16, c[1]+16], fill=Y+(255,))
+    L.alpha_composite(place(sub, cx, cy-30, scale=.85+.15*a, alpha=a))
+    # v34 fix: the stamp text ("25 SECONDS") is NOT drawn here — the scene
+    # label below the visual already shows it (v33 dup-text rule). The watch
+    # face + sweeping red sector + hand is the visual; the label carries the
+    # number.
+    return L
+
+@reg("stamp_cta", ["cta", "quit", "stop", "today", "follow", "action", "stamp"])
+def vis_stamp_cta(t, st=0, d=1.0, word="QUIT", stamp="TODAY", strike="NOT TOMORROW", accent=Y, cx=W/2, cy=640, words=None):
+    """The last scene is a stamp CTA (Hark `stamp`): a huge word, a rotated
+    stamp slamming in, and a strikethrough animating across the dismissive phrase."""
+    L = _L()
+    a1 = _ob(_p(t, st, .35))
+    if a1 > 0:
+        dr = ImageDraw.Draw(L)
+        dr.text((cx, 620), word, font=_font(280), fill=WHITE+(255,), anchor="mm")
+    _ni = _num_word_idx(words)
+    _tl = _word_t(words, 1) if words and len(words) > 1 else d*.4
+    if (t-st) > _tl:
+        q = _oe(_p(t, st+_tl, .12))
+        s = Image.new("RGBA", (900, 300), (0, 0, 0, 0)); ds = ImageDraw.Draw(s)
+        ds.rounded_rectangle([10, 10, 890, 290], 20, outline=Y+(255,), width=16)
+        ds.text((450, 150), stamp, font=_font(220), fill=Y+(255,), anchor="mm")
+        s = s.rotate(-6, expand=True, resample=Image.BICUBIC)
+        L.alpha_composite(place(s, cx, 960, scale=2.4-1.4*q, alpha=q))
+    _tn = _word_t(words, 3) if words and len(words) > 3 else d*.7
+    if (t-st) > _tn:
+        q = _oe(_p(t, st+_tn, .3))
+        dr = ImageDraw.Draw(L)
+        f = _font(120)
+        dr.text((cx, 1290), strike, font=f, fill=(150, 150, 150, int(255*q)), anchor="mm")
+        w = dr.textlength(strike, font=f)
+        dr.line([cx-w/2-10, 1290, cx-w/2-10+(w+20)*_oe(_p(t, st+_tn+.25, .3)), 1283], fill=RED+(255,), width=14)
+    return L
 
 # ============================ BACKGROUNDS ============================
 SCENE_BG = {"dark": ((14, 16, 22), (28, 32, 44)), "navy": ((10, 20, 44), (24, 48, 90)), "wine": ((40, 10, 20), (80, 24, 40)),
