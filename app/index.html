@@ -225,6 +225,14 @@
             <p class="muted small" id="setupStateSub"></p>
             <button class="btn secondary" id="setupRetryBtn" data-t="setupRetry" hidden></button>
           </div>
+          <!-- v40: Gmail re-consent — shown by loadSetupState() only when
+               setup/status reports gmail needs-scope / no-token during a
+               setup. One button, same connect/link google flow. -->
+          <div class="card note" id="gmailConsentCard" hidden>
+            <p><b id="gmailConsentTitle"></b></p>
+            <p class="muted small" id="gmailConsentSub"></p>
+            <button class="btn secondary" id="gmailConsentBtn"></button>
+          </div>
           <p class="muted" data-t="setupIntro"></p>
           <!-- R48: plain-words explainer — Divya does everything with one allow
                (accounts, API keys, captchas, server). The user is asked for

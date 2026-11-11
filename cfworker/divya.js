@@ -340,7 +340,12 @@ const PROVIDERS = {
   facebook:  { title: "Facebook connect",  desc: "Page lo post cheyadaniki" },
   telegram:  { title: "Telegram connect",  desc: "Telegram lo kuda Divya" },
 };
-const GSCOPE = { youtube: "openid email https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly", google: "openid email profile" };
+const GSCOPE = { youtube: "openid email https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly", google: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/cloud-platform" };
+// v40 Gemini: cloud-platform is the ONLY scope keys.create accepts (no
+// narrower scope exists) — it is also a SENSITIVE scope: an unverified app
+// shows "Google hasn't verified this app" + a 100-user lifetime cap until
+// Google approves sensitive-scope verification. Adding it forces ALL Google
+// connects to re-consent (old tokens cannot mint cloud-platform tokens).
 const MSCOPE = { instagram: "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management", facebook: "pages_show_list,pages_manage_posts,pages_read_engagement" };
 
 async function connectMenu(env, user) {
@@ -401,6 +406,12 @@ async function oauthRoutes(env, url) {
         a = { uid, name: String(prof?.name || email.split("@")[0]).slice(0, 60), email, phone: "", pphone: "", pw: "", pwv: 1, created: Date.now(), google: true };
         await acctPut(env, a); await env.KV.put(`em:${email}`, uid);
       }
+      // v40 (R19): store the Google OAuth token under the app user id so the
+      // Worker itself can read verification mail server-side (fetchVerifyLink)
+      // and feed the magic link to the setup runner. nid matches appAuth's
+      // derivation for a: sessions (a.phone || "u_"+uid). Never logged.
+      const nid = a.phone || ("u_" + a.uid);
+      await env.KV.put(`tok:${nid}:google`, JSON.stringify({ ...tok, at: Date.now(), who: email }));
       return Response.redirect("https://divya-app.n8n00101.workers.dev/?gtoken=" + encodeURIComponent(await newSession(env, a)), 302);
     }
     await env.KV.put(`tok:${s.user}:${s.prov}`, JSON.stringify({ ...tok, at: Date.now(), who }));
@@ -1128,24 +1139,19 @@ async function doPostInstagram(env, n, o, en = false) {
     return appJson(req, { ok: true, deleted });
   }
   if (p === "gmail/verify" && req.method === "GET") {
-    // R19: read the newest verification mail via the connected Google token.
-    // TODO(scope): the Google OAuth app must include gmail.readonly; the current
-    // GSCOPE.google ("openid email profile") cannot read mail — until the scope is
-    // added, this returns needs_scope and the app falls back to the one manual tap.
-    const rec = JSON.parse((await env.KV.get(`tok:${u.n}:google`)) || "null");
-    if (!rec?.access_token) return appJson(req, { ok: false, needs_scope: true, error: lang === "en" ? "Gmail is not connected." : "Gmail connect avvaledu." }, 400);
-    const q = String(url.searchParams.get("q") || "verify").slice(0, 120);
-    const list = await (await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(q + " newer_than:1d")}&maxResults=1`, { headers: { Authorization: "Bearer " + rec.access_token } })).json().catch(() => ({}));
-    if (list.error?.status === 401) return appJson(req, { ok: false, error: lang === "en" ? "Gmail token expired — reconnect Google." : "Gmail token expire ayyindi — Google malli connect cheyyi." }, 401);
-    const id = list.messages?.[0]?.id;
-    if (!id) return appJson(req, { ok: false, error: "verification mail kanipinchaledu." }, 404);
-    const msg = await (await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, { headers: { Authorization: "Bearer " + rec.access_token } })).json().catch(() => ({}));
-    const b64 = (msg.payload?.parts || []).map(x => x.body?.data || "").join("") + (msg.payload?.body?.data || "");
-    let text = "";
-    try { text = atob(b64.replace(/-/g, "+").replace(/_/g, "/")); } catch {}
-    const m = text.match(/https?:\/\/[^\s"'<>]+(?:verify|confirm|activate)[^\s"'<>]*/i) || text.match(/https?:\/\/[^\s"'<>]+/);
-    if (!m) return appJson(req, { ok: false, error: "link kanipinchaledu." }, 404);
-    return appJson(req, { ok: true, link: m[0], from: (msg.payload?.headers || []).find(h => h.name === "From")?.value || "" });
+    // v40 (R19): "did the verification mail arrive?" check ONLY. The link
+    // itself is NEVER returned here — it lives server-side on the setup job
+    // record for the runner only. Uses googleToken() (refresh) + the
+    // recursive body walk + provider matchers from fetchVerifyLink().
+    const tok = await googleToken(env, u.n);
+    if (!tok) return appJson(req, { ok: false, needs_scope: true, error: lang === "en" ? "Gmail is not connected." : "Gmail connect avvaledu." }, 400);
+    const provParam = String(url.searchParams.get("provider") || "").trim().toLowerCase();
+    const qParam = String(url.searchParams.get("q") || "").toLowerCase();
+    const provider = provParam || (qParam.includes("groq") ? "groq" : qParam.includes("openrouter") ? "openrouter" : qParam.includes("cloudflare") ? "cloudflare" : "generic");
+    const r = await fetchVerifyLink(env, u.n, provider, null, 0, { window: "1d" });
+    if (r.reason === "needs-scope") return appJson(req, { ok: false, needs_scope: true, error: "Gmail read permission kavali — okkasari allow cheyyi." });
+    if (!r.ok) return appJson(req, { ok: false, error: r.reason === "no-mail-yet" ? "verification mail kanipinchaledu." : "Gmail read avvaledu." }, r.reason === "no-mail-yet" ? 404 : 502);
+    return appJson(req, { ok: true, found: true, from: r.from || "", subject: r.subject || "" });
   }
   if (p === "post/instagram" && req.method === "POST") {
     if (!body.confirm) return appJson(req, { ok: false, needs_confirm: true, error: lang === "en" ? "Confirm to post this reel to your Instagram account." : "Ee reel ni nee Instagram lo post cheyala? Confirm cheyyi." }, 400);
@@ -1882,7 +1888,7 @@ async function appRunner(req, env, p, url, body) {
 const SETUP_PROVIDERS = {
   groq: { name: "Groq", site: "console.groq.com", url: "https://console.groq.com/signup", flow: "email" },
   openrouter: { name: "OpenRouter", site: "openrouter.ai", url: "https://openrouter.ai/sign-up", flow: "email" },
-  gemini: { name: "Gemini (Google AI Studio)", site: "aistudio.google.com", url: "https://aistudio.google.com/", flow: "google" },
+  gemini: { name: "Gemini (Google AI Studio)", site: "aistudio.google.com", url: "https://aistudio.google.com/", flow: "google" }, // v40: provisioned SERVER-SIDE by provisionGeminiKey() in setupStartNext — flow "google" stays as the runner fallback for manual runs only
   cloudflare: { name: "Cloudflare (server)", site: "dash.cloudflare.com", url: "https://dash.cloudflare.com/sign-up", flow: "token" },
 };
 function setupJobId() { return [...crypto.getRandomValues(new Uint8Array(10))].map(b => b.toString(16).padStart(2, "0")).join(""); }
@@ -1919,7 +1925,7 @@ async function setupWatchdog(env, n, chain) {
   const mins = Math.max(1, Math.round((Date.now() - last) / 60000));
   const fin = { state: "stalled", done: chain.done || [], failed: chain.failed || [],
     provider: cur.provider, note: (cur.note || "") + ` — runner nunchi ${mins} min nunchi update ledu (setup aagipoyindhi).`,
-    lastStep: cur.step || "", lastUrl: cur.url || "", at: Date.now() };
+    lastStep: cur.step || "", lastUrl: cur.url || "", at: Date.now(), geminiVerify: (chain && chain.geminiNeedsVerify) || null, failReason: (chain && chain.failReason) || null };
   await env.KV.put(`setupdone:${n}`, JSON.stringify(fin), { expirationTtl: 86400 });
   await env.KV.delete(`setupchain:${n}`);
   return fin;
@@ -1975,7 +1981,7 @@ function setupSteps(chain, cur, fin, keys, lang) {
       else st = cur.state === "failed" ? "failed" : "running";
     }
     else if (!chain && fin && (fin.state === "failed" || fin.state === "stalled") && fin.provider === id) st = "failed";
-    const txt = setupStepText(id, st, lang, (cur && cur.provider === id ? cur.note : "") || (fin ? fin.note || "" : ""), kind);
+    const txt = setupStepText(id, st, lang, (cur && cur.provider === id ? cur.note : "") || (fin ? fin.note || "" : "") || (chain && chain.failReason && chain.failReason[id]) || (fin && fin.failReason && fin.failReason[id]) || "", kind);
     return { id, name: SETUP_PROVIDERS[id].name, state: st, kind, note: txt, text: txt };
   });
 }
@@ -2148,6 +2154,185 @@ async function autoCheckAll(env) {
     }
   } catch {}
 }
+// ===== v40 (R19): Worker-side verification-mail reader =====
+// The setup runner pauses on an email verification (Groq/OpenRouter/
+// Cloudflare magic link). The agent's Gmail tool redacts sign-in links,
+// so the link can never travel agent -> runner. Instead the WORKER reads
+// the user's Gmail itself (gmail.readonly scope, token stored at
+// tok:<n>:google on Google login / Connect) and feeds the link to the
+// runner server-side, on the job record only. The link/code is NEVER
+// logged, NEVER stored in any log KV, and NEVER returned by any
+// client-facing API — the only place it appears is the job record
+// (setupjob:<job>, 2-day TTL) returned by setup/runner/job to the runner
+// (x-runner-key auth). setup/status strips it via stripJobSecrets().
+async function googleToken(env, n) {
+  // Same refresh pattern as ytToken: expired + refresh_token -> refresh
+  // via oauth2.googleapis.com/token, store back, return the fresh token.
+  // No refresh token / refresh fails -> null (caller surfaces re-consent).
+  const t = JSON.parse((await env.KV.get(`tok:${n}:google`)) || "null");
+  if (!t || !t.access_token) return null;
+  if (t.expires_in && t.at && Date.now() - t.at > (t.expires_in - 300) * 1000) {
+    if (!t.refresh_token) return null;
+    const nt = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) })).json().catch(() => ({}));
+    if (!nt.access_token) return null;
+    const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in };
+    await env.KV.put(`tok:${n}:google`, JSON.stringify(merged));
+    return merged;
+  }
+  return t;
+}
+const VERIFY_PROVIDERS = {
+  // domains: preferred link hosts (magic links live here); from/subj:
+  // sender + subject keywords for the matcher; q: Gmail list query;
+  // mode "and" = from AND subj must match, "or" = either matches.
+  groq: { domains: ["groq.com", "stytch"], from: ["noreply@groq.com"], subj: ["login request", "groq"], q: "from:noreply@groq.com", mode: "and" },
+  openrouter: { domains: ["openrouter.ai", "clerk"], from: ["openrouter"], subj: ["openrouter", "verify"], q: "OpenRouter", mode: "or" },
+  cloudflare: { domains: ["cloudflare.com"], from: ["cloudflare"], subj: ["verify", "confirm", "cloudflare"], q: "from:cloudflare", mode: "and" },
+  generic: { domains: [], from: [], subj: ["verify", "confirm", "activate", "login"], q: "verify", mode: "or" },
+};
+function gmailHeader(msg, name) {
+  return (msg.payload?.headers || []).find(h => String(h.name || "").toLowerCase() === name)?.value || "";
+}
+function b64urlDecode(s) {
+  const b64 = String(s || "").replace(/-/g, "+").replace(/_/g, "/");
+  const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
+  try { return atob(b64 + pad); } catch { return ""; }
+}
+function gmailWalkParts(part, out) {
+  // RECURSIVE body walk: multipart/mixed -> multipart/alternative ->
+  // text/plain + text/html at any depth (the old gmail/verify only
+  // joined top-level parts and missed nested bodies).
+  if (!part) return;
+  const mime = String(part.mimeType || "");
+  if (mime === "text/plain" || mime === "text/html") { out.push({ mime, data: part.body?.data || "" }); return; }
+  for (const sub of part.parts || []) gmailWalkParts(sub, out);
+}
+function gmailBodyText(msg) {
+  const parts = []; gmailWalkParts(msg.payload, parts);
+  const plain = parts.filter(p => p.mime === "text/plain").map(p => b64urlDecode(p.data)).join("\n");
+  if (plain.trim()) return plain;
+  const html = parts.filter(p => p.mime === "text/html").map(p => b64urlDecode(p.data)).join("\n");
+  return html.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+}
+function gmailPickLink(text, domains) {
+  const urls = [...new Set((String(text).match(/https:\/\/[^\s"'<>\)\]]+/g) || []).map(u => u.replace(/[.,;:!?]+$/, "").replace(/&amp;/g, "&")))];
+  if (!urls.length) return "";
+  const pref = [...(domains || []), "stytch"];
+  const hostHas = u => { try { const h = new URL(u).hostname.toLowerCase(); return pref.some(d => h.includes(d)); } catch { return false; } };
+  const kw = /verify|confirm|activate|magic|login|signin/i;
+  return urls.find(u => hostHas(u)) || urls.find(u => kw.test(u)) || urls[0] || "";
+}
+function gmailPickCode(text) {
+  // First standalone 6-digit number near verify/code/confirm — not a
+  // year (4 digits) and not part of a longer number (\D boundaries).
+  // Returns "" when no candidate sits near the keywords (never feed a
+  // random 6-digit number such as an order id).
+  const t = String(text || "");
+  const re = /(?:^|\D)(\d{6})(?:\D|$)/g;
+  const cands = []; let m;
+  while ((m = re.exec(t))) cands.push({ code: m[1], i: m.index });
+  if (!cands.length) return "";
+  const near = cands.find(c => /verif|code|confirm/i.test(t.slice(Math.max(0, c.i - 60), c.i + 70)));
+  return near ? near.code : "";
+}
+async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
+  // Server-side only. Returns {ok:true, link|code, from, subject} or
+  // {ok:false, reason: "no-gmail-token"|"needs-scope"|"no-mail-yet"|"gmail-error"}.
+  // The link/code is returned ONLY to in-Worker callers (job feed /
+  // gmail/verify presence check) — never to the app.
+  const tok = await googleToken(env, n);
+  if (!tok) return { ok: false, reason: "no-gmail-token" };
+  const m = VERIFY_PROVIDERS[String(provider || "").toLowerCase()] || VERIFY_PROVIDERS.generic;
+  const window = (opts && opts.window) || "2h";
+  const auth = { Authorization: "Bearer " + tok.access_token };
+  let list;
+  try {
+    const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(m.q + " newer_than:" + window)}&maxResults=5`, { headers: auth });
+    list = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      const em = String(list.error?.message || "");
+      if (r.status === 403 || /insufficientPermissions/i.test(em)) return { ok: false, reason: "needs-scope" };
+      return { ok: false, reason: "gmail-error" };
+    }
+  } catch { return { ok: false, reason: "gmail-error" }; }
+  const ids = (list.messages || []).map(x => x.id).filter(Boolean);
+  if (!ids.length) return { ok: false, reason: "no-mail-yet" };
+  // Recency guard: only a mail from THIS run. pauseStart = later of the
+  // pause time (job.upd at pause, captured as pausedAt), the job start
+  // and the chain start, minus a 5-min grace — the provider sends the
+  // mail the moment the runner submits the form, which can be seconds
+  // BEFORE the runner notices the "check your email" page and pauses.
+  const pauseStart = Math.max((job && job.pausedAt) || 0, (job && job.at) || 0, chainAt || 0) - 5 * 60 * 1000;
+  for (const id of ids) {
+    let msg;
+    try {
+      const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, { headers: auth });
+      msg = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (r.status === 403 || /insufficientPermissions/i.test(String(msg.error?.message || ""))) return { ok: false, reason: "needs-scope" };
+        continue;
+      }
+    } catch { continue; }
+    const from = gmailHeader(msg, "from").toLowerCase();
+    const subject = gmailHeader(msg, "subject").toLowerCase();
+    const fromOk = !m.from.length || m.from.some(s => from.includes(s));
+    const subjOk = !m.subj.length || m.subj.some(s => subject.includes(s));
+    if (m.mode === "and" ? !(fromOk && subjOk) : !(fromOk || subjOk)) continue;
+    if (job && Number(msg.internalDate || 0) <= pauseStart) continue; // old mail from a previous run
+    const text = gmailBodyText(msg);
+    const link = gmailPickLink(text, m.domains);
+    if (link) return { ok: true, link, from: gmailHeader(msg, "from"), subject: gmailHeader(msg, "subject") };
+    const code = gmailPickCode(text);
+    if (code) return { ok: true, code, from: gmailHeader(msg, "from"), subject: gmailHeader(msg, "subject") };
+  }
+  return { ok: false, reason: "no-mail-yet" };
+}
+async function maybeFeedVerifyLink(env, job, chainAt) {
+  // Throttled (45s) feed attempt for a job paused on email verification.
+  // Success: verifyLink/verifyCode set, job flips back to running (the
+  // runner's poll loop opens the link in its own browser). Failure:
+  // mailFetch + mailFetchAt recorded, job stays paused. Never throws —
+  // a mail-fetch exception must never break the runner's polling.
+  try {
+    if (!job || job.state !== "paused" || (job.pauseReason || "email") !== "email") return job;
+    if (job.verifyLink || job.verifyCode) return job;
+    if (job.mailFetchAt && Date.now() - job.mailFetchAt < 45000) return job;
+    const r = await fetchVerifyLink(env, job.user, job.provider, job, chainAt);
+    job.mailFetchAt = Date.now();
+    if (r.ok && (r.link || r.code)) {
+      if (r.link) job.verifyLink = r.link;
+      if (r.code) job.verifyCode = r.code;
+      job.state = "running"; job.pauseReason = ""; job.note = ""; job.resumedAt = Date.now(); job.mailFetch = "ok";
+      delete job.pausedAt;
+    } else {
+      job.mailFetch = r.reason || "gmail-error";
+    }
+    job.upd = Date.now();
+    await env.KV.put(`setupjob:${job.job}`, JSON.stringify(job), { expirationTtl: 86400 * 2 });
+    return job;
+  } catch { return job; }
+}
+async function gmailStateFor(env, n, job) {
+  // setup/status `gmail` field for the app's re-consent card. Carries no
+  // link/code — only the state + provider.
+  const provider = (job && job.provider) || null;
+  if (job && (job.verifyLink || job.verifyCode)) return { state: "ok", provider };
+  const mf = (job && job.mailFetch) || "";
+  if (mf === "no-gmail-token") return { state: "no-token", provider };
+  if (mf === "needs-scope") return { state: "needs-scope", provider };
+  if (mf === "no-mail-yet") return { state: "no-mail-yet", provider };
+  if (mf === "gmail-error") return { state: "error", provider };
+  const tok = JSON.parse((await env.KV.get(`tok:${n}:google`)) || "null");
+  if (!tok || !tok.access_token) return { state: "no-token", provider };
+  return { state: "no-mail-yet", provider };
+}
+function stripJobSecrets(j) {
+  // setup/status returns the current job to the APP — the magic link /
+  // SMS code must never travel there (runner-only, via setup/runner/job).
+  if (!j) return j;
+  const { verifyLink, verifyCode, smsCode, ...rest } = j;
+  return rest;
+}
 async function appSetupUser(req, env, u, p, body, lang) {
   const en = lang === "en";
   if (p === "setup/status") {
@@ -2170,7 +2355,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       if (stalled) {
         const state = setupStateFor(null, null, stalled, keys);
         const autoLog = await autoLogRead(env, u.n);
-        return { ok: true, active: false, consent: !!consent, finished: stalled, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), autoLog: autoLog.slice(0, 10) };
+        return { ok: true, active: false, consent: !!consent, finished: stalled, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (stalled && stalled.geminiVerify) || null, autoLog: autoLog.slice(0, 10) };
       }
       chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     }
@@ -2185,9 +2370,18 @@ async function appSetupUser(req, env, u, p, body, lang) {
       let auto = null;
       try { auto = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", false); } catch {}
       const autoLog = await autoLogRead(env, u.n);
-      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
+      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
     }
-    const cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
+    let cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
+    // v40 (R19): paused on email verification — try feeding the magic link
+    // server-side from Gmail (throttled inside maybeFeedVerifyLink, so the
+    // app's polling can't spam the Gmail API). Covers the case where the
+    // runner is not polling (e.g. after a runner timeout). Best-effort —
+    // a failure here never breaks setup/status.
+    if (cur && cur.state === "paused" && (cur.pauseReason || "email") === "email" && !cur.verifyLink && !cur.verifyCode) {
+      try { cur = await maybeFeedVerifyLink(env, cur, chain.at || 0); } catch {}
+    }
+    const gmail = await gmailStateFor(env, u.n, cur);
     let state = setupStateFor(chain, cur, null, keys);
     // v39 (D4): staleness — a run that reports "running" but has made no
     // progress for 30+ minutes is stalled, not running. The runner posts
@@ -2207,7 +2401,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // of a bare "Setup running…". Additive field; older app builds ignore it.
     const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang) } : null;
     const autoLog = await autoLogRead(env, u.n);
-    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, autoLog: autoLog.slice(0, 10) };
+    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, geminiVerify: chain.geminiNeedsVerify || null, autoLog: autoLog.slice(0, 10) };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
@@ -2264,7 +2458,12 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (!chain || !chain.current) return { ok: false, error: "no job" };
     const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
     if (!j) return { ok: false, error: "no job" };
+    // v40: pausedAt = job.upd at pause (recency guard for the mail reader).
+    // Set only on the transition into paused — the runner heartbeats while
+    // paused, and re-stamping it would push the guard past the real mail.
+    const wasPaused = j.state === "paused";
     j.state = "paused"; j.pauseReason = reason; j.note = setupPauseLine(reason, lang); j.upd = Date.now();
+    if (!wasPaused) j.pausedAt = Date.now();
     await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
     return { ok: true, reason, message: j.note };
   }
@@ -2277,6 +2476,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
     if (!j) return { ok: false, error: "no job" };
     j.state = "running"; j.note = ""; j.pauseReason = ""; j.resumedAt = Date.now(); j.upd = Date.now();
+    delete j.pausedAt; // v40: pause over, recency guard resets for the next pause
     // v39 C7: the resume can carry what the runner needs to finish the
     // paused step — the magic-link URL (job.verifyLink, opened in the
     // runner's own browser so the session lands there) or an SMS code
@@ -2298,6 +2498,131 @@ async function appSetupUser(req, env, u, p, body, lang) {
   }
   return { ok: false, error: "not found" };
 }
+// ===== v40: Gemini server-side provisioning (no browser, no runner) =====
+// The GitHub runner cannot create a Gemini key: AI Studio needs a Google
+// sign-in and the headless runner has no Google session (the runner's
+// flow_google is a dead end — left untouched as the fallback for manual
+// runs). The Worker does it instead, with the user's stored Google OAuth
+// token (tok:<n>:google, refreshed by googleToken()): list/reuse a project
+// -> create one if none -> enable APIs -> create a restricted key -> fetch
+// its key string -> test it. The key is sealed via storeKey() like every
+// other provider key — never logged, never returned by any API.
+// Returns {ok:true, projectNumber, projectId, reused} on success, else
+// {ok:false, reason, ...}: "no-google-token" | "needs-scope" (token predates
+// the cloud-platform consent — user must reconnect Google) | "needs-tos"
+// (first-project Cloud ToS tap) | "needs-verification" (key IS stored; only
+// the 30-second phone QR scan at verifyUrl is pending) | "list-projects-failed"
+// | "create-project-failed" | "enable-apis-failed" | "create-key-failed" |
+// "test-failed" | "provision-error".
+const GEMINI_GCP_SERVICES = ["generativelanguage.googleapis.com", "apikeys.googleapis.com", "serviceusage.googleapis.com", "cloudresourcemanager.googleapis.com"];
+const GEMINI_OP_TIMEOUT_MS = 120000;
+const GEMINI_POLL_MS = 5000;
+async function gcpJson(tok, url, opts) {
+  const r = await fetch(url, { ...(opts || {}), headers: { ...(opts?.headers || {}), Authorization: "Bearer " + tok, "content-type": "application/json" } }).catch(() => null);
+  const b = r ? await r.json().catch(() => ({})) : {};
+  return { ok: !!r && r.ok, status: r ? r.status : 0, body: b };
+}
+async function gcpPollOp(tok, pollUrl) {
+  // Long-running GCP operation: poll until done (success or error) or timeout.
+  const deadline = Date.now() + GEMINI_OP_TIMEOUT_MS;
+  while (true) {
+    const r = await gcpJson(tok, pollUrl);
+    if (r.ok && r.body.done) return r.body;
+    if (!r.ok) return { error: r.body.error || { message: "operation poll failed: HTTP " + r.status } };
+    if (r.body.error) return r.body; // done:true carrying an error
+    if (Date.now() >= deadline) return { error: { message: "operation timed out" }, timeout: true };
+    await new Promise(res => setTimeout(res, GEMINI_POLL_MS));
+  }
+}
+async function provisionGeminiKey(env, n) {
+  const tok = await googleToken(env, n);
+  if (!tok) return { ok: false, reason: "no-google-token" };
+  const at = tok.access_token;
+  const errMsg = e => String((e && (e.message || e.status)) || "");
+  const isTos = e => /terms of service/i.test(errMsg(e));
+  const isScope = (status, e) => status === 403 && /insufficient|PERMISSION_DENIED|does not have/i.test(errMsg(e));
+  try {
+    // 1. Reuse an existing project when possible — dodges both the
+    // first-project ToS tap and the free-tier verification problem (an
+    // AI Studio project is already ToS-accepted + verified). Prefer a
+    // project with the Generative Language API already enabled.
+    let projectNumber = "", projectId = "", reused = false;
+    const list = await gcpJson(at, "https://cloudresourcemanager.googleapis.com/v1/projects?pageSize=100");
+    if (!list.ok) {
+      const e = list.body.error || {};
+      if (list.status === 403 && isTos(e)) return { ok: false, reason: "needs-tos", tosUrl: "https://console.cloud.google.com" };
+      if (isScope(list.status, e)) return { ok: false, reason: "needs-scope" };
+      return { ok: false, reason: "list-projects-failed", status: list.status, detail: errMsg(e).slice(0, 200) };
+    }
+    const projects = (list.body.projects || []).filter(p => p.projectNumber && p.lifecycleState !== "DELETE_REQUESTED");
+    for (const p of projects.slice(0, 5)) {
+      const svc = await gcpJson(at, `https://serviceusage.googleapis.com/v1/projects/${p.projectNumber}/services/generativelanguage.googleapis.com`);
+      if (svc.ok && svc.body.state === "ENABLED") { projectNumber = String(p.projectNumber); projectId = String(p.projectId || ""); reused = true; break; }
+    }
+    if (!projectNumber && projects.length) { projectNumber = String(projects[0].projectNumber); projectId = String(projects[0].projectId || ""); reused = true; }
+    // 2. No project: create one (no parent/org — a user account needs none).
+    if (!projectNumber) {
+      const pid = "divya-" + [...crypto.getRandomValues(new Uint8Array(6))].map(b => "abcdefghijklmnopqrstuvwxyz0123456789"[b % 36]).join("");
+      const created = await gcpJson(at, "https://cloudresourcemanager.googleapis.com/v1/projects", { method: "POST", body: JSON.stringify({ projectId: pid, name: "Divya" }) });
+      if (!created.ok) {
+        const e = created.body.error || {};
+        if (created.status === 403 && isTos(e)) return { ok: false, reason: "needs-tos", tosUrl: "https://console.cloud.google.com" };
+        if (isScope(created.status, e)) return { ok: false, reason: "needs-scope" };
+        return { ok: false, reason: "create-project-failed", status: created.status, detail: errMsg(e).slice(0, 200) };
+      }
+      const op = await gcpPollOp(at, "https://cloudresourcemanager.googleapis.com/v1/" + created.body.name);
+      if (op.error) {
+        if (isTos(op.error)) return { ok: false, reason: "needs-tos", tosUrl: "https://console.cloud.google.com" };
+        return { ok: false, reason: "create-project-failed", detail: errMsg(op.error).slice(0, 200) };
+      }
+      projectNumber = String(op.response?.projectNumber || "");
+      projectId = String(op.response?.projectId || pid);
+      if (!projectNumber) return { ok: false, reason: "create-project-failed", detail: "no projectNumber in operation response" };
+    }
+    // 3. Enable the APIs (batchEnable, one call).
+    const en = await gcpJson(at, `https://serviceusage.googleapis.com/v1/projects/${projectNumber}/services:batchEnable`, { method: "POST", body: JSON.stringify({ serviceIds: GEMINI_GCP_SERVICES }) });
+    if (!en.ok) return { ok: false, reason: "enable-apis-failed", status: en.status, detail: errMsg(en.body.error).slice(0, 200) };
+    const enOp = await gcpPollOp(at, "https://serviceusage.googleapis.com/v1/" + en.body.name);
+    if (enOp.error) return { ok: false, reason: "enable-apis-failed", detail: errMsg(enOp.error).slice(0, 200) };
+    // 4. Create the key — restricted to generativelanguage (MANDATORY:
+    // Gemini rejects unrestricted standard keys).
+    const kc = await gcpJson(at, `https://apikeys.googleapis.com/v2/projects/${projectNumber}/locations/global/keys`, { method: "POST", body: JSON.stringify({ displayName: "Divya", restrictions: { apiTargets: [{ service: "generativelanguage.googleapis.com" }] } }) });
+    if (!kc.ok) return { ok: false, reason: "create-key-failed", status: kc.status, detail: errMsg(kc.body.error).slice(0, 200) };
+    const kcOp = await gcpPollOp(at, "https://apikeys.googleapis.com/v2/" + kc.body.name);
+    if (kcOp.error) return { ok: false, reason: "create-key-failed", detail: errMsg(kcOp.error).slice(0, 200) };
+    const keyName = String(kcOp.response?.name || "");
+    if (!keyName) return { ok: false, reason: "create-key-failed", detail: "no key name in operation response" };
+    // 5. Fetch the key string (ListKeys/GetKey deliberately omit it).
+    const ks = await gcpJson(at, `https://apikeys.googleapis.com/v2/${keyName}/keyString`);
+    if (!ks.ok || !ks.body.keyString) return { ok: false, reason: "create-key-failed", status: ks.status, detail: "keyString not returned" };
+    const key = String(ks.body.keyString);
+    // 6. Test it (same probe setup.py uses). 403 FREE_TIER_VERIFICATION_REQUIRED
+    // means the key EXISTS but the project needs the 30-second phone QR
+    // scan — store the key anyway; it becomes usable after verification.
+    // Other failures are retried (API enablement can take a minute to
+    // propagate) before giving up; an untested key is NOT stored, so a
+    // later auto-provision can retry cleanly instead of piling up keys.
+    let probe = null, probeBody = {};
+    for (let attempt = 0; attempt < 3; attempt++) {
+      probe = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?pageSize=1&key=${encodeURIComponent(key)}`).catch(() => null);
+      probeBody = probe ? await probe.json().catch(() => ({})) : {};
+      if (probe && probe.ok) break;
+      if (probe && probe.status === 403 && /FREE_TIER_VERIFICATION_REQUIRED/i.test(JSON.stringify(probeBody))) break;
+      if (attempt < 2) await new Promise(res => setTimeout(res, 10000));
+    }
+    if (probe && probe.ok) {
+      await storeKey(env, n, "gemini", key, { who: "AI Studio" });
+      return { ok: true, projectNumber, projectId, reused };
+    }
+    if (probe && probe.status === 403 && /FREE_TIER_VERIFICATION_REQUIRED/i.test(JSON.stringify(probeBody))) {
+      await storeKey(env, n, "gemini", key, { who: "AI Studio" });
+      return { ok: false, reason: "needs-verification", projectNumber, projectId, reused, verifyUrl: `https://aistudio.google.com/verify?project=${projectNumber}` };
+    }
+    return { ok: false, reason: "test-failed", status: probe ? probe.status : 0 };
+  } catch (e) {
+    return { ok: false, reason: "provision-error", detail: String(e).slice(0, 200) };
+  }
+}
 async function setupStartNext(env, n) {
   const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
   if (!chain) return { ok: false, error: "no chain" };
@@ -2306,12 +2631,48 @@ async function setupStartNext(env, n) {
   // v24: record the outcome before deleting the chain — otherwise the app has
   // nothing to show when the setup ends (the mini-box just vanished).
   // v38 merge fix: if NO provider produced a key, the run failed (not done).
-  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, at: Date.now(), ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
+  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, failReason: chain.failReason || null, ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
   const job = setupJobId();
   const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
   await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
   chain.current = job;
   await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+  // v40: Gemini is provisioned SERVER-SIDE here — the runner's flow_google
+  // is a dead end (no Google session in the headless runner), so NO GitHub
+  // dispatch for gemini. On success the key is sealed in the KV slot and
+  // the chain advances like the runner's done path. On needs-verification
+  // the key is ALSO stored (it becomes usable after the phone QR scan) and
+  // gemini counts as done, with geminiNeedsVerify carried so the app can
+  // show the verify step. Any other failure marks gemini failed and the
+  // chain advances to the next provider (one provider's failure never
+  // kills the chain).
+  if (nextId === "gemini") {
+    rec.state = "running"; rec.step = "creating key"; rec.upd = Date.now();
+    await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    const prov = await provisionGeminiKey(env, n).catch(e => ({ ok: false, reason: "provision-error", detail: String(e).slice(0, 200) }));
+    rec.upd = Date.now();
+    if (prov.ok) {
+      rec.state = "done"; rec.step = "key saved"; rec.note = "";
+      if (!chain.done.includes("gemini")) chain.done.push("gemini");
+    } else if (prov.reason === "needs-verification") {
+      rec.state = "done"; rec.step = "key saved — verification pending"; rec.note = "";
+      if (!chain.done.includes("gemini")) chain.done.push("gemini");
+      chain.geminiNeedsVerify = { projectNumber: prov.projectNumber || "", verifyUrl: prov.verifyUrl || "" };
+    } else {
+      rec.state = "failed"; rec.step = "failed";
+      rec.note = String(prov.reason || "failed").slice(0, 200);
+      chain.failed = chain.failed || [];
+      if (!chain.failed.includes("gemini")) chain.failed.push("gemini");
+      // Keep the reason on the chain so setupSteps can show WHY it failed
+      // (it only reads the CURRENT job's note, which by then belongs to
+      // the next provider).
+      chain.failReason = chain.failReason || {};
+      chain.failReason.gemini = String(prov.reason || "failed").slice(0, 80);
+    }
+    await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+    return setupStartNext(env, n); // advance to the next provider
+  }
   const ok = await setupDispatch(env, job, nextId);
   if (!ok) { await env.KV.delete(`setupjob:${job}`); return { ok: false, error: "dispatch failed" }; }
   return { ok: true, job, provider: nextId };
@@ -2321,9 +2682,21 @@ async function appSetupRunner(req, env, p, url, body) {
   const job = String(url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, "");
   const rec = job ? JSON.parse((await env.KV.get(`setupjob:${job}`)) || "null") : null;
   if (!rec) return new Response("missing", { status: 404 });
-  if (p === "setup/runner/job") return Response.json({ ok: true, job: rec });
+  if (p === "setup/runner/job") {
+    // v40 (R19): paused on email verification — feed the magic link
+    // server-side from the user's Gmail (never through the agent's
+    // redacted tool layer). Best-effort; never breaks the runner's poll.
+    if (rec.state === "paused" && (rec.pauseReason || "email") === "email" && !rec.verifyLink && !rec.verifyCode) {
+      let chainAt = 0;
+      try { const ch = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null"); chainAt = ch?.at || 0; } catch {}
+      const updated = await maybeFeedVerifyLink(env, rec, chainAt);
+      return Response.json({ ok: true, job: updated });
+    }
+    return Response.json({ ok: true, job: rec });
+  }
   if (p === "setup/runner/progress" && req.method === "POST") {
     const state = ["queued", "running", "paused", "done", "failed", "stopped"].includes(body.state) ? body.state : "running";
+    const prevState = rec.state;
     rec.state = state; rec.step = String(body.step || rec.step || "").slice(0, 80); rec.note = String(body.note || "").slice(0, 300); rec.url = String(body.url || rec.url || "").slice(0, 500); rec.upd = Date.now();
     // v38 merge fix: the runner reports pauses with a reason. Email/SMS are
     // the only two the user must act on; captcha/signin are last-resort
@@ -2331,8 +2704,8 @@ async function appSetupRunner(req, env, p, url, body) {
     // Gemini Google sign-in). Store the reason as-is — never coerce a
     // captcha/signin pause into an email pause (that would tell the user
     // to tap an email link that does not exist).
-    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); }
-    else if (state === "running") { rec.pauseReason = ""; }
+    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); if (prevState !== "paused") rec.pausedAt = Date.now(); /* v40: job.upd at pause, for the mail recency guard */ }
+    else if (state === "running") { rec.pauseReason = ""; delete rec.pausedAt; }
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     // Chain: provider done → auto-start the next one with the same consent.
     if (state === "done") {
