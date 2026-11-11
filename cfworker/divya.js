@@ -1206,6 +1206,20 @@ async function openKey(env, n, prov) {
     return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(iv), additionalData: te8(`${n}:${prov}`) }, k, unb64(ct)));
   } catch { return ""; }
 }
+async function openSetupPass(env, n) {
+  // v39 Phase 2: the generated provider-account password, sealed with the
+  // same KEK as API keys. The runner needs it to sign back in to an
+  // EXISTING account (auto-provision of a replacement key) — without it
+  // Divya could never re-enter an account it created. Never logged, never
+  // returned by any API; only sent to the runner over the authenticated
+  // runner channel (job record, x-runner-key), same as today.
+  try {
+    const rec = JSON.parse((await env.KV.get(`upass:${n}`)) || "null"); if (!rec?.ct) return "";
+    const k = await appKek(env); if (!k) return "";
+    const [iv, ct] = rec.ct.split(".");
+    return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(iv), additionalData: te8(`${n}:setup`) }, k, unb64(ct)));
+  } catch { return ""; }
+}
 async function storeKey(env, n, prov, key, res) {
   await env.KV.put(`ukey:${n}:${prov}`, JSON.stringify({ ct: await sealKey(env, n, prov, key), at: Date.now(), ok: true, who: res.who || "", tested: Date.now() }));
 }
@@ -1877,6 +1891,39 @@ async function setupDispatch(env, job, provider) {
   const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/setup.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs: { job, provider } }) }).catch(() => null);
   return !!r && r.status === 204;
 }
+// v39 (setup-flow fix, 2026-11-11): a setup run must NEVER hang forever.
+// The live test proved the failure: the runner died/stalled at the Groq
+// sign-in page and nothing ever noticed — the chain stayed in KV, the app
+// showed "Setup running…" forever, and the previous session's stale card
+// showed the same. Every job record carries `upd` (last runner contact);
+// the watchdog below treats a run as STALLED when the runner goes silent
+// (10 min while running/queued — the runner posts progress far more often
+// than that, and heartbeats every ~15s while paused; 30 min while paused).
+// A stalled run is recorded in setupdone (state "stalled", last step +
+// reason) and the chain is cleared, so the app shows failed/stalled +
+// Retry instead of "running" forever. (Worker B owns the Setup PAGE
+// display of stalled/failed + Retry; this is the server-side state that
+// feeds it, plus the chat mini-box.)
+const SETUP_STALE_RUNNING_MS = 10 * 60 * 1000;
+const SETUP_STALE_PAUSED_MS = 30 * 60 * 1000;
+async function setupWatchdog(env, n, chain) {
+  // Returns the recorded setupdone entry when the active run is stale
+  // (and clears the chain), else null. Idempotent: once the chain is
+  // gone, later calls take the no-chain path.
+  if (!chain || !chain.current) return null;
+  const cur = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
+  if (!cur) return null;
+  const last = cur.upd || cur.at || 0;
+  const limit = cur.state === "paused" ? SETUP_STALE_PAUSED_MS : SETUP_STALE_RUNNING_MS;
+  if (Date.now() - last < limit) return null;
+  const mins = Math.max(1, Math.round((Date.now() - last) / 60000));
+  const fin = { state: "stalled", done: chain.done || [], failed: chain.failed || [],
+    provider: cur.provider, note: (cur.note || "") + ` — runner nunchi ${mins} min nunchi update ledu (setup aagipoyindhi).`,
+    lastStep: cur.step || "", lastUrl: cur.url || "", at: Date.now() };
+  await env.KV.put(`setupdone:${n}`, JSON.stringify(fin), { expirationTtl: 86400 });
+  await env.KV.delete(`setupchain:${n}`);
+  return fin;
+}
 // v38 (R48, items 1+6): setup state + per-step progress for the app's
 // login-time check and chat mini-box. States: not-started / running /
 // paused-email / paused-sms / done / failed.
@@ -1891,6 +1938,9 @@ function setupStateFor(chain, cur, fin, keys) {
   if (fin) {
     if (fin.state === "done") return "done";
     if (fin.state === "failed") return "failed";
+    // v39: a stalled run is a terminal state of its own — the app shows
+    // "stalled" + Retry, never "running" forever.
+    if (fin.state === "stalled") return "stalled";
     return (keys.groq || keys.openrouter || keys.gemini) ? "done" : "not-started";
   }
   return (keys.groq || keys.openrouter || keys.gemini) ? "done" : "not-started";
@@ -1924,7 +1974,7 @@ function setupSteps(chain, cur, fin, keys, lang) {
       if (cur.state === "paused") { st = "paused"; kind = cur.pauseReason || "email"; }
       else st = cur.state === "failed" ? "failed" : "running";
     }
-    else if (!chain && fin && fin.state === "failed" && fin.provider === id) st = "failed";
+    else if (!chain && fin && (fin.state === "failed" || fin.state === "stalled") && fin.provider === id) st = "failed";
     const txt = setupStepText(id, st, lang, (cur && cur.provider === id ? cur.note : "") || (fin ? fin.note || "" : ""), kind);
     return { id, name: SETUP_PROVIDERS[id].name, state: st, kind, note: txt, text: txt };
   });
@@ -1938,12 +1988,170 @@ async function setupFinalize(env, n, done) {
   try { if (!(await env.KV.get(`joined:${n}`))) await env.KV.put(`joined:${n}`, String(Date.now())); } catch {}
   const keys = {};
   for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${n}:${id}`)) keys[id] = true;
-  return { referralCode: code, weeklyFree: TOK.WEEKLY_FREE, weekEnds: istWeekEnd(), keys };
+  // v39 Phase 2: an autonomous run logs what it did, so the user can see
+  // it (Setup screen auto-log). The chain is still in KV here —
+  // setupStartNext deletes it only after finalize returns.
+  let auto = false;
+  try {
+    const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
+    if (chain && chain.auto) {
+      auto = true;
+      for (const id of (chain.done || [])) if (keys[id]) await autoLogAppend(env, n, { provider: id, action: "key-added", why: (chain.why && chain.why[id]) || "key missing — auto-provisioned", result: "ok" });
+      for (const id of (chain.failed || [])) await autoLogAppend(env, n, { provider: id, action: "still-missing", why: (chain.why && chain.why[id]) || "auto-provision failed", result: "failed" });
+      if (!(chain.done || []).length && !(chain.failed || []).length) await autoLogAppend(env, n, { provider: "", action: "no-key", why: "auto-provision finished with no key", result: "failed" });
+    }
+  } catch {}
+  return { referralCode: code, weeklyFree: TOK.WEEKLY_FREE, weekEnds: istWeekEnd(), keys, auto };
+}
+// ===== v39 Phase 2: autonomous self-monitoring + self-provisioning =====
+// Ajju (2026-11-11): Divya itself must figure out, on its own, whether
+// the API keys are there and whether they are enough for the user's usage
+// — and when they are not, think "I need more API keys from free models"
+// and create them itself, in the background, inside the one-tap allow.
+// Loop: (a) key-health check (present? valid? rate-limited?), (b) usage
+// analysis (weekly token spend vs allowance), (c) auto-provision the
+// missing/invalid providers through the same setup chain, (d) every
+// action logged to a visible auto-log (when / which provider / why /
+// result) the Setup screen shows. Triggers: opportunistically on
+// setup/status (throttled to one check per user per 6h), the scheduled
+// handler (when a cron is configured), and setup/autocheck (manual/test).
+// Never without consent on file; never while a run is already active;
+// a provider that failed auto-provision is not retried for 24h.
+const AUTO_PROVIDERS = ["groq", "openrouter", "gemini"];
+const AUTO_CHECK_MIN_MS = 6 * 60 * 60 * 1000;
+const AUTO_FAIL_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+const AUTO_LOG_MAX = 20;
+const AUTO_PROBE = {
+  groq: "https://api.groq.com/openai/v1/models",
+  openrouter: "https://openrouter.ai/api/v1/models",
+  gemini: "https://generativelanguage.googleapis.com/v1beta/models",
+};
+async function autoProbeKey(provider, key) {
+  // One cheap read-only probe, same endpoints the runner's test_key uses.
+  // Returns {valid, limited}: limited = key works but the free tier is
+  // rate-limiting right now (still counts as a key, never auto-replaced
+  // on its own — only missing/invalid keys trigger provisioning).
+  try {
+    const url = provider === "gemini" ? AUTO_PROBE.gemini + "?key=" + encodeURIComponent(key) : AUTO_PROBE[provider];
+    const headers = provider === "gemini" ? {} : { Authorization: "Bearer " + key };
+    const r = await fetch(url, { headers, signal: AbortSignal.timeout(10000) }).catch(() => null);
+    if (!r) return { valid: false, limited: false, error: "no response" };
+    if (r.status === 429) return { valid: true, limited: true };
+    return { valid: r.status === 200, limited: false };
+  } catch { return { valid: false, limited: false, error: "probe failed" }; }
+}
+async function keyHealthCheck(env, n) {
+  const health = {};
+  for (const id of AUTO_PROVIDERS) {
+    const key = await openKey(env, n, id);
+    if (!key) { health[id] = { present: false, valid: false, status: "missing" }; continue; }
+    const probe = await autoProbeKey(id, key);
+    health[id] = { present: true, valid: probe.valid, limited: !!probe.limited, status: probe.valid ? (probe.limited ? "limited" : "ok") : "invalid" };
+  }
+  return health;
+}
+async function usageAnalysis(env, n, health) {
+  const bal = await tokBalance(env, n).catch(() => null);
+  const weekSpent = bal ? bal.weekSpent : 0;
+  const week = bal ? bal.week : TOK.WEEKLY_FREE;
+  const usagePct = week > 0 ? Math.round((weekSpent / week) * 100) : 0;
+  const missing = AUTO_PROVIDERS.filter(id => health[id].status === "missing");
+  const invalid = AUTO_PROVIDERS.filter(id => health[id].status === "invalid");
+  const limited = AUTO_PROVIDERS.filter(id => health[id].status === "limited");
+  return { weekSpent, weekLeft: bal ? bal.weekLeft : 0, videosWeek: bal ? bal.videosWeek : 0, usagePct,
+    unlimited: !!(bal && bal.unlimited), missing, invalid, limited,
+    enough: missing.length === 0 && invalid.length === 0 };
+}
+async function autoLogRead(env, n) {
+  try { return JSON.parse((await env.KV.get(`setupauto:${n}`)) || "[]"); } catch { return []; }
+}
+async function autoLogAppend(env, n, entry) {
+  try {
+    const log = await autoLogRead(env, n);
+    log.unshift({ at: Date.now(), ...entry });
+    await env.KV.put(`setupauto:${n}`, JSON.stringify(log.slice(0, AUTO_LOG_MAX)), { expirationTtl: 86400 * 30 });
+  } catch {}
+}
+async function maybeAutoCheck(env, n, email, force) {
+  // Returns the verdict. Throttled (6h) unless force (test/manual).
+  // Never provisions without consent on file, never during an active run.
+  const now = Date.now();
+  const last = parseInt((await env.KV.get(`setupautolast:${n}`)) || "0", 10) || 0;
+  if (!force && now - last < AUTO_CHECK_MIN_MS) return { checked: false, reason: "throttled" };
+  await env.KV.put(`setupautolast:${n}`, String(now), { expirationTtl: 86400 * 2 });
+  const consent = JSON.parse((await env.KV.get(`setupconsent:${n}`)) || "null");
+  if (!consent) {
+    // A brand-new user who never gave the allow gets no log spam — the
+    // login-time setup prompt is the ask. Log only when an EXISTING user
+    // (previous setup, or real usage) has a lapsed allow.
+    const hadSetup = !!(await env.KV.get(`setupdone:${n}`)) || !!(await env.KV.get(`joined:${n}`));
+    if (hadSetup) await autoLogAppend(env, n, { provider: "", action: "skipped", why: "one-tap allow expired or missing — needs one tap in Setup", result: "needs-consent" });
+    return { checked: true, action: "needs-consent" };
+  }
+  const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
+  if (chain) return { checked: true, action: "already-running" };
+  const health = await keyHealthCheck(env, n);
+  const usage = await usageAnalysis(env, n, health);
+  const log = await autoLogRead(env, n);
+  const failedRecently = id => log.some(e => e.provider === id && e.result === "failed" && now - (e.at || 0) < AUTO_FAIL_COOLDOWN_MS);
+  const whyFor = id => {
+    const base = health[id].status === "missing" ? `${SETUP_PROVIDERS[id].name} key ledu` : `${SETUP_PROVIDERS[id].name} key pani cheyyatledhu (invalid)`;
+    return usage.usagePct >= 50 ? `${base} — usage ${usage.usagePct}% of weekly allowance, keys saripovu` : base;
+  };
+  const candidates = [...usage.missing, ...usage.invalid].filter(id => !failedRecently(id));
+  const skippedCool = [...usage.missing, ...usage.invalid].filter(id => failedRecently(id));
+  if (!candidates.length) {
+    // Nothing to provision. Log only what the user should see: a state
+    // change, or usage pressing against the free tiers with no free
+    // provider left to add (honest limit — Divya cannot invent a 4th
+    // free provider).
+    if (usage.usagePct >= 90 && usage.enough) {
+      await autoLogAppend(env, n, { provider: "", action: "checked", why: `usage ${usage.usagePct}% of weekly allowance — anni free providers already set up, inka free keys levu`, result: "maxed" });
+    }
+    return { checked: true, action: "none", health, usage, skippedCool };
+  }
+  const em = String(email || consent.email || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
+    await autoLogAppend(env, n, { provider: candidates[0], action: "skipped", why: "no email on file for the new accounts", result: "needs-email" });
+    return { checked: true, action: "needs-email", health, usage };
+  }
+  const why = {};
+  for (const id of candidates) why[id] = whyFor(id);
+  // v39: reuse the sealed setup password when one exists — the accounts
+  // this user already has were created with it, so the runner can sign
+  // back in and create a replacement key with no user action. A fresh
+  // password (no stored one, e.g. a pre-v39 setup) means an existing
+  // account falls back to the surfaced sign-in pause.
+  const storedPass = await openSetupPass(env, n);
+  const autoChain = { providers: candidates, done: [], failed: [], current: null, email: em, pass: storedPass || setupPass(), at: now, auto: true, why };
+  await env.KV.put(`setupchain:${n}`, JSON.stringify(autoChain), { expirationTtl: 86400 * 7 });
+  const next = await setupStartNext(env, n);
+  if (!next.ok) {
+    await env.KV.delete(`setupchain:${n}`);
+    await autoLogAppend(env, n, { provider: candidates[0], action: "dispatch-failed", why: `auto-provision start avvaledu: ${next.error || "dispatch failed"}`, result: "failed" });
+    return { checked: true, action: "dispatch-failed", health, usage, error: next.error };
+  }
+  for (const id of candidates) await autoLogAppend(env, n, { provider: id, action: "provisioning", why: why[id], result: "started" });
+  return { checked: true, action: "provisioning", providers: candidates, why, health, usage, skippedCool };
+}
+async function autoCheckAll(env) {
+  // Scheduled path (needs a cron trigger configured — none is set today):
+  // run the autonomous check for every user with a one-tap allow on file.
+  try {
+    const list = await env.KV.list({ prefix: "setupconsent:" });
+    for (const k of (list.keys || [])) {
+      const n = k.name.slice("setupconsent:".length);
+      try {
+        const consent = JSON.parse((await env.KV.get(k.name)) || "null");
+        if (consent && consent.email) await maybeAutoCheck(env, n, consent.email, false);
+      } catch {}
+    }
+  } catch {}
 }
 async function appSetupUser(req, env, u, p, body, lang) {
   const en = lang === "en";
   if (p === "setup/status") {
-    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    let chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     const consent = JSON.parse((await env.KV.get(`setupconsent:${u.n}`)) || "null");
     const keys = {};
     for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${u.n}:${id}`)) keys[id] = true;
@@ -1954,12 +2162,30 @@ async function appSetupUser(req, env, u, p, body, lang) {
     const hasOwnAiKey = !!(keys.groq || keys.openrouter || keys.gemini);
     const sharedFallback = !!((env.GROQ_KEY || "") || env.OPENROUTER_KEY || env.GEMINI_KEY);
     const needsSetup = !hasOwnAiKey;
+    // v39: watchdog first — a run whose runner went silent is STALLED, not
+    // "running". The watchdog records setupdone + clears the chain, so the
+    // response below takes the finished path (state "stalled" + Retry).
+    if (chain) {
+      const stalled = await setupWatchdog(env, u.n, chain);
+      if (stalled) {
+        const state = setupStateFor(null, null, stalled, keys);
+        const autoLog = await autoLogRead(env, u.n);
+        return { ok: true, active: false, consent: !!consent, finished: stalled, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), autoLog: autoLog.slice(0, 10) };
+      }
+      chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    }
     // v24: when the chain is gone, report the recorded outcome (done/failed)
     // so the app can show it instead of the mini-box vanishing silently.
     if (!chain) {
       const fin = JSON.parse((await env.KV.get(`setupdone:${u.n}`)) || "null");
       const state = setupStateFor(null, null, fin, keys);
-      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang) };
+      // v39 Phase 2: opportunistic autonomous check (throttled to one
+      // check per user per 6h, never while a run is active). Best-effort
+      // — a failure here never breaks setup/status.
+      let auto = null;
+      try { auto = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", false); } catch {}
+      const autoLog = await autoLogRead(env, u.n);
+      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
     }
     const cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
     let state = setupStateFor(chain, cur, null, keys);
@@ -1967,15 +2193,21 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // progress for 30+ minutes is stalled, not running. The runner posts
     // progress (setupjob.upd) on every step change; a pause waits on the
     // user's one tap and is NEVER stale. Display state only — nothing here
-    // stops, restarts, or re-dispatches the run (that is the setup-flow
-    // owner's scope, not this status display).
+    // stops, restarts, or re-dispatches the run (the watchdog above already
+    // converts a stale CURRENT job to finished "stalled"; this covers the gap
+    // when there is no current job record yet, via chain.at).
     const SETUP_STALE_MS = 30 * 60 * 1000;
     const lastUpd = (cur && cur.upd) || chain.at || 0;
     const stalled = state === "running" && lastUpd > 0 && (Date.now() - lastUpd) > SETUP_STALE_MS;
     if (stalled) state = "stalled";
     let steps = setupSteps(chain, cur, null, keys, lang);
     if (stalled) steps = steps.map(s => s.state === "running" ? { ...s, state: "stalled", note: setupStepText(s.id, "stalled", lang), text: setupStepText(s.id, "stalled", lang) } : s);
-    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps };
+    // v39: the exact user step, when the run is waiting on one — kind +
+    // the page to open + the one plain line. The app renders this instead
+    // of a bare "Setup running…". Additive field; older app builds ignore it.
+    const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang) } : null;
+    const autoLog = await autoLogRead(env, u.n);
+    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: cur, keys, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, autoLog: autoLog.slice(0, 10) };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
@@ -1983,10 +2215,29 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: en ? "Give an email for the new accounts." : "Kotha accounts kosam oka email ivvu." };
     const ids = (Array.isArray(body.providers) ? body.providers : ["groq", "openrouter", "gemini", "cloudflare"]).filter(id => SETUP_PROVIDERS[id]);
     if (!ids.length) return { ok: false, error: "no provider" };
+    // v39: never silently orphan a live run. A fresh active chain means a
+    // runner is working right now — say so instead of starting a second
+    // one (the live test's "button enabled again, as if nothing had
+    // happened" came from a fresh start overwriting a dead one). A stale
+    // chain is recorded as stalled first (watchdog), so its outcome is
+    // not lost when the new run replaces it.
+    const prev = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    if (prev) {
+      const stalled = await setupWatchdog(env, u.n, prev);
+      if (!stalled) return { ok: false, error: en ? "Setup is already running — wait for it to finish." : "Setup already nadusthondhi — ayye varaku wait cheyu.", alreadyRunning: true };
+    }
     // One allow: the user tapped "set up everything" — consent covers accounts,
     // API keys, captchas and the server step for this whole run.
-    await env.KV.put(`setupconsent:${u.n}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ids }), { expirationTtl: 86400 * 7 });
-    const chain = { providers: ids, done: [], failed: [], current: null, email, pass: setupPass(), at: Date.now() };
+    // v39: the email rides in the consent record too, so the autonomous
+    // auto-provision loop (Phase 2) can re-run the chain later without
+    // asking the user again.
+    await env.KV.put(`setupconsent:${u.n}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ids, email }), { expirationTtl: 86400 * 7 });
+    const pass = setupPass();
+    const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now() };
+    // v39 Phase 2: seal the generated provider-account password so a later
+    // autonomous run can sign back in to the accounts this run creates
+    // (replacement keys). Sealed with the app KEK, never returned by any API.
+    try { await env.KV.put(`upass:${u.n}`, JSON.stringify({ ct: await sealKey(env, u.n, "setup", pass) }), { expirationTtl: 86400 * 365 }); } catch {}
     await env.KV.put(`setupchain:${u.n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
     const next = await setupStartNext(env, u.n);
     if (!next.ok) return next;
@@ -2003,10 +2254,12 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // the email verification link tap, or the phone/SMS code. The runner
     // polls the job state and waits while it is "paused"; the user does the
     // one action, taps Continue, and the runner resumes on its own.
-    // Captchas are solved by the runner itself (audio on-device) — never a
-    // pause reason.
+    // v39: Take Control pauses are real too — "signin" (the user signs in
+    // on the provider page themselves) and "captcha" (image challenge with
+    // no audio alternative). The old code rejected both and the app's Take
+    // Control button silently recorded an "email" pause instead.
     const reason = String(body.reason || "email").trim().toLowerCase();
-    if (reason !== "email" && reason !== "sms") return { ok: false, error: en ? "Setup pauses only for the email link or the SMS code." : "Setup email link leda SMS code kosam matrame aaguthundi." };
+    if (!["email", "sms", "signin", "captcha"].includes(reason)) return { ok: false, error: en ? "Setup pauses only for the email link, the SMS code, a sign-in, or a captcha." : "Setup email link, SMS code, sign-in leda captcha kosam matrame aaguthundi." };
     const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     if (!chain || !chain.current) return { ok: false, error: "no job" };
     const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
@@ -2024,8 +2277,24 @@ async function appSetupUser(req, env, u, p, body, lang) {
     const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
     if (!j) return { ok: false, error: "no job" };
     j.state = "running"; j.note = ""; j.pauseReason = ""; j.resumedAt = Date.now(); j.upd = Date.now();
+    // v39 C7: the resume can carry what the runner needs to finish the
+    // paused step — the magic-link URL (job.verifyLink, opened in the
+    // runner's own browser so the session lands there) or an SMS code
+    // (job.smsCode, filled by maybe_sms). Never logged; job records live
+    // 2 days in KV and are never returned by any read API.
+    if (typeof body.link === "string" && body.link.startsWith("https://")) j.verifyLink = body.link.slice(0, 2000);
+    if (typeof body.code === "string" && body.code.trim()) j.smsCode = body.code.trim().slice(0, 32);
     await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
     return { ok: true };
+  }
+  if (p === "setup/autocheck" && req.method === "POST") {
+    // v39 Phase 2: run the autonomous key-health + usage check now and
+    // return the verdict (checked / action / providers / why). force=true
+    // bypasses the 6h throttle (test/manual trigger); consent, active-run
+    // and 24h-failure-cooldown rules still apply.
+    const verdict = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", !!body.force).catch(e => ({ checked: false, error: String(e).slice(0, 200) }));
+    const autoLog = await autoLogRead(env, u.n);
+    return { ok: true, ...verdict, autoLog: autoLog.slice(0, 10) };
   }
   return { ok: false, error: "not found" };
 }
@@ -2062,7 +2331,7 @@ async function appSetupRunner(req, env, p, url, body) {
     // Gemini Google sign-in). Store the reason as-is — never coerce a
     // captcha/signin pause into an email pause (that would tell the user
     // to tap an email link that does not exist).
-    if (state === "paused") { const pr = String(body.reason || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); }
+    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); }
     else if (state === "running") { rec.pauseReason = ""; }
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     // Chain: provider done → auto-start the next one with the same consent.
@@ -2128,6 +2397,11 @@ export default {
   // Optional cron ping of the call server (no cron set: SnapDeploy free hours are limited).
   async scheduled(ev, env, ctx) {
     ctx.waitUntil(fetch((env.CALL_URL || CALL_URL) + "/health").then(r => env.KV.put("dbg:callping", `${new Date().toISOString()} ${r.status}`, { expirationTtl: 86400 * 2 })).catch(() => {}));
+    // v39 Phase 2: autonomous key-health + usage check for every user with
+    // a one-tap allow on file (throttled inside maybeAutoCheck). Fires only
+    // when a cron trigger is configured — until then the setup/status
+    // opportunistic trigger is the live path.
+    ctx.waitUntil(autoCheckAll(env).catch(() => {}));
   },
   async fetch(req, env, ctx) {
     const url = new URL(req.url);

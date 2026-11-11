@@ -238,7 +238,7 @@
             <p><b data-t="setupHowAfterT"></b> <span data-t="setupHowAfter"></span></p>
             <p class="muted" data-t="setupHowNote"></p>
           </div>
-          <button class="btn primary" id="oneTapBtn" data-t="setupOneTap"></button>
+          <button class="btn primary" id="oneTapBtn" data-t="setupOneTap" disabled></button>
           <p class="muted small" data-t="setupConsent"></p>
           <div class="list">
             <div class="row"><div><b data-t="googleRow"></b><div class="muted small" id="gWho" data-t="googleSub"></div></div><button class="pill go" id="gBtn" data-t="continueGoogle"></button></div>
@@ -246,6 +246,10 @@
           <label class="consent"><input type="checkbox" id="consent"><span data-t="consent"></span></label>
           <button class="btn secondary" id="guideBtn" data-t="guideBtn"></button>
           <ol class="steps" id="steps"></ol>
+          <div class="card note small" id="autoLogCard" hidden>
+            <p><b data-t="autoLogT"></b></p>
+            <ul id="autoLog"></ul>
+          </div>
           <p class="muted small" data-t="setupStepNote"></p>
           <div class="card note small">
             <p><b data-t="serverTitle"></b> <span data-t="serverText"></span></p>
