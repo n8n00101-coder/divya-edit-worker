@@ -1268,7 +1268,12 @@ async function storeBrowserProfile(env, n, state) {
   await env.KV.put(`uprofile:${n}`, JSON.stringify({ ct: await sealKey(env, n, "browser", JSON.stringify(state)), at: Date.now() }), { expirationTtl: 86400 * 365 });
 }
 async function storeKey(env, n, prov, key, res) {
-  await env.KV.put(`ukey:${n}:${prov}`, JSON.stringify({ ct: await sealKey(env, n, prov, key), at: Date.now(), ok: true, who: res.who || "", tested: Date.now() }));
+  // v51 (R55): every save records HOW the key got here — source "divya"
+  // (Divya added it through the automate setup) or "manual" (the user
+  // gave it: Setup form, chat, or the provider key form). The Setup keys
+  // list labels each row from this field; records saved before it existed
+  // are labelled by origin in setupKeyList().
+  await env.KV.put(`ukey:${n}:${prov}`, JSON.stringify({ ct: await sealKey(env, n, prov, key), at: Date.now(), ok: true, who: res.who || "", tested: Date.now(), source: res.source === "manual" ? "manual" : "divya" }));
 }
 // ---- v48 (R54): the user's OWN model — "Model name" + "API key" only ----
 // Setup is simple: Automate with Divya, or Manual — Add Model. The user
@@ -1376,8 +1381,8 @@ async function saveUserModel(env, n, inp) {
     t = await testUserModel(inp.key, res.base, model, res.anthropic);
   }
   if (!t.ok) return { ok: false, kind: t.kind, status: t.status, msg: t.msg, available: t.available };
-  await storeKey(env, n, "custom", inp.key, { who: res.who });
-  const rec = { name: name || t.model, model: t.model, base: res.base, who: res.who, at: Date.now(), ok: true };
+  await storeKey(env, n, "custom", inp.key, { who: res.who, source: "manual" });
+  const rec = { name: name || t.model, model: t.model, base: res.base, who: res.who, at: Date.now(), ok: true, source: "manual" };
   await env.KV.put(`umodel:${n}`, JSON.stringify(rec));
   return { ok: true, ...rec, note: t.note || "" };
 }
@@ -1669,7 +1674,7 @@ async function appKeys(req, env, u, p, body, lang) {
     if (!r || !r.ok || !j.key) return appJson(req, { ok: false, error: en ? "OpenRouter didn't give a key. Try connecting again." : "OpenRouter key ivvaledu. Malli connect cheyyi." }, 400);
     const res = await KEYPROV.openrouter.test(j.key);
     await env.KV.put("dbg:orx", JSON.stringify({ at: new Date().toISOString(), fields: Object.keys(j), prefix: String(j.key).slice(0, 9), len: String(j.key).length, test: res.status, msg: res.msg || "" }), { expirationTtl: 86400 * 2 });
-    await storeKey(env, u.n, "openrouter", j.key, res.ok ? res : { who: "OpenRouter" });
+    await storeKey(env, u.n, "openrouter", j.key, res.ok ? { ...res, source: "manual" } : { who: "OpenRouter", source: "manual" });
     return appJson(req, { ok: true, provider: "openrouter", who: res.who || "OpenRouter" });
   }
   if (!KEYPROV[prov]) return appJson(req, { ok: false, error: "unknown provider" }, 400);
@@ -1679,7 +1684,7 @@ async function appKeys(req, env, u, p, body, lang) {
     if (key.length < 16 || key.length > 400 || /\s/.test(key)) return appJson(req, { ok: false, error: en ? "That doesn't look like a key." : "Idi key laaga ledu." }, 400);
     const res = await KEYPROV[prov].test(key).catch(() => ({ ok: false, status: 0 }));
     if (!res.ok) return appJson(req, { ok: false, error: en ? `Key test failed (${res.status || "network"}). Check and paste again.` : `Key test fail ayyindi (${res.status || "network"}). Check chesi malli paste cheyyi.` }, 400);
-    await storeKey(env, u.n, prov, key, res);
+    await storeKey(env, u.n, prov, key, { ...res, source: "manual" });
     return appJson(req, { ok: true, provider: prov, who: res.who });
   }
   if (p === "keys/test") {
@@ -2634,14 +2639,40 @@ function stripChainSecrets(c) {
   const { pass, password, ...rest } = c;
   return rest;
 }
+// ---- v51 (R55): the user's keys list for the bottom of the Setup tab --
+// Ajju (2026-11-12): the list shows HOW MANY keys were added and HOW each
+// one connected — "manual" (the user gave it: Setup form, chat, or the
+// provider key form) or "divya" (Divya added it through the automate
+// setup). New saves record the source at save time (storeKey); records
+// saved before the field existed are labelled by origin: chain providers
+// = Divya added, the custom model = Manual. READS ONLY — status comes
+// from each record's own ok/tested fields, never a live probe (the v50
+// KV-write lesson), and no key value or ciphertext ever leaves here.
+const KEYLIST_PROVIDERS = [["groq", "Groq"], ["openrouter", "OpenRouter"], ["gemini", "Gemini (Google AI Studio)"], ["cloudflare", "Cloudflare (server)"], ["github", "GitHub"], ["huggingface", "Hugging Face"]];
+async function setupKeyList(env, n) {
+  const rows = [];
+  for (const [id, name] of KEYLIST_PROVIDERS) {
+    const r = parseRec(await env.KV.get(`ukey:${n}:${id}`));
+    if (!r) continue;
+    rows.push({ id, name, version: "", ok: !!r.ok, source: r.source === "manual" ? "manual" : "divya", at: r.at || 0, tested: r.tested || 0 });
+  }
+  const um = parseRec(await env.KV.get(`umodel:${n}`));
+  const crec = parseRec(await env.KV.get(`ukey:${n}:custom`));
+  if (um || crec) {
+    rows.push({ id: "custom", name: (um && (um.name || um.model)) || "Your model", version: (um && um.model) || "", ok: um ? !!um.ok : !!crec.ok, source: "manual", at: (um && um.at) || (crec && crec.at) || 0, tested: (crec && crec.tested) || 0 });
+  }
+  return { count: rows.filter(r => r.ok).length, keys: rows };
+}
 async function appSetupUser(req, env, u, p, body, lang) {
   const en = lang === "en";
+  if (p === "setup/keys") { const kl = await setupKeyList(env, u.n); return { ok: true, count: kl.count, keys: kl.keys }; }
   if (p === "setup/status") {
     let chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     const consent = parseRec(await env.KV.get(`setupconsent:${u.n}`));
     const keys = {};
     for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${u.n}:${id}`)) keys[id] = true;
     if (await env.KV.get(`umodel:${u.n}`)) keys.custom = true; // v48 (R54): a saved own model counts as set up
+    const keyList = await setupKeyList(env, u.n); // v51 (R55): rows for the Setup keys list
     // v38 (R48, item 1): login-time setup-needed check. A fresh account has
     // no own AI key stored; the shared fallback is rate-limited, so it does
     // not count as "set up". sharedFallback only reports whether a shared
@@ -2657,7 +2688,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       if (stalled) {
         const state = setupStateFor(null, null, stalled, keys);
         const autoLog = await autoLogRead(env, u.n);
-        return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(stalled), keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (stalled && stalled.geminiVerify) || null, autoLog: autoLog.slice(0, 10) };
+        return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(stalled), keys, keyList, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (stalled && stalled.geminiVerify) || null, autoLog: autoLog.slice(0, 10) };
       }
       chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     }
@@ -2672,7 +2703,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       let auto = null;
       try { auto = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", false); } catch {}
       const autoLog = await autoLogRead(env, u.n);
-      return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(fin), keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
+      return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(fin), keys, keyList, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
     }
     let cur = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null;
     // v40 (R19): paused on email verification — try feeding the magic link
@@ -2703,7 +2734,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // of a bare "Setup running…". Additive field; older app builds ignore it.
     const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang), tc: !!cur.tc } : null;
     const autoLog = await autoLogRead(env, u.n);
-    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, geminiVerify: chain.geminiNeedsVerify || null, autoLog: autoLog.slice(0, 10) };
+    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, keyList, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, geminiVerify: chain.geminiNeedsVerify || null, autoLog: autoLog.slice(0, 10) };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
@@ -2950,11 +2981,11 @@ async function provisionGeminiKey(env, n) {
       if (attempt < 2) await new Promise(res => setTimeout(res, 10000));
     }
     if (probe && probe.ok) {
-      await storeKey(env, n, "gemini", key, { who: "AI Studio" });
+      await storeKey(env, n, "gemini", key, { who: "AI Studio", source: "divya" });
       return { ok: true, projectNumber, projectId, reused };
     }
     if (probe && probe.status === 403 && /FREE_TIER_VERIFICATION_REQUIRED/i.test(JSON.stringify(probeBody))) {
-      await storeKey(env, n, "gemini", key, { who: "AI Studio" });
+      await storeKey(env, n, "gemini", key, { who: "AI Studio", source: "divya" });
       return { ok: false, reason: "needs-verification", projectNumber, projectId, reused, verifyUrl: `https://aistudio.google.com/verify?project=${projectNumber}` };
     }
     return { ok: false, reason: "test-failed", status: probe ? probe.status : 0 };
@@ -3144,7 +3175,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     const key = String(body.key || body.token || "").trim();
     if (key.length < 10 || key.length > 500) return new Response("bad key", { status: 400 });
     if (!env.APP_KEK) return new Response("key storage not ready", { status: 503 });
-    try { await storeKey(env, rec.user, rec.provider, key, { who: String(body.who || rec.provider || "") }); }
+    try { await storeKey(env, rec.user, rec.provider, key, { who: String(body.who || rec.provider || ""), source: "divya" }); }
     catch (e) { return new Response("key storage failed", { status: 500 }); }
     return Response.json({ ok: true, provider: rec.provider, sealed: true });
   }

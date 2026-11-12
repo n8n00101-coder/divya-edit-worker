@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "divya-v29";
+const APP_V = "divya-v30";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -50,7 +50,7 @@ const T = {
     remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
     connectNote: "Login page browser lo open avuthundi. Connect ayyaka ikkadiki tirigi raa.", connect: "Connect", connectedP: "Connected", soon: "Tvaralo", ytNoChannel: "Connect ayyindhi, kani ee account lo YouTube channel kanipinchaledu", connNoAccount: "Connect ayyindhi, kani account kanipinchaledu", ytNoChannelShort: "Channel kanipinchaledu", connNoAccountShort: "Account kanipinchaledu",
     setupIntro: "Rendu veellu matrame: (1) Automate with Divya — Divya ne anni setup chesthundhi, nee okka permission tho. (2) Manual — nee daggara already oka model key unte, kindha Add Model lo ivvu. Anthe.",
-    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "Nee daggara already oka AI model key unte ikkada ivvu — Divya test chesi save chesthundhi, tarvatha chat ki ade brain avuthundhi. Chat lo model name + key pampina kuda Divya thane save chesthundhi.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (udaa: gpt-5, llama-3.3-70b)", modelKeyPh: "API key paste cheyyi", modelOwn: "Nee key nee own server lone sealed ga untundhi — andukani adi misuse avvadhu, evariki kanipinchadhu.", modelNone: "Inka nee own model save avvaledu.", modelConnected: m => `Connected ✓ — ${m}`, modelTesting: "Test chesthunna…", tcTitle: "Take Control — sign-in screen", tcHint: "Ee screen Divya browser dhi. Screen meeda tap chesi, kindha box lo type chesi sign in cheyu — ayyaka paina 'Nenu chesa ✓' nokku.", tcTypeBtn: "Type cheyyi", tcPh: "Ikkada type cheyyi…",
+    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "Nee daggara already oka AI model key unte ikkada ivvu — Divya test chesi save chesthundhi, tarvatha chat ki ade brain avuthundhi. Chat lo model name + key pampina kuda Divya thane save chesthundhi.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (udaa: gpt-5, llama-3.3-70b)", modelKeyPh: "API key paste cheyyi", modelOwn: "Nee key nee own server lone sealed ga untundhi — andukani adi misuse avvadhu, evariki kanipinchadhu.", modelNone: "Inka nee own model save avvaledu.", modelConnected: m => `Connected ✓ — ${m}`, keysTitle: n => `Nee keys (${n})`, keysNone: "Inka keys emi add avvaledu.", keyWorking: "Working ✓", keyNotWorking: "Pani cheyatledu", keySrcManual: "Manual", keySrcDivya: "Divya added", modelTesting: "Test chesthunna…", tcTitle: "Take Control — sign-in screen", tcHint: "Ee screen Divya browser dhi. Screen meeda tap chesi, kindha box lo type chesi sign in cheyu — ayyaka paina 'Nenu chesa ✓' nokku.", tcTypeBtn: "Type cheyyi", tcPh: "Ikkada type cheyyi…",
     googleRow: "Continue with Google", googleSub: "Nee email ni setup ki vaadutham", continueGoogle: "Continue", orLoginPw: "Leda password tho login cheyyi",
     consent: "Naa keys ni Divya encrypt chesi save chesi, naa requests kosam matrame vaadadaniki permission istunna.", guideBtn: "🔊 Voice tho manual setup",
     needConsent: "Mundu permission box tick cheyyi.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Ayyindi", delData: "Naa data delete cheyyi", delDataConfirm: "Nee account, chats, tokens — anni delete avthayi. Ee action ni venakki theeyalem. Confirm cheyala?", delDataDone: "Nee data delete chesam.", templateLabel: "Style template",
@@ -105,7 +105,7 @@ const T = {
     remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
     connectNote: "Sign-in opens in your browser. Come back here when done.", connect: "Connect", connectedP: "Connected", soon: "Soon", ytNoChannel: "Connected, but no YouTube channel found on this account", connNoAccount: "Connected, but no account found", ytNoChannelShort: "No channel found", connNoAccountShort: "No account found",
     setupIntro: "Just two ways: (1) Automate with Divya — Divya sets up everything itself, with your one-time permission. (2) Manual — already have a model key? Add it below. That's all.",
-    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "Already have an AI model key? Give it here — Divya tests it, saves it, and uses it as your chat brain. You can also just send the model name + key in chat and Divya saves it.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (e.g. gpt-5, llama-3.3-70b)", modelKeyPh: "Paste the API key", modelOwn: "Your key stays sealed on your own server — that's why it can't be misused or seen by anyone.", modelNone: "No model of your own saved yet.", modelConnected: m => `Connected ✓ — ${m}`, modelTesting: "Testing…", tcTitle: "Take Control — sign-in screen", tcHint: "This screen is Divya's browser. Tap the screen and type in the box below to sign in — then tap 'I did it ✓' above.", tcTypeBtn: "Type", tcPh: "Type here…",
+    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "Already have an AI model key? Give it here — Divya tests it, saves it, and uses it as your chat brain. You can also just send the model name + key in chat and Divya saves it.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (e.g. gpt-5, llama-3.3-70b)", modelKeyPh: "Paste the API key", modelOwn: "Your key stays sealed on your own server — that's why it can't be misused or seen by anyone.", modelNone: "No model of your own saved yet.", modelConnected: m => `Connected ✓ — ${m}`, keysTitle: n => `Your keys (${n})`, keysNone: "No keys added yet.", keyWorking: "Working ✓", keyNotWorking: "Not working", keySrcManual: "Manual", keySrcDivya: "Divya added", modelTesting: "Testing…", tcTitle: "Take Control — sign-in screen", tcHint: "This screen is Divya's browser. Tap the screen and type in the box below to sign in — then tap 'I did it ✓' above.", tcTypeBtn: "Type", tcPh: "Type here…",
     googleRow: "Continue with Google", googleSub: "Uses your email for setup", continueGoogle: "Continue", orLoginPw: "Or log in with a password",
     consent: "I give Divya permission to save my keys encrypted and use them only for my requests.", guideBtn: "🔊 Manual setup by voice",
     needConsent: "Please tick the permission box first.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Done", delData: "Delete my data", delDataConfirm: "Your account, chats and tokens will all be deleted. This can't be undone. Confirm?", delDataDone: "Your data has been deleted.", templateLabel: "Style template",
@@ -149,7 +149,7 @@ const T = {
     callBtn: n => `कॉल करें ${n}`, waBtn: "WhatsApp खोलें", openBtn: n => `${n} खोलें`, playBtn: "YouTube पर सुनें", openedTab: n => `${n} naye tab mein khola`, openedApp: n => `${n} khola`, openYTApp: "YouTube ऐप खुल गया ✓", ytNoApp: "YouTube ऐप फ़ोन में नहीं है — ब्राउज़र में खोला।", ytOpening: "YouTube ऐप खोल रही हूँ…", waApp: "WhatsApp ऐप खुल गया ✓", waNoApp: "WhatsApp ऐप फ़ोन में नहीं है — ब्राउज़र में खोला।", waOpening: "WhatsApp ऐप खोल रही हूँ…", updBanner: v => `नया वर्शन ${v} आ गया — रिफ्रेश करें।`, updRefresh: "रिफ्रेश करें", updCheck: "ऐप अपडेट चेक करें", updLatest: "ऐप लेटेस्ट वर्शन पर है ✓", openBlocked: "Browser ne roka — neeche link dabao", openOff: "Auto-open band hai — neeche link dabao", calBtn: "Google Calendar में जोड़ें", subBtn: "प्लान देखें", pickContact: "कॉन्टैक्ट से चुनें", typeNumber: "नंबर टाइप करें", noNumber: n => `${n} का नंबर मेरे पास नहीं है। "${n} सेव करें 98xxxxxxxx" कहें, या कॉन्टैक्ट से चुनें।`, askNumber: n => `${n} का फ़ोन नंबर?`, saved: (n, x) => `${n} का नंबर सेव कर लिया (+${x})। यह सिर्फ़ इसी फ़ोन में रहेगा।`, remFire: t => `रिमाइंडर: ${t}`, notifTitle: "Divya रिमाइंडर",
     connectNote: "लॉग इन पेज ब्राउज़र में खुलेगा। कनेक्ट होने के बाद यहाँ वापस आएँ।", connect: "कनेक्ट", connectedP: "कनेक्टेड", soon: "जल्द आ रहा है", ytNoChannel: "कनेक्टेड, लेकिन इस अकाउंट पर YouTube चैनल नहीं मिला", connNoAccount: "कनेक्टेड, लेकिन कोई अकाउंट नहीं मिला", ytNoChannelShort: "चैनल नहीं मिला", connNoAccountShort: "अकाउंट नहीं मिला",
     setupIntro: "सिर्फ़ दो तरीके: (1) Automate with Divya — Divya खुद सब setup करती है, आपकी एक बार की परमिशन से। (2) Manual — पहले से model key है तो नीचे Add Model में दें। बस इतना ही।",
-    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "पहले से कोई AI model key है? यहाँ दें — Divya test करके save करेगी और उसे ही आपकी chat brain बनाएगी। Chat में model name + key भेजने पर भी Divya खुद save कर लेगी।", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (जैसे: gpt-5, llama-3.3-70b)", modelKeyPh: "API key paste करें", modelOwn: "आपकी key आपके अपने server पर ही sealed रहती है — इसलिए उसका misuse नहीं हो सकता और वह किसी को दिखती नहीं।", modelNone: "अभी आपकी अपनी कोई model save नहीं है।", modelConnected: m => `Connected ✓ — ${m}`, modelTesting: "Test हो रहा है…", tcTitle: "Take Control — sign-in screen", tcHint: "यह screen Divya के browser की है। Screen पर tap करके और नीचे box में type करके sign in करें — फिर ऊपर 'मैंने कर दिया ✓' दबाएँ।", tcTypeBtn: "Type करें", tcPh: "यहाँ type करें…",
+    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "पहले से कोई AI model key है? यहाँ दें — Divya test करके save करेगी और उसे ही आपकी chat brain बनाएगी। Chat में model name + key भेजने पर भी Divya खुद save कर लेगी।", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (जैसे: gpt-5, llama-3.3-70b)", modelKeyPh: "API key paste करें", modelOwn: "आपकी key आपके अपने server पर ही sealed रहती है — इसलिए उसका misuse नहीं हो सकता और वह किसी को दिखती नहीं।", modelNone: "अभी आपकी अपनी कोई model save नहीं है।", modelConnected: m => `Connected ✓ — ${m}`, keysTitle: n => `आपकी keys (${n})`, keysNone: "अभी कोई key add नहीं हुई।", keyWorking: "Working ✓", keyNotWorking: "काम नहीं कर रही", keySrcManual: "Manual", keySrcDivya: "Divya added", modelTesting: "Test हो रहा है…", tcTitle: "Take Control — sign-in screen", tcHint: "यह screen Divya के browser की है। Screen पर tap करके और नीचे box में type करके sign in करें — फिर ऊपर 'मैंने कर दिया ✓' दबाएँ।", tcTypeBtn: "Type करें", tcPh: "यहाँ type करें…",
     googleRow: "Continue with Google", googleSub: "आपका ईमेल सेटअप के लिए इस्तेमाल होगा", continueGoogle: "जारी रखें", orLoginPw: "या पासवर्ड से लॉग इन करें",
     consent: "मैं Divya को अपनी keys एन्क्रिप्ट करके सेव करने और सिर्फ़ मेरी रिक्वेस्ट के लिए इस्तेमाल करने की परमिशन देता/देती हूँ।",
     guideBtn: "🔊 वॉइस से मैनुअल सेटअप", needConsent: "पहले परमिशन बॉक्स पर टिक करें।", allow: "अलाउ करें", cancel: "कैंसिल", save: "सेव करें", next: "अगला स्टेप", done: "हो गया", delData: "मेरा डेटा डिलीट करें", delDataConfirm: "आपका अकाउंट, चैट, टोकन — सब डिलीट हो जाएगा। यह वापस नहीं होगा। कन्फ़र्म करें?", delDataDone: "आपका डेटा डिलीट कर दिया गया।", templateLabel: "स्टाइल टेम्पलेट",
@@ -192,7 +192,7 @@ const T = {
     callBtn: n => `Call karo ${n}`, waBtn: "WhatsApp kholo", openBtn: n => `${n} kholo`, playBtn: "YouTube par suno", openedTab: n => `${n} naye tab mein khola`, openedApp: n => `${n} khola`, openYTApp: "YouTube app khul gaya ✓", ytNoApp: "YouTube app phone mein nahi hai — browser mein khola.", ytOpening: "YouTube app khol rahi hoon…", waApp: "WhatsApp app khul gaya ✓", waNoApp: "WhatsApp app phone mein nahi hai — browser mein khola.", waOpening: "WhatsApp app khol rahi hoon…", updBanner: v => `Naya version ${v} aa gaya — refresh karo.`, updRefresh: "Refresh karo", updCheck: "App update check karo", updLatest: "App latest version par hai ✓", openBlocked: "Browser ne roka — neeche link dabao", openOff: "Auto-open band hai — neeche link dabao", calBtn: "Google Calendar me jodo", subBtn: "Plans dekho", pickContact: "Contacts se chuno", typeNumber: "Number type karo", noNumber: n => `${n} ka number mere paas nahi hai. "${n} save karo 98xxxxxxxx" kaho, ya contacts se chuno.`, askNumber: n => `${n} ka phone number?`, saved: (n, x) => `${n} ka number save kar liya (+${x}). Ye sirf isi phone me rahega.`, remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
     connectNote: "Log in page browser me khulega. Connect hone ke baad yahan wapas aao.", connect: "Connect", connectedP: "Connected", soon: "Jald aa raha hai", ytNoChannel: "Connected, lekin is account par YouTube channel nahi mila", connNoAccount: "Connected, lekin koi account nahi mila", ytNoChannelShort: "Channel nahi mila", connNoAccountShort: "Account nahi mila",
     setupIntro: "Sirf do tareeke: (1) Automate with Divya — Divya khud sab setup karti hai, aapki ek baar ki permission se. (2) Manual — pehle se model key hai to neeche Add Model me dein. Bas itna hi.",
-    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "Pehle se koi AI model key hai? Yahan dein — Divya test karke save karegi aur use hi aapki chat brain banayegi. Chat me model name + key bhejne par bhi Divya khud save kar legi.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (jaise: gpt-5, llama-3.3-70b)", modelKeyPh: "API key paste karo", modelOwn: "Aapki key aapke apne server par hi sealed rehti hai — isliye uska misuse nahi ho sakta aur woh kisi ko dikhti nahi.", modelNone: "Abhi aapki apni koi model save nahi hai.", modelConnected: m => `Connected ✓ — ${m}`, modelTesting: "Test ho raha hai…", tcTitle: "Take Control — sign-in screen", tcHint: "Ye screen Divya ke browser ki hai. Screen par tap karke aur neeche box me type karke sign in karo — phir upar 'Maine kar diya ✓' dabao.", tcTypeBtn: "Type karo", tcPh: "Yahan type karo…",
+    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "Pehle se koi AI model key hai? Yahan dein — Divya test karke save karegi aur use hi aapki chat brain banayegi. Chat me model name + key bhejne par bhi Divya khud save kar legi.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (jaise: gpt-5, llama-3.3-70b)", modelKeyPh: "API key paste karo", modelOwn: "Aapki key aapke apne server par hi sealed rehti hai — isliye uska misuse nahi ho sakta aur woh kisi ko dikhti nahi.", modelNone: "Abhi aapki apni koi model save nahi hai.", modelConnected: m => `Connected ✓ — ${m}`, keysTitle: n => `Aapki keys (${n})`, keysNone: "Abhi koi key add nahi hui.", keyWorking: "Working ✓", keyNotWorking: "Kaam nahi kar rahi", keySrcManual: "Manual", keySrcDivya: "Divya added", modelTesting: "Test ho raha hai…", tcTitle: "Take Control — sign-in screen", tcHint: "Ye screen Divya ke browser ki hai. Screen par tap karke aur neeche box me type karke sign in karo — phir upar 'Maine kar diya ✓' dabao.", tcTypeBtn: "Type karo", tcPh: "Yahan type karo…",
     googleRow: "Continue with Google", googleSub: "Aapka email setup ke liye use hoga", continueGoogle: "Continue", orLoginPw: "Ya password se log in karo",
     consent: "Main Divya ko apni keys encrypt karke save karne aur sirf meri requests ke liye use karne ki permission deta/deti hoon.",
     guideBtn: "🔊 Voice se manual setup", needConsent: "Pehle permission box par tick karo.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Ho gaya", delData: "Mera data delete karo", delDataConfirm: "Aapka account, chats, tokens — sab delete ho jayega. Ye wapas nahi hoga. Confirm karo?", delDataDone: "Aapka data delete kar diya gaya.", templateLabel: "Style template",
@@ -383,7 +383,7 @@ function route() {
   if (name === "connect" || name === "settings") loadConnect();
   if (name === "home") loadStatus();
   if (name === "profile") { renderProfile(); loadPlan(); loadConnect(); }
-  if (name === "setup") { loadModel(); loadConnect(); loadSetupState(); }
+  if (name === "setup") { loadModel(); loadKeys(); loadConnect(); loadSetupState(); }
   if (name === "history") loadVideos();
   if (name === "plan" || name === "home") loadPlan();
   if (name === "download") renderDownload();
@@ -1442,12 +1442,41 @@ async function saveModel() {
     if (keyEl) keyEl.value = "";
     if (msg) msg.textContent = t("modelConnected", d.model);
     toast(t("modelConnected", d.model), true);
-    loadModel();
+    loadModel(); loadKeys();
   } else if (msg) msg.textContent = d.error || t("netErr");
 }
 $("#modelSaveBtn") && ($("#modelSaveBtn").onclick = () => saveModel());
-$("#modelTestBtn") && ($("#modelTestBtn").onclick = async () => { const d = await api("model/test", { method: "POST", json: {} }).catch(() => ({})); toast(d.ok ? t("modelConnected", d.model) : (d.error || t("netErr")), true); loadModel(); });
-$("#modelDelBtn") && ($("#modelDelBtn").onclick = async () => { await api("model/delete", { method: "POST", json: {} }).catch(() => {}); const m = $("#modelMsg"); if (m) m.textContent = ""; loadModel(); });
+$("#modelTestBtn") && ($("#modelTestBtn").onclick = async () => { const d = await api("model/test", { method: "POST", json: {} }).catch(() => ({})); toast(d.ok ? t("modelConnected", d.model) : (d.error || t("netErr")), true); loadModel(); loadKeys(); });
+$("#modelDelBtn") && ($("#modelDelBtn").onclick = async () => { await api("model/delete", { method: "POST", json: {} }).catch(() => {}); const m = $("#modelMsg"); if (m) m.textContent = ""; loadModel(); loadKeys(); });
+/* v51 (R55): Setup bottom — "Your keys (N)": every saved key with its
+   working status and how it connected (Manual / Divya added). Display
+   only; the Worker never sends a key value. */
+let keysState = null;
+async function loadKeys() {
+  try { const d = await api("setup/keys"); keysState = d && d.ok ? d : null; } catch { keysState = null; }
+  renderKeys();
+}
+function renderKeys() {
+  const title = $("#keysTitle"), list = $("#keysList"), none = $("#keysNone");
+  if (!title || !list) return;
+  const rows = (keysState && keysState.keys) || [];
+  title.textContent = t("keysTitle", keysState ? keysState.count : 0);
+  list.innerHTML = "";
+  rows.forEach(r => {
+    const row = document.createElement("div"); row.className = "row";
+    const left = document.createElement("div");
+    const b = document.createElement("b");
+    b.textContent = r.name + (r.version && r.version !== r.name ? " — " + r.version : "");
+    const sub = document.createElement("div"); sub.className = "muted small";
+    sub.textContent = r.ok ? t("keyWorking") : t("keyNotWorking");
+    left.append(b, sub);
+    const pill = document.createElement("span"); pill.className = "pill";
+    pill.textContent = r.source === "manual" ? t("keySrcManual") : t("keySrcDivya");
+    row.append(left, pill);
+    list.appendChild(row);
+  });
+  if (none) none.hidden = rows.length > 0;
+}
 $("#consent").onchange = e => { S.consent = e.target.checked; store.set("consent", S.consent); syncOneTapBtn(); };
 function needConsent(then) { if (S.consent) return true; sheet(t("needConsent"), [{ label: t("allow"), primary: true, fn: () => { S.consent = true; store.set("consent", true); $("#consent").checked = true; then && then(); } }, { label: t("cancel") }]); return false; }
 /* v48 (R54): the per-provider paste/save helpers, the OpenRouter OAuth
