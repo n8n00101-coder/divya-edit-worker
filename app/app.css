@@ -331,3 +331,12 @@ body.blind .tabbar a{font-size:15px}
 .voice-note{white-space:normal;overflow-wrap:anywhere;min-width:0;width:100%}
 /* v39 (D4): Setup page state banner — Retry button sits under the state line. */
 #setupStateCard .btn.secondary{margin:6px 0 0}
+
+/* v48 (Take Control): live runner-browser panel in the chat mini-box */
+.tc-panel{margin-top:8px}
+.tc-img{width:100%;border:1px solid var(--line);border-radius:10px;display:block;background:#000;min-height:120px;margin-top:6px}
+.tc-panel .keyrow{display:flex;gap:8px;margin-top:8px}
+.tc-panel .keyrow input{flex:1;min-width:0;font-size:15px;padding:10px 12px}
+#modelCard .field{display:block;margin-top:10px}
+#modelCard .field span{display:block;font-size:13px;margin-bottom:4px}
+#modelSaveBtn{margin-top:12px;width:100%}

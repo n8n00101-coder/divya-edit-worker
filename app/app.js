@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "divya-v27";
+const APP_V = "divya-v29";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -49,7 +49,8 @@ const T = {
     noNumber: n => `${n} number naa daggara ledu. "save ${n} 98xxxxxxxx" ani cheppu, leda contacts nunchi select cheyyi.`, askNumber: n => `${n} phone number?`, saved: (n, x) => `${n} number save chesa (+${x}). Ee phone lo matrame untundi.`,
     remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
     connectNote: "Login page browser lo open avuthundi. Connect ayyaka ikkadiki tirigi raa.", connect: "Connect", connectedP: "Connected", soon: "Tvaralo", ytNoChannel: "Connect ayyindhi, kani ee account lo YouTube channel kanipinchaledu", connNoAccount: "Connect ayyindhi, kani account kanipinchaledu", ytNoChannelShort: "Channel kanipinchaledu", connNoAccountShort: "Account kanipinchaledu",
-    setupIntro: "Divya ni nee sontha accounts lo setup chestham — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (nee server). Divya anni chesthundhi — accounts, API keys, server setup — nee okka permission tho. Neeku emi cheyalsina pani undadhu.",
+    setupIntro: "Rendu veellu matrame: (1) Automate with Divya — Divya ne anni setup chesthundhi, nee okka permission tho. (2) Manual — nee daggara already oka model key unte, kindha Add Model lo ivvu. Anthe.",
+    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "Nee daggara already oka AI model key unte ikkada ivvu — Divya test chesi save chesthundhi, tarvatha chat ki ade brain avuthundhi. Chat lo model name + key pampina kuda Divya thane save chesthundhi.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (udaa: gpt-5, llama-3.3-70b)", modelKeyPh: "API key paste cheyyi", modelOwn: "Nee key nee own server lone sealed ga untundhi — andukani adi misuse avvadhu, evariki kanipinchadhu.", modelNone: "Inka nee own model save avvaledu.", modelConnected: m => `Connected ✓ — ${m}`, modelTesting: "Test chesthunna…", tcTitle: "Take Control — sign-in screen", tcHint: "Ee screen Divya browser dhi. Screen meeda tap chesi, kindha box lo type chesi sign in cheyu — ayyaka paina 'Nenu chesa ✓' nokku.", tcTypeBtn: "Type cheyyi", tcPh: "Ikkada type cheyyi…",
     googleRow: "Continue with Google", googleSub: "Nee email ni setup ki vaadutham", continueGoogle: "Continue", orLoginPw: "Leda password tho login cheyyi",
     consent: "Naa keys ni Divya encrypt chesi save chesi, naa requests kosam matrame vaadadaniki permission istunna.", guideBtn: "🔊 Voice tho manual setup",
     needConsent: "Mundu permission box tick cheyyi.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Ayyindi", delData: "Naa data delete cheyyi", delDataConfirm: "Nee account, chats, tokens — anni delete avthayi. Ee action ni venakki theeyalem. Confirm cheyala?", delDataDone: "Nee data delete chesam.", templateLabel: "Style template",
@@ -103,7 +104,8 @@ const T = {
     noNumber: n => `I don't have ${n}'s number. Say "save ${n} 98xxxxxxxx", or pick from contacts.`, askNumber: n => `${n}'s phone number?`, saved: (n, x) => `Saved ${n} (+${x}). It stays on this phone only.`,
     remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
     connectNote: "Sign-in opens in your browser. Come back here when done.", connect: "Connect", connectedP: "Connected", soon: "Soon", ytNoChannel: "Connected, but no YouTube channel found on this account", connNoAccount: "Connected, but no account found", ytNoChannelShort: "No channel found", connNoAccountShort: "No account found",
-    setupIntro: "Divya sets itself up inside YOUR own accounts — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (your server). Divya does everything — accounts, API keys, server setup — with your one-time permission. You don't have to do anything.",
+    setupIntro: "Just two ways: (1) Automate with Divya — Divya sets up everything itself, with your one-time permission. (2) Manual — already have a model key? Add it below. That's all.",
+    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "Already have an AI model key? Give it here — Divya tests it, saves it, and uses it as your chat brain. You can also just send the model name + key in chat and Divya saves it.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (e.g. gpt-5, llama-3.3-70b)", modelKeyPh: "Paste the API key", modelOwn: "Your key stays sealed on your own server — that's why it can't be misused or seen by anyone.", modelNone: "No model of your own saved yet.", modelConnected: m => `Connected ✓ — ${m}`, modelTesting: "Testing…", tcTitle: "Take Control — sign-in screen", tcHint: "This screen is Divya's browser. Tap the screen and type in the box below to sign in — then tap 'I did it ✓' above.", tcTypeBtn: "Type", tcPh: "Type here…",
     googleRow: "Continue with Google", googleSub: "Uses your email for setup", continueGoogle: "Continue", orLoginPw: "Or log in with a password",
     consent: "I give Divya permission to save my keys encrypted and use them only for my requests.", guideBtn: "🔊 Manual setup by voice",
     needConsent: "Please tick the permission box first.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Done", delData: "Delete my data", delDataConfirm: "Your account, chats and tokens will all be deleted. This can't be undone. Confirm?", delDataDone: "Your data has been deleted.", templateLabel: "Style template",
@@ -146,7 +148,8 @@ const T = {
     voiceHonest: "Divya सिर्फ़ जब ऐप खुला हो और स्क्रीन पर हो, तब सुनती है (वेब ऐप बैकग्राउंड में नहीं सुनता)। कॉल/WhatsApp चुपचाप नहीं भेज सकती: डायलर या WhatsApp सब कुछ भरकर खोलती है, आप Call/Send दबाते हैं। वॉइस पहचान ब्राउज़र की सर्विस (Chrome में Google) से होती है।",
     callBtn: n => `कॉल करें ${n}`, waBtn: "WhatsApp खोलें", openBtn: n => `${n} खोलें`, playBtn: "YouTube पर सुनें", openedTab: n => `${n} naye tab mein khola`, openedApp: n => `${n} khola`, openYTApp: "YouTube ऐप खुल गया ✓", ytNoApp: "YouTube ऐप फ़ोन में नहीं है — ब्राउज़र में खोला।", ytOpening: "YouTube ऐप खोल रही हूँ…", waApp: "WhatsApp ऐप खुल गया ✓", waNoApp: "WhatsApp ऐप फ़ोन में नहीं है — ब्राउज़र में खोला।", waOpening: "WhatsApp ऐप खोल रही हूँ…", updBanner: v => `नया वर्शन ${v} आ गया — रिफ्रेश करें।`, updRefresh: "रिफ्रेश करें", updCheck: "ऐप अपडेट चेक करें", updLatest: "ऐप लेटेस्ट वर्शन पर है ✓", openBlocked: "Browser ne roka — neeche link dabao", openOff: "Auto-open band hai — neeche link dabao", calBtn: "Google Calendar में जोड़ें", subBtn: "प्लान देखें", pickContact: "कॉन्टैक्ट से चुनें", typeNumber: "नंबर टाइप करें", noNumber: n => `${n} का नंबर मेरे पास नहीं है। "${n} सेव करें 98xxxxxxxx" कहें, या कॉन्टैक्ट से चुनें।`, askNumber: n => `${n} का फ़ोन नंबर?`, saved: (n, x) => `${n} का नंबर सेव कर लिया (+${x})। यह सिर्फ़ इसी फ़ोन में रहेगा।`, remFire: t => `रिमाइंडर: ${t}`, notifTitle: "Divya रिमाइंडर",
     connectNote: "लॉग इन पेज ब्राउज़र में खुलेगा। कनेक्ट होने के बाद यहाँ वापस आएँ।", connect: "कनेक्ट", connectedP: "कनेक्टेड", soon: "जल्द आ रहा है", ytNoChannel: "कनेक्टेड, लेकिन इस अकाउंट पर YouTube चैनल नहीं मिला", connNoAccount: "कनेक्टेड, लेकिन कोई अकाउंट नहीं मिला", ytNoChannelShort: "चैनल नहीं मिला", connNoAccountShort: "अकाउंट नहीं मिला",
-    setupIntro: "Divya आपके अपने accounts में setup हो जाती है — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (आपका server)। Divya सब कुछ करती है — accounts, API keys, server setup — आपकी एक बार की परमिशन से। आपको कुछ नहीं करना है।",
+    setupIntro: "सिर्फ़ दो तरीके: (1) Automate with Divya — Divya खुद सब setup करती है, आपकी एक बार की परमिशन से। (2) Manual — पहले से model key है तो नीचे Add Model में दें। बस इतना ही।",
+    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "पहले से कोई AI model key है? यहाँ दें — Divya test करके save करेगी और उसे ही आपकी chat brain बनाएगी। Chat में model name + key भेजने पर भी Divya खुद save कर लेगी।", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (जैसे: gpt-5, llama-3.3-70b)", modelKeyPh: "API key paste करें", modelOwn: "आपकी key आपके अपने server पर ही sealed रहती है — इसलिए उसका misuse नहीं हो सकता और वह किसी को दिखती नहीं।", modelNone: "अभी आपकी अपनी कोई model save नहीं है।", modelConnected: m => `Connected ✓ — ${m}`, modelTesting: "Test हो रहा है…", tcTitle: "Take Control — sign-in screen", tcHint: "यह screen Divya के browser की है। Screen पर tap करके और नीचे box में type करके sign in करें — फिर ऊपर 'मैंने कर दिया ✓' दबाएँ।", tcTypeBtn: "Type करें", tcPh: "यहाँ type करें…",
     googleRow: "Continue with Google", googleSub: "आपका ईमेल सेटअप के लिए इस्तेमाल होगा", continueGoogle: "जारी रखें", orLoginPw: "या पासवर्ड से लॉग इन करें",
     consent: "मैं Divya को अपनी keys एन्क्रिप्ट करके सेव करने और सिर्फ़ मेरी रिक्वेस्ट के लिए इस्तेमाल करने की परमिशन देता/देती हूँ।",
     guideBtn: "🔊 वॉइस से मैनुअल सेटअप", needConsent: "पहले परमिशन बॉक्स पर टिक करें।", allow: "अलाउ करें", cancel: "कैंसिल", save: "सेव करें", next: "अगला स्टेप", done: "हो गया", delData: "मेरा डेटा डिलीट करें", delDataConfirm: "आपका अकाउंट, चैट, टोकन — सब डिलीट हो जाएगा। यह वापस नहीं होगा। कन्फ़र्म करें?", delDataDone: "आपका डेटा डिलीट कर दिया गया।", templateLabel: "स्टाइल टेम्पलेट",
@@ -188,7 +191,8 @@ const T = {
     voiceHonest: "Divya sirf jab app khula ho aur screen par ho, tab sunti hai (web app background me nahi sunta). Call/WhatsApp chupchaap nahi bhej sakti: dialer ya WhatsApp sab kuch bharkar kholti hai, aap Call/Send dabate hain. Voice pehchan browser ki service (Chrome me Google) se hoti hai.",
     callBtn: n => `Call karo ${n}`, waBtn: "WhatsApp kholo", openBtn: n => `${n} kholo`, playBtn: "YouTube par suno", openedTab: n => `${n} naye tab mein khola`, openedApp: n => `${n} khola`, openYTApp: "YouTube app khul gaya ✓", ytNoApp: "YouTube app phone mein nahi hai — browser mein khola.", ytOpening: "YouTube app khol rahi hoon…", waApp: "WhatsApp app khul gaya ✓", waNoApp: "WhatsApp app phone mein nahi hai — browser mein khola.", waOpening: "WhatsApp app khol rahi hoon…", updBanner: v => `Naya version ${v} aa gaya — refresh karo.`, updRefresh: "Refresh karo", updCheck: "App update check karo", updLatest: "App latest version par hai ✓", openBlocked: "Browser ne roka — neeche link dabao", openOff: "Auto-open band hai — neeche link dabao", calBtn: "Google Calendar me jodo", subBtn: "Plans dekho", pickContact: "Contacts se chuno", typeNumber: "Number type karo", noNumber: n => `${n} ka number mere paas nahi hai. "${n} save karo 98xxxxxxxx" kaho, ya contacts se chuno.`, askNumber: n => `${n} ka phone number?`, saved: (n, x) => `${n} ka number save kar liya (+${x}). Ye sirf isi phone me rahega.`, remFire: t => `Reminder: ${t}`, notifTitle: "Divya reminder",
     connectNote: "Log in page browser me khulega. Connect hone ke baad yahan wapas aao.", connect: "Connect", connectedP: "Connected", soon: "Jald aa raha hai", ytNoChannel: "Connected, lekin is account par YouTube channel nahi mila", connNoAccount: "Connected, lekin koi account nahi mila", ytNoChannelShort: "Channel nahi mila", connNoAccountShort: "Account nahi mila",
-    setupIntro: "Divya aapke apne accounts me setup ho jati hai — Groq, OpenRouter, Gemini (free AI keys) + Cloudflare (aapka server). Divya sab kuch karti hai — accounts, API keys, server setup — aapki ek baar ki permission se. Aapko kuch nahi karna hai.",
+    setupIntro: "Sirf do tareeke: (1) Automate with Divya — Divya khud sab setup karti hai, aapki ek baar ki permission se. (2) Manual — pehle se model key hai to neeche Add Model me dein. Bas itna hi.",
+    autoTitle: "Automate with Divya", modelTitle: "Manual — Add Model", modelSub: "Pehle se koi AI model key hai? Yahan dein — Divya test karke save karegi aur use hi aapki chat brain banayegi. Chat me model name + key bhejne par bhi Divya khud save kar legi.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "Model name (jaise: gpt-5, llama-3.3-70b)", modelKeyPh: "API key paste karo", modelOwn: "Aapki key aapke apne server par hi sealed rehti hai — isliye uska misuse nahi ho sakta aur woh kisi ko dikhti nahi.", modelNone: "Abhi aapki apni koi model save nahi hai.", modelConnected: m => `Connected ✓ — ${m}`, modelTesting: "Test ho raha hai…", tcTitle: "Take Control — sign-in screen", tcHint: "Ye screen Divya ke browser ki hai. Screen par tap karke aur neeche box me type karke sign in karo — phir upar 'Maine kar diya ✓' dabao.", tcTypeBtn: "Type karo", tcPh: "Yahan type karo…",
     googleRow: "Continue with Google", googleSub: "Aapka email setup ke liye use hoga", continueGoogle: "Continue", orLoginPw: "Ya password se log in karo",
     consent: "Main Divya ko apni keys encrypt karke save karne aur sirf meri requests ke liye use karne ki permission deta/deti hoon.",
     guideBtn: "🔊 Voice se manual setup", needConsent: "Pehle permission box par tick karo.", allow: "Allow", cancel: "Cancel", save: "Save", next: "Next step", done: "Ho gaya", delData: "Mera data delete karo", delDataConfirm: "Aapka account, chats, tokens — sab delete ho jayega. Ye wapas nahi hoga. Confirm karo?", delDataDone: "Aapka data delete kar diya gaya.", templateLabel: "Style template",
@@ -222,7 +226,7 @@ function applyLang() {
   $("#greet").textContent = t("hello", new Date().getHours());
   if (cur) setTitle(cur);
   setVState(VA.state || "idle");
-  renderSteps();
+  renderModel();
   showVoiceName();
   if (voiceListEl() && !voiceListEl().hidden) renderVoiceList();
 }
@@ -379,7 +383,7 @@ function route() {
   if (name === "connect" || name === "settings") loadConnect();
   if (name === "home") loadStatus();
   if (name === "profile") { renderProfile(); loadPlan(); loadConnect(); }
-  if (name === "setup") { loadKeys(); loadConnect(); loadSetupState(); }
+  if (name === "setup") { loadModel(); loadConnect(); loadSetupState(); }
   if (name === "history") loadVideos();
   if (name === "plan" || name === "home") loadPlan();
   if (name === "download") renderDownload();
@@ -830,7 +834,7 @@ function renderAutoLog() {
   const card = $("#autoLogCard"); if (card) card.hidden = !lastAutoLog.length;
   ul.innerHTML = lastAutoLog.map(e => {
     const when = e.at ? new Date(e.at).toLocaleString() : "";
-    const who = e.provider ? ((KP[e.provider] && KP[e.provider].name) || e.provider) + ": " : "";
+    const who = e.provider ? (PNAMES[e.provider] || e.provider) + ": " : "";
     return `<li class="muted small">${esc(when)} — ${esc(who + (e.action || ""))}${e.why ? " — " + esc(e.why) : ""} (${esc(e.result || "")})</li>`;
   }).join("");
 }
@@ -866,7 +870,7 @@ async function startOneTapSetup() {
    or SMS code) plus a "Nenu chesa ✓" button that resumes via setup/continue. */
 let setupPause = null; // {id} of the step paused for the user's one tap (email/SMS only)
 function setupStepLabel(st) {
-  const name = st.name || (KP[st.id] && KP[st.id].name) || st.id || st.site || "";
+  const name = st.name || st.id || st.site || "";
   const state = String(st.state || "").toLowerCase();
   const queued = state === "queued" || state === "pending" || state === "waiting";
   const mark = state === "done" ? "✓ " : state === "paused" ? "⏸ " : state === "failed" ? "✗ " : state === "stalled" ? "⚠ " : queued ? "· " : "… ";
@@ -904,7 +908,7 @@ function renderSetupBox(d) {
   const pauseIsEmail = !!pausedStep && !["sms", "phone", "code", "signin", "captcha"].includes(pauseKind);
   // "Waiting on you" lives ONLY on the paused step (email link / SMS code).
   const newPause = pausedStep ? { id: pausedStep.id || pausedStep.provider || "" } : null;
-  if (JSON.stringify(newPause) !== JSON.stringify(setupPause)) { setupPause = newPause; if (cur === "setup") renderSteps(); }
+  if (JSON.stringify(newPause) !== JSON.stringify(setupPause)) { setupPause = newPause; }
   let html = `<b>${esc(title)}</b>`;
   if (steps) {
     html += steps.map(setupStepLabel).join("");
@@ -942,6 +946,19 @@ function renderSetupBox(d) {
   if (gmailNeeds) {
     html += `<div class="card note" data-gmail-consent><b>${esc(t("gmailConsentT"))}</b><div>${esc(t("gmailConsentLine"))}</div><div class="act"><button class="pill" data-a="gmail">${esc(t("gmailAllowBtn"))}</button></div></div>`;
   }
+  // v48 (Take Control): the paused step is a live browser handoff — the
+  // provider refused Divya's automated sign-in, so the user signs in
+  // THEMSELVES in Divya's browser, streamed into this panel (tap = click,
+  // type box + Enter). The "Nenu chesa ✓" button below ends it
+  // (setup/continue); the runner then finishes the step alone and the
+  // session lands in the user's sealed browser profile for every
+  // later run.
+  const tcOn = !!(d.action && d.action.tc);
+  if (tcOn) {
+    html += `<div class="tc-panel"><b>${esc(t("tcTitle"))}</b><div class="muted small">${esc(t("tcHint"))}</div>` +
+      `<img class="tc-img" data-tc-img alt="">` +
+      `<div class="keyrow"><input class="keyfield" data-tc-text type="text" autocomplete="off" spellcheck="false" placeholder="${esc(t("tcPh"))}"><button class="act-btn" data-tc-type>${esc(t("tcTypeBtn"))}</button><button class="act-btn alt" data-tc-enter>Enter</button></div></div>`;
+  }
   // v39: the sign-in page to open comes from the server's action (or the
   // current job's URL) — a paused-signin step without an open button is
   // exactly the bug the live test caught.
@@ -976,7 +993,50 @@ function renderSetupBox(d) {
   if (stop) stop.onclick = async () => { await api("setup/stop", { method: "POST", json: {} }); pollSetup(); };
   const cont = setupBoxEl.querySelector('[data-a="continue"]');
   if (cont) cont.onclick = async () => { await api("setup/continue", { method: "POST", json: {} }); pollSetup(); };
+  if (tcOn) { tcBind(setupBoxEl); const ti = setupBoxEl.querySelector("[data-tc-text]"); if (ti && tcTextKeep) ti.value = tcTextKeep; tcStart(); } else tcStop();
   scrollDown();
+}
+/* v48 (Take Control): live view of the paused runner browser. Frames
+   arrive via GET setup/tc (polled ~1.5s while the panel is shown); taps
+   on the image and the type box go back as POST setup/tc/input. The
+   frame polls self-stop when the panel leaves the DOM (run finished,
+   box re-rendered without TC, chat closed). */
+let tcPoll = null, tcTextKeep = "";
+function tcStart() {
+  if (tcPoll) return;
+  const fetchFrame = async () => {
+    const img = setupBoxEl && setupBoxEl.querySelector("[data-tc-img]");
+    if (!img) { tcStop(); return; }
+    try {
+      const d = await api("setup/tc");
+      const im2 = setupBoxEl && setupBoxEl.querySelector("[data-tc-img]");
+      if (d && d.ok && d.active && d.img && im2) im2.src = "data:image/jpeg;base64," + d.img;
+    } catch {}
+  };
+  fetchFrame();
+  tcPoll = setInterval(fetchFrame, 1500);
+}
+function tcStop() { if (tcPoll) { clearInterval(tcPoll); tcPoll = null; } }
+function tcBind(box) {
+  const img = box.querySelector("[data-tc-img]");
+  if (img) img.onclick = e => {
+    const r = img.getBoundingClientRect();
+    if (!r.width || !img.naturalWidth) return;
+    const x = Math.round((e.clientX - r.left) / r.width * img.naturalWidth);
+    const y = Math.round((e.clientY - r.top) / r.height * img.naturalHeight);
+    api("setup/tc/input", { method: "POST", json: { type: "click", x, y } }).catch(() => {});
+  };
+  const inp = box.querySelector("[data-tc-text]");
+  if (inp) inp.oninput = () => { tcTextKeep = inp.value; };
+  const typeBtn = box.querySelector("[data-tc-type]");
+  if (typeBtn) typeBtn.onclick = () => {
+    const v = inp ? inp.value : "";
+    if (!v) return;
+    api("setup/tc/input", { method: "POST", json: { type: "type", text: v } }).catch(() => {});
+    if (inp) { inp.value = ""; tcTextKeep = ""; }
+  };
+  const enterBtn = box.querySelector("[data-tc-enter]");
+  if (enterBtn) enterBtn.onclick = () => { api("setup/tc/input", { method: "POST", json: { type: "key", key: "Enter" } }).catch(() => {}); };
 }
 async function pollSetup() {
   if (setupPoll) clearInterval(setupPoll);
@@ -1201,7 +1261,7 @@ $("#heyBtn").onclick = () => { go("voice"); setTimeout(() => SR ? vaOnce() : toa
 $("#avatarBtn").onclick = () => go("profile");
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { vaKill(); if (VA.state !== "idle") setVState(vaIdleState()); }
-  else if (S.token && !$("#main").hidden) { if (VA.on) vaListen("wake"); if (guide.id) guideReturn(); if (cur === "connect" || cur === "setup") loadConnect(); }
+  else if (S.token && !$("#main").hidden) { if (VA.on) vaListen("wake"); if (cur === "connect" || cur === "setup") loadConnect(); }
 });
 
 /* ---------- templates: visual cards (R25) — same palette as video-kit/render.py ---------- */
@@ -1348,93 +1408,51 @@ $("#gBtn").onclick = () => connectLink("google");
 $("#loginGoogleBtn") && ($("#loginGoogleBtn").onclick = async () => { const r = await api("auth/google", { method: "POST", json: {} }).catch(() => ({})); if (r.ok && r.url) location.href = r.url; else toast(r.error || t("netErr")); });
 
 /* ---------- server & API setup ---------- */
-const CF_TPL = "https://dash.cloudflare.com/profile/api-tokens?" + new URLSearchParams({ permissionGroupKeys: JSON.stringify([{ key: "workers_scripts", type: "edit" }, { key: "workers_kv_storage", type: "edit" }, { key: "account_settings", type: "read" }]), name: "Divya", accountId: "*", zoneId: "all" });
-const KP = {
-  openrouter: { name: "OpenRouter", oauth: true, rx: /^sk-or-v1-[a-f0-9]{40,}$/i, url: "https://openrouter.ai/settings/keys" },
-  groq: { name: "Groq", rx: /^gsk_[A-Za-z0-9]{20,}$/, url: "https://console.groq.com/keys" },
-  gemini: { name: "Gemini", rx: /^AIza[0-9A-Za-z_-]{30,}$/, url: "https://aistudio.google.com/app/apikey" },
-  cloudflare: { name: "Cloudflare", rx: /^[A-Za-z0-9_-]{40}$/, url: CF_TPL },
-  github: { name: "GitHub", soon: true, rx: /^(ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{50,})$/, url: "https://github.com/settings/tokens/new?scopes=repo,workflow&description=Divya" },
-  huggingface: { name: "Hugging Face", soon: true, rx: /^hf_[A-Za-z0-9]{30,}$/, url: "https://huggingface.co/settings/tokens/new?tokenType=read&tokenName=Divya" },
-};
-let keyState = {};
-async function loadKeys() { try { const d = await api("keys"); if (d.ok) { keyState = Object.fromEntries(d.providers.map(p => [p.id, p])); renderSteps(); } } catch {} }
-function renderSteps() {
-  const box = $("#steps"); if (!box) return; $("#consent").checked = S.consent;
-  box.innerHTML = Object.entries(KP).map(([id, k]) => {
-    const s = keyState[id] || {};
-    // R48: "Waiting on you" appears ONLY on the step paused for the user's
-    // one tap (email-link tap / SMS code) — never for a key paste or any
-    // other step. setupPause is set by the mini-box from setup/status.
-    const waiting = setupPause && setupPause.id === id && !(s.set && s.ok);
-    const st = s.set ? (s.ok ? t("stepOk", s.who) : t("stepFail")) : waiting ? t("stepWaiting") : t("stepNot");
-    return `<li class="step${s.set && s.ok ? " done" : ""}${waiting ? " waiting" : ""}" id="st-${id}"><div class="step-h"><b>${esc(k.name)}</b><span class="pill wait">${esc(st)}</span></div>
-      <p class="muted small">${esc(t("d_" + id))}${k.soon ? " " + esc(t("oauthSoon")) : ""}</p>
-      <p class="muted small">${esc(t("stepYouDo"))}</p>
-      <div class="btns">${k.oauth ? `<button class="act-btn" data-or>${esc(t("oneTap"))}</button>` : ""}<a class="act-btn${k.oauth ? " alt" : ""}" href="${esc(k.url)}" target="_blank" rel="noopener" data-open="${id}">${esc(t("openCreate"))}</a>
-      ${s.set ? `<button class="act-btn alt" data-test="${id}">${esc(t("test"))}</button><button class="act-btn alt" data-del="${id}">${esc(t("remove"))}</button>` : ""}</div>
-      <div class="keyrow"><label class="sr-only" for="key-${id}">${esc(k.name + " " + t("pasteKey"))}</label><input class="keyfield" id="key-${id}" type="password" autocomplete="off" spellcheck="false" placeholder="${esc(t("pasteKey"))}" data-key="${id}">
-      <button class="act-btn alt" data-paste="${id}" aria-label="${esc(t("paste") + " " + k.name)}">${esc(t("paste"))}</button><button class="act-btn" data-save="${id}" aria-label="${esc(t("testSave") + " " + k.name)}">${esc(t("testSave"))}</button></div></li>`;
-  }).join("");
-  box.querySelectorAll("[data-or]").forEach(b => b.onclick = orConnect);
-  box.querySelectorAll("[data-save]").forEach(b => b.onclick = () => saveKey(b.dataset.save, $("#key-" + b.dataset.save).value.trim()));
-  box.querySelectorAll("[data-paste]").forEach(b => b.onclick = async () => { try { const v = (await navigator.clipboard.readText()).trim(); $("#key-" + b.dataset.paste).value = v; checkPasted(b.dataset.paste, v); } catch { $("#key-" + b.dataset.paste).focus(); toast(t("guidePaste"), true); } });
-  box.querySelectorAll("[data-key]").forEach(i => i.addEventListener("input", () => checkPasted(i.dataset.key, i.value.trim())));
-  box.querySelectorAll("[data-test]").forEach(b => b.onclick = async () => { const d = await api("keys/test", { method: "POST", json: { provider: b.dataset.test } }).catch(() => ({})); toast(d.ok ? t("stepOk", d.who) : (d.error || t("netErr")), true); loadKeys(); });
-  box.querySelectorAll("[data-del]").forEach(b => b.onclick = async () => { await api("keys/delete", { method: "POST", json: { provider: b.dataset.del } }).catch(() => {}); loadKeys(); });
+/* v48 (R54): Setup is TWO paths only — "Automate with Divya" (above)
+   and "Manual — Add Model" (below). The old per-provider key cards (six
+   hardcoded providers, each with its own page link, key format and
+   buttons) and the voice guide are GONE. PNAMES is only a display-name
+   map for the automate run's own step labels / auto-log lines. */
+const PNAMES = { groq: "Groq", openrouter: "OpenRouter", gemini: "Gemini", cloudflare: "Cloudflare" };
+let modelState = null;
+async function loadModel() {
+  try { const d = await api("model"); modelState = d && d.ok ? d.model : null; } catch { modelState = null; }
+  renderModel();
+}
+function renderModel() {
+  const st = $("#modelState"); if (!st) return;
+  const btns = $("#modelBtns");
+  if (modelState && modelState.model) {
+    st.textContent = t("modelConnected", modelState.model) + (modelState.ok ? "" : " — " + t("stepFail"));
+    if (btns) btns.hidden = false;
+  } else {
+    st.textContent = t("modelNone");
+    if (btns) btns.hidden = true;
+  }
   renderAutoLog();
 }
+async function saveModel() {
+  const nameEl = $("#modelName"), keyEl = $("#modelKey"), msg = $("#modelMsg");
+  const name = nameEl ? nameEl.value.trim() : "", key = keyEl ? keyEl.value.trim() : "";
+  if (!key) { keyEl && keyEl.focus(); return; }
+  if (!needConsent(() => saveModel())) return;
+  if (msg) msg.textContent = t("modelTesting");
+  const d = await api("model/save", { method: "POST", json: { name, key, consent: true } }).catch(() => ({}));
+  if (d.ok) {
+    if (keyEl) keyEl.value = "";
+    if (msg) msg.textContent = t("modelConnected", d.model);
+    toast(t("modelConnected", d.model), true);
+    loadModel();
+  } else if (msg) msg.textContent = d.error || t("netErr");
+}
+$("#modelSaveBtn") && ($("#modelSaveBtn").onclick = () => saveModel());
+$("#modelTestBtn") && ($("#modelTestBtn").onclick = async () => { const d = await api("model/test", { method: "POST", json: {} }).catch(() => ({})); toast(d.ok ? t("modelConnected", d.model) : (d.error || t("netErr")), true); loadModel(); });
+$("#modelDelBtn") && ($("#modelDelBtn").onclick = async () => { await api("model/delete", { method: "POST", json: {} }).catch(() => {}); const m = $("#modelMsg"); if (m) m.textContent = ""; loadModel(); });
 $("#consent").onchange = e => { S.consent = e.target.checked; store.set("consent", S.consent); syncOneTapBtn(); };
 function needConsent(then) { if (S.consent) return true; sheet(t("needConsent"), [{ label: t("allow"), primary: true, fn: () => { S.consent = true; store.set("consent", true); $("#consent").checked = true; then && then(); } }, { label: t("cancel") }]); return false; }
-function checkPasted(id, v) { if (v && KP[id].rx.test(v)) confirmKey(id, v); }
-function confirmKey(id, v) {
-  if (confirmKey.open === v) return; confirmKey.open = v;
-  sheet(t("foundKey", KP[id].name, v.slice(-4)), [{ label: t("save"), primary: true, fn: () => { confirmKey.open = ""; saveKey(id, v); } }, { label: t("cancel"), fn: () => { confirmKey.open = ""; } }]);
-}
-async function saveKey(id, v) {
-  if (!v) { $("#key-" + id)?.focus(); return; }
-  if (!needConsent(() => saveKey(id, v))) return;
-  if (!KP[id].rx.test(v) && v.length < 16) { toast(t("keyBad", KP[id].name), true); return; }
-  const d = await api("keys/save", { method: "POST", json: { provider: id, key: v, consent: true } }).catch(() => ({}));
-  if (d.ok) { toast(t("keySaved", KP[id].name), true); if (guide.id === id) { guide.id = ""; await loadKeys(); return guideNext(true); } }
-  else toast(d.error || t("netErr"), true);
-  loadKeys();
-}
-async function orConnect() {
-  if (!needConsent(orConnect)) return;
-  const v = [...crypto.getRandomValues(new Uint8Array(48))].map(b => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"[b % 64]).join("");
-  const dig = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(v)));
-  const ch = btoa(String.fromCharCode(...dig)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  store.set("orv", v);
-  location.href = "https://openrouter.ai/auth?" + new URLSearchParams({ callback_url: location.host === new URL(APP_URL).host ? APP_URL + "/setup" : BASE + "?orcb=1", code_challenge: ch, code_challenge_method: "S256" });
-}
-async function orFinish() {
-  const code = store.get("orcode", ""), v = store.get("orv", ""); if (!code || !v) { store.del("orcode"); return; }
-  store.del("orcode"); store.del("orv");
-  const d = await api("keys/openrouter", { method: "POST", json: { code, verifier: v } }).catch(() => ({}));
-  toast(d.ok ? t("orDone") : (d.error || t("orFail")), true); loadKeys();
-}
-/* voice-guided setup: speak each step, open the page, read the clipboard on return, one confirmation to save */
-const guide = { id: "" };
-$("#guideBtn").onclick = () => { if (needConsent(() => guideNext())) guideNext(); };
-async function guideNext(afterSave) {
-  await loadKeys();
-  const id = Object.keys(KP).find(k => !(keyState[k]?.set && keyState[k]?.ok));
-  if (!id) { guide.id = ""; toast(t("guideDone"), true); return; }
-  if (afterSave) return sheet(t("guideNextQ", KP[id].name), [{ label: t("next"), primary: true, fn: () => guideOpen(id) }, { label: t("done") }]);
-  guideOpen(id);
-}
-function guideOpen(id) {
-  guide.id = id; $("#st-" + id)?.scrollIntoView({ block: "center" });
-  speak(t("guideStep", KP[id].name, t("d_" + id)));
-  if (KP[id].oauth) return orConnect();
-  window.open(KP[id].url, "_blank", "noopener");
-}
-async function guideReturn() {
-  const id = guide.id; if (!id || KP[id].oauth) return;
-  try { const v = (await navigator.clipboard.readText()).trim(); if (KP[id].rx.test(v)) { $("#key-" + id).value = v; return confirmKey(id, v); } } catch {}
-  $("#key-" + id)?.focus(); speak(t("guidePaste"));
-}
+/* v48 (R54): the per-provider paste/save helpers, the OpenRouter OAuth
+   detour and the voice guide were removed with the provider cards —
+   manual setup is now only the Add Model form above (and chat). */
 
 /* ---------- R48 login-time setup prompt ----------
    After login, ask the Worker whether setup is actually needed:
@@ -1745,9 +1763,8 @@ $("#suVoiceBtn").onclick = () => blindSignup();
 /* ---------- boot ---------- */
 function enter() {
   $("#login").hidden = true; $("#main").hidden = false; $("#bubble").hidden = false; $("#me").textContent = t("loggedIn", whoAmI()); $("#drawerMe").textContent = whoAmI(); renderAcct(); refreshMe();
-  loadHistory(); loadConnect(); loadKeys(); warmVoices(); schedule(); cur = "";
+  loadHistory(); loadConnect(); loadModel(); warmVoices(); schedule(); cur = "";
   route(); setTimeout(() => $("#screen-title").focus({ preventScroll: true }), 50);
-  if (store.get("orcode", "")) { go("setup"); orFinish(); }
   if (S.wake && SR) vaStart();
   setTimeout(() => checkSetupPrompt(), 3000); // R48: login-time setup prompt — only when setup/status says it is needed
 }
