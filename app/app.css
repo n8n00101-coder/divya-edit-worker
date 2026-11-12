@@ -10,8 +10,8 @@
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Noto Sans","Noto Sans Telugu",system-ui,sans-serif;
   color-scheme:light;
 }
-html[data-theme=dark]{--bg:#332A1E;--surface:#332A1E;--surface2:#453723;--text:#F1E6CB;--muted:#C9B18A;--line:rgba(241,230,203,.12);--accent:#B3C4A5;--accent2:#C2D2B4;--on-accent:#2A2118;--me:#8CA87E;--on-me:#F7F1DC;--bot:#332A1E;--shadow:5px 5px 12px rgba(12,8,3,.5),-5px -5px 12px rgba(230,205,150,.14);color-scheme:dark}
-@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#332A1E;--surface:#332A1E;--surface2:#453723;--text:#F1E6CB;--muted:#C9B18A;--line:rgba(241,230,203,.12);--accent:#B3C4A5;--accent2:#C2D2B4;--on-accent:#2A2118;--me:#8CA87E;--on-me:#F7F1DC;--bot:#332A1E;--shadow:5px 5px 12px rgba(12,8,3,.5),-5px -5px 12px rgba(230,205,150,.14);color-scheme:dark}}
+html[data-theme=dark]{--bg:#2F3524;--surface:#2F3524;--surface2:#424B31;--text:#F1E6CB;--muted:#BFC49E;--line:rgba(241,230,203,.13);--accent:#B3C4A5;--accent2:#C2D2B4;--on-accent:#2A2118;--me:#8CA87E;--on-me:#F7F1DC;--bot:#2F3524;--shadow:5px 5px 12px rgba(10,12,4,.5),-5px -5px 12px rgba(230,205,150,.12);color-scheme:dark}
+@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#2F3524;--surface:#2F3524;--surface2:#424B31;--text:#F1E6CB;--muted:#BFC49E;--line:rgba(241,230,203,.13);--accent:#B3C4A5;--accent2:#C2D2B4;--on-accent:#2A2118;--me:#8CA87E;--on-me:#F7F1DC;--bot:#2F3524;--shadow:5px 5px 12px rgba(10,12,4,.5),-5px -5px 12px rgba(230,205,150,.12);color-scheme:dark}}
 /* v62 (Ajju): NO shadow/glow effects inside input boxes — flat, clean,
    professional fields: soft fill, one hairline border, pista focus ring. */
 input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file])),textarea,select{box-shadow:none!important;background:color-mix(in srgb,var(--surface2) 45%,var(--bg));border:1px solid var(--line)}
@@ -275,7 +275,17 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .tabbar a svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .tabbar a[aria-current=page]{color:var(--text)}
 .tabbar a[aria-current=page]:before{content:"";position:absolute;top:-5px;left:30%;right:30%;height:3px;border-radius:0 0 3px 3px;background:var(--text)}
-.tabbar .tv-orb{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:var(--on-accent)}
+.tabbar .tv-orb{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:var(--on-accent)}
+/* v67: message gestures — quote block inside a bubble, long-press menu, reply bar */
+.msg{position:relative;touch-action:pan-y}
+.quote-in{display:block;background:color-mix(in srgb,var(--accent) 18%,transparent);border-left:3px solid var(--accent);border-radius:8px;padding:6px 9px;margin-bottom:6px;font-size:13px;color:var(--muted);white-space:pre-wrap;word-break:break-word}
+.ctxmenu{position:fixed;z-index:300;display:flex;gap:6px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:6px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+.ctxmenu button{min-height:40px;padding:0 14px;border-radius:8px;background:var(--bg);color:var(--text);font-weight:600;font-size:14px}
+.progbar{height:8px;background:var(--surface2);border-radius:99px;overflow:hidden;margin:7px 0 5px}
+.progbar i{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .6s ease}
+#replyBar{display:flex;align-items:center;gap:8px;background:color-mix(in srgb,var(--accent) 16%,var(--bg));border:1px solid var(--line);border-radius:12px;padding:8px 12px;margin:0 10px 6px;font-size:13px;color:var(--muted)}
+#replyBar span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#replyBar button{flex:none;font-size:16px;color:var(--text);padding:2px 6px}
 .tabbar .tv-orb svg{width:18px;height:18px}
 .tabbar a[aria-current=page].tab-voice:before{display:none}
 .tabbar a.tab-voice[aria-current=page] .tv-orb{box-shadow:0 0 0 3px var(--bg),0 0 0 5px var(--text)}

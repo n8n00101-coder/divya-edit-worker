@@ -96,7 +96,10 @@ async function kokoroLoad() {
     // transformers.js after the first download. Timed out honestly instead
     // of hanging the voice picker forever on a stalled connection.
     kokoroPhase = "model";
-    const tts = await kokoroWithTimeout(KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q8" }), KOKORO_MODEL_TIMEOUT_MS, "model");
+    let tts;
+    try { tts = await kokoroWithTimeout(KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q8" }), KOKORO_MODEL_TIMEOUT_MS, "model"); }
+    catch (e1) { // v67 (Ajju): on slow phones the ~90 MB q8 download never finishes and voices "don't load" — fall back to the ~half-size q4 model before giving up.
+      tts = await kokoroWithTimeout(KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q4" }), KOKORO_MODEL_TIMEOUT_MS, "model"); }
     if (gen !== kokoroGen) throw new Error("kokoro: superseded");
     kokoroTTS = tts;
     try { kokoroVoices = await tts.list_voices(); } catch { kokoroVoices = null; }
