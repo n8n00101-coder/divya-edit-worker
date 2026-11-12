@@ -1490,6 +1490,40 @@ def _wait_auth_fields(page, email_sels, pass_sels, step):
     return "missing"
 
 
+def _cf_token_add_perms(page, names):
+    """Best-effort: add extra permission rows (D1 Edit, Cloudflare Pages
+    Edit) to the dashboard token editor. The stock 'Edit Cloudflare
+    Workers' template carries NEITHER, and without them the R52 deploy
+    service cannot create databases or deploy Pages sites with a
+    Julie-created token (live-proven 2026-11-12: D1 -> HTTP 401).
+    Never raises and never fails the leg: returns the names it managed
+    to add; the caller records the outcome so a missing permission is
+    reported honestly instead of failing late at deploy time."""
+    added = []
+    for name in names:
+        try:
+            add = page.locator("button:has-text('Add more'), a:has-text('Add more')").last
+            if not add.count():
+                break
+            add.click()
+            page.wait_for_timeout(900)
+            # The new row's permission picker is a combobox: type the
+            # permission name, then click the matching option.
+            box = page.locator("input[placeholder*='permission' i], input[role='combobox']").last
+            if box.count():
+                box.click()
+                box.fill(name)
+                page.wait_for_timeout(900)
+            opt = page.locator(f"text={name}").last
+            if opt.count():
+                opt.click()
+                page.wait_for_timeout(500)
+                added.append(name)
+        except Exception:
+            break
+    return added
+
+
 def flow_cloudflare(page, job, cfg):
     """Cloudflare (server) flow: create the account (or sign in if it
     already exists) -> create a Workers-deploy API token in the dashboard
@@ -1565,6 +1599,14 @@ def flow_cloudflare(page, job, cfg):
     if not click(page, ["button:has-text('Edit Cloudflare Workers')", "a:has-text('Edit Cloudflare Workers')", "text=Edit Cloudflare Workers"]):
         return _fail("Cloudflare dashboard step failed: 'Edit Cloudflare Workers' template kanipinchaledu — dashboard layout marindhi (step: API Tokens > Create Token > template). Take Control tho try cheyyi.")
     page.wait_for_timeout(2000)
+    # R52 fix (2026-11-12): the Workers template alone cannot deploy
+    # Pages sites or create D1 databases — add both permissions so a
+    # Julie-created token can run the full deploy service. Best-effort:
+    # whatever could not be added is named in the result extra.
+    _cf_extra = _cf_token_add_perms(page, ["D1 Edit", "Cloudflare Pages Edit"])
+    _cf_missing = [n for n in ("D1 Edit", "Cloudflare Pages Edit") if n not in _cf_extra]
+    if _cf_missing:
+        progress("running", "api-token", "Token ki konni permissions add avvaledu: " + ", ".join(_cf_missing) + " — deploy ki avi kavali, tarvatha cheptha.", "")
     if not click(page, ["button:has-text('Continue to summary')", "button:has-text('Continue')"]):
         # The template may open the editor directly — proceed if Create Token is there.
         if not page.locator("button:has-text('Create Token')").count():
@@ -1590,8 +1632,8 @@ def flow_cloudflare(page, job, cfg):
     if not dep_ok:
         # Token is good and stored — only the deploy failed, so a later
         # run can deploy without re-creating the account or token.
-        return _fail(f"Cloudflare Worker deploy avvaledu: {dep_err} — token save ayyindhi.", key=token, extra={"account_id": account_id})
-    return _ok(key=token, extra={"account_id": account_id})
+        return _fail(f"Cloudflare Worker deploy avvaledu: {dep_err} — token save ayyindhi.", key=token, extra={"account_id": account_id, "token_missing_perms": _cf_missing})
+    return _ok(key=token, extra={"account_id": account_id, "token_missing_perms": _cf_missing})
 
 
 FLOWS = {
