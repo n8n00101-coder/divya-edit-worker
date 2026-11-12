@@ -1156,6 +1156,29 @@ def flow_google(page, job, cfg):
     return _fail("Key kanipinchaledu (step: key creation). Take Control tho try cheyyi.")
 
 
+def _wait_auth_fields(page, email_sels, pass_sels, step):
+    """Wait for the email+password fields of a JS-rendered auth form to
+    be VISIBLE (up to ~45s, one reload, progress posted). Returns
+    "ok" | "missing" | "stopped". v45: fill() only acts on visible
+    matches, so a fixed sleep races the SPA render."""
+    for attempt in range(2):
+        deadline = time.time() + 45
+        while time.time() < deadline and not (_visible(page, email_sels) and _visible(page, pass_sels)):
+            if check_stop():
+                return "stopped"
+            page.wait_for_timeout(2000)
+        if _visible(page, email_sels) and _visible(page, pass_sels):
+            return "ok"
+        if attempt == 0:
+            progress("running", step, "Page malli load chesthunna…", page.url)
+            try:
+                page.reload(wait_until="domcontentloaded", timeout=60000)
+            except Exception:
+                pass
+            page.wait_for_timeout(2000)
+    return "missing"
+
+
 def flow_cloudflare(page, job, cfg):
     """Cloudflare (server) flow: create the account (or sign in if it
     already exists) -> create a Workers-deploy API token in the dashboard
@@ -1172,8 +1195,17 @@ def flow_cloudflare(page, job, cfg):
     maybe_captcha(page)
     if check_stop():
         return _stopped()
-    ok = fill(page, ["input[type='email']", "input[name='email']", "input[placeholder*='email' i]"], email)
-    ok = fill(page, ["input[type='password']", "input[name='password']"], password) and ok
+    # v45: the dashboard is a JS SPA — the auth inputs render seconds
+    # after domcontentloaded, and fill() only acts on VISIBLE matches,
+    # so the old fixed 2.5s wait raced the render and failed "form
+    # kanipinchaledu" on a healthy page (live 2026-11-12, GH
+    # 43151779324: the whole flow died ~9s in). Wait for the fields.
+    _CF_EMAIL = ["input[type='email']", "input[name='email']", "input[placeholder*='email' i]"]
+    _CF_PASS = ["input[type='password']", "input[name='password']"]
+    if _wait_auth_fields(page, _CF_EMAIL, _CF_PASS, "signup") == "stopped":
+        return _stopped()
+    ok = fill(page, _CF_EMAIL, email)
+    ok = fill(page, _CF_PASS, password) and ok
     if not ok:
         return _fail("Cloudflare signup form kanipinchaledu — dashboard layout marindhi (step: signup form). Take Control tho try cheyyi.")
     click(page, ["button:has-text('Sign up')", "button:has-text('Create account')", "button:has-text('Continue')", "button[type='submit']"])
@@ -1186,6 +1218,9 @@ def flow_cloudflare(page, job, cfg):
         progress("running", "signin", "Cloudflare account already undhi — sign in chesthunna.", cfg["login_url"])
         goto(page, cfg["login_url"])
         page.wait_for_timeout(2500)
+        # v45: same SPA render wait as the signup form.
+        if _wait_auth_fields(page, ["input[type='email']", "input[name='email']", "input[placeholder*='email' i]"], ["input[type='password']", "input[name='password']"], "signin") == "stopped":
+            return _stopped()
         ok = fill(page, ["input[type='email']", "input[name='email']", "input[placeholder*='email' i]"], email)
         ok = fill(page, ["input[type='password']", "input[name='password']"], password) and ok
         if not ok:
