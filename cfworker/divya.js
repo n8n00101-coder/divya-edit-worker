@@ -49,7 +49,7 @@ async function liveModels(env, key) {
   if (c) return JSON.parse(c);
   const r = await fetch("https://api.groq.com/openai/v1/models", { headers: { Authorization: `Bearer ${key}` } });
   if (!r.ok) return [];
-  const ids = (await r.json()).data.filter(m => m.active !== false).map(m => m.id);
+  const ids = ((await r.json()).data || []).filter(m => m.active !== false).map(m => m.id);
   await env.KV.put("groq:models", JSON.stringify(ids), { expirationTtl: 3600 * 6 });
   return ids;
 }
@@ -122,7 +122,41 @@ async function media(env, id) {
 }
 
 async function history(env, user) { return JSON.parse((await env.KV.get(`h:${user}`)) || "[]").filter(x => !(x.role === "assistant" && /can[’']t (share|help)|cannot share/i.test(String(x.content)))); }
-async function remember(env, user, h) { await env.KV.put(`h:${user}`, JSON.stringify(h.slice(-30)), { expirationTtl: 86400 * 30 }); } // v67 (Ajju): deeper memory — 30 turns, 30 days (was 12 turns / 3 days: Julie forgot the conversation)
+async function remember(env, user, h) {
+  // v68 (Ajju — "Muse laga history gurthu pettukovali"): the recent 30
+  // turns ride verbatim; anything older is COMPRESSED into a durable
+  // long-term memory note (hmem:) instead of being forgotten, and the
+  // note is fed back into every future brain call (memContext below).
+  let keep = h;
+  if (h.length > 30) {
+    const overflow = h.slice(0, h.length - 30); keep = h.slice(-30);
+    try {
+      const text = overflow.map(m => `${m.role === "user" ? "User" : "Julie"}: ${String(m.content || "").slice(0, 300)}`).join("\n").slice(0, 6000);
+      let sum = "";
+      try { sum = await groq(env, [{ role: "system", content: "You compress chat excerpts into a durable memory note for an assistant. Output ONLY the note: the user's facts, names, topics discussed, decisions, preferences and open threads — max 120 words, plain lines, no preamble." }, { role: "user", content: text }]); } catch {}
+      // If the brain is unreachable, memory still forms: keep a plain
+      // excerpt of the older turns rather than forgetting them.
+      if (!sum || /^Sorry ra/i.test(sum)) sum = "Earlier conversation excerpt: " + text.slice(0, 600);
+      const prev = JSON.parse((await env.KV.get(`hmem:${user}`)) || "[]");
+      prev.push(sum.trim().slice(0, 700));
+      await env.KV.put(`hmem:${user}`, JSON.stringify(prev.slice(-4)), { expirationTtl: 86400 * 90 });
+    } catch {}
+  }
+  await env.KV.put(`h:${user}`, JSON.stringify(keep), { expirationTtl: 86400 * 30 });
+}
+async function memContext(env, user) {
+  // Durable memory injected into every brain call: compressed earlier
+  // conversations (hmem:) + hard user facts (umem:) — this is how Julie
+  // remembers a user across days and topics, the way Muse does.
+  const out = [];
+  try {
+    const hm = JSON.parse((await env.KV.get(`hmem:${user}`)) || "[]");
+    if (hm.length) out.push({ role: "system", content: "LONG-TERM MEMORY (earlier conversations with this user — treat as true and use it):\n" + hm.join("\n") });
+    const um = JSON.parse((await env.KV.get(`umem:${user}`)) || "null");
+    if (um) { const bits = []; if (um.name) bits.push(`their name is ${um.name}`); if (um.voice) bits.push(`always use a ${um.voice} voice-over for their videos`); if (um.lang) bits.push(`they prefer ${um.lang}`); (um.notes || []).forEach(n => bits.push(n)); if (bits.length) out.push({ role: "system", content: "USER FACTS (durable, saved across all conversations): " + bits.join("; ") + "." }); }
+  } catch {}
+  return out;
+}
 
 async function startEdit(env, user, mediaId, instruction) {
   const tk = await tokSpend(env, user, TOK.COST.video_edit); if (!tk.ok) return say(env, user, tokMsg("te", tk));
@@ -310,7 +344,7 @@ async function handle(env, m) {
     // model — answer with the R48 one-allow Setup flow instead.
     if (isSetupQuestion(text)) { const sg = setupGuideReply("te"); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: sg }); await remember(env, user, hh); return say(env, user, sg); }
     const h = await history(env, user); h.push({ role: "user", content: text });
-    let ans = await groq(env, [{ role: "system", content: SYS }, ...h]);
+    let ans = await groq(env, [{ role: "system", content: SYS }, ...(await memContext(env, user)), ...h]);
     let mm = ans.match(/\[\[\s*CREATE\s*:\s*([^\]]*)\]\]/i);
     if (!mm && (forceCreateWA || isNoVideoEditOrder(text))) { mm = [null, text]; ans = "Sare, start chesa — script, visuals, voice, captions, edit, motham nene A to Z chestha. Ready ayyaka ikkade pampistha."; }
     ans = ans.replace(/\[\[[^\]]*\]\]/g, "").replace(/\*\*|__|^#+\s*/gm, "").trim();
@@ -551,6 +585,25 @@ async function appTalk(env, u, text, lang, voiceId) {
     h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
     return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
   }
+  // v68: durable user facts — name, always-voice, always-language and
+  // explicit "gurthu pettuko / remember ..." notes are saved to umem:
+  // and injected into EVERY future conversation (memContext), not just
+  // this one. This is the user-profile memory Ajju asked for.
+  try {
+    const um = JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null") || {};
+    let umDirty = false;
+    const nameM = cleanText.match(/(?:naa peru|my name is)\s+([A-Za-z][A-Za-z .]{1,30})/i);
+    if (nameM) { const nm = nameM[1].trim().split(/\s+/).slice(0, 2).join(" "); if (nm && nm !== um.name) { um.name = nm; umDirty = true; } }
+    if (/(eppudu|always|prathi\s*sari|every\s*time)/i.test(cleanText)) {
+      const vM = cleanText.match(/(female|male|aada|maga)\s*(voice|sound)?/i);
+      if (vM && /(voice|sound)/i.test(cleanText)) { const g = /female|aada/i.test(vM[1]) ? "female" : "male"; if (um.voice !== g) { um.voice = g; umDirty = true; } }
+      const lM = cleanText.match(/(telugu|hindi|english)/i);
+      if (lM) { const lg = lM[1][0].toUpperCase() + lM[1].slice(1).toLowerCase(); if (um.lang !== lg) { um.lang = lg; umDirty = true; } }
+    }
+    const remM = cleanText.match(/(?:gurthu\s*pettuko|remember(?:\s+this)?)\s*[:\-]?\s*(.{4,140})/i);
+    if (remM) { um.notes = [...(um.notes || []), remM[1].trim()].slice(-10); umDirty = true; }
+    if (umDirty) await env.KV.put(`umem:${u.n}`, JSON.stringify(um), { expirationTtl: 86400 * 180 });
+  } catch {}
   // R40: resume a create that waited for short/long (asked once, now answered).
   let resumeBrief = null;
   const crtPend = JSON.parse((await env.KV.get(`crtpend:${u.n}`)) || "null");
@@ -673,7 +726,7 @@ async function appTalk(env, u, text, lang, voiceId) {
   let ans, mm;
   if (resumeBrief) { ans = lang === "en" ? "Starting your video now." : "Nee video start chesthunna."; mm = [null, resumeBrief]; }
   else {
-    ans = await userBrain(env, u, [{ role: "system", content: appSys(u.owner, lang) }, ...h], lang);
+    ans = await userBrain(env, u, [{ role: "system", content: appSys(u.owner, lang) }, ...(await memContext(env, u.n)), ...h], lang);
     mm = ans.match(/\[\[\s*CREATE\s*:\s*([^\]]*)\]\]/i);
     ans = ans.replace(/\[\[[^\]]*\]\]/g, "").replace(/\*\*|__|^#+\s*/gm, "").trim();
     // v67: small models sometimes continue the chat themselves (writing
@@ -708,6 +761,7 @@ async function appTalk(env, u, text, lang, voiceId) {
     // applies to THIS create, once.
     const np = JSON.parse((await env.KV.get(`nextpref:${u.n}`)) || "null");
     if (np) { if (np.gender) brief += ` Voice-over gender: ${np.gender}.`; if (np.langName) brief += ` Voice language: ${np.langName}.`; await env.KV.delete(`nextpref:${u.n}`); }
+    else { const um2 = JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null"); if (um2 && um2.voice) brief += ` Voice-over gender: ${um2.voice}.`; if (um2 && um2.lang) brief += ` Voice language: ${um2.lang}.`; }
     // R34: the video voice-over uses the user's picked app voice gender
     // (the runner only reads male/female from the brief/plan).
     const vg = /^m-/.test(String(voiceId || "")) ? "male" : /^f-/.test(String(voiceId || "")) ? "female" : "";
@@ -946,7 +1000,7 @@ async function appApi(req, env, url, ctx) {
   if (!u || !u.ok) return appJson(req, { ok: false, error: "login" }, 401);
   const lang = body.lang === "en" || url.searchParams.get("lang") === "en" ? "en" : "te";
   if (p === "logout" && req.method === "POST") { await env.KV.delete(`sess:${(req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim()}`); return appJson(req, { ok: true }); }
-  if (p === "me") { const a = u.acct; try { if (!(await env.KV.get(`joined:${u.n}`))) await env.KV.put(`joined:${u.n}`, String(Date.now())); } catch {} return appJson(req, { ok: true, number: a ? (a.phone || "") : u.n, owner: u.owner, premium: await isPremium(env, u.n), account: a ? { name: a.name, email: a.email, phone: a.phone || "", phone_pending: a.pphone || "" } : null }); }
+  if (p === "me") { const a = u.acct; try { if (!(await env.KV.get(`joined:${u.n}`))) await env.KV.put(`joined:${u.n}`, String(Date.now())); } catch {} return appJson(req, { ok: true, number: a ? (a.phone || "") : u.n, owner: u.owner, premium: await isPremium(env, u.n), memory: JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null"), account: a ? { name: a.name, email: a.email, phone: a.phone || "", phone_pending: a.pphone || "" } : null }); }
   if (p.startsWith("account/") && req.method === "POST") return acctPrivate(req, env, u, p, body);
   if (p === "plan") { const bal = await tokBalance(env, u.n); const own = !!((await env.KV.get(`ukey:${u.n}:groq`)) || (await env.KV.get(`ukey:${u.n}:openrouter`)) || (await env.KV.get(`umodel:${u.n}`))); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = PLANS[pid].voice; /* v37: voice assistant included in every plan (was a planvoice KV flag / ₹49 add-on) */ return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, edits_limit: Math.floor(TOK.WEEKLY_FREE / TOK.PER_MIN), edits_used: Math.floor(bal.weekSpent / TOK.PER_MIN), edits_left: bal.videosWeek, period: "week", unlimited: bal.unlimited, brain: own ? "own" : "shared", video_backend: "shared", pro: "soon" }); }
   if (p === "assist" && req.method === "POST") return appJson(req, await appAssist(env, u, body, lang));

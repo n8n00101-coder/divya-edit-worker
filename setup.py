@@ -151,6 +151,32 @@ def _pause_reason(step):
     return None
 
 
+_CUR = {"page": None}  # v68: the live page of the provider attempt in flight
+
+# v68 (Ajju — "Muse lo laga agent pani live ga kanipinchali"): an inert
+# on-page cursor that follows the agent's real mouse (Playwright moves
+# the virtual mouse to each element before clicking, so this div tracks
+# every action) and pulses on click. It rides inside every screenshot
+# the app streams, so the user SEES the agent move, select and click.
+CURSOR_JS = r"""
+(() => {
+  if (window.__julieCursor) return; window.__julieCursor = true;
+  const boot = () => {
+    if (!document.body) { setTimeout(boot, 60); return; }
+    const c = document.createElement('div'); c.id = '__julie_cursor';
+    c.style.cssText = 'position:fixed;left:0;top:0;width:26px;height:26px;z-index:2147483647;pointer-events:none;transition:left .18s ease,top .18s ease;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))';
+    c.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 3 L19 12 L12.5 13.5 L15 20 L12.5 21.5 L10 14.5 L5.5 18.5 Z" fill="#FF5A1F" stroke="#fff" stroke-width="1.4"/></svg>';
+    document.body.appendChild(c);
+    const ring = document.createElement('div'); ring.id = '__julie_ring';
+    ring.style.cssText = 'position:fixed;width:34px;height:34px;border:3px solid #FF5A1F;border-radius:50%;z-index:2147483646;pointer-events:none;opacity:0;transform:translate(-50%,-50%)';
+    document.body.appendChild(ring);
+    addEventListener('mousemove', e => { c.style.left = e.clientX + 'px'; c.style.top = e.clientY + 'px'; }, true);
+    addEventListener('mousedown', e => { ring.style.left = e.clientX + 'px'; ring.style.top = e.clientY + 'px'; ring.style.opacity = '0.9'; ring.style.transition = 'none'; ring.style.width = '12px'; ring.style.height = '12px'; requestAnimationFrame(() => { ring.style.transition = 'all .45s ease-out'; ring.style.width = '44px'; ring.style.height = '44px'; ring.style.opacity = '0'; }); }, true);
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+"""
+
 def progress(state, step="", note="", url="", status=None, reason=None, tc=False):
     """POST progress to the Worker (best-effort: never fails the setup).
 
@@ -179,6 +205,33 @@ def progress(state, step="", note="", url="", status=None, reason=None, tc=False
                    json=payload, headers=H, timeout=20)
     except Exception as e:
         print("progress failed:", e)
+    # v68: stream a live frame at every step change, not only during
+    # Take Control — the app's live view shows the agent's screen while
+    # it works. tc_post_frame is throttled + change-only, and frames go
+    # to the state store, so this costs a handful of writes per run.
+    try:
+        if _CUR["page"] is not None:
+            tc_post_frame(_CUR["page"])
+    except Exception:
+        pass
+    # v68 (speed): a wall that PERSISTS (>20s across progress calls)
+    # aborts the flow at once — grinding against a bot wall for two
+    # full attempts was the main reason setup felt stuck for ages.
+    try:
+        if state == "running" and _CUR["page"] is not None:
+            w = wall_hit(_CUR["page"])
+            if w:
+                since = _CUR.get("wall_since")
+                if since and (time.time() - since) > 20:
+                    raise WallHit(w)
+                if not since:
+                    _CUR["wall_since"] = time.time()
+            else:
+                _CUR["wall_since"] = None
+    except WallHit:
+        raise
+    except Exception:
+        pass
 
 
 def heartbeat():
@@ -321,8 +374,14 @@ def open_context(browser):
     user's configuration + saved session (above). Ephemeral mode:
     exactly the old throwaway context."""
     if PROFILE_MODE:
-        return browser.new_context(**profile_context_kwargs())
-    return browser.new_context(viewport={"width": 1280, "height": 800})
+        ctx = browser.new_context(**profile_context_kwargs())
+    else:
+        ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+    try:
+        ctx.add_init_script(CURSOR_JS)  # v68: visible agent cursor in the live view
+    except Exception:
+        pass
+    return ctx
 
 
 def close_context(ctx):
@@ -1656,17 +1715,59 @@ FLOWS = {
 }
 
 
+class WallHit(Exception):
+    """v68 (speed): a provider security wall (Stytch / Cloudflare bot
+    check) — retrying never helps, so the provider must fail FAST and
+    hand over to Take Control instead of burning minutes per attempt."""
+
+_WALL_MARKERS = ("redirect-error", "just a moment", "attention required", "verify you are human", "are you a robot", "checking your browser", "security check", "unusual traffic")
+
+def wall_hit(page):
+    """Cheap wall detection: URL + title (+ a slice of body text when
+    asked). Returns the marker found, or None."""
+    try:
+        u = (page.url or "").lower()
+        for m in _WALL_MARKERS:
+            if m in u:
+                return m
+        t = (page.title() or "").lower()
+        for m in _WALL_MARKERS:
+            if m in t:
+                return m
+    except Exception:
+        pass
+    return None
+
 def run_flow(page, job, cfg):
     """Run one provider's flow. Never raises: any exception becomes a
     failed result with the error text, so the chain can move on."""
     global CURRENT_PROVIDER
     flow = job.get("flow") or cfg.get("flow") or "email"
     try:
+        # v68 (speed): entry wall check — Cloudflare's "Just a moment"
+        # and similar walls show on FIRST load. Give the page ~6s to
+        # clear a managed challenge; if the wall persists, fail in
+        # seconds (no_retry) instead of grinding through the whole flow.
+        if flow in ("cloudflare", "token", "email"):
+            try:
+                page.goto(cfg["url"], wait_until="domcontentloaded", timeout=30000)
+                page.wait_for_timeout(2500)
+                if wall_hit(page):
+                    page.wait_for_timeout(4000)
+                    w = wall_hit(page)
+                    if w:
+                        return _fail(f"{cfg['name']} security wall ({w}) — bot check ni Julie daggara nunchi daataledu. Take Control tho nuvve okkasari sign in cheyyi, tarvatha Julie ne continue chesthundhi.", extra={"no_retry": True, "wall": w})
+            except WallHit:
+                raise
+            except Exception:
+                pass  # a failed pre-load never blocks the real flow
         if flow in ("cloudflare", "token"):
             return flow_cloudflare(page, job, cfg)
         if flow == "google":
             return flow_google(page, job, cfg)
         return flow_email_signup(page, job, cfg)
+    except WallHit as w:
+        return _fail(f"{cfg['name']} security wall ({w}) — Take Control tho nuvve okkasari sign in cheyyi, tarvatha Julie ne continue chesthundhi.", extra={"no_retry": True, "wall": str(w)})
     except Exception as e:
         print(f"flow error for {cfg['name']}:", e)
         return _fail(f"{cfg['name']} flow aagipoyindhi: {e}. Take Control tho try cheyyi.")
@@ -1681,6 +1782,7 @@ def run_provider(browser, job, cfg, provider):
             progress("running", "retry", f"{cfg['name']} malli try chesthunna (attempt {attempt}/{MAX_TRIES}).", cfg["url"])
         ctx = open_context(browser)
         page = ctx.new_page()
+        _CUR["page"] = page  # v68: live-view frame source for progress()
         try:
             last = run_flow(page, job, cfg)
         except Exception as e:
@@ -1693,6 +1795,10 @@ def run_provider(browser, job, cfg, provider):
         # v39 C7: a verification-resume failure must NOT retry — retrying
         # re-submits the email, sends another magic link and pauses again.
         if (last.get("extra") or {}).get("no_retry"):
+            return last
+        # v68 (speed): wall-class failures never heal on retry — one
+        # attempt is enough; move on and let the user Take Control.
+        if any(m in str(last.get("error") or "").lower() for m in _WALL_MARKERS + ("security wall",)):
             return last
         # "failed": retry once (bounded), then give up on THIS provider only.
     return last
