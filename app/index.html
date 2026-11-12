@@ -234,6 +234,7 @@
             <button class="btn secondary" id="gmailConsentBtn"></button>
           </div>
           <p class="muted" data-t="setupIntro"></p>
+          <h3 data-t="autoTitle"></h3>
           <!-- R48: plain-words explainer — Divya does everything with one allow
                (accounts, API keys, captchas, server). The user is asked for
                ONE thing only, and only once: the email-link tap / SMS code. -->
@@ -252,13 +253,25 @@
             <div class="row"><div><b data-t="googleRow"></b><div class="muted small" id="gWho" data-t="googleSub"></div></div><button class="pill go" id="gBtn" data-t="continueGoogle"></button></div>
           </div>
           <label class="consent"><input type="checkbox" id="consent"><span data-t="consent"></span></label>
-          <button class="btn secondary" id="guideBtn" data-t="guideBtn"></button>
-          <ol class="steps" id="steps"></ol>
+          <!-- v48 (R54): Manual — Add Model. ONLY two fields: model name +
+               API key -> Test and Save. No provider/model lists anywhere.
+               The old per-provider key cards + voice guide were removed:
+               setup is Automate with Divya, or this. -->
+          <div class="card" id="modelCard">
+            <p><b data-t="modelTitle"></b></p>
+            <p class="muted small" data-t="modelSub"></p>
+            <p class="small" id="modelState"></p>
+            <label class="field"><span data-t="modelNameL"></span><input class="keyfield" id="modelName" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tp="modelNamePh"></label>
+            <label class="field"><span data-t="modelKeyL"></span><input class="keyfield" id="modelKey" type="password" autocomplete="off" spellcheck="false" data-tp="modelKeyPh"></label>
+            <button class="btn primary" id="modelSaveBtn" data-t="testSave"></button>
+            <p class="muted small" id="modelMsg" aria-live="polite"></p>
+            <div class="btns" id="modelBtns" hidden><button class="act-btn alt" id="modelTestBtn" data-t="test"></button><button class="act-btn alt" id="modelDelBtn" data-t="remove"></button></div>
+            <p class="muted small" data-t="modelOwn"></p>
+          </div>
           <div class="card note small" id="autoLogCard" hidden>
             <p><b data-t="autoLogT"></b></p>
             <ul id="autoLog"></ul>
           </div>
-          <p class="muted small" data-t="setupStepNote"></p>
           <div class="card note small">
             <p><b data-t="serverTitle"></b> <span data-t="serverText"></span></p>
           </div>

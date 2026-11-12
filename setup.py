@@ -75,7 +75,7 @@ while waiting (so the Worker's staleness watchdog can tell "waiting on
 the user" from "runner dead"), and every progress post carries the pause
 `reason` the Worker stores.
 """
-import os, sys, time, json, re
+import os, sys, time, json, re, base64
 import httpx
 from playwright.sync_api import sync_playwright
 
@@ -151,7 +151,7 @@ def _pause_reason(step):
     return None
 
 
-def progress(state, step="", note="", url="", status=None, reason=None):
+def progress(state, step="", note="", url="", status=None, reason=None, tc=False):
     """POST progress to the Worker (best-effort: never fails the setup).
 
     Payload carries BOTH shapes: the legacy {state, step, note, url} the
@@ -171,7 +171,9 @@ def progress(state, step="", note="", url="", status=None, reason=None):
     }
     if rsn:
         payload["reason"] = rsn
-    LAST_PROGRESS.update({"state": state, "step": step, "note": note, "url": url, "reason": rsn})
+    if tc:
+        payload["tc"] = True
+    LAST_PROGRESS.update({"state": state, "step": step, "note": note, "url": url, "reason": rsn, "tc": bool(tc)})
     try:
         httpx.post(f"{WORKER}/api/setup/runner/progress", params={"job": JOB},
                    json=payload, headers=H, timeout=20)
@@ -184,13 +186,15 @@ def heartbeat():
     runner waits on a user pause, so the Worker sees a live runner and
     its staleness watchdog does not mark a waiting run as dead."""
     try:
+        payload = {"provider": CURRENT_PROVIDER or PROVIDER,
+                   "step": LAST_PROGRESS["step"], "status": LAST_PROGRESS["state"] if LAST_PROGRESS["state"] != "paused" else _pause_status(LAST_PROGRESS["step"]),
+                   "message": LAST_PROGRESS["note"], "state": LAST_PROGRESS["state"],
+                   "note": LAST_PROGRESS["note"], "url": LAST_PROGRESS["url"],
+                   "reason": LAST_PROGRESS["reason"]}
+        if LAST_PROGRESS.get("tc"):
+            payload["tc"] = True
         httpx.post(f"{WORKER}/api/setup/runner/progress", params={"job": JOB},
-                   json={"provider": CURRENT_PROVIDER or PROVIDER,
-                         "step": LAST_PROGRESS["step"], "status": LAST_PROGRESS["state"] if LAST_PROGRESS["state"] != "paused" else _pause_status(LAST_PROGRESS["step"]),
-                         "message": LAST_PROGRESS["note"], "state": LAST_PROGRESS["state"],
-                         "note": LAST_PROGRESS["note"], "url": LAST_PROGRESS["url"],
-                         "reason": LAST_PROGRESS["reason"]},
-                   headers=H, timeout=20)
+                   json=payload, headers=H, timeout=20)
     except Exception:
         pass
 
@@ -950,6 +954,85 @@ def _verify_fail_msg(name):
     return base + (f" [{LAST_VERIFY_DIAG}]" if LAST_VERIFY_DIAG else "")
 
 
+TC_PAUSE_MSG = "Sign-in okkasari nuvve cheyyi — Divya browser screen ikkade app lo kanipisthundhi, andulo sign in cheyu. Ayyaka 'Nenu chesa ✓' nokku — migilina anni nene chestha."
+
+
+def tc_post_frame(page):
+    """Stream one screenshot of the live browser to the Worker (the app
+    shows it to the user during Take Control). Best-effort: a failed
+    frame never breaks the pause."""
+    try:
+        shot = page.screenshot(type="jpeg", quality=55)
+        img = base64.b64encode(shot).decode()
+        httpx.post(f"{WORKER}/api/setup/runner/tcframe", params={"job": JOB},
+                   json={"img": img, "url": page.url}, headers=H, timeout=20)
+    except Exception as e:
+        print("tc frame failed:", e)
+
+
+def tc_apply_inputs(page, inputs):
+    """Apply the user's queued Take Control inputs (click / type / key /
+    scroll / nav) to the live page. Each input is best-effort."""
+    for inp in inputs or []:
+        t = str((inp or {}).get("type") or "")
+        try:
+            if t == "click":
+                page.mouse.click(float(inp.get("x") or 0), float(inp.get("y") or 0))
+            elif t == "type":
+                txt = str(inp.get("text") or "")
+                if txt:
+                    page.keyboard.type(txt, delay=25)
+            elif t == "key":
+                k = str(inp.get("key") or "")
+                if k:
+                    page.keyboard.press(k)
+            elif t == "scroll":
+                page.mouse.wheel(0, float(inp.get("dy") or 0))
+            elif t == "nav":
+                u = str(inp.get("url") or "")
+                if u.startswith("https://"):
+                    page.goto(u, wait_until="domcontentloaded", timeout=30000)
+        except Exception as e:
+            print("tc input failed:", t, e)
+        page.wait_for_timeout(250)
+
+
+def take_control(page, job, cfg):
+    """v48 (R51 Take Control): hand THIS browser to the user in the app.
+    The runner streams screenshots (setup/runner/tcframe) and applies the
+    user's queued inputs (delivered on the job poll as tcInputs) while
+    the job stays paused-signin with tc on. The user signs in AS
+    THEMSELVES — no captcha solving, no disguise: the session they create
+    lands in this context and is captured into the sealed profile, so
+    every later run reuses it. When the user taps Continue in the app,
+    the job flips back to running and this returns True. Bounded
+    (~25 min; heartbeats keep the Worker watchdog calm). Returns False
+    on stop/timeout."""
+    progress("paused", "google-signin", TC_PAUSE_MSG, page.url, reason="signin", tc=True)
+    tc_post_frame(page)
+    deadline = time.time() + 1500
+    last_beat = 0.0
+    while time.time() < deadline:
+        j = get_job()
+        jr = j.get("job") or {}
+        st = jr.get("state", "")
+        if st == "stopped":
+            return False
+        inputs = jr.get("tcInputs") or []
+        if inputs:
+            tc_apply_inputs(page, inputs)
+        tc_post_frame(page)
+        if st == "running":
+            page.wait_for_timeout(1500)
+            return True
+        if time.time() - last_beat > 14:
+            heartbeat()
+            last_beat = time.time()
+        time.sleep(1.2)
+    print(f"take control timed out for {cfg['name']}", flush=True)
+    return False
+
+
 def pause_for_email_verify(page, job, cfg):
     """Magic-link verification pause (v39 C7): Groq (Stytch) sends a link
     instead of a password step. Pause with reason=email so the app surfaces
@@ -1024,6 +1107,29 @@ def pause_for_email_verify(page, job, cfg):
             print(f"verify landing: {sp.scheme}://{sp.hostname}{sp.path} diag={LAST_VERIFY_DIAG or '-'}", flush=True)
         except Exception:
             pass
+    if _verify_signed_in(page, cfg, name):
+        return True
+    # v48 (Take Control): the provider refused the automated link open
+    # (the Stytch redirect-error class — proven live 2026-11-12: fresh,
+    # well-formed link, instant refusal of the runner environment). In
+    # profile mode the one remaining honest path is the user signing in
+    # themselves in THIS browser via Take Control; the session lands in
+    # the sealed profile and this run continues to key creation.
+    if PROFILE_MODE:
+        print(f"verify: {name} automated sign-in refused — Take Control ki velthunna (user sign-in).", flush=True)
+        if take_control(page, job, cfg):
+            try:
+                capture_profile(page.context)
+            except Exception:
+                pass
+            return _verify_signed_in(page, cfg, name)
+    return False
+
+
+def _verify_signed_in(page, cfg, name):
+    """The keys-page signed-in check (tail of the old verify pause):
+    True only when the keys page loads with no auth form left."""
+    global LAST_VERIFY_DIAG
     try:
         goto(page, cfg["keys_url"])
     except Exception:

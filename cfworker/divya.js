@@ -297,6 +297,15 @@ async function handle(env, m) {
       const r = await appAssist(env, { n: user }, { text, tz: "Asia/Kolkata", via: "wa" }, "te");
       return say(env, user, r.reply || "");
     }
+    // v48 (R54): a model name + API key pasted in chat — save it
+    // structurally (resolve -> test -> save); redacted from history,
+    // never sent to the model, never echoed back.
+    const mk = extractChatModelKey(text);
+    if (mk) {
+      const r = await saveUserModel(env, user, mk).catch(() => ({ ok: false, kind: "error" }));
+      const a2 = r.ok ? modelSavedLine(r, "te") : modelErrText(r, "te");
+      const hh = await history(env, user); hh.push({ role: "user", content: text.split(mk.key).join("••••••") }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2);
+    }
     // v38 (R48): API-key / provider / "AI down" questions never reach the
     // model — answer with the R48 one-allow Setup flow instead.
     if (isSetupQuestion(text)) { const sg = setupGuideReply("te"); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: sg }); await remember(env, user, hh); return say(env, user, sg); }
@@ -525,7 +534,19 @@ async function appTalk(env, u, text, lang, voiceId) {
   const tplM = null; // R47: templates removed — Divya chooses the aesthetic itself, the user never picks one.
   const tplPick = null;
   const cleanText = text.replace(/\[\[[^\]]*\]\]/g, "").trim();
-  const h = await history(env, u.n); h.push({ role: "user", content: cleanText || text });
+  // v48 (R54): a model name + API key pasted in chat is taken structurally
+  // (resolve -> test -> save, below) and the key is redacted from the
+  // history entry BEFORE anything is stored — it never reaches the model
+  // and never appears in history, logs or any later reply.
+  const mk = extractChatModelKey(text);
+  const histText = mk ? (cleanText || text).split(mk.key).join("••••••") : (cleanText || text);
+  const h = await history(env, u.n); h.push({ role: "user", content: histText });
+  if (mk) {
+    const r = await saveUserModel(env, u.n, mk).catch(() => ({ ok: false, kind: "error" }));
+    const a2 = r.ok ? modelSavedLine(r, lang) : modelErrText(r, lang);
+    h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
+    return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
+  }
   // R40: resume a create that waited for short/long (asked once, now answered).
   let resumeBrief = null;
   const crtPend = JSON.parse((await env.KV.get(`crtpend:${u.n}`)) || "null");
@@ -876,10 +897,11 @@ async function appApi(req, env, url, ctx) {
   if (p === "logout" && req.method === "POST") { await env.KV.delete(`sess:${(req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim()}`); return appJson(req, { ok: true }); }
   if (p === "me") { const a = u.acct; try { if (!(await env.KV.get(`joined:${u.n}`))) await env.KV.put(`joined:${u.n}`, String(Date.now())); } catch {} return appJson(req, { ok: true, number: a ? (a.phone || "") : u.n, owner: u.owner, premium: await isPremium(env, u.n), account: a ? { name: a.name, email: a.email, phone: a.phone || "", phone_pending: a.pphone || "" } : null }); }
   if (p.startsWith("account/") && req.method === "POST") return acctPrivate(req, env, u, p, body);
-  if (p === "plan") { const bal = await tokBalance(env, u.n); const own = !!((await env.KV.get(`ukey:${u.n}:groq`)) || (await env.KV.get(`ukey:${u.n}:openrouter`))); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = PLANS[pid].voice; /* v37: voice assistant included in every plan (was a planvoice KV flag / ₹49 add-on) */ return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, edits_limit: Math.floor(TOK.WEEKLY_FREE / TOK.PER_MIN), edits_used: Math.floor(bal.weekSpent / TOK.PER_MIN), edits_left: bal.videosWeek, period: "week", unlimited: bal.unlimited, brain: own ? "own" : "shared", video_backend: "shared", pro: "soon" }); }
+  if (p === "plan") { const bal = await tokBalance(env, u.n); const own = !!((await env.KV.get(`ukey:${u.n}:groq`)) || (await env.KV.get(`ukey:${u.n}:openrouter`)) || (await env.KV.get(`umodel:${u.n}`))); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = PLANS[pid].voice; /* v37: voice assistant included in every plan (was a planvoice KV flag / ₹49 add-on) */ return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, edits_limit: Math.floor(TOK.WEEKLY_FREE / TOK.PER_MIN), edits_used: Math.floor(bal.weekSpent / TOK.PER_MIN), edits_left: bal.videosWeek, period: "week", unlimited: bal.unlimited, brain: own ? "own" : "shared", video_backend: "shared", pro: "soon" }); }
   if (p === "assist" && req.method === "POST") return appJson(req, await appAssist(env, u, body, lang));
   if (p.startsWith("setup/")) return appJson(req, await appSetupUser(req, env, u, p, body, lang));
   if (p.startsWith("keys")) return appKeys(req, env, u, p, body, lang);
+  if (p === "model" || p.startsWith("model/")) return appModel(req, env, u, p, body, lang);
   if (p === "history") return appJson(req, { ok: true, messages: (await history(env, u.n)).map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })) });
   if (p === "chat" && req.method === "POST") {
     const text = String(body.text || "").trim().slice(0, 4000);
@@ -1248,6 +1270,188 @@ async function storeBrowserProfile(env, n, state) {
 async function storeKey(env, n, prov, key, res) {
   await env.KV.put(`ukey:${n}:${prov}`, JSON.stringify({ ct: await sealKey(env, n, prov, key), at: Date.now(), ok: true, who: res.who || "", tested: Date.now() }));
 }
+// ---- v48 (R54): the user's OWN model — "Model name" + "API key" only ----
+// Setup is simple: Automate with Divya, or Manual — Add Model. The user
+// gives ANY model name + its key (Setup form or straight in chat); Divya
+// resolves which provider/endpoint it belongs to, connects to the
+// AVAILABLE WORKING version of that model family, and seals the key per
+// user (the same KEK storeKey pattern as every other key). The key lives
+// only in the user's own sealed storage — never pooled, never logged,
+// never returned by any endpoint after save. When a saved model exists,
+// the chat brain uses it first (OpenAI-compatible call), falling back to
+// the other own/shared keys when it is absent or failing.
+function parseModelName(raw) {
+  const s = String(raw || "").trim();
+  const um = s.match(/https?:\/\/[^\s"']+/);
+  if (!um) return { name: s.slice(0, 120), base: "" };
+  return { name: s.replace(um[0], "").trim().slice(0, 120), base: um[0].replace(/\/+$/, "") };
+}
+function resolveModelBase(name, key, baseOverride) {
+  const clean = b => String(b || "").replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
+  if (baseOverride && /^https?:\/\//i.test(baseOverride)) return { base: clean(baseOverride), who: "Your server", anthropic: false };
+  const k = String(key || ""), nm = String(name || "").toLowerCase();
+  if (k.startsWith("gsk_")) return { base: "https://api.groq.com/openai/v1", who: "Groq" };
+  if (k.startsWith("sk-or-")) return { base: "https://openrouter.ai/api/v1", who: "OpenRouter" };
+  if (k.startsWith("AIza")) return { base: "https://generativelanguage.googleapis.com/v1beta/openai", who: "Gemini" };
+  if (k.startsWith("sk-ant-")) return { base: "https://api.anthropic.com/v1", who: "Anthropic", anthropic: true };
+  if (k.startsWith("hf_")) return { base: "https://router.huggingface.co/v1", who: "Hugging Face" };
+  if (/claude/.test(nm)) return { base: "https://api.anthropic.com/v1", who: "Anthropic", anthropic: true };
+  if (/deepseek/.test(nm)) return { base: "https://api.deepseek.com/v1", who: "DeepSeek" };
+  if (/gemini|gemma/.test(nm)) return { base: "https://generativelanguage.googleapis.com/v1beta/openai", who: "Gemini" };
+  if (/mistral|codestral|magistral/.test(nm)) return { base: "https://api.mistral.ai/v1", who: "Mistral" };
+  if (/kimi|moonshot/.test(nm)) return { base: "https://api.moonshot.ai/v1", who: "Moonshot" };
+  if (/glm|chatglm|zhipu/.test(nm)) return { base: "https://open.bigmodel.cn/api/paas/v4", who: "Zhipu" };
+  if (/sonar|perplexity/.test(nm)) return { base: "https://api.perplexity.ai", who: "Perplexity" };
+  if (/command|cohere/.test(nm)) return { base: "https://api.cohere.ai/compatibility/v1", who: "Cohere" };
+  if (/^gpt-|^o[0-9]|chatgpt/.test(nm)) return { base: "https://api.openai.com/v1", who: "OpenAI" };
+  if (nm.includes("/")) return { base: "https://openrouter.ai/api/v1", who: "OpenRouter" };
+  if (k.startsWith("sk-")) return { base: "https://api.openai.com/v1", who: "OpenAI" };
+  return null;
+}
+function modelHeaders(key, anthropic) {
+  const h = { Authorization: `Bearer ${key}`, "content-type": "application/json" };
+  if (anthropic) h["x-api-key"] = key;
+  return h;
+}
+async function modelChatProbe(base, key, model, anthropic) {
+  const r = await fetch(base + "/chat/completions", { method: "POST", headers: modelHeaders(key, anthropic), body: JSON.stringify({ model, messages: [{ role: "user", content: "hi" }], max_tokens: 5 }), signal: AbortSignal.timeout(20000) }).catch(() => null);
+  if (!r) return { status: 0, ok: false, err: "" };
+  const j = await r.json().catch(() => ({}));
+  return { status: r.status, ok: r.ok && !j.error, err: String((j.error && (j.error.message || j.error.code)) || "").slice(0, 160) };
+}
+async function modelListIds(base, key, anthropic) {
+  const r = await fetch(base + "/models", { headers: modelHeaders(key, anthropic), signal: AbortSignal.timeout(20000) }).catch(() => null);
+  if (!r || !r.ok) return [];
+  const j = await r.json().catch(() => ({}));
+  return (Array.isArray(j.data) ? j.data : []).map(m => String((m && m.id) || "")).filter(Boolean);
+}
+function pickAvailableModel(ids, want) {
+  if (!ids.length) return "";
+  const w = String(want || "").toLowerCase(); if (!w) return "";
+  const low = ids.map(id => id.toLowerCase());
+  let i = low.indexOf(w); if (i >= 0) return ids[i];
+  i = low.findIndex(id => id.startsWith(w)); if (i >= 0) return ids[i];
+  i = low.findIndex(id => w.startsWith(id)); if (i >= 0) return ids[i];
+  const fam = w.split(/[-_/:]/).filter(Boolean)[0] || "";
+  if (fam) {
+    const cand = ids.filter(id => id.toLowerCase().includes(fam) && !/embed|whisper|tts|image|moderation|rerank/i.test(id));
+    if (cand.length) { cand.sort((a, b) => Math.abs(a.length - w.length) - Math.abs(b.length - w.length)); return cand[0]; }
+  }
+  return "";
+}
+// Test = ONE real minimal chat call with the key. If the exact model id
+// is not available, resolve the provider's available version of the same
+// family from GET /models, test THAT, and report which version connected.
+async function testUserModel(key, base, model, anthropic) {
+  const r = await modelChatProbe(base, key, model, anthropic);
+  if (r.ok) return { ok: true, model };
+  if (r.status === 401 || r.status === 403) return { ok: false, kind: "auth", status: r.status, msg: r.err };
+  const modelErr = r.status === 404 || r.status === 400 || r.status === 422 || /model/i.test(r.err);
+  if (modelErr) {
+    const ids = await modelListIds(base, key, anthropic);
+    const pick = pickAvailableModel(ids, model);
+    if (pick && pick !== model) {
+      const r2 = await modelChatProbe(base, key, pick, anthropic);
+      if (r2.ok) return { ok: true, model: pick, note: "available" };
+      if (r2.status === 401 || r2.status === 403) return { ok: false, kind: "auth", status: r2.status, msg: r2.err };
+    }
+    return { ok: false, kind: "model", status: r.status, msg: r.err, available: ids.slice(0, 5) };
+  }
+  return { ok: false, kind: "error", status: r.status, msg: r.err };
+}
+async function saveUserModel(env, n, inp) {
+  const parsed = parseModelName(inp.name || "");
+  const name = parsed.name;
+  const res = resolveModelBase(name, inp.key, String(inp.base || "") || parsed.base);
+  if (!res) return { ok: false, kind: "resolve" };
+  let model = name, t = null;
+  if (model) {
+    t = await testUserModel(inp.key, res.base, model, res.anthropic);
+  } else {
+    // Key only: pick the provider's available chat model from /models.
+    const ids = await modelListIds(res.base, inp.key, res.anthropic);
+    const usable = ids.filter(id => !/embed|whisper|tts|image|moderation|rerank|audio/i.test(id));
+    model = pickAvailableModel(usable, "gpt") || usable[0] || "";
+    if (!model) return { ok: false, kind: "model", status: 0, msg: "", available: [] };
+    t = await testUserModel(inp.key, res.base, model, res.anthropic);
+  }
+  if (!t.ok) return { ok: false, kind: t.kind, status: t.status, msg: t.msg, available: t.available };
+  await storeKey(env, n, "custom", inp.key, { who: res.who });
+  const rec = { name: name || t.model, model: t.model, base: res.base, who: res.who, at: Date.now(), ok: true };
+  await env.KV.put(`umodel:${n}`, JSON.stringify(rec));
+  return { ok: true, ...rec, note: t.note || "" };
+}
+function modelErrText(r, lang) {
+  const en = lang === "en";
+  if (r.kind === "resolve") return en ? "I couldn't tell which provider that model belongs to. Give the model name together with its API base URL (like https://…/v1 model-name) and try again." : "Aa model ye provider do nenu cheppalenu. Model name tho paatu API base URL kuda ivvu (https://…/v1 model-name laaga), malli try cheyyi.";
+  if (r.kind === "auth") return en ? `The key didn't work (HTTP ${r.status || "?"}${r.msg ? ": " + r.msg : ""}) — the provider rejected it. Check the key and try again. Nothing was saved.` : `Key pani cheyaledu (HTTP ${r.status || "?"}${r.msg ? ": " + r.msg : ""}) — provider reject chesindhi. Key check chesi malli ivvu. Emi save avvaledu.`;
+  if (r.kind === "model") return en ? `That model isn't available on this key${r.available && r.available.length ? " — available: " + r.available.join(", ") : ""}. Nothing was saved.` : `Aa model ee key tho available ledu${r.available && r.available.length ? " — available: " + r.available.join(", ") : ""}. Emi save avvaledu.`;
+  return en ? "The test call failed (network). Try again. Nothing was saved." : "Test call fail ayyindhi (network). Malli try cheyyi. Emi save avvaledu.";
+}
+async function customChat(key, rec, messages) {
+  const headers = { Authorization: `Bearer ${key}`, "content-type": "application/json" };
+  if (String(rec.base || "").includes("anthropic.com")) headers["x-api-key"] = key;
+  const r = await fetch(String(rec.base || "") + "/chat/completions", { method: "POST", headers, body: JSON.stringify({ model: rec.model, messages, max_tokens: 900, temperature: 0.7 }), signal: AbortSignal.timeout(25000) }).catch(() => null);
+  if (!r || !r.ok) return "";
+  const j = await r.json().catch(() => ({}));
+  return String((j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+}
+async function appModel(req, env, u, p, body, lang) {
+  const en = lang === "en";
+  if (p === "model") {
+    const rec = JSON.parse((await env.KV.get(`umodel:${u.n}`)) || "null");
+    return appJson(req, { ok: true, ready: !!env.APP_KEK, model: rec ? { name: rec.name || "", model: rec.model || "", base: rec.base || "", who: rec.who || "", at: rec.at || 0, ok: !!rec.ok } : null });
+  }
+  if (req.method !== "POST") return appJson(req, { ok: false, error: "method" }, 405);
+  if (p === "model/save") {
+    if (!env.APP_KEK) return appJson(req, { ok: false, error: en ? "Key storage isn't ready yet." : "Key storage inka ready ledu." }, 503);
+    if (body.consent !== true) return appJson(req, { ok: false, error: en ? "Please allow first." : "Mundu permission ivvu." }, 400);
+    const key = String(body.key || "").trim();
+    if (key.length < 16 || key.length > 400 || /\s/.test(key)) return appJson(req, { ok: false, error: en ? "That doesn't look like an API key." : "Idi API key laaga ledu." }, 400);
+    const r = await saveUserModel(env, u.n, { name: String(body.name || ""), key, base: String(body.base || "") }).catch(() => ({ ok: false, kind: "error" }));
+    if (!r.ok) return appJson(req, { ok: false, error: modelErrText(r, lang), kind: r.kind || "error" }, 400);
+    return appJson(req, { ok: true, name: r.name, model: r.model, who: r.who, note: r.note || "" });
+  }
+  if (p === "model/test") {
+    const rec = JSON.parse((await env.KV.get(`umodel:${u.n}`)) || "null");
+    if (!rec) return appJson(req, { ok: false, error: en ? "No model saved yet." : "Inka model save avvaledu." }, 404);
+    const key = await openKey(env, u.n, "custom");
+    if (!key) return appJson(req, { ok: false, error: en ? "No key saved yet." : "Inka key save avvaledu." }, 404);
+    const t = await testUserModel(key, rec.base, rec.model, String(rec.base).includes("anthropic.com")).catch(() => ({ ok: false, kind: "error" }));
+    rec.ok = t.ok; if (t.ok && t.model) rec.model = t.model;
+    await env.KV.put(`umodel:${u.n}`, JSON.stringify(rec));
+    return appJson(req, { ok: t.ok, model: rec.model, error: t.ok ? undefined : modelErrText(t, lang) });
+  }
+  if (p === "model/delete") { await env.KV.delete(`ukey:${u.n}:custom`); await env.KV.delete(`umodel:${u.n}`); return appJson(req, { ok: true }); }
+  return appJson(req, { ok: false, error: "not found" }, 404);
+}
+// Chat is an entry point too (R54): a model name + API key pasted into
+// chat is taken structurally — resolved, tested and saved right here —
+// and is NEVER sent to the model, echoed back, logged, or left in the
+// stored history (the caller redacts the history entry before writing).
+const CHAT_KEY_RX = /\b(gsk_[A-Za-z0-9]{20,}|sk-or-v1-[A-Za-z0-9\-_]{20,}|sk-ant-[A-Za-z0-9\-_]{20,}|AIza[A-Za-z0-9\-_]{20,}|hf_[A-Za-z0-9]{20,}|sk-(?:proj-)?[A-Za-z0-9\-_]{20,})\b/;
+function extractChatModelKey(text) {
+  const s = String(text || "");
+  const m = s.match(CHAT_KEY_RX);
+  if (!m) return null;
+  const key = m[1];
+  const rest = s.replace(key, " ");
+  let name = "";
+  const mm = rest.match(/model\s*(?:name)?\s*[:=\-]?\s*([A-Za-z0-9][A-Za-z0-9.\-_\/]{1,80})/i) || rest.match(/([A-Za-z0-9][A-Za-z0-9.\-_\/]{1,80})\s+model\b/i);
+  if (mm) name = mm[1];
+  if (/^(key|api|is|my|the|name)$/i.test(name)) name = "";
+  if (!name) {
+    const toks = rest.split(/[^A-Za-z0-9.\-_\/]+/).filter(Boolean);
+    name = toks.find(t => t.length >= 3 && /(gpt|claude|llama|gemini|gemma|deepseek|qwen|kimi|moonshot|mistral|sonar|glm|mixtral|command)/i.test(t)) || toks.find(t => t.includes("/") && t.length >= 5) || "";
+  }
+  const bu = rest.match(/https?:\/\/[^\s"']+/);
+  return { key, name: String(name || "").trim(), base: bu ? bu[0].replace(/\/+$/, "") : "" };
+}
+function modelSavedLine(r, lang) {
+  return lang === "en"
+    ? `Model connected ✓ — ${r.model} is now your Divya brain. Your key is saved sealed in your own storage — it is never shown, pooled or shared.`
+    : `Model connect ayyindhi ✓ — ${r.model} ipudu nee Divya brain. Nee key nee own storage lone sealed ga save ayyindhi — ekkada kanipinchadhu, evaritho share avvadhu.`;
+}
 async function orChat(env, key, messages) {
   let free = JSON.parse((await env.KV.get("or:free")) || "null");
   if (!free) {
@@ -1280,6 +1484,12 @@ async function geminiChat(env, key, messages) {
 // failing never stops the chain. Returns "" only when every provider failed.
 async function chatWithFallback(env, u, messages) {
   const sorry = /^Sorry ra, naa AI brain/;
+  // v48 (R54): the user's own saved model (Manual — Add Model) is the
+  // brain FIRST when present; any failure falls through to the chain.
+  try {
+    const crec = JSON.parse((await env.KV.get(`umodel:${u.n}`)) || "null");
+    if (crec && crec.base && crec.model) { const ck = await openKey(env, u.n, "custom"); if (ck) { const out = await customChat(ck, crec, messages).catch(() => ""); if (out) { u.via = "own-model"; return out; } } }
+  } catch {}
   const gk = await openKey(env, u.n, "groq");
   if (gk) { const out = await groq({ ...env, GROQ_KEY: gk }, messages).catch(() => ""); if (out && !sorry.test(out)) { u.via = "own-groq"; return out; } }
   const ok = await openKey(env, u.n, "openrouter");
@@ -1327,7 +1537,7 @@ function setupMissingKeyReply(lang) {
   return "Setup ayyindhi kani naaku pani chese key dorakaledu — accounts lo edo okati complete avvaledu. Setup ni malli run cheyala? Setup lo (#/setup) 'Setup malli cheyu' ani tap cheyu, migilina anni nene chestha.";
 }
 async function hasUsableOwnKey(env, n) {
-  for (const prov of ["groq", "openrouter", "gemini"]) { try { if (await openKey(env, n, prov)) return true; } catch {} }
+  for (const prov of ["groq", "openrouter", "gemini", "custom"]) { try { if (await openKey(env, n, prov)) return true; } catch {} }
   return false;
 }
 // v38 (R48, item 5): the all-providers-failed fallback. Setup done but no
@@ -1971,9 +2181,9 @@ function setupStateFor(chain, cur, fin, keys) {
     // v39: a stalled run is a terminal state of its own — the app shows
     // "stalled" + Retry, never "running" forever.
     if (fin.state === "stalled") return "stalled";
-    return (keys.groq || keys.openrouter || keys.gemini) ? "done" : "not-started";
+    return (keys.groq || keys.openrouter || keys.gemini || keys.custom) ? "done" : "not-started";
   }
-  return (keys.groq || keys.openrouter || keys.gemini) ? "done" : "not-started";
+  return (keys.groq || keys.openrouter || keys.gemini || keys.custom) ? "done" : "not-started";
 }
 function setupStepText(id, st, lang, note, kind) {
   const name = SETUP_PROVIDERS[id] ? SETUP_PROVIDERS[id].name : id;
@@ -2401,11 +2611,12 @@ async function appSetupUser(req, env, u, p, body, lang) {
     const consent = JSON.parse((await env.KV.get(`setupconsent:${u.n}`)) || "null");
     const keys = {};
     for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${u.n}:${id}`)) keys[id] = true;
+    if (await env.KV.get(`umodel:${u.n}`)) keys.custom = true; // v48 (R54): a saved own model counts as set up
     // v38 (R48, item 1): login-time setup-needed check. A fresh account has
     // no own AI key stored; the shared fallback is rate-limited, so it does
     // not count as "set up". sharedFallback only reports whether a shared
     // key is even configured (it can still be rate-limited).
-    const hasOwnAiKey = !!(keys.groq || keys.openrouter || keys.gemini);
+    const hasOwnAiKey = !!(keys.groq || keys.openrouter || keys.gemini || keys.custom);
     const sharedFallback = !!((env.GROQ_KEY || "") || env.OPENROUTER_KEY || env.GEMINI_KEY);
     const needsSetup = !hasOwnAiKey;
     // v39: watchdog first — a run whose runner went silent is STALLED, not
@@ -2460,7 +2671,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // v39: the exact user step, when the run is waiting on one — kind +
     // the page to open + the one plain line. The app renders this instead
     // of a bare "Setup running…". Additive field; older app builds ignore it.
-    const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang) } : null;
+    const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang), tc: !!cur.tc } : null;
     const autoLog = await autoLogRead(env, u.n);
     return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, geminiVerify: chain.geminiNeedsVerify || null, autoLog: autoLog.slice(0, 10) };
   }
@@ -2549,6 +2760,36 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (typeof body.link === "string" && body.link.startsWith("https://")) j.verifyLink = body.link.slice(0, 2000);
     if (typeof body.code === "string" && body.code.trim()) j.smsCode = body.code.trim().slice(0, 32);
     await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
+    return { ok: true };
+  }
+  if (p === "setup/tc" && req.method === "GET") {
+    // v48 (Take Control): the owner's live view of the paused runner
+    // browser — the latest streamed frame for THEIR current job only.
+    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    if (!chain || !chain.current) return { ok: true, active: false };
+    const fr = JSON.parse((await env.KV.get(`tcframe:${chain.current}`)) || "null");
+    if (!fr) return { ok: true, active: false };
+    return { ok: true, active: true, img: fr.img, url: fr.url || "", at: fr.at || 0 };
+  }
+  if (p === "setup/tc/input" && req.method === "POST") {
+    // v48 (Take Control): queue one input (click / type / key / scroll /
+    // nav) for the runner, which applies it to the live browser on its
+    // next poll. Inputs are the owner's own taps/typing during their one
+    // sign-in step — validated, capped, never logged.
+    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    if (!chain || !chain.current) return { ok: false, error: "no job" };
+    const type = String(body.type || "");
+    const inp = { type, at: Date.now() };
+    if (type === "click") { inp.x = Math.max(0, Math.min(4000, Math.round(+body.x || 0))); inp.y = Math.max(0, Math.min(4000, Math.round(+body.y || 0))); }
+    else if (type === "type") { inp.text = String(body.text || "").slice(0, 500); if (!inp.text) return { ok: false, error: "empty" }; }
+    else if (type === "key") { inp.key = String(body.key || "").slice(0, 24); if (!/^[A-Za-z0-9+ ]+$/.test(inp.key)) return { ok: false, error: "bad key" }; }
+    else if (type === "scroll") { inp.dy = Math.max(-2000, Math.min(2000, Math.round(+body.dy || 0))); }
+    else if (type === "nav") { inp.url = String(body.url || "").slice(0, 500); if (!/^https:\/\//.test(inp.url)) return { ok: false, error: "bad url" }; }
+    else return { ok: false, error: "bad type" };
+    const qk = `tcinput:${chain.current}`;
+    const q = JSON.parse((await env.KV.get(qk)) || "[]");
+    q.push(inp); while (q.length > 30) q.shift();
+    await env.KV.put(qk, JSON.stringify(q), { expirationTtl: 3600 });
     return { ok: true };
   }
   if (p === "setup/autocheck" && req.method === "POST") {
@@ -2791,6 +3032,11 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     return Response.json({ ok: true, stored: true });
   }
   if (p === "setup/runner/job") {
+    // v48 (Take Control): hand the runner the inputs the user queued in
+    // the app since the last poll, then clear the queue — read-and-clear,
+    // so each input is delivered exactly once.
+    let tcInputs = [];
+    try { const q = JSON.parse((await env.KV.get(`tcinput:${job}`)) || "[]"); if (Array.isArray(q) && q.length) { tcInputs = q.slice(0, 30); await env.KV.delete(`tcinput:${job}`); } } catch {}
     // v40 (R19): paused on email verification — feed the magic link
     // server-side from the user's Gmail (never through the agent's
     // redacted tool layer). Best-effort; never breaks the runner's poll.
@@ -2798,9 +3044,20 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       let chainAt = 0;
       try { const ch = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null"); chainAt = ch?.at || 0; } catch {}
       const updated = await maybeFeedVerifyLink(env, rec, chainAt);
-      return Response.json({ ok: true, job: updated });
+      return Response.json({ ok: true, job: { ...updated, tcInputs } });
     }
-    return Response.json({ ok: true, job: rec });
+    return Response.json({ ok: true, job: { ...rec, tcInputs } });
+  }
+  if (p === "setup/runner/tcframe" && req.method === "POST") {
+    // v48 (Take Control): the runner streams screenshots of the paused
+    // browser; only the latest frame is kept (KV, 1h TTL) for the owner's
+    // live view (setup/tc). Frames show the user's own provider sign-in
+    // pages during their one manual step — never logged, never returned
+    // to anyone but the job's owner.
+    const img = String(body.img || "");
+    if (!img || img.length > 900000 || !/^[A-Za-z0-9+/=]+$/.test(img)) return new Response("bad frame", { status: 400 });
+    await env.KV.put(`tcframe:${job}`, JSON.stringify({ img, url: String(body.url || "").slice(0, 500), at: Date.now() }), { expirationTtl: 3600 });
+    return Response.json({ ok: true });
   }
   if (p === "setup/runner/progress" && req.method === "POST") {
     const state = ["queued", "running", "paused", "done", "failed", "stopped"].includes(body.state) ? body.state : "running";
@@ -2812,8 +3069,8 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // Gemini Google sign-in). Store the reason as-is — never coerce a
     // captcha/signin pause into an email pause (that would tell the user
     // to tap an email link that does not exist).
-    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); if (prevState !== "paused") rec.pausedAt = Date.now(); /* v40: job.upd at pause, for the mail recency guard */ }
-    else if (state === "running") { rec.pauseReason = ""; delete rec.pausedAt; }
+    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); if (prevState !== "paused") rec.pausedAt = Date.now(); /* v40: job.upd at pause, for the mail recency guard */ rec.tc = !!body.tc; /* v48: Take Control live-view active for this pause */ }
+    else if (state === "running") { rec.pauseReason = ""; rec.tc = false; delete rec.pausedAt; }
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     // Chain: provider done → auto-start the next one with the same consent.
     if (state === "done") {
