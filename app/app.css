@@ -1,16 +1,21 @@
-/* Julie PWA — v53 cream theme (Muse-like): warm cream + soft beige cards,
-   warm brown text, caramel accent; iOS radii, typography and soft shadows.
-   Dark = warm espresso (same family, never pure black). */
+/* Julie PWA — v57 WHEAT NEUMORPHISM (Soft UI, per Ajju's reference):
+   surfaces share the wheat background colour; elements read as raised or
+   pressed through a paired dark + light shadow. Dark = espresso neu. */
 :root{
-  --bg:#EFC97E;--surface:#F8E5B4;--surface2:#E9C173;--text:#57401E;--muted:#8A6A34;--line:#DDAF5E;
-  --accent:#B07627;--accent2:#C68B3A;--on-accent:#FFF6DE;--me:#B07627;--on-me:#FFF6DE;--bot:#FAEDC8;
-  --shadow:0 1px 2px rgba(122,84,38,.05),0 6px 20px rgba(122,84,38,.07);--r:22px;
+  --bg:#EAC87E;--surface:#EAC87E;--surface2:#E2BC66;--text:#57401E;--muted:#86662E;--line:rgba(120,84,26,.16);
+  --accent:#B07627;--accent2:#C68B3A;--on-accent:#FFF6DE;--me:#C08A35;--on-me:#FFF6DE;--bot:#EAC87E;
+  --shadow:7px 7px 16px rgba(166,120,45,.42),-7px -7px 16px rgba(255,246,214,.85);--r:24px;
   --sat:env(safe-area-inset-top);--sab:env(safe-area-inset-bottom);
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Noto Sans","Noto Sans Telugu",system-ui,sans-serif;
   color-scheme:light;
 }
-html[data-theme=dark]{--bg:#231910;--surface:#2F2115;--surface2:#3E2C1B;--text:#F5E9D5;--muted:#C9AC85;--line:#4C3823;--accent:#D9A05B;--accent2:#C68B4E;--on-accent:#2A1C0E;--me:#C68B4E;--on-me:#FFF6E8;--bot:#2B1E12;--shadow:none;color-scheme:dark}
-@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#231910;--surface:#2F2115;--surface2:#3E2C1B;--text:#F5E9D5;--muted:#C9AC85;--line:#4C3823;--accent:#D9A05B;--accent2:#C68B4E;--on-accent:#2A1C0E;--me:#C68B4E;--on-me:#FFF6E8;--bot:#2B1E12;--shadow:none;color-scheme:dark}}
+html[data-theme=dark]{--bg:#2B1D11;--surface:#2B1D11;--surface2:#3A2812;--text:#F5E9D5;--muted:#C9AC85;--line:rgba(245,233,213,.08);--accent:#D9A05B;--accent2:#C68B4E;--on-accent:#2A1C0E;--me:#C68B4E;--on-me:#FFF6E8;--bot:#2B1D11;--shadow:7px 7px 16px rgba(8,5,2,.65),-7px -7px 16px rgba(110,82,46,.5);color-scheme:dark}
+@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#2B1D11;--surface:#2B1D11;--surface2:#3A2812;--text:#F5E9D5;--muted:#C9AC85;--line:rgba(245,233,213,.08);--accent:#D9A05B;--accent2:#C68B4E;--on-accent:#2A1C0E;--me:#C68B4E;--on-me:#FFF6E8;--bot:#2B1D11;--shadow:7px 7px 16px rgba(8,5,2,.65),-7px -7px 16px rgba(110,82,46,.5);color-scheme:dark}}
+/* v57 neumorphism details: inputs sit pressed-in, cards/bubbles raised */
+input,textarea,select{box-shadow:inset 5px 5px 10px rgba(166,120,45,.32),inset -5px -5px 10px rgba(255,246,214,.7);border-color:transparent!important}
+html[data-theme=dark] input,html[data-theme=dark] textarea,html[data-theme=dark] select{box-shadow:inset 5px 5px 10px rgba(8,5,2,.55),inset -5px -5px 10px rgba(110,82,46,.4)}
+.bubble{box-shadow:var(--shadow)}
+.seg button.on{box-shadow:4px 4px 9px rgba(166,120,45,.35),-4px -4px 9px rgba(255,246,214,.75)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:16px;-webkit-font-smoothing:antialiased;overscroll-behavior:none}
 button,a{font:inherit;color:inherit;background:none;border:0;cursor:pointer;text-decoration:none}
