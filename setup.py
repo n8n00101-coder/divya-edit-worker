@@ -1014,11 +1014,10 @@ def take_control(page, job, cfg):
     last_beat = 0.0
     while time.time() < deadline:
         j = get_job()
-        jr = j.get("job") or {}
-        st = jr.get("state", "")
+        st = j.get("state", "")
         if st == "stopped":
             return False
-        inputs = jr.get("tcInputs") or []
+        inputs = j.get("tcInputs") or []
         if inputs:
             tc_apply_inputs(page, inputs)
         tc_post_frame(page)
@@ -1045,7 +1044,32 @@ def pause_for_email_verify(page, job, cfg):
     LAST_VERIFY_DIAG = ""
     name = cfg["name"]
     progress("paused", "verify-email", MAGIC_LINK_PAUSE_MSG(name), page.url, reason="email")
-    if wait_pause():
+    if PROFILE_MODE:
+        # v49: bounded wait (~4 min) for the server-fed link. If the mail
+        # never lands (the provider throttles magic-link mail after
+        # repeated runs), hand the browser to the user (Take Control)
+        # instead of sitting in the email pause for the full 30 min:
+        # they sign in directly on the login page, the session is
+        # captured into the sealed profile, and key creation proceeds.
+        deadline = time.time() + 240
+        while True:
+            j0 = get_job()
+            st0 = str(j0.get("state") or "")
+            if st0 == "stopped":
+                return False
+            link0 = str(j0.get("verify_link") or j0.get("verifyLink") or "").strip()
+            if link0.startswith("http") or st0 == "running":
+                break
+            if time.time() > deadline:
+                print("no verification mail fed in 4 min - Take Control handover", flush=True)
+                if take_control(page, job, cfg):
+                    capture_profile(page.context)
+                    if _verify_signed_in(page, cfg, name):
+                        return True
+                return False
+            heartbeat()
+            time.sleep(10)
+    elif wait_pause():
         return False
     page.wait_for_timeout(2000)
     j = get_job()
