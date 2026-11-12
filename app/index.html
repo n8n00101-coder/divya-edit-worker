@@ -3,17 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
-<title>Divya</title>
-<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-<meta name="description" content="Divya — your personal AI: video editing, voice assistant, chat">
+<title>Julie</title>
+<meta name="theme-color" content="#231910" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#FAF3E3" media="(prefers-color-scheme: light)">
+<meta name="description" content="Julie — your personal AI: video editing, voice assistant, chat">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="favicon.png" type="image/png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Divya">
+<meta name="apple-mobile-web-app-title" content="Julie">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -23,8 +23,8 @@
   <!-- LOGIN -->
   <section id="login" class="login" hidden aria-labelledby="loginTitle">
     <div class="login-card">
-      <img src="icon-192.png" class="login-logo" alt="">
-      <h1 id="loginTitle" tabindex="-1">Divya</h1>
+      <img src="mascot.webp" class="login-logo" alt="">
+      <h1 id="loginTitle" tabindex="-1">Julie</h1>
       <p class="muted" id="loginSub" data-t="loginSub2"></p>
       <div class="net-banner" id="netBanner" role="alert" hidden><b data-t="netBlockedT"></b><span class="nb-text"></span><button type="button" class="btn secondary" data-t="retry" data-retry></button></div>
       <button class="btn primary" id="loginGoogleBtn" type="button"><span data-t="googleRow"></span></button>
@@ -100,13 +100,25 @@
       <button class="icon-btn" id="menuBtn" aria-controls="drawer" aria-expanded="false" data-tl="openMenu">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
-      <h1 id="screen-title" tabindex="-1"></h1>
+      <!-- v53 (Julie rebrand): Muse-style brand header — circular mascot,
+           the name "julie", and UNDER it a live status line that mirrors the
+           app's real states (setup mini-box / edit job / chat), set by
+           updateLiveStatus() in app.js. The screen title stays for a11y +
+           document.title only. -->
+      <div class="brand">
+        <img class="mascot" id="mascotImg" src="mascot.webp" alt="">
+        <div class="brand-txt">
+          <span class="brand-name">julie</span>
+          <span class="brand-status" id="liveStatus" aria-live="polite">Online</span>
+        </div>
+      </div>
+      <h1 id="screen-title" class="sr-only" tabindex="-1"></h1>
       <button class="avatar-btn" id="avatarBtn" data-tl="openProfile"><span class="avatar" id="avatarTop" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span></button>
     </header>
 
     <div class="drawer-bg" id="drawerBg" hidden></div>
     <nav id="drawer" class="drawer" data-tl="menu" inert>
-      <div class="drawer-head"><img src="icon-192.png" alt=""><div><b>Divya</b><div class="muted small" id="drawerMe"></div></div></div>
+      <div class="drawer-head"><img src="mascot.webp" alt=""><div><b>Julie</b><div class="muted small" id="drawerMe"></div></div></div>
       <ul>
         <li><a href="#/home" data-r="home"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11 12 4l9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span data-t="sHome"></span></a></li>
         <li><a href="#/chat" data-r="chat"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></svg><span data-t="sChat"></span></a></li>
@@ -129,8 +141,8 @@
         <div class="scroll pad">
           <p class="greet"><span id="greet"></span><br><span class="muted" data-t="greetSub"></span></p>
           <button class="hey" id="heyBtn">
-            <span class="hey-orb" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg></span>
-            <span class="hey-txt"><b>Hey Divya</b><span class="muted small" data-t="heySub"></span></span>
+            <span class="hey-orb" aria-hidden="true"><img src="mascot.webp" alt=""></span>
+            <span class="hey-txt"><b>Hey Julie</b><span class="muted small" data-t="heySub"></span></span>
           </button>
           <a class="card quota" id="homeQuota" href="#/chat"><span class="q-num" id="homeQuotaNum">–</span><span class="q-txt"><b data-t="editsLeftT"></b><span class="muted small" id="homeQuotaSub"></span></span><span class="q-go" aria-hidden="true">›</span></a>
           <ul class="grid" data-tl="quickActions">
@@ -197,7 +209,7 @@
           <p class="v-reply" id="vReply" aria-live="polite"></p>
           <div class="v-actions" id="vActions"></div>
           <div class="list">
-            <div class="row"><label for="wakeToggle"><span>Hey Divya · <span lang="te">హే దివ్య</span></span><br><span class="muted small" data-t="wakeSub"></span></label>
+            <div class="row"><label for="wakeToggle"><span>Hey Julie · <span lang="te">హే జూలీ</span></span><br><span class="muted small" data-t="wakeSub"></span></label>
               <span class="switch"><input type="checkbox" id="wakeToggle" role="switch"><span aria-hidden="true"></span></span></div>
             <a class="row link" href="#/settings"><span data-t="voicePick"></span><span class="muted r"><span class="voiceName"></span> ›</span></a>
           </div>
@@ -310,7 +322,7 @@
       <section id="s-download" class="screen" data-title="sDownload">
         <div class="scroll pad">
           <div class="card stack center">
-            <img src="icon-192.png" alt="" class="dl-icon">
+            <img src="mascot.webp" alt="" class="dl-icon">
             <p id="dlStatus" aria-live="polite"></p>
             <button class="btn primary" id="installBtn" data-t="installNow"></button>
             <p class="muted small" data-t="notApk"></p>
@@ -400,11 +412,11 @@
   <div id="updBanner" class="upd-banner" role="alert" hidden><span id="updText"></span><button type="button" class="btn primary" id="updRefreshBtn" data-t="updRefresh"></button></div>
   <div id="bubble" class="bubble" hidden>
     <div id="bubblePanel" class="bubble-panel" hidden>
-      <div class="bubble-head"><b>Divya</b><button id="bubbleClose" aria-label="Close">✕</button></div>
+      <div class="bubble-head"><b>Julie</b><button id="bubbleClose" aria-label="Close">✕</button></div>
       <div id="bubbleLog" class="bubble-log" aria-live="polite"></div>
-      <div class="bubble-input"><input id="bubbleText" type="text" data-tp="bubblePh" aria-label="Message Divya"><button id="bubbleSend" class="btn primary">➤</button></div>
+      <div class="bubble-input"><input id="bubbleText" type="text" data-tp="bubblePh" aria-label="Message Julie"><button id="bubbleSend" class="btn primary">➤</button></div>
     </div>
-    <button id="bubbleBtn" class="bubble-btn" aria-label="Divya chat">💬</button>
+    <button id="bubbleBtn" class="bubble-btn" aria-label="Julie chat"><img src="mascot.webp" alt=""></button>
   </div>
   <div id="sr" class="sr-only" aria-live="polite"></div>
   <div id="sheet" class="sheet-bg" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetText"><p id="sheetText"></p><div class="sheet-btns" id="sheetBtns"></div></div></div>
