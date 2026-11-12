@@ -1,14 +1,16 @@
-/* Divya PWA — monochrome theme (black / white / light grays) */
+/* Julie PWA — v53 cream theme (Muse-like): warm cream + soft beige cards,
+   warm brown text, caramel accent; iOS radii, typography and soft shadows.
+   Dark = warm espresso (same family, never pure black). */
 :root{
-  --bg:#ffffff;--surface:#f5f5f5;--surface2:#e9e9e9;--text:#0a0a0a;--muted:#5f5f5f;--line:#e0e0e0;
-  --accent:#0a0a0a;--on-accent:#ffffff;--me:#0a0a0a;--on-me:#ffffff;--bot:#f2f2f2;
-  --shadow:0 1px 2px rgba(0,0,0,.04),0 4px 16px rgba(0,0,0,.05);--r:18px;
+  --bg:#FAF3E3;--surface:#FFFBEF;--surface2:#F1E3C6;--text:#5B4632;--muted:#9A8266;--line:#EADFC6;
+  --accent:#C68B4E;--accent2:#D9A05B;--on-accent:#FFF9EE;--me:#C68B4E;--on-me:#FFFBF2;--bot:#FFFDF6;
+  --shadow:0 1px 2px rgba(122,84,38,.05),0 6px 20px rgba(122,84,38,.07);--r:22px;
   --sat:env(safe-area-inset-top);--sab:env(safe-area-inset-bottom);
-  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans","Noto Sans Telugu",system-ui,sans-serif;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Noto Sans","Noto Sans Telugu",system-ui,sans-serif;
   color-scheme:light;
 }
-html[data-theme=dark]{--bg:#000000;--surface:#121212;--surface2:#1e1e1e;--text:#f4f4f4;--muted:#a3a3a3;--line:#2a2a2a;--accent:#f4f4f4;--on-accent:#000000;--me:#f4f4f4;--on-me:#000000;--bot:#161616;--shadow:none;color-scheme:dark}
-@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#000000;--surface:#121212;--surface2:#1e1e1e;--text:#f4f4f4;--muted:#a3a3a3;--line:#2a2a2a;--accent:#f4f4f4;--on-accent:#000000;--me:#f4f4f4;--on-me:#000000;--bot:#161616;--shadow:none;color-scheme:dark}}
+html[data-theme=dark]{--bg:#231910;--surface:#2F2115;--surface2:#3E2C1B;--text:#F5E9D5;--muted:#C9AC85;--line:#4C3823;--accent:#D9A05B;--accent2:#C68B4E;--on-accent:#2A1C0E;--me:#C68B4E;--on-me:#FFF6E8;--bot:#2B1E12;--shadow:none;color-scheme:dark}
+@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#231910;--surface:#2F2115;--surface2:#3E2C1B;--text:#F5E9D5;--muted:#C9AC85;--line:#4C3823;--accent:#D9A05B;--accent2:#C68B4E;--on-accent:#2A1C0E;--me:#C68B4E;--on-me:#FFF6E8;--bot:#2B1E12;--shadow:none;color-scheme:dark}}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:16px;-webkit-font-smoothing:antialiased;overscroll-behavior:none}
 button,a{font:inherit;color:inherit;background:none;border:0;cursor:pointer;text-decoration:none}
@@ -26,7 +28,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 /* login */
 .login{height:100%;display:flex;padding:24px;overflow-y:auto}
 .login-card{width:100%;max-width:380px;text-align:center;animation:rise .4s ease;margin:auto}
-.login-logo{width:76px;height:76px;border-radius:22px;border:1px solid var(--line)}
+.login-logo{width:84px;height:84px;border-radius:50%;border:1px solid var(--line);box-shadow:var(--shadow);animation:bob 3.4s ease-in-out infinite}
 .login h1{font-size:32px;margin:14px 0 4px;letter-spacing:-.5px}
 .login p{margin:0 0 20px}
 .stack{display:flex;flex-direction:column;gap:12px}
@@ -45,8 +47,16 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 
 /* app bar + drawer */
 #main{height:100%;display:flex;flex-direction:column}
-.appbar{display:flex;align-items:center;gap:6px;padding:calc(6px + var(--sat)) 6px 6px;border-bottom:1px solid var(--line);background:var(--bg);z-index:3;flex:none}
+.appbar{display:flex;align-items:center;gap:6px;padding:calc(6px + var(--sat)) 8px 8px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(18px) saturate(1.5);-webkit-backdrop-filter:blur(18px) saturate(1.5);z-index:3;flex:none}
 .appbar h1{flex:1;margin:0;font-size:19px;font-weight:700;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* v53 brand header: mascot + "julie" + live status line (Muse-style) */
+.brand{flex:1;display:flex;align-items:center;gap:10px;min-width:0;padding-left:2px}
+.mascot{width:42px;height:42px;border-radius:50%;flex:none;border:1px solid var(--line);box-shadow:var(--shadow);animation:bob 3.4s ease-in-out infinite;transition:box-shadow .4s}
+.mascot.working{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 45%,transparent),0 0 20px color-mix(in srgb,var(--accent) 55%,transparent);animation-duration:1.5s}
+.brand-txt{display:flex;flex-direction:column;min-width:0;line-height:1.15}
+.brand-name{font-size:19px;font-weight:700;letter-spacing:-.3px}
+.brand-status{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:56vw}
+.brand-status.working{color:var(--accent);font-weight:600}
 .icon-btn{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;color:var(--text);position:relative;flex:none}
 .icon-btn:hover{background:var(--surface)}
 .live-dot{position:absolute;top:10px;right:10px;width:9px;height:9px;border-radius:50%;background:var(--text);animation:blink 1.4s infinite}
@@ -54,7 +64,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .drawer{position:absolute;top:0;bottom:0;left:0;width:min(300px,84%);background:var(--bg);border-right:1px solid var(--line);z-index:21;transform:translateX(-102%);transition:transform .25s ease;padding:calc(14px + var(--sat)) 10px calc(14px + var(--sab));overflow-y:auto}
 .drawer.open{transform:none}
 .drawer-head{display:flex;gap:12px;align-items:center;padding:6px 10px 16px;border-bottom:1px solid var(--line);margin-bottom:8px}
-.drawer-head img{width:40px;height:40px;border-radius:12px;border:1px solid var(--line)}
+.drawer-head img{width:40px;height:40px;border-radius:50%;border:1px solid var(--line)}
 .drawer ul{list-style:none;margin:0;padding:0}
 .drawer li a,.drawer li button{display:flex;align-items:center;gap:14px;width:100%;min-height:50px;padding:0 12px;border-radius:12px;font-size:16px;text-align:left}
 .drawer li a:hover,.drawer li button:hover{background:var(--surface)}
@@ -71,10 +81,11 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 /* home */
 .greet{font-size:24px;font-weight:700;margin:4px 0 16px;line-height:1.3;letter-spacing:-.3px}
 .greet .muted{font-size:15px;font-weight:400;letter-spacing:0}
-.hey{display:flex;align-items:center;gap:16px;width:100%;padding:18px;border-radius:22px;background:var(--accent);color:var(--on-accent);text-align:left;margin-bottom:18px;min-height:96px}
-.hey .muted{color:inherit;opacity:.7;display:block;margin-top:2px}
+.hey{display:flex;align-items:center;gap:16px;width:100%;padding:18px;border-radius:26px;background:linear-gradient(135deg,var(--accent2),var(--accent));color:var(--on-accent);text-align:left;margin-bottom:18px;min-height:96px;box-shadow:0 8px 24px color-mix(in srgb,var(--accent) 35%,transparent)}
+.hey .muted{color:inherit;opacity:.75;display:block;margin-top:2px}
 .hey b{font-size:22px;letter-spacing:-.3px}
-.hey-orb{width:60px;height:60px;border-radius:50%;display:grid;place-items:center;border:2px solid currentColor;flex:none;position:relative}
+.hey-orb{width:60px;height:60px;border-radius:50%;display:grid;place-items:center;flex:none;position:relative;overflow:hidden;border:2px solid color-mix(in srgb,var(--on-accent) 65%,transparent)}
+.hey-orb img{width:100%;height:100%;object-fit:cover;display:block}
 .hey-orb:after{content:"";position:absolute;inset:-7px;border-radius:50%;border:1px solid currentColor;opacity:.35;animation:ring 2.4s infinite}
 .hey-orb svg{width:28px;height:28px}
 .grid{list-style:none;margin:0 0 18px;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
@@ -101,7 +112,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .typing i{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:blink 1.2s infinite}
 .typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
 .empty{margin:auto;text-align:center;padding:24px}
-.empty img{width:56px;height:56px;border-radius:16px;margin-bottom:10px;border:1px solid var(--line)}
+.empty img{width:64px;height:64px;border-radius:50%;margin-bottom:10px;border:1px solid var(--line);box-shadow:var(--shadow);animation:bob 3.4s ease-in-out infinite}
 .empty h2{margin:0 0 6px;font-size:21px}
 .chips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:16px}
 .chip{min-height:44px;padding:0 14px;border-radius:999px;background:var(--surface);border:1px solid var(--line);font-size:14px}
@@ -117,7 +128,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .rec-bar .dot{width:10px;height:10px;border-radius:50%;background:var(--text);animation:blink 1s infinite}
 
 /* cards / forms */
-.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px;box-shadow:var(--shadow)}
 .card h2{margin:0 0 8px;font-size:19px;display:flex;align-items:center;gap:10px}
 .card .h3{font-size:16px}
 .card ol{margin:0;padding-left:20px;line-height:1.55}
@@ -133,7 +144,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .pulse.done{animation:none}.pulse.fail{animation:none;background:none;border:2px solid var(--text)}.pulse.idle{animation:none;background:var(--surface2);border:1px solid var(--line)}
 
 /* lists */
-.list{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-bottom:14px}
+.list{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-bottom:14px;box-shadow:var(--shadow)}
 .row{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:60px;padding:12px 16px;text-align:left;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}
 .row label{cursor:pointer;flex:1}
@@ -198,7 +209,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .plan h2{font-size:21px}
 .plan.pro{border-color:var(--text)}
 .ticks{margin:0 0 10px;padding-left:20px;line-height:1.6}
-.dl-icon{width:72px;height:72px;border-radius:20px;align-self:center;border:1px solid var(--line)}
+.dl-icon{width:76px;height:76px;border-radius:50%;align-self:center;border:1px solid var(--line);box-shadow:var(--shadow)}
 
 .toast{position:absolute;left:50%;bottom:calc(24px + var(--sab));transform:translate(-50%,20px);background:var(--text);color:var(--bg);padding:11px 16px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;transition:all .25s;max-width:90%;text-align:center;z-index:40}
 .toast.show{opacity:1;transform:translate(-50%,0)}
@@ -214,6 +225,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 @keyframes blink{0%,100%{opacity:.3}50%{opacity:1}}
 @keyframes ring{0%{transform:scale(.9);opacity:.5}100%{transform:scale(1.25);opacity:0}}
 @keyframes breathe{50%{transform:scale(1.05)}}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes talk{from{transform:scale(.96)}to{transform:scale(1.1)}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -236,9 +248,9 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .net-banner.in-app{margin:8px 10px;flex:none}
 .net-banner[hidden]{display:none}
 /* App update banner: fixed above the tab bar, one tap to refresh to the new version. */
-.upd-banner{position:fixed;left:12px;right:12px;bottom:84px;z-index:95;display:flex;gap:10px;align-items:center;background:#1a73e8;color:#fff;border-radius:14px;padding:12px 14px;box-shadow:0 4px 18px rgba(0,0,0,.3);font-size:14px;line-height:1.4}
+.upd-banner{position:fixed;left:12px;right:12px;bottom:84px;z-index:95;display:flex;gap:10px;align-items:center;background:var(--accent);color:var(--on-accent);border-radius:16px;padding:12px 14px;box-shadow:0 4px 18px rgba(122,84,38,.35);font-size:14px;line-height:1.4}
 .upd-banner span{flex:1}
-.upd-banner .btn{flex:none;background:#fff;color:#1a73e8;min-height:44px}
+.upd-banner .btn{flex:none;background:#FFF9EE;color:#8A5A24;min-height:44px}
 .upd-banner[hidden]{display:none}
 .acct-card .h3{margin:0}
 .acct-card p{margin:0}
@@ -250,7 +262,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .avatar svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .avatar.big{width:64px;height:64px;font-size:26px;flex:none}.avatar.big svg{width:32px;height:32px}
 .avatar-btn[aria-current=page] .avatar{box-shadow:0 0 0 3px var(--bg),0 0 0 5px var(--text)}
-.tabbar{flex:none;display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);background:var(--bg);padding:4px 4px calc(4px + var(--sab));z-index:3}
+.tabbar{flex:none;display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);background:color-mix(in srgb,var(--bg) 84%,transparent);backdrop-filter:blur(20px) saturate(1.5);-webkit-backdrop-filter:blur(20px) saturate(1.5);padding:4px 4px calc(4px + var(--sab));z-index:3}
 .tabbar a{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:56px;border-radius:12px;font-size:12px;font-weight:600;color:var(--muted);text-decoration:none;position:relative}
 .tabbar a svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .tabbar a[aria-current=page]{color:var(--text)}
@@ -288,7 +300,8 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
    never overlapping the send button; the composer (z-index:70) always wins taps over the bubble (60). */
 .bubble{position:fixed;right:16px;bottom:150px;z-index:60;display:flex;flex-direction:column;align-items:flex-end;gap:10px}
 .bubble.dragging{transition:none}
-.bubble-btn{width:56px;height:56px;border-radius:50%;border:none;background:var(--text);color:var(--bg);font-size:24px;box-shadow:0 4px 16px rgba(0,0,0,.3);cursor:grab;touch-action:none}
+.bubble-btn{width:56px;height:56px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--text);font-size:24px;box-shadow:0 4px 16px rgba(122,84,38,.3);cursor:grab;touch-action:none;padding:0;overflow:hidden}
+.bubble-btn img{width:100%;height:100%;object-fit:cover;display:block}
 .bubble-btn:active{cursor:grabbing}
 .bubble-panel{width:min(340px,calc(100vw - 16px));height:min(46vh,420px);background:var(--surface);border:1px solid var(--line);border-radius:16px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.3)}
 .bubble-head{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line);cursor:grab;touch-action:none;flex:none}
@@ -311,14 +324,14 @@ body.blind .tabbar a{font-size:15px}
 .attach-chip{display:flex;align-items:center;gap:8px;margin:0 0 8px;padding:8px 12px;border-radius:12px;background:var(--surface);border:1px solid var(--line);font-size:14px}
 .attach-chip button{margin-left:auto;border:0;background:none;font-size:18px;cursor:pointer;color:var(--text)}
 .tpl-card{border:1px solid var(--line,#ddd);border-radius:12px;padding:0 0 8px;background:var(--card,#fff);text-align:left;cursor:pointer}
-.tpl-card.on{outline:2px solid #1a73e8;outline-offset:1px}
+.tpl-card.on{outline:2px solid var(--accent);outline-offset:1px}
 .tpl-prev{display:block;height:44px;border-radius:11px 11px 0 0;position:relative;overflow:hidden}
 .tpl-accent{position:absolute;left:0;top:0;bottom:0;width:6px}
 .tpl-sample{position:absolute;right:10px;bottom:6px;font-weight:700;font-size:18px}
 .tpl-name{display:block;font-weight:700;padding:6px 8px 0}
 .tpl-card .muted{display:block;padding:2px 8px 0}
 .hist-item{display:flex;flex-direction:column;gap:6px}
-.hist-num{font-weight:800;color:#1a73e8}
+.hist-num{font-weight:800;color:var(--accent)}
 /* v39 (D7): voice list — a voice label never wraps mid-phrase ("Arjun ·" /
    "Teenage"): one line, ellipsis only when genuinely too long for the
    screen. Warning/status lines wrap fully and never clip at the edge.
