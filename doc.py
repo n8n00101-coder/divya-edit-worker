@@ -2066,6 +2066,7 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     starts, t = [], 0.4  # 0.4 s pre-roll for the boom
     for s in p["scenes"]: starts.append(t); t += s["d"]
     p["starts"] = starts; p["voice_end"] = t; total = t + OUTRO
+    if notify: await notify("Voice ready. Scenes render chestunna (animation + music).")
     # v36 (Blind E6 — pre-render geometry QC + auto-fix): BEFORE the chunk
     # render, check every scene's layer geometry at mid-scene. If two layers
     # intersect, scale the visual to 80% and re-check; still hitting, drop
@@ -2116,6 +2117,7 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     fc += "".join(f"[a{i}]" for i in range(len(starts))) + f"amix=inputs={len(starts)}:normalize=0,apad,atrim=0:{total:.2f}[o]"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", fc, "-map", "[o]", "-ar", str(SR), "-ac", "1", f"{wd}/voice.wav"], check=True)
     _payoff = starts[_payoff_idx(p)] if starts else None
+    if notify: await notify("Rendering: final video assemble chestunna.")
     music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff)
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/voice.wav", "-i", f"{wd}/music.wav", "-i", f"{wd}/music_sfx.wav", "-filter_complex",
                     # v36 (Blind E1): the music is ducked -12 dB under the voice

@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v42";
+const APP_V = "julie-v43";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -740,7 +740,7 @@ const linkify = s => esc(s).replace(/https?:\/\/[^\s<]+/g, u => `<a href="${u}" 
 function scrollDown() { const m = $("#msgs"); requestAnimationFrame(() => m.scrollTop = m.scrollHeight); }
 function bubble(role, text, extra = {}) {
   $("#msgs .empty")?.remove();
-  const d = document.createElement("div"); d.className = "msg " + (role === "user" ? "me" : role === "sys" ? "sys" : "bot");
+  const d = document.createElement("div"); d.className = "msg " + (role === "user" ? "me" : role === "sys" ? "sys" : "bot"); d.dataset.text = text || "";
   if (extra.img) { const i = new Image(); i.src = extra.img; i.alt = "image"; d.appendChild(i); if (text) { const p = document.createElement("div"); p.textContent = text; d.appendChild(p); } }
   else d.innerHTML = (extra.heard ? `<span class="heard" aria-hidden="true">🎙️</span>` : "") + linkify(text);
   if (extra.buttons?.length) { const box = document.createElement("div"); box.className = "act"; renderButtons(box, extra.buttons); d.appendChild(box); }
@@ -751,6 +751,20 @@ function typing(on) {
   $("#msgs .typing")?.remove();
   if (on === true) { const d = document.createElement("div"); d.className = "msg bot typing"; d.setAttribute("aria-label", t("thinking")); d.innerHTML = "<i></i><i></i><i></i>"; $("#msgs").appendChild(d); scrollDown(); }
 }
+/* v67 (Ajju): basic message gestures that were missing — swipe right on a
+   message to reply to it (Julie gets the quoted context too), long-press
+   for a Copy / Reply menu. */
+let replyTo = null;
+function replyBarEl() { let b = $("#replyBar"); if (!b) { b = document.createElement("div"); b.id = "replyBar"; b.hidden = true; b.innerHTML = "<span></span><button type='button' aria-label='Cancel reply'>✕</button>"; b.querySelector("button").onclick = () => { replyTo = null; b.hidden = true; }; document.querySelector(".composer-wrap")?.prepend(b); } return b; }
+function setReply(msgEl) { const text = (msgEl.dataset.text || msgEl.textContent || "").trim(); if (!text) return; replyTo = { who: msgEl.classList.contains("me") ? "user" : "bot", text }; const b = replyBarEl(); b.querySelector("span").textContent = (replyTo.who === "user" ? "You: " : "Julie: ") + text.slice(0, 90); b.hidden = false; $("#input")?.focus(); }
+function hideReplyBar() { const b = $("#replyBar"); if (b) b.hidden = true; }
+function msgMenu(msgEl, x, y) { document.querySelector(".ctxmenu")?.remove(); const m = document.createElement("div"); m.className = "ctxmenu"; const mk = (label, fn) => { const btn = document.createElement("button"); btn.textContent = label; btn.onclick = () => { m.remove(); fn(); }; m.appendChild(btn); }; mk("Reply", () => setReply(msgEl)); mk("Copy", async () => { const tx = (msgEl.dataset.text || msgEl.textContent || "").trim(); try { await navigator.clipboard.writeText(tx); toast("Copied ✓"); } catch { toast(tx.slice(0, 60)); } }); document.body.appendChild(m); const r = m.getBoundingClientRect(); m.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + "px"; m.style.top = Math.max(8, y - r.height - 10) + "px"; setTimeout(() => addEventListener("pointerdown", function h(e) { if (!m.contains(e.target)) { m.remove(); removeEventListener("pointerdown", h); } }), 10); }
+(() => { const box = $("#msgs"); if (!box) return; let st = null;
+  box.addEventListener("pointerdown", e => { const el = e.target.closest(".msg"); if (!el || el.classList.contains("typing")) return; st = { el, x: e.clientX, y: e.clientY, dx: 0, dy: 0, lp: setTimeout(() => { if (st && Math.hypot(st.dx, st.dy) < 10) { const elx = st.el; msgMenu(elx, st.x, st.y); st = null; } }, 550) }; });
+  box.addEventListener("pointermove", e => { if (!st) return; st.dx = e.clientX - st.x; st.dy = e.clientY - st.y; if (Math.abs(st.dy) > 12) clearTimeout(st.lp); if (st.dx > 0 && Math.abs(st.dy) < 40) st.el.style.transform = `translateX(${Math.min(st.dx, 70)}px)`; });
+  const end = () => { if (!st) return; clearTimeout(st.lp); const dx = st.dx || 0, dy = st.dy || 0; st.el.style.transform = ""; if (dx > 60 && Math.abs(dy) < 40) setReply(st.el); st = null; };
+  box.addEventListener("pointerup", end); box.addEventListener("pointercancel", end);
+})();
 function renderEmpty() {
   const m = $("#msgs"); m.innerHTML = "";
   const e = document.createElement("div"); e.className = "empty";
@@ -795,8 +809,9 @@ async function send(text) {
   text = (text || "").trim();
   if ((!text && !pendingVideo) || busy) return;
   if (!text && pendingVideo) text = t("attachVideoMsg");
-  busy = true; bubble("user", text); $("#input").value = ""; autoGrow(); updateBtn(); typing(true);
+  busy = true; const rt = replyTo; replyTo = null; hideReplyBar(); const bEl = bubble("user", text); if (rt) { const q = document.createElement("span"); q.className = "quote-in"; q.textContent = (rt.who === "user" ? "You: " : "Julie: ") + rt.text.slice(0, 140); bEl.prepend(q); } $("#input").value = ""; autoGrow(); updateBtn(); typing(true);
   let serverText = text;
+  if (rt) serverText += `\n(Replying to ${rt.who === "user" ? "my own" : "Julie's"} earlier message: "${rt.text.slice(0, 200)}")`;
   if (pendingVideo) serverText += `\n[[EDITVIDEO: ${pendingVideo.job}]]`;
   pendingVideo = null; showChip();
   try {
@@ -818,7 +833,16 @@ function videoBubble(num, url) {
   d.innerHTML = `<b>${esc(t("jobDone"))} — video ${num}</b><video controls preload="metadata" playsinline src="${url}" style="width:100%;border-radius:12px;margin-top:6px"></video><br><a href="${url}" download="divya-video-${num}.mp4">${esc(t("histWatch"))}</a>`;
   el.appendChild(d); scrollDown(); saveChat();
 }
-function videoBubbleFail(num) { bubble("bot", `${t("jobFail")} — video ${num}`); saveChat(); }
+function videoBubbleFail(num) { document.getElementById("prog-" + num)?.remove(); bubble("bot", `${t("jobFail")} — video ${num}`); saveChat(); }
+/* v67 (Ajju): LIVE progress in chat — a bar + % + the real stage line the
+   runner reports, updated by the poller while the video is being made. */
+function showProgress(num, v) {
+  let d = document.getElementById("prog-" + num);
+  if (!d) { $("#msgs .empty")?.remove(); d = document.createElement("div"); d.className = "msg bot prog"; d.id = "prog-" + num; $("#msgs").appendChild(d); }
+  const pct = Math.max(3, Math.min(99, v.pct || 5));
+  d.innerHTML = `<div class="small muted">${esc(v.note || "Video tayaru avuthondi…")}</div><div class="progbar"><i style="width:${pct}%"></i></div><div class="small"><b>${pct}%</b> — video ${num}</div>`;
+  scrollDown();
+}
 async function pollChatVideo(num, job) {
   if (chatPoll) clearInterval(chatPoll);
   let tries = 0, tickBusy = false;
@@ -832,8 +856,9 @@ async function pollChatVideo(num, job) {
     try { const d = await api("videos"); v = (d.videos || []).find(x => x.job === job || x.n === num); } catch {}
     if (!v) return;
     if (v.state === "failed") { clearInterval(chatPoll); chatPoll = null; videoBubbleFail(num); return; }
+    if (v.state === "running" || v.state === "queued") { showProgress(num, v); return; }
     if (v.state === "done" && v.has_result) {
-      clearInterval(chatPoll); chatPoll = null;
+      clearInterval(chatPoll); chatPoll = null; document.getElementById("prog-" + num)?.remove();
       try {
         const r = await apiFetch("result?job=" + job, { headers: { authorization: "Bearer " + S.token } });
         if (!r.ok) { videoBubbleFail(num); return; }

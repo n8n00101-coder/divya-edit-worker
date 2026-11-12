@@ -54,9 +54,21 @@ async def main():
         await wa.send_text(to, f"⚠️ Edit fail ayyindi: {str(e)[:300]}. Instruction konchem marchi malli try cheyyandi.")
         raise
 
+_STAGE_PCT = (("script ready", 35), ("codegen", 20), ("voice ready", 55), ("rendering", 80), ("download", 15), ("edit plan", 35), ("voice", 45), ("render", 75), ("export", 90), ("upload", 95), ("plan", 30))
+def _pct_for(state, note):
+    # v67 (Ajju): live progress % in the app — mapped from the REAL stage
+    # the runner reports, never invented. Unknown stage -> None (the app
+    # keeps the last real %). Done is always 100.
+    if state == "done": return 100
+    if state != "running": return None
+    t = (note or "").lower()
+    for k, v in _STAGE_PCT:
+        if k in t: return v
+    return None
+
 def app_state(state, note=""):
     try:
-        httpx.post(f"{WORKER}/api/runner/state", params={"job": JOB}, json={"state": state, "note": note[:300]},
+        httpx.post(f"{WORKER}/api/runner/state", params={"job": JOB}, json={"state": state, "note": note[:300], "pct": _pct_for(state, note)},
                    headers={"x-runner-key": KEY}, timeout=20)
     except Exception as e:
         print("state post failed", type(e).__name__)
@@ -158,17 +170,18 @@ HARK_PIPELINE = (
 )
 
 
-# R37: Hark's long-video method (16:9, 8-15 min documentaries). Use for LONG
+# R37: Hark's long-video method (16:9 documentaries). Use for LONG
 # videos; Hark short method rules 9:16 shorts; Tab 8-step stays as the base.
 # Source: ~/workspace/styles/HARK-LONG-METHOD.md (given by Hark, 2026-11-09).
+# v67 (Ajju): long limit raised to 60 min — chapters scale with length.
 HARK_LONG_PIPELINE = (
-    " Hark long method (16:9 long videos, 8-15 min): format 1920x1080, 30fps;"
-    " structure Hook (0:00-0:30) -> Intro promise -> 4-6 chapters -> Twist -> Summary -> CTA;"
+    " Hark long method (16:9 long videos, up to 60 min): format 1920x1080, 30fps;"
+    " structure Hook (0:00-0:30) -> Intro promise -> chapters (about 1 chapter per 5 minutes: 8 min = 2-3 chapters, 30 min = 6, 60 min = 10-12) -> Twist -> Summary -> CTA;"
     " something changes on screen every 20-40s."
     " 1) Topic+angle — 5 surprising but provable angles (one-line hook, core question, why watch till the end); pick one with a clear question."
     " 2) Research — every fact/number/date with exact claim + official source + year + exact wording; mark unsure as UNVERIFIED;"
     " sources sheet: claim | source | link | year | exact wording. Open every source yourself."
-    " 3) Outline — hook 30s, 5 chapters (one question + one proof + one visual each), twist, summary, CTA, timestamps."
+    " 3) Outline — hook 30s, chapters scaled to the target length (one question + one proof + one visual each), twist, summary, CTA, timestamps."
     " 4) Script — short spoken sentences (max 15 words), one idea per line, numbers as digits, every fact followed by [SOURCE: name],"
     " [VISUAL: ...] under each line; 140-150 words = 1 minute. No claims outside the sources sheet."
     " 5) Fact check pass — script line by line against the sources sheet; rewrite any line whose number/wording/year/meaning differs."
