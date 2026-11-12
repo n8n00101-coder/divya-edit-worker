@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v39";
+const APP_V = "julie-v40";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -235,7 +235,7 @@ function applyTheme() {
   document.documentElement.dataset.theme = S.theme;
   $$("#setTheme button").forEach(b => { b.classList.toggle("on", b.dataset.v === S.theme); b.setAttribute("aria-checked", b.dataset.v === S.theme); });
   const dark = S.theme === "dark" || (S.theme === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
-  $$('meta[name="theme-color"]').forEach(m => { m.removeAttribute("media"); m.content = dark ? "#231910" : "#FAF3E3"; });
+  $$('meta[name="theme-color"]').forEach(m => { m.removeAttribute("media"); m.content = dark ? "#231910" : "#F3EAD3"; });
 }
 function announce(msg) { const e = $("#sr"); e.textContent = ""; setTimeout(() => e.textContent = msg, 60); }
 function toast(msg, say) { const e = $("#toast"); e.textContent = msg; e.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => e.classList.remove("show"), 3000); if (say || S.vf) speak(msg); }
