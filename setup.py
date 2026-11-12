@@ -948,7 +948,18 @@ def _page_snippet(page):
         return ""
 
 
+LAST_TC_TIMEOUT = False
+
+
 def _verify_fail_msg(name):
+    global LAST_TC_TIMEOUT
+    if LAST_TC_TIMEOUT:
+        # v50: the Take Control window lapsed with no sign-in — say
+        # exactly that (the chain finalizes failed/<provider> with this
+        # reason), not the generic link wording.
+        LAST_TC_TIMEOUT = False
+        return (f"{name} sign-in time ayipoyindhi — Take Control lo sign in "
+                f"cheyaledhu, malli setup run cheyachu (step: Take Control sign-in).")
     base = (f"{name} sign-in complete avvaledu — verification link open chesi "
             f"sign in ayyaka malli setup run cheyyi (step: email verification).")
     return base + (f" [{LAST_VERIFY_DIAG}]" if LAST_VERIFY_DIAG else "")
@@ -1008,6 +1019,8 @@ def take_control(page, job, cfg):
     the job flips back to running and this returns True. Bounded
     (~25 min; heartbeats keep the Worker watchdog calm). Returns False
     on stop/timeout."""
+    global LAST_TC_TIMEOUT
+    LAST_TC_TIMEOUT = False
     progress("paused", "google-signin", TC_PAUSE_MSG, page.url, reason="signin", tc=True)
     tc_post_frame(page)
     deadline = time.time() + 1500
@@ -1029,6 +1042,7 @@ def take_control(page, job, cfg):
             last_beat = time.time()
         time.sleep(1.2)
     print(f"take control timed out for {cfg['name']}", flush=True)
+    LAST_TC_TIMEOUT = True
     return False
 
 
