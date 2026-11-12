@@ -2172,8 +2172,13 @@ async function setupWatchdog(env, n, chain) {
   const fin = { state: "stalled", done: chain.done || [], failed: chain.failed || [],
     provider: cur.provider, note: (cur.note || "") + ` — runner nunchi ${mins} min nunchi update ledu (setup aagipoyindhi).`,
     lastStep: cur.step || "", lastUrl: cur.url || "", at: Date.now(), geminiVerify: (chain && chain.geminiNeedsVerify) || null, failReason: (chain && chain.failReason) || null };
-  await env.KV.put(`setupdone:${n}`, JSON.stringify(fin), { expirationTtl: 86400 });
-  await env.KV.delete(`setupchain:${n}`);
+  // v50: persistence is best-effort. When the daily KV write quota is
+  // exhausted, put() THROWS — that throw escaped setup/status as an
+  // HTTP 500 (live 2026-11-12, after the TC frame stream burned the
+  // day's writes). The verdict is still returned for THIS response;
+  // the records are re-finalized on a later call once writes recover.
+  try { await env.KV.put(`setupdone:${n}`, JSON.stringify(fin), { expirationTtl: 86400 }); } catch {}
+  try { await env.KV.delete(`setupchain:${n}`); } catch {}
   return fin;
 }
 // v38 (R48, items 1+6): setup state + per-step progress for the app's
@@ -2429,7 +2434,12 @@ async function googleToken(env, n) {
     try { const resp = await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) }); nt = await resp.json().catch(() => ({})); } catch { return null; }
     if (!nt.access_token) return null;
     const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in };
-    await env.KV.put(`tok:${n}:google`, JSON.stringify(merged));
+    // v50: persisting the refreshed token is best-effort — a KV write
+    // failure (e.g. the daily write quota) must not fail the request;
+    // the fresh token is still returned for THIS call. (Live 2026-11-12:
+    // this bare put threw "KV put() limit exceeded for the day" and
+    // gmail/verify returned HTTP 500.)
+    try { await env.KV.put(`tok:${n}:google`, JSON.stringify(merged)); } catch {}
     return merged;
   }
   return t;
@@ -3079,7 +3089,21 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // to anyone but the job's owner.
     const img = String(body.img || "");
     if (!img || img.length > 900000 || !/^[A-Za-z0-9+/=]+$/.test(img)) return new Response("bad frame", { status: 400 });
-    await env.KV.put(`tcframe:${job}`, JSON.stringify({ img, url: String(body.url || "").slice(0, 500), at: Date.now() }), { expirationTtl: 3600 });
+    const furl = String(body.url || "").slice(0, 500);
+    // v50: quota hygiene — the runner streams a frame every ~1.2s and
+    // each one was a KV put; a static sign-in screen burned the whole
+    // daily KV write quota (free tier) in one TC window and took down
+    // setup/status + gmail/verify with it. Store a cheap fingerprint
+    // with the frame and skip the write when nothing changed (reads
+    // are plentiful; writes are the scarce budget).
+    let h = img.length;
+    for (let i = 0; i < img.length; i += 997) h = (h * 31 + img.charCodeAt(i)) >>> 0;
+    const fp = h + ":" + img.length;
+    try {
+      const prev = parseRec(await env.KV.get(`tcframe:${job}`));
+      if (prev && prev.fp === fp && (prev.url || "") === furl) return Response.json({ ok: true, skipped: true });
+      await env.KV.put(`tcframe:${job}`, JSON.stringify({ img, url: furl, at: Date.now(), fp }), { expirationTtl: 3600 });
+    } catch { return Response.json({ ok: true, stored: false }); }
     return Response.json({ ok: true });
   }
   if (p === "setup/runner/progress" && req.method === "POST") {
@@ -3166,7 +3190,12 @@ export default {
   },
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
-    if (url.pathname.startsWith("/api/")) return appApi(req, env, url, ctx);
+    if (url.pathname.startsWith("/api/")) {
+      // v50: last-resort guard — an unexpected throw inside the app API
+      // must surface as a clean JSON 500, never a bare error-1101 page.
+      try { return await appApi(req, env, url, ctx); }
+      catch (e) { console.log("appApi error", String((e && e.message) || e)); return new Response(JSON.stringify({ ok: false, error: "server error — malli try cheyyi" }), { status: 500, headers: { "content-type": "application/json" } }); }
+    }
     if (url.pathname === "/webhook" && req.method === "GET") {
       if (url.searchParams.get("hub.mode") === "subscribe" && url.searchParams.get("hub.verify_token") === env.VERIFY_TOKEN)
         return new Response(url.searchParams.get("hub.challenge") || "");
