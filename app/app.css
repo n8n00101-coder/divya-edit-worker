@@ -5,16 +5,17 @@
 :root{
   --bg:#EAC87E;--surface:#EAC87E;--surface2:#C9CF8F;--text:#454D1C;--muted:#7A7A3D;--line:rgba(90,110,40,.18);
   --accent:#6FA84F;--accent2:#93C572;--on-accent:#F7F3D8;--me:#7FB069;--on-me:#FBF7E0;--bot:#EAC87E;
-  --shadow:7px 7px 16px rgba(150,110,40,.40),-7px -7px 16px rgba(250,244,205,.85);--r:24px;
+  --shadow:5px 5px 12px rgba(150,110,40,.26),-5px -5px 12px rgba(250,244,205,.5);--r:24px;
   --sat:env(safe-area-inset-top);--sab:env(safe-area-inset-bottom);
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Noto Sans","Noto Sans Telugu",system-ui,sans-serif;
   color-scheme:light;
 }
-html[data-theme=dark]{--bg:#2C3620;--surface:#2C3620;--surface2:#3A472A;--text:#F0E3BC;--muted:#B9C48D;--line:rgba(240,227,188,.10);--accent:#93C572;--accent2:#A9D18A;--on-accent:#22300F;--me:#5E8F47;--on-me:#F5EFD2;--bot:#2C3620;--shadow:7px 7px 16px rgba(10,14,4,.6),-7px -7px 16px rgba(147,197,114,.22);color-scheme:dark}
-@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#2C3620;--surface:#2C3620;--surface2:#3A472A;--text:#F0E3BC;--muted:#B9C48D;--line:rgba(240,227,188,.10);--accent:#93C572;--accent2:#A9D18A;--on-accent:#22300F;--me:#5E8F47;--on-me:#F5EFD2;--bot:#2C3620;--shadow:7px 7px 16px rgba(10,14,4,.6),-7px -7px 16px rgba(147,197,114,.22);color-scheme:dark}}
-/* v57 neumorphism details: inputs sit pressed-in, cards/bubbles raised */
-input,textarea,select{box-shadow:inset 5px 5px 10px rgba(166,120,45,.32),inset -5px -5px 10px rgba(255,246,214,.7);border-color:transparent!important}
-html[data-theme=dark] input,html[data-theme=dark] textarea,html[data-theme=dark] select{box-shadow:inset 5px 5px 10px rgba(8,5,2,.55),inset -5px -5px 10px rgba(110,82,46,.4)}
+html[data-theme=dark]{--bg:#332A1E;--surface:#332A1E;--surface2:#453723;--text:#F2E4BE;--muted:#C9B18A;--line:rgba(242,228,190,.12);--accent:#A9C98B;--accent2:#BCD6A0;--on-accent:#2A2118;--me:#7FA85C;--on-me:#F7F1DC;--bot:#332A1E;--shadow:5px 5px 12px rgba(12,8,3,.5),-5px -5px 12px rgba(230,205,150,.14);color-scheme:dark}
+@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#332A1E;--surface:#332A1E;--surface2:#453723;--text:#F2E4BE;--muted:#C9B18A;--line:rgba(242,228,190,.12);--accent:#A9C98B;--accent2:#BCD6A0;--on-accent:#2A2118;--me:#7FA85C;--on-me:#F7F1DC;--bot:#332A1E;--shadow:5px 5px 12px rgba(12,8,3,.5),-5px -5px 12px rgba(230,205,150,.14);color-scheme:dark}}
+/* v62 (Ajju): NO shadow/glow effects inside input boxes — flat, clean,
+   professional fields: soft fill, one hairline border, pista focus ring. */
+input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),textarea,select{box-shadow:none!important;background:color-mix(in srgb,var(--surface2) 45%,var(--bg));border:1px solid var(--line)}
+input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):focus,textarea:focus,select:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)!important}
 .bubble{box-shadow:var(--shadow)}
 .seg button.on{box-shadow:4px 4px 9px rgba(166,120,45,.35),-4px -4px 9px rgba(255,246,214,.75)}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
