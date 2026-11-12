@@ -841,6 +841,15 @@ def pause_for_email_verify(page, job, cfg):
     if link.startswith("http"):
         progress("running", "verify-link", f"{name} verification link open chesthunna — sign in avthundhi.", link)
         try:
+            # Shape only (host/path/param NAMES/length) — never the
+            # token value. A truncated extraction is visible at a glance.
+            from urllib.parse import urlsplit, parse_qsl
+            _sp = urlsplit(link)
+            _params = sorted({k for k, _v in parse_qsl(_sp.query)})
+            print(f"verify link: host={_sp.hostname} path={_sp.path} params={_params} len={len(link)}", flush=True)
+        except Exception:
+            pass
+        try:
             goto(page, link, tries=2)
         except Exception:
             pass
@@ -865,6 +874,12 @@ def pause_for_email_verify(page, job, cfg):
             err = _link_error(page)
             if err:
                 LAST_VERIFY_DIAG = err
+                break
+            if "error" in page.url.lower():
+                # The provider's own error surface (e.g. Stytch
+                # /redirect-error for a consumed or invalid token) —
+                # capture what it says instead of waiting blind.
+                LAST_VERIFY_DIAG = _page_snippet(page) or ("link page: " + page.url.split("?")[0])
                 break
             u = page.url.lower()
             if "stytch.com" not in u and "login" not in u and "signin" not in u and "sign-in" not in u:
