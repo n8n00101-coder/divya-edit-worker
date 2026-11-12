@@ -620,6 +620,15 @@ async function appTalk(env, u, text, lang, voiceId) {
     h.push({ role: "assistant", content: r.reply }); await remember(env, u.n, h);
     return { reply: r.reply, action: r.action, intent: r.intent, video_started: false, premium_required: !!r.premium_required, brain: u.via || "shared" };
   }
+  // v52 (R52): a deploy order ("naa app ni server lo setup cheyu", a repo
+  // link to deploy) is routed structurally BEFORE setup questions — the
+  // words overlap ("setup cheyu") but the intent is a deployment, and it
+  // must never fall through to the brain and come back as a fake claim.
+  if (isDeployOrder(text)) {
+    const dr = await deployChatReply(env, u, text, lang).catch(e => String(e.message || e).slice(0, 160));
+    h.push({ role: "assistant", content: dr }); await remember(env, u.n, h);
+    return { reply: dr, video_started: false, premium_required: false, brain: u.via || "shared" };
+  }
   // v38 (R48): API-key / provider / "AI down" questions never reach the
   // model — answer with the R48 one-allow Setup flow instead.
   if (isSetupQuestion(text)) {
@@ -902,6 +911,7 @@ async function appApi(req, env, url, ctx) {
   if (p.startsWith("setup/")) return appJson(req, await appSetupUser(req, env, u, p, body, lang));
   if (p.startsWith("keys")) return appKeys(req, env, u, p, body, lang);
   if (p === "model" || p.startsWith("model/")) return appModel(req, env, u, p, body, lang);
+  if (p.startsWith("deploy/")) return appDeploy(req, env, u, p, body, lang);
   if (p === "history") return appJson(req, { ok: true, messages: (await history(env, u.n)).map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })) });
   if (p === "chat" && req.method === "POST") {
     const text = String(body.text || "").trim().slice(0, 4000);
@@ -1429,6 +1439,398 @@ async function appModel(req, env, u, p, body, lang) {
   }
   if (p === "model/delete") { await env.KV.delete(`ukey:${u.n}:custom`); await env.KV.delete(`umodel:${u.n}`); return appJson(req, { ok: true }); }
   return appJson(req, { ok: false, error: "not found" }, 404);
+}
+// ---- v52 (R52): any-app server setup — Divya deploys the USER's own app /
+// website / database on the USER's own Cloudflare account, API-only (no
+// browser, no bot-wall exposure). Chat-first: "naa app ni server lo setup
+// cheyu" + a source (site zip or an already-static GitHub repo) -> Pages
+// project -> files uploaded -> deployment -> LIVE probe -> chat report
+// with the URL. Databases are D1 on the same account; connect wires the
+// D1 binding into the Pages project's production config. Everything runs
+// on the user's sealed "cloudflare" key; without it the answer names the
+// ONE missing thing — never a dead end, never a fake "deployed" claim.
+// Records: ONE KV record per user (udeploy:<n>), written only on change.
+// -- BLAKE3 (hash mode), pure JS: the Pages direct-upload protocol keys
+// files by blake3(base64(content) + extension)[:32 hex] and Workers have
+// no BLAKE3 primitive. Verified against the reference implementation.
+const B3_IV = [0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A, 0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19];
+const B3_PERM = [2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8];
+function b3rotr(x, n) { return ((x >>> n) | (x << (32 - n))) >>> 0; }
+function b3g(v, a, b, c, d, x, y) {
+  v[a] = (v[a] + v[b] + x) >>> 0; v[d] = b3rotr(v[d] ^ v[a], 16);
+  v[c] = (v[c] + v[d]) >>> 0; v[b] = b3rotr(v[b] ^ v[c], 12);
+  v[a] = (v[a] + v[b] + y) >>> 0; v[d] = b3rotr(v[d] ^ v[a], 8);
+  v[c] = (v[c] + v[d]) >>> 0; v[b] = b3rotr(v[b] ^ v[c], 7);
+}
+function b3round(v, m) {
+  b3g(v, 0, 4, 8, 12, m[0], m[1]); b3g(v, 1, 5, 9, 13, m[2], m[3]);
+  b3g(v, 2, 6, 10, 14, m[4], m[5]); b3g(v, 3, 7, 11, 15, m[6], m[7]);
+  b3g(v, 0, 5, 10, 15, m[8], m[9]); b3g(v, 1, 6, 11, 12, m[10], m[11]);
+  b3g(v, 2, 7, 8, 13, m[12], m[13]); b3g(v, 3, 4, 9, 14, m[14], m[15]);
+}
+function b3permute(m) { const o = new Array(16); for (let i = 0; i < 16; i++) o[i] = m[B3_PERM[i]]; return o; }
+function b3words(bytes, off) {
+  const w = new Array(16);
+  for (let i = 0; i < 16; i++) { const j = off + i * 4; w[i] = ((bytes[j] || 0) | ((bytes[j + 1] || 0) << 8) | ((bytes[j + 2] || 0) << 16) | ((bytes[j + 3] || 0) << 24)) >>> 0; }
+  return w;
+}
+function b3compress(cv, blockWords, counter, blockLen, flags) {
+  const v = [cv[0], cv[1], cv[2], cv[3], cv[4], cv[5], cv[6], cv[7], B3_IV[0], B3_IV[1], B3_IV[2], B3_IV[3], counter >>> 0, Math.floor(counter / 4294967296) >>> 0, blockLen, flags];
+  let m = blockWords;
+  for (let r = 0; r < 7; r++) { b3round(v, m); if (r < 6) m = b3permute(m); }
+  const out = new Array(16);
+  for (let i = 0; i < 8; i++) out[i] = (v[i + 8] ^ v[i]) >>> 0;
+  for (let i = 0; i < 8; i++) out[i + 8] = (v[i] ^ cv[i]) >>> 0;
+  return out;
+}
+function b3output(cv, blockWords, counter, blockLen, flags) {
+  return { cv, blockWords, counter, blockLen, flags,
+    chainingValue() { return b3compress(this.cv, this.blockWords, this.counter, this.blockLen, this.flags).slice(0, 8); },
+    rootBytes(n) { const out = new Uint8Array(n); let off = 0, ctr = 0;
+      while (off < n) { const words = b3compress(this.cv, this.blockWords, ctr, this.blockLen, this.flags | 8);
+        for (let i = 0; i < 16 && off < n; i++) { let w = words[i]; for (let b = 0; b < 4 && off < n; b++) { out[off++] = w & 0xff; w >>>= 8; } }
+        ctr++; }
+      return out; } };
+}
+function b3chunkOutput(bytes, start, len, chunkCounter) {
+  let cv = B3_IV.slice();
+  const blocks = Math.max(1, Math.ceil(len / 64));
+  let output = null;
+  for (let b = 0; b < blocks; b++) {
+    const blen = Math.min(64, len - b * 64);
+    const flags = (b === 0 ? 1 : 0) | (b === blocks - 1 ? 2 : 0);
+    output = b3output(cv, b3words(bytes, start + b * 64), chunkCounter, blen, flags);
+    if (b < blocks - 1) cv = output.chainingValue();
+  }
+  return output;
+}
+function b3parentOutput(leftCv, rightCv) {
+  const block = new Uint8Array(64);
+  const put = (cv, off) => { for (let i = 0; i < 8; i++) { let w = cv[i]; for (let b = 0; b < 4; b++) { block[off + i * 4 + b] = w & 0xff; w >>>= 8; } } };
+  put(leftCv, 0); put(rightCv, 32);
+  return b3output(B3_IV.slice(), b3words(block, 0), 0, 64, 4);
+}
+function blake3Hex(bytes, outLen = 32) {
+  const CHUNK = 1024;
+  const totalChunks = Math.max(1, Math.ceil(bytes.length / CHUNK));
+  const stack = [];
+  let out = null;
+  for (let c = 0; c < totalChunks; c++) {
+    const start = c * CHUNK, len = Math.min(CHUNK, bytes.length - start);
+    const chunkOut = b3chunkOutput(bytes, start, Math.max(0, len), c);
+    if (c === totalChunks - 1) { out = chunkOut; break; }
+    let cv = chunkOut.chainingValue();
+    let total = c + 1;
+    while (total % 2 === 0) { cv = b3parentOutput(stack.pop(), cv).chainingValue(); total >>= 1; }
+    stack.push(cv);
+  }
+  while (stack.length) out = b3parentOutput(stack.pop(), out.chainingValue());
+  const root = out.rootBytes(outLen);
+  return [...root].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+// The wrangler/Pages file key: first 32 hex chars of BLAKE3 over the
+// TEXT bytes of base64(content) + extension (no dot).
+function pagesFileHash(data, ext) {
+  let bin = ""; const CH = 32768;
+  for (let i = 0; i < data.length; i += CH) bin += String.fromCharCode.apply(null, data.subarray(i, i + CH));
+  const text = new TextEncoder().encode(btoa(bin) + String(ext || ""));
+  return blake3Hex(text, 16);
+}
+const DEPLOY_MIME = { html: "text/html", htm: "text/html", css: "text/css", js: "text/javascript", mjs: "text/javascript", json: "application/json", txt: "text/plain", md: "text/markdown", xml: "application/xml", svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", ico: "image/x-icon", avif: "image/avif", woff: "font/woff", woff2: "font/woff2", ttf: "font/ttf", otf: "font/otf", pdf: "application/pdf", wasm: "application/wasm", map: "application/json", webmanifest: "application/manifest+json", mp4: "video/mp4", webm: "video/webm", mp3: "audio/mpeg", ogg: "audio/ogg", wav: "audio/wav" };
+function deployExt(path) { const m = String(path).toLowerCase().match(/\.([a-z0-9]+)$/); return m ? m[1] : ""; }
+// -- minimal ZIP reader (stored + deflate entries; CRC not verified) --
+async function unzipFiles(bytes) {
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let eocd = -1;
+  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65536) && i >= 0; i--) { if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; } }
+  if (eocd < 0) throw new Error("zip file kaadu — correct zip pampu");
+  const count = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true);
+  const files = [];
+  const dec = new TextDecoder();
+  for (let k = 0; k < count; k++) {
+    if (off + 46 > bytes.length || dv.getUint32(off, true) !== 0x02014b50) break;
+    const method = dv.getUint16(off + 10, true);
+    const csize = dv.getUint32(off + 20, true);
+    const nlen = dv.getUint16(off + 28, true), elen = dv.getUint16(off + 30, true), clen = dv.getUint16(off + 32, true);
+    const lhofs = dv.getUint32(off + 42, true);
+    const name = dec.decode(bytes.subarray(off + 46, off + 46 + nlen));
+    off += 46 + nlen + elen + clen;
+    if (!name || name.endsWith("/")) continue;
+    if (lhofs + 30 > bytes.length) continue;
+    const lnlen = dv.getUint16(lhofs + 26, true), lelen = dv.getUint16(lhofs + 28, true);
+    const comp = bytes.subarray(lhofs + 30 + lnlen + lelen, lhofs + 30 + lnlen + lelen + csize);
+    let data;
+    if (method === 0) data = new Uint8Array(comp);
+    else if (method === 8) data = new Uint8Array(await new Response(new Blob([comp]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+    else throw new Error("zip lo unsupported compression undhi");
+    files.push({ path: name.replace(/\\/g, "/"), data });
+  }
+  if (!files.length) throw new Error("zip lo files levu");
+  return files;
+}
+// Turn raw zip/repo entries into a Pages file set: pick the root that
+// holds index.html (root, else the single shared top folder, else dist/),
+// skip hidden files, cap the set. Throws an honest Error when the source
+// is not an already-built static site.
+function siteFileSet(entries) {
+  const clean = entries.map(e => ({ path: e.path.replace(/^\.\//, ""), data: e.data }))
+    .filter(e => e.path && !e.path.split("/").some(seg => seg.startsWith(".") || seg === "__MACOSX") && !e.path.split("/").includes(".."));
+  if (!clean.length) throw new Error("files levu");
+  const hasAt = root => clean.some(e => e.path === root + "index.html");
+  let root = null;
+  if (hasAt("")) root = "";
+  else {
+    const tops = [...new Set(clean.map(e => e.path.split("/")[0]))];
+    if (tops.length === 1 && hasAt(tops[0] + "/")) root = tops[0] + "/";
+    else if (hasAt("dist/")) root = "dist/";
+  }
+  if (root === null) throw new Error("index.html dorakaledu — idi built static site kaadu (build step kavali, adhi inka v1 lo ledu)");
+  const files = [], special = {};
+  let total = 0;
+  for (const e of clean) {
+    if (root && !e.path.startsWith(root)) continue;
+    const rel = e.path.slice(root.length);
+    if (!rel) continue;
+    if (rel === "_headers" || rel === "_redirects") { special[rel] = e.data; continue; }
+    total += e.data.length;
+    if (total > 25 * 1024 * 1024) throw new Error("site chaala peddadhi (25 MB paina) — v1 ki chinna static site saripothundhi");
+    files.push({ path: "/" + rel, data: e.data, ext: deployExt(rel) });
+  }
+  if (!files.length) throw new Error("deploy cheyaniki files levu");
+  if (files.length > 500) throw new Error("files chaala ekkuva (500 paina) — v1 limit");
+  return { files, special };
+}
+const CF_API = "https://api.cloudflare.com/client/v4";
+const DEPLOY_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Mobile Safari/537.36";
+async function cfCall(key, method, path, opts = {}) {
+  const headers = { Authorization: `Bearer ${opts.jwt || key}` };
+  let body;
+  if (opts.json !== undefined) { headers["content-type"] = "application/json"; body = JSON.stringify(opts.json); }
+  else if (opts.form) body = opts.form;
+  const r = await fetch(CF_API + path, { method, headers, body }).catch(() => null);
+  if (!r) return { status: 0, ok: false, result: null, msg: "Cloudflare ki connect avvaledu (network)" };
+  const j = await r.json().catch(() => null);
+  const msg = j && j.errors && j.errors[0] ? String(j.errors[0].message || "").slice(0, 140) : "";
+  return { status: r.status, ok: !!(j && j.success), result: j ? j.result : null, msg };
+}
+async function deployRec(env, n) {
+  const rec = JSON.parse((await env.KV.get(`udeploy:${n}`)) || "null");
+  return { sites: (rec && rec.sites) || [], databases: (rec && rec.databases) || [], cfAccount: (rec && rec.cfAccount) || "" };
+}
+async function saveDeployRec(env, n, rec) { await env.KV.put(`udeploy:${n}`, JSON.stringify(rec)); }
+async function cfAccountFor(env, n, key, rec) {
+  if (rec.cfAccount) return rec.cfAccount;
+  const r = await cfCall(key, "GET", "/accounts?per_page=1");
+  const id = r.ok && r.result && r.result[0] ? String(r.result[0].id || "") : "";
+  if (!id) throw new Error(r.msg || "Cloudflare account dorakaledu — key ki account access undha choodu");
+  rec.cfAccount = id; // saved with the caller's next record write, not here (KV discipline)
+  return id;
+}
+function sanitizeProjectName(raw) {
+  const s = String(raw || "").toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 58);
+  return /^[a-z0-9]/.test(s) ? s : "";
+}
+async function probeLive(url, tries = 4) {
+  for (let i = 0; i < tries; i++) {
+    const r = await fetch(url, { headers: { "User-Agent": DEPLOY_UA }, redirect: "follow" }).catch(() => null);
+    if (r) { const ok = r.status === 200; try { await r.arrayBuffer(); } catch {} if (ok) return true; }
+    if (i < tries - 1) await new Promise(res => setTimeout(res, 1500));
+  }
+  return false;
+}
+// Full Pages deploy for one site file set on the user's account.
+async function cfDeploySite(key, acct, name, fileSet) {
+  let proj = await cfCall(key, "GET", `/accounts/${acct}/pages/projects/${name}`);
+  if (!proj.ok) {
+    const c = await cfCall(key, "POST", `/accounts/${acct}/pages/projects`, { json: { name, production_branch: "main" } });
+    if (!c.ok) throw new Error(c.msg || "Pages project create avvaledu");
+    proj = c;
+  }
+  const subdomain = (proj.result && proj.result.subdomain) || `${name}.pages.dev`;
+  const tok = await cfCall(key, "GET", `/accounts/${acct}/pages/projects/${name}/upload-token`);
+  const jwt = tok.ok && tok.result ? (tok.result.jwt || tok.result.token || "") : "";
+  if (!jwt) throw new Error(tok.msg || "upload token raledu");
+  const byHash = new Map();
+  const manifest = {};
+  for (const f of fileSet.files) { const h = pagesFileHash(f.data, f.ext); manifest[f.path] = h; if (!byHash.has(h)) byHash.set(h, f); }
+  const hashes = [...byHash.keys()];
+  const miss = await cfCall(key, "POST", "/pages/assets/check-missing", { json: { hashes }, jwt });
+  if (!miss.ok) throw new Error(miss.msg || "asset check avvaledu");
+  const missing = Array.isArray(miss.result) ? miss.result : hashes;
+  if (missing.length) {
+    const batch = missing.map(h => { const f = byHash.get(h); let bin = ""; const CH = 32768; for (let i = 0; i < f.data.length; i += CH) bin += String.fromCharCode.apply(null, f.data.subarray(i, i + CH)); return { key: h, value: btoa(bin), metadata: { contentType: DEPLOY_MIME[f.ext] || "application/octet-stream" }, base64: true }; });
+    const up = await cfCall(key, "POST", "/pages/assets/upload", { json: batch, jwt });
+    if (!up.ok) throw new Error(up.msg || "files upload avvaledu");
+  }
+  const uh = await cfCall(key, "POST", "/pages/assets/upsert-hashes", { json: { hashes }, jwt });
+  if (!uh.ok) throw new Error(uh.msg || "asset register avvaledu");
+  const fd = new FormData();
+  fd.append("branch", "main");
+  fd.append("manifest", JSON.stringify(manifest));
+  for (const [sn, data] of Object.entries(fileSet.special || {})) fd.append(sn, new Blob([data]), sn);
+  const dep = await cfCall(key, "POST", `/accounts/${acct}/pages/projects/${name}/deployments`, { form: fd });
+  if (!dep.ok) throw new Error(dep.msg || "deployment create avvaledu");
+  const depUrl = (dep.result && dep.result.url) || "";
+  const apex = `https://${subdomain}/`;
+  const live = (depUrl && await probeLive(depUrl, 3)) || await probeLive(apex, 4);
+  return { url: apex, deploymentUrl: depUrl, deploymentId: (dep.result && dep.result.id) || "", live: !!live };
+}
+async function repoSiteFiles(url) {
+  const m = String(url || "").match(/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:[/?#\s]|$)/);
+  if (!m) throw new Error("GitHub repo link correct ga ivvu");
+  for (const br of ["main", "master"]) {
+    const r = await fetch(`https://codeload.github.com/${m[1]}/${m[2]}/zip/refs/heads/${br}`, { headers: { "User-Agent": DEPLOY_UA } }).catch(() => null);
+    if (r && r.ok) {
+      const buf = new Uint8Array(await r.arrayBuffer());
+      if (buf.length > 25 * 1024 * 1024) throw new Error("repo chaala peddadhi (25 MB paina)");
+      return { entries: await unzipFiles(buf), repoName: m[2] };
+    }
+  }
+  throw new Error("repo files thisukolekapoyanu — repo public dha, link correct dha choodu");
+}
+// Shared by the endpoint and chat: returns {ok:true, site} or throws.
+async function runSiteDeploy(env, n, name, fileSet) {
+  const key = await openKey(env, n, "cloudflare");
+  if (!key) { const e = new Error("cloudflare-key-missing"); e.missing = "cloudflare"; throw e; }
+  const rec = await deployRec(env, n);
+  const acct = await cfAccountFor(env, n, key, rec);
+  const out = await cfDeploySite(key, acct, name, fileSet);
+  const site = { name, url: out.url, deploymentUrl: out.deploymentUrl, deploymentId: out.deploymentId, status: out.live ? "live" : "deployed", files: fileSet.files.length, at: Date.now(), bindings: {} };
+  const ix = rec.sites.findIndex(s => s.name === name);
+  if (ix >= 0) { site.bindings = rec.sites[ix].bindings || {}; rec.sites[ix] = site; } else rec.sites.push(site);
+  rec.sites = rec.sites.slice(-25);
+  await saveDeployRec(env, n, rec);
+  return site;
+}
+function deployMissingLine(lang) {
+  return lang === "en"
+    ? "One thing is missing: your Cloudflare server key. Give one allow in Setup (#/setup) — Divya creates it — or add the key there, then tell me again and I'll deploy."
+    : "Okka vishayam missing: nee Cloudflare server key. Setup lo (#/setup) okka allow ivvu — Divya ne create chesthundhi — leda key add cheyu, tarvatha malli cheppu, deploy chestha.";
+}
+async function appDeploy(req, env, u, p, body, lang) {
+  const en = lang === "en";
+  if (p === "deploy/list" && req.method === "GET") {
+    const rec = await deployRec(env, u.n);
+    return appJson(req, { ok: true, sites: rec.sites, databases: rec.databases });
+  }
+  if (req.method !== "POST") return appJson(req, { ok: false, error: "method" }, 405);
+  if (p === "deploy/site") {
+    const name = sanitizeProjectName(body.name);
+    if (!name) return appJson(req, { ok: false, error: en ? "Give a site name (letters, numbers, dashes)." : "Site peru ivvu (letters, numbers, dashes matrame)." }, 400);
+    const key = await openKey(env, u.n, "cloudflare");
+    if (!key) return appJson(req, { ok: false, missing: "cloudflare", error: deployMissingLine(lang) }, 400);
+    try {
+      let entries = null;
+      const src = body.source || {};
+      if (src.type === "repo") entries = (await repoSiteFiles(src.url)).entries;
+      else if (src.type === "zip") {
+        let bytes = null;
+        if (src.data) { if (String(src.data).length > 7 * 1024 * 1024) return appJson(req, { ok: false, error: en ? "Zip too big for v1 (about 5 MB max)." : "Zip chaala peddadhi — v1 ki ~5 MB varake." }, 413); const bs = atob(String(src.data).replace(/\s/g, "")); bytes = new Uint8Array(bs.length); for (let i = 0; i < bs.length; i++) bytes[i] = bs.charCodeAt(i); }
+        else if (src.fileId) { const b = await env.KV.get(`upl:${String(src.fileId).replace(/[^0-9a-z]/gi, "")}`, "arrayBuffer"); if (b) bytes = new Uint8Array(b); }
+        if (!bytes) return appJson(req, { ok: false, error: en ? "Zip not found — send the zip data or a staged file id." : "Zip dorakaledu — zip data leda file id ivvu." }, 400);
+        entries = await unzipFiles(bytes);
+      } else return appJson(req, { ok: false, error: en ? "Source must be a zip or a repo link." : "Source zip leda repo link ayi undali." }, 400);
+      const site = await runSiteDeploy(env, u.n, name, siteFileSet(entries));
+      return appJson(req, { ok: true, url: site.url, deploymentUrl: site.deploymentUrl, status: site.status, deploymentId: site.deploymentId, files: site.files });
+    } catch (e) {
+      if (e && e.missing) return appJson(req, { ok: false, missing: e.missing, error: deployMissingLine(lang) }, 400);
+      return appJson(req, { ok: false, error: en ? `Deploy failed: ${String(e.message || e).slice(0, 160)}` : `Deploy avvaledu: ${String(e.message || e).slice(0, 160)}` }, 502);
+    }
+  }
+  if (p === "deploy/database") {
+    const name = String(body.name || "").trim().slice(0, 64);
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) return appJson(req, { ok: false, error: en ? "Give a database name (letters, numbers, - and _)." : "Database peru ivvu (letters, numbers, - mariyu _)." }, 400);
+    const key = await openKey(env, u.n, "cloudflare");
+    if (!key) return appJson(req, { ok: false, missing: "cloudflare", error: deployMissingLine(lang) }, 400);
+    try {
+      const rec = await deployRec(env, u.n);
+      const acct = await cfAccountFor(env, u.n, key, rec);
+      let db = rec.databases.find(d => d.name === name);
+      if (!db) {
+        const c = await cfCall(key, "POST", `/accounts/${acct}/d1/database`, { json: { name } });
+        if (!c.ok || !c.result || !c.result.uuid) return appJson(req, { ok: false, error: en ? `Database create failed: ${c.msg || "Cloudflare refused"}` : `Database create avvaledu: ${c.msg || "Cloudflare oppukoledhu"}` }, 502);
+        db = { name, id: String(c.result.uuid), state: "created", at: Date.now() };
+        rec.databases.push(db); rec.databases = rec.databases.slice(-25);
+        await saveDeployRec(env, u.n, rec);
+      }
+      const lst = await cfCall(key, "GET", `/accounts/${acct}/d1/database?name=${encodeURIComponent(name)}`);
+      const listed = !!(lst.ok && Array.isArray(lst.result) && lst.result.some(d => d.name === name));
+      return appJson(req, { ok: true, database_name: db.name, database_id: db.id, state: "created", listed });
+    } catch (e) {
+      return appJson(req, { ok: false, error: en ? `Database failed: ${String(e.message || e).slice(0, 160)}` : `Database avvaledu: ${String(e.message || e).slice(0, 160)}` }, 502);
+    }
+  }
+  if (p === "deploy/connect") {
+    const siteName = sanitizeProjectName(body.deployment);
+    const dbName = String(body.database || "").trim().slice(0, 64);
+    const binding = String(body.binding || "DB").replace(/[^A-Za-z0-9_]/g, "").slice(0, 64) || "DB";
+    const key = await openKey(env, u.n, "cloudflare");
+    if (!key) return appJson(req, { ok: false, missing: "cloudflare", error: deployMissingLine(lang) }, 400);
+    const rec = await deployRec(env, u.n);
+    const site = rec.sites.find(s => s.name === siteName);
+    const db = rec.databases.find(d => d.name === dbName) || rec.databases.find(d => d.id === dbName);
+    if (!site) return appJson(req, { ok: false, error: en ? "That site isn't deployed yet — deploy it first." : "Aa site inka deploy avvaledu — mundu deploy cheyu." }, 404);
+    if (!db) return appJson(req, { ok: false, error: en ? "That database isn't created yet — create it first." : "Aa database inka create avvaledu — mundu create cheyu." }, 404);
+    let state = "wired-at-next-deploy", note = "";
+    try {
+      const acct = await cfAccountFor(env, u.n, key, rec);
+      const proj = await cfCall(key, "GET", `/accounts/${acct}/pages/projects/${site.name}`);
+      const prodCfg = (proj.ok && proj.result && proj.result.deployment_configs && proj.result.deployment_configs.production) || {};
+      const newProd = { ...prodCfg, d1_databases: { ...(prodCfg.d1_databases || {}), [binding]: { id: db.id } } };
+      const pat = await cfCall(key, "PATCH", `/accounts/${acct}/pages/projects/${site.name}`, { json: { deployment_configs: { production: newProd } } });
+      const nowCfg = pat.ok && pat.result && pat.result.deployment_configs && pat.result.deployment_configs.production && pat.result.deployment_configs.production.d1_databases;
+      if (nowCfg && nowCfg[binding] && nowCfg[binding].id === db.id) state = "bound";
+      else if (pat.ok) note = en ? "Cloudflare accepted the change but didn't show the binding yet — it takes effect on the next deploy." : "Cloudflare change theeskundhi kani binding inka kanipinchaledu — next deploy tho apply avthundhi.";
+      else note = (en ? "Cloudflare refused the binding: " : "Cloudflare binding oppukoledhu: ") + (pat.msg || "");
+    } catch (e) { note = String(e.message || e).slice(0, 140); }
+    site.bindings = site.bindings || {};
+    site.bindings[db.name] = { binding, databaseId: db.id, state, at: Date.now() };
+    await saveDeployRec(env, u.n, rec);
+    return appJson(req, { ok: true, state, binding, database_name: db.name, database_id: db.id, note });
+  }
+  return appJson(req, { ok: false, error: "not found" }, 404);
+}
+// R52 chat surface: a deploy order is answered structurally, exactly like
+// setup questions — with a repo link Divya deploys right away; without a
+// source it reports the deployments on record or the ONE missing thing.
+function isDeployOrder(text) {
+  const t = String(text || "");
+  if (isCreateOrder(t) || isNoVideoEditOrder(t)) return false;
+  if (/\bdeploy\b|\bhosting\b/i.test(t)) return true;
+  if (/\b(server|website|web\s?site|site)\b/i.test(t) && /\b(setup|pettu|pettali|cheyu|cheyyi|create|build)\b/i.test(t)) return true;
+  if (/\b(naa|my|mana)\s+(app|site|website)\b/i.test(t) && /\b(setup|deploy|pettu|pettali|server)\b/i.test(t)) return true;
+  return false;
+}
+async function deployChatReply(env, u, text, lang) {
+  const en = lang === "en";
+  const key = await openKey(env, u.n, "cloudflare");
+  if (!key) return deployMissingLine(lang);
+  const urlM = String(text).match(/https?:\/\/github\.com\/[^\s"']+/);
+  if (urlM) {
+    try {
+      const { entries, repoName } = await repoSiteFiles(urlM[0]);
+      const name = sanitizeProjectName(repoName) || "my-site";
+      const site = await runSiteDeploy(env, u.n, name, siteFileSet(entries));
+      return en
+        ? `Deployed ✓ — your site is ${site.status === "live" ? "live" : "deployed"}: ${site.url} (${site.files} files, on your own Cloudflare account). Say "connect a database" when you want data in it.`
+        : `Deploy ayyindhi ✓ — nee site ${site.status === "live" ? "live" : "deploy"} ayyindhi: ${site.url} (${site.files} files, nee own Cloudflare account lone). Data kavali ante "database connect cheyu" ani cheppu.`;
+    } catch (e) {
+      if (e && e.missing) return deployMissingLine(lang);
+      return en ? `Deploy didn't finish: ${String(e.message || e).slice(0, 160)}` : `Deploy avvaledu: ${String(e.message || e).slice(0, 160)}`;
+    }
+  }
+  const rec = await deployRec(env, u.n);
+  if (rec.sites.length || rec.databases.length) {
+    const sl = rec.sites.map(s => `${s.name} — ${s.url} (${s.status})`).join("; ");
+    const dl = rec.databases.map(d => `${d.name} (id ${String(d.id).slice(0, 8)}…)`).join("; ");
+    return en
+      ? `Your deployments: ${sl || "no sites yet"}${dl ? `. Databases: ${dl}` : ""}. Send a GitHub repo link or your built site zip and I'll deploy it.`
+      : `Nee deployments: ${sl || "sites inka levu"}${dl ? `. Databases: ${dl}` : ""}. GitHub repo link leda nee built site zip pampu, deploy chestha.`;
+  }
+  return en
+    ? "I can set up your app or website on your own server. Send a GitHub repo link (already-built static site) or your built site zip, and I'll deploy it and give you the live link."
+    : "Nee app leda website ni nee own server lo setup cheyagalanu. GitHub repo link (already build ayina static site) leda nee built site zip pampu — deploy chesi live link istha.";
 }
 // Chat is an entry point too (R54): a model name + API key pasted into
 // chat is taken structurally — resolved, tested and saved right here —
