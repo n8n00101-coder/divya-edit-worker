@@ -1150,6 +1150,7 @@ async function doPostInstagram(env, n, o, en = false) {
     const provider = provParam || (qParam.includes("groq") ? "groq" : qParam.includes("openrouter") ? "openrouter" : qParam.includes("cloudflare") ? "cloudflare" : "generic");
     const r = await fetchVerifyLink(env, u.n, provider, null, 0, { window: "1d" });
     if (r.reason === "needs-scope") return appJson(req, { ok: false, needs_scope: true, error: "Gmail read permission kavali — okkasari allow cheyyi." });
+    if (r.reason === "api-not-enabled") return appJson(req, { ok: false, api_not_enabled: true, error: "Divya project lo Gmail API enable avvaledu — Divya team adhi on cheyali." });
     if (!r.ok) return appJson(req, { ok: false, error: r.reason === "no-mail-yet" ? "verification mail kanipinchaledu." : "Gmail read avvaledu." }, r.reason === "no-mail-yet" ? 404 : 502);
     return appJson(req, { ok: true, found: true, from: r.from || "", subject: r.subject || "" });
   }
@@ -2235,9 +2236,19 @@ function gmailPickCode(text) {
   const near = cands.find(c => /verif|code|confirm/i.test(t.slice(Math.max(0, c.i - 60), c.i + 70)));
   return near ? near.code : "";
 }
+// v41: a 403 from a Google API whose service is DISABLED in the OAuth
+// project (accessNotConfigured / "has not been used in project") is a
+// Divya-side configuration problem, NOT a missing user scope — surface
+// it distinctly so nobody is sent to re-consent for nothing.
+function isApiDisabled(status, errObj) {
+  if (status !== 403) return false;
+  let s = "";
+  try { s = JSON.stringify(errObj || {}); } catch { s = String((errObj && errObj.message) || ""); }
+  return /accessNotConfigured|SERVICE_DISABLED|has not been used in project/i.test(s);
+}
 async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
   // Server-side only. Returns {ok:true, link|code, from, subject} or
-  // {ok:false, reason: "no-gmail-token"|"needs-scope"|"no-mail-yet"|"gmail-error"}.
+  // {ok:false, reason: "no-gmail-token"|"needs-scope"|"api-not-enabled"|"no-mail-yet"|"gmail-error"}.
   // The link/code is returned ONLY to in-Worker callers (job feed /
   // gmail/verify presence check) — never to the app.
   const tok = await googleToken(env, n);
@@ -2251,6 +2262,7 @@ async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
     list = await r.json().catch(() => ({}));
     if (!r.ok) {
       const em = String(list.error?.message || "");
+      if (isApiDisabled(r.status, list.error)) return { ok: false, reason: "api-not-enabled" };
       if (r.status === 403 || /insufficientPermissions/i.test(em)) return { ok: false, reason: "needs-scope" };
       return { ok: false, reason: "gmail-error" };
     }
@@ -2269,6 +2281,7 @@ async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
       const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`, { headers: auth });
       msg = await r.json().catch(() => ({}));
       if (!r.ok) {
+        if (isApiDisabled(r.status, msg.error)) return { ok: false, reason: "api-not-enabled" };
         if (r.status === 403 || /insufficientPermissions/i.test(String(msg.error?.message || ""))) return { ok: false, reason: "needs-scope" };
         continue;
       }
@@ -2320,6 +2333,7 @@ async function gmailStateFor(env, n, job) {
   const mf = (job && job.mailFetch) || "";
   if (mf === "no-gmail-token") return { state: "no-token", provider };
   if (mf === "needs-scope") return { state: "needs-scope", provider };
+  if (mf === "api-not-enabled") return { state: "api-not-enabled", provider };
   if (mf === "no-mail-yet") return { state: "no-mail-yet", provider };
   if (mf === "gmail-error") return { state: "error", provider };
   const tok = JSON.parse((await env.KV.get(`tok:${n}:google`)) || "null");
@@ -2329,8 +2343,18 @@ async function gmailStateFor(env, n, job) {
 function stripJobSecrets(j) {
   // setup/status returns the current job to the APP — the magic link /
   // SMS code must never travel there (runner-only, via setup/runner/job).
+  // v41: the generated provider-account password (pass) must never
+  // travel there either.
   if (!j) return j;
-  const { verifyLink, verifyCode, smsCode, ...rest } = j;
+  const { verifyLink, verifyCode, smsCode, pass, password, ...rest } = j;
+  return rest;
+}
+function stripChainSecrets(c) {
+  // The chain object is returned raw as `finished` in setup/status —
+  // strip its secrets the same way (the runner receives the password
+  // through setup/runner/job, never through the app).
+  if (!c) return c;
+  const { pass, password, ...rest } = c;
   return rest;
 }
 async function appSetupUser(req, env, u, p, body, lang) {
@@ -2355,7 +2379,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       if (stalled) {
         const state = setupStateFor(null, null, stalled, keys);
         const autoLog = await autoLogRead(env, u.n);
-        return { ok: true, active: false, consent: !!consent, finished: stalled, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (stalled && stalled.geminiVerify) || null, autoLog: autoLog.slice(0, 10) };
+        return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(stalled), keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (stalled && stalled.geminiVerify) || null, autoLog: autoLog.slice(0, 10) };
       }
       chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
     }
@@ -2370,7 +2394,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       let auto = null;
       try { auto = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", false); } catch {}
       const autoLog = await autoLogRead(env, u.n);
-      return { ok: true, active: false, consent: !!consent, finished: fin, keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
+      return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(fin), keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
     }
     let cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
     // v40 (R19): paused on email verification — try feeding the magic link
@@ -2509,7 +2533,9 @@ async function appSetupUser(req, env, u, p, body, lang) {
 // other provider key — never logged, never returned by any API.
 // Returns {ok:true, projectNumber, projectId, reused} on success, else
 // {ok:false, reason, ...}: "no-google-token" | "needs-scope" (token predates
-// the cloud-platform consent — user must reconnect Google) | "needs-tos"
+// the cloud-platform consent — user must reconnect Google) | "api-not-enabled"
+// (a required Google API is disabled in the OAuth project — Divya-side fix,
+// NOT a user re-consent) | "needs-tos"
 // (first-project Cloud ToS tap) | "needs-verification" (key IS stored; only
 // the 30-second phone QR scan at verifyUrl is pending) | "list-projects-failed"
 // | "create-project-failed" | "enable-apis-failed" | "create-key-failed" |
@@ -2551,6 +2577,7 @@ async function provisionGeminiKey(env, n) {
     if (!list.ok) {
       const e = list.body.error || {};
       if (list.status === 403 && isTos(e)) return { ok: false, reason: "needs-tos", tosUrl: "https://console.cloud.google.com" };
+      if (isApiDisabled(list.status, e)) return { ok: false, reason: "api-not-enabled" };
       if (isScope(list.status, e)) return { ok: false, reason: "needs-scope" };
       return { ok: false, reason: "list-projects-failed", status: list.status, detail: errMsg(e).slice(0, 200) };
     }
@@ -2567,6 +2594,7 @@ async function provisionGeminiKey(env, n) {
       if (!created.ok) {
         const e = created.body.error || {};
         if (created.status === 403 && isTos(e)) return { ok: false, reason: "needs-tos", tosUrl: "https://console.cloud.google.com" };
+        if (isApiDisabled(created.status, e)) return { ok: false, reason: "api-not-enabled" };
         if (isScope(created.status, e)) return { ok: false, reason: "needs-scope" };
         return { ok: false, reason: "create-project-failed", status: created.status, detail: errMsg(e).slice(0, 200) };
       }
