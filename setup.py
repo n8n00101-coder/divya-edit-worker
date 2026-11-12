@@ -968,15 +968,32 @@ def _verify_fail_msg(name):
 TC_PAUSE_MSG = "Sign-in okkasari nuvve cheyyi — Divya browser screen ikkade app lo kanipisthundhi, andulo sign in cheyu. Ayyaka 'Nenu chesa ✓' nokku — migilina anni nene chestha."
 
 
+_TC_FRAME_LAST = {"at": 0.0, "hash": ""}
+
+
 def tc_post_frame(page):
     """Stream one screenshot of the live browser to the Worker (the app
     shows it to the user during Take Control). Best-effort: a failed
-    frame never breaks the pause."""
+    frame never breaks the pause.
+    v50: throttled (>=2.5s apart) and change-only — every frame used to
+    be a KV put on the Worker, and one 25-min TC window of ~1.2s frames
+    burned the whole daily KV write quota (free tier), taking
+    setup/status and gmail/verify down with 500s. An unchanged screen
+    sends nothing."""
     try:
+        now = time.time()
+        if now - _TC_FRAME_LAST["at"] < 2.5:
+            return
         shot = page.screenshot(type="jpeg", quality=55)
+        import hashlib
+        digest = hashlib.sha256(shot).hexdigest()
+        if digest == _TC_FRAME_LAST["hash"]:
+            _TC_FRAME_LAST["at"] = now
+            return
         img = base64.b64encode(shot).decode()
         httpx.post(f"{WORKER}/api/setup/runner/tcframe", params={"job": JOB},
                    json={"img": img, "url": page.url}, headers=H, timeout=20)
+        _TC_FRAME_LAST.update({"at": now, "hash": digest})
     except Exception as e:
         print("tc frame failed:", e)
 
