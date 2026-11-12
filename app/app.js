@@ -1,11 +1,11 @@
 "use strict";
 // API hosts, tried in order; the first that answers is remembered. Add a second host here (e.g. a custom domain) if *.workers.dev is blocked.
-const API_BASES = ["https://divya.n8n00101.workers.dev/api"];
+const API_BASES = ["https://divya.n8n00101.workers.dev/api", "/api"]; // v60: second door = this origin's /api proxy to the same Worker (service binding) — if one host is dropped by the phone's network, the other carries the app
 let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 10) || 0, API_BASES.length - 1)];
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v36";
+const APP_V = "julie-v37";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -248,11 +248,24 @@ function sheet(msg, btns) {
 $$("[role=radiogroup] button").forEach(b => b.setAttribute("role", "radio"));
 
 async function apiFetch(path, opts) {
-  // try the remembered API host first, then the others; a TypeError means the host was unreachable (blocked, DNS, offline)
+  // v60 resilience: try the remembered API host first, then the other
+  // door; each door gets up to 2 attempts with backoff and a 20s cap, so
+  // a flaky mobile-data connection self-heals instead of erroring the
+  // user. An HTTP response (even an error one) is an answer — only
+  // network-level failures retry/fail over.
   const order = [API, ...API_BASES.filter(b => b !== API)]; let last;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
   for (const base of order) {
-    try { const r = await fetch(base + "/" + path, opts); if (base !== API) { API = base; localStorage.setItem("dv_apiIdx", String(API_BASES.indexOf(base))); } netState(true); return r; }
-    catch (e) { last = e; }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt) await sleep(900);
+      const c = new AbortController(); const tm = setTimeout(() => c.abort(), 20000);
+      try {
+        const r = await fetch(base + "/" + path, { ...opts, signal: c.signal });
+        clearTimeout(tm);
+        if (base !== API) { API = base; localStorage.setItem("dv_apiIdx", String(API_BASES.indexOf(base))); }
+        netState(true); return r;
+      } catch (e) { clearTimeout(tm); last = e; }
+    }
   }
   netState(false); const err = new Error("net"); err.cause = last; throw err;
 }
@@ -808,8 +821,12 @@ function videoBubble(num, url) {
 function videoBubbleFail(num) { bubble("bot", `${t("jobFail")} — video ${num}`); saveChat(); }
 async function pollChatVideo(num, job) {
   if (chatPoll) clearInterval(chatPoll);
-  let tries = 0;
+  let tries = 0, tickBusy = false;
   const tick = async () => {
+    if (tickBusy) return; tickBusy = true;
+    try { await tickBody(); } finally { tickBusy = false; }
+  };
+  const tickBody = async () => {
     if (++tries > 90) { clearInterval(chatPoll); chatPoll = null; return; }
     let v = null;
     try { const d = await api("videos"); v = (d.videos || []).find(x => x.job === job || x.n === num); } catch {}
@@ -1043,8 +1060,12 @@ function tcBind(box) {
 }
 async function pollSetup() {
   if (setupPoll) clearInterval(setupPoll);
-  let tries = 0;
+  let tries = 0, tickBusy = false;
   const tick = async () => {
+    if (tickBusy) return; tickBusy = true;
+    try { await tickBody(); } finally { tickBusy = false; }
+  };
+  const tickBody = async () => {
     // v39: the poll itself must never die silently. 30 min with no
     // terminal state means the run is stalled — show that + Retry in the
     // box (and in chat) instead of leaving "Setup running…" on screen.
