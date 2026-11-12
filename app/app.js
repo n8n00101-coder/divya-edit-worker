@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v41";
+const APP_V = "julie-v42";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -306,7 +306,7 @@ function setTab(v, focus = true) { authTab = v; store.set("authTab", v); showFor
 $$("#authTabs button").forEach(b => b.onclick = () => setTab(b.dataset.v));
 $("#authTabs").addEventListener("keydown", e => { if (!/Arrow(Left|Right)/.test(e.key)) return; const v = ["pw", "su", "wa"], i = v.indexOf(authTab); setTab(v[(i + (e.key === "ArrowRight" ? 1 : 2)) % 3], false); $("#tab-" + authTab).focus(); });
 $$(".eye").forEach(b => b.onclick = () => { const i = b.parentElement.querySelector("input"); const show = i.type === "password"; i.type = show ? "text" : "password"; b.setAttribute("aria-pressed", show); });
-function showLogin() { $("#main").hidden = true; $("#login").hidden = false; setTab(authTab, false); vaStop(); setTimeout(() => $({ pw: "#pwId", su: "#suName", wa: "#num" }[authTab]).focus(), 300); netCheck(); }
+function showLogin() { $("#main").hidden = true; $("#login").hidden = false; $("#bubble").hidden = true; $("#bubblePanel").hidden = true; setTab(authTab, false); vaStop(); setTimeout(() => $({ pw: "#pwId", su: "#suName", wa: "#num" }[authTab]).focus(), 300); netCheck(); }
 const whoAmI = () => S.number ? "+" + S.number : (S.acct?.email || "");
 const normId = v => { v = v.trim(); return v.includes("@") ? v.toLowerCase() : v.replace(/[^\d+]/g, ""); };
 function setSession(d) { S.token = d.token; S.number = d.number || ""; S.acct = d.account || S.acct || null; store.set("token", S.token); store.set("number", S.number); store.set("acct", S.acct); }
@@ -1742,6 +1742,10 @@ $("#bubbleClose").onclick = bubbleClose;
   const reClamp = () => { const r = box.getBoundingClientRect(); const p = clampPos(r.left, r.top); if (Math.round(r.left) !== p.x || Math.round(r.top) !== p.y) { applyPos(p.x, p.y); store.set("bubblePos", { x: p.x, y: p.y }); } };
   addEventListener("resize", reClamp);
   addEventListener("orientationchange", () => setTimeout(reClamp, 300));
+  // v65: also re-clamp shortly after load — a position saved on a wide
+  // screen (or by an older build) must never leave the button clipped
+  // off-screen on a narrow phone.
+  setTimeout(reClamp, 400); setTimeout(reClamp, 1500);
   let drag = null, suppressClickUntil = 0;
   function onDown(e) {
     if (e.button !== undefined && e.button !== 0) return;

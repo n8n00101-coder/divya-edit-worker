@@ -14,10 +14,11 @@ html[data-theme=dark]{--bg:#332A1E;--surface:#332A1E;--surface2:#453723;--text:#
 @media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#332A1E;--surface:#332A1E;--surface2:#453723;--text:#F1E6CB;--muted:#C9B18A;--line:rgba(241,230,203,.12);--accent:#B3C4A5;--accent2:#C2D2B4;--on-accent:#2A2118;--me:#8CA87E;--on-me:#F7F1DC;--bot:#332A1E;--shadow:5px 5px 12px rgba(12,8,3,.5),-5px -5px 12px rgba(230,205,150,.14);color-scheme:dark}}
 /* v62 (Ajju): NO shadow/glow effects inside input boxes — flat, clean,
    professional fields: soft fill, one hairline border, pista focus ring. */
-input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),textarea,select{box-shadow:none!important;background:color-mix(in srgb,var(--surface2) 45%,var(--bg));border:1px solid var(--line)}
-input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]):focus,textarea:focus,select:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)!important}
+input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file])),textarea,select{box-shadow:none!important;background:color-mix(in srgb,var(--surface2) 45%,var(--bg));border:1px solid var(--line)}
+input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file])):focus,textarea:focus,select:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)!important}
+::placeholder{color:color-mix(in srgb,var(--text) 58%,var(--bg));opacity:1}
 .bubble{box-shadow:var(--shadow)}
-.seg button.on{box-shadow:4px 4px 9px rgba(166,120,45,.35),-4px -4px 9px rgba(255,246,214,.75)}
+.seg button.on{box-shadow:none}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:var(--font);font-size:16px;-webkit-font-smoothing:antialiased;overscroll-behavior:none}
 button,a{font:inherit;color:inherit;background:none;border:0;cursor:pointer;text-decoration:none}
@@ -35,12 +36,12 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 /* login */
 .login{height:100%;display:flex;padding:24px;overflow-y:auto}
 .login-card{width:100%;max-width:380px;text-align:center;animation:rise .4s ease;margin:auto}
-.login-logo{width:84px;height:84px;border-radius:50%;border:1px solid var(--line);box-shadow:var(--shadow);animation:bob 3.4s ease-in-out infinite}
+.login-logo{width:84px;height:84px;border-radius:50%;border:1px solid var(--line);animation:bob 3.4s ease-in-out infinite}
 .login h1{font-size:32px;margin:14px 0 4px;letter-spacing:-.5px}
 .login p{margin:0 0 20px}
 .stack{display:flex;flex-direction:column;gap:12px}
 .field{display:flex;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:0 16px;height:56px}
-.field:focus-within,.code-input:focus,.big-input:focus,.keyfield:focus{border-color:var(--text)}
+.field:focus-within,.code-input:focus,.big-input:focus,.keyfield:focus{border-color:var(--accent)}
 .prefix{color:var(--muted);margin-right:10px;font-weight:600}
 .field input{flex:1;min-width:0;border:0;outline:0;background:none;font-size:19px;letter-spacing:.5px}
 .code-input{height:58px;border-radius:14px;border:1px solid var(--line);background:var(--surface);text-align:center;font-size:26px;letter-spacing:12px;outline:0}
@@ -58,7 +59,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .appbar h1{flex:1;margin:0;font-size:19px;font-weight:700;letter-spacing:-.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* v53 brand header: mascot + "julie" + live status line (Muse-style) */
 .brand{flex:1;display:flex;align-items:center;gap:10px;min-width:0;padding-left:2px}
-.mascot{width:42px;height:42px;border-radius:50%;flex:none;border:1px solid var(--line);box-shadow:var(--shadow);animation:bob 3.4s ease-in-out infinite;transition:box-shadow .4s}
+.mascot{width:42px;height:42px;border-radius:50%;flex:none;border:1px solid var(--line);animation:bob 3.4s ease-in-out infinite;transition:box-shadow .4s}
 .mascot.working{box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 45%,transparent),0 0 20px color-mix(in srgb,var(--accent) 55%,transparent);animation-duration:1.5s}
 .brand-txt{display:flex;flex-direction:column;min-width:0;line-height:1.15}
 .brand-name{font-size:19px;font-weight:700;letter-spacing:-.3px}
@@ -243,7 +244,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .auth-tabs{margin:0 0 16px}
 .auth-tabs button{font-size:14px;padding:0 6px}
 .field.tf input{font-size:17px;letter-spacing:0}
-.field.tf input::placeholder{color:var(--muted);opacity:.85}
+.field.tf input::placeholder{color:color-mix(in srgb,var(--text) 58%,var(--bg));opacity:1}
 .eye{width:44px;height:44px;margin-right:-10px;display:grid;place-items:center;color:var(--muted);border-radius:10px;flex:none}
 .eye[aria-pressed=true]{color:var(--text)}
 .eye svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
