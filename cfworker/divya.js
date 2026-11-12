@@ -2688,7 +2688,7 @@ async function setupFinalize(env, n, done) {
 // Never without consent on file; never while a run is already active;
 // a provider that failed auto-provision is not retried for 24h.
 const AUTO_PROVIDERS = ["groq", "openrouter", "gemini"];
-const AUTO_CHECK_MIN_MS = 6 * 60 * 60 * 1000;
+const AUTO_CHECK_MIN_MS = 24 * 60 * 60 * 1000; // v62: was 6h — the opportunistic check + any auto-provision chain it starts are KV-write machinery; daily is plenty and protects the free write budget for real user actions
 const AUTO_FAIL_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const AUTO_LOG_MAX = 20;
 const AUTO_PROBE = {
