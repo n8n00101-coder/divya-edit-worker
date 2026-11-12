@@ -1,5 +1,5 @@
 // Julie PWA service worker: app shell offline, API always network. Paths are relative so it works at / and at /divya-edit-worker/app/.
-const V = "julie-v43";
+const V = "julie-v44";
 const ROOT = new URL("./", self.location).href; // scope root
 const SHELL = ["./", "app.css", "app.js", "voices-kokoro.js", "manifest.webmanifest", "mascot.webp", "icon-192.png", "icon-512.png", "apple-touch-icon.png", "favicon.png"].map(p => new URL(p, ROOT).href);
 self.addEventListener("install", e => { e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
