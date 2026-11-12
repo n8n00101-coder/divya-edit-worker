@@ -780,6 +780,47 @@ def goto(page, url, timeout=60000, tries=3):
     return False
 
 
+# v43: diagnostic from the last magic-link landing (provider error text
+# or a visible-text snippet). Appended to the verification failure so a
+# failed run says WHY the sign-in did not land, and printed to the run
+# log. Never contains the link or its token (text + host/path only).
+LAST_VERIFY_DIAG = ""
+
+
+def _link_error(page):
+    """Provider-side magic-link error text (expired / already used /
+    invalid / rate-limited), if the landing page shows one."""
+    try:
+        txt = page.inner_text("body") or ""
+    except Exception:
+        return ""
+    low = txt.lower()
+    for phrase in ("link has expired", "link is expired", "expired link", "has expired",
+                   "already been used", "already used", "this link has already",
+                   "invalid link", "link is invalid", "no longer valid",
+                   "too many requests", "rate limit"):
+        i = low.find(phrase)
+        if i >= 0:
+            return "link page: " + " ".join(txt[max(0, i - 20):i + 110].split())[:150]
+    return ""
+
+
+def _page_snippet(page):
+    """Short visible-text snippet of the current page, for failure
+    diagnostics (never the URL — its query carries the token)."""
+    try:
+        txt = " ".join((page.inner_text("body") or "").split())
+        return ("page: " + txt[:150]) if txt else ""
+    except Exception:
+        return ""
+
+
+def _verify_fail_msg(name):
+    base = (f"{name} sign-in complete avvaledu — verification link open chesi "
+            f"sign in ayyaka malli setup run cheyyi (step: email verification).")
+    return base + (f" [{LAST_VERIFY_DIAG}]" if LAST_VERIFY_DIAG else "")
+
+
 def pause_for_email_verify(page, job, cfg):
     """Magic-link verification pause (v39 C7): Groq (Stytch) sends a link
     instead of a password step. Pause with reason=email so the app surfaces
@@ -788,6 +829,8 @@ def pause_for_email_verify(page, job, cfg):
     session must land — then verify the console is reachable signed-in.
     Returns True only when signed in; False when stopped or the sign-in
     did not complete (the caller fails clearly, never hangs)."""
+    global LAST_VERIFY_DIAG
+    LAST_VERIFY_DIAG = ""
     name = cfg["name"]
     progress("paused", "verify-email", MAGIC_LINK_PAUSE_MSG(name), page.url, reason="email")
     if wait_pause():
@@ -798,27 +841,61 @@ def pause_for_email_verify(page, job, cfg):
     if link.startswith("http"):
         progress("running", "verify-link", f"{name} verification link open chesthunna — sign in avthundhi.", link)
         try:
-            goto(page, link)
+            goto(page, link, tries=2)
         except Exception:
             pass
-        # The link may redirect (Stytch discovery) — give it up to 30s to
-        # leave the redirect host before checking the console.
-        for _ in range(15):
+        # v43: the provider SPA must EXCHANGE the magic-link token
+        # client-side before a session exists (Groq/Stytch: the redirect
+        # lands on the console login page with the token in the URL; the
+        # app JS authenticates, then routes away from the auth page).
+        # The old loop left the page after ~2s — as soon as the redirect
+        # host changed — aborting the exchange, so the keys page still
+        # showed the login form and the run failed "sign-in complete
+        # avvaledu" even though the link was fresh (proven live
+        # 2026-11-12: feed ok, real stytch.com magic link opened, keys
+        # check still on the auth page). Wait on the landing page (up to
+        # ~45s) for the session to land: signed-in markers, the SPA
+        # routing away from the auth page by itself, or a provider error
+        # (expired / already used) — captured as the diagnostic.
+        deadline = time.time() + 45
+        while time.time() < deadline:
             page.wait_for_timeout(2000)
-            if "stytch.com" not in page.url:
-                break
             if _page_says(page, ["dashboard", "api keys", "create api key", "log out", "sign out"]):
                 break
+            err = _link_error(page)
+            if err:
+                LAST_VERIFY_DIAG = err
+                break
+            u = page.url.lower()
+            if "stytch.com" not in u and "login" not in u and "signin" not in u and "sign-in" not in u:
+                # The SPA routed away from the auth page on its own —
+                # give the fresh session a moment to settle.
+                page.wait_for_timeout(2000)
+                break
+            if check_stop():
+                return False
+        try:
+            from urllib.parse import urlsplit
+            sp = urlsplit(page.url)
+            print(f"verify landing: {sp.scheme}://{sp.hostname}{sp.path} diag={LAST_VERIFY_DIAG or '-'}", flush=True)
+        except Exception:
+            pass
     try:
         goto(page, cfg["keys_url"])
     except Exception:
         pass
     page.wait_for_timeout(3000)
     if _page_says(page, ["create an account or login", "continue with email", "continue with google"]):
+        if not LAST_VERIFY_DIAG:
+            LAST_VERIFY_DIAG = _link_error(page) or _page_snippet(page)
+        print(f"verify failed for {name}: keys page still shows the auth page. {LAST_VERIFY_DIAG}", flush=True)
         return False
     ctrls = wait_for_auth_form(page, cfg, timeout_s=15)
     if ctrls is None:
         return True  # no auth form any more — signed in
+    if not LAST_VERIFY_DIAG:
+        LAST_VERIFY_DIAG = _link_error(page) or _page_snippet(page)
+    print(f"verify failed for {name}: auth form still present on the keys page. {LAST_VERIFY_DIAG}", flush=True)
     return False
 
 
@@ -943,7 +1020,7 @@ def flow_email_signup(page, job, cfg):
                 if pause_for_email_verify(page, job, cfg):
                     pass  # verified + signed in — fall through to key creation
                 else:
-                    return _fail(f"{name} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).", extra={"no_retry": True})
+                    return _fail(_verify_fail_msg(name), extra={"no_retry": True})
             else:
                 return _fail(f"{name} — email tarvatha next step load avvaledu (step: signup form). Take Control tho try cheyyi.")
         if ctrls2.get("stopped"):
@@ -1014,7 +1091,7 @@ def flow_email_signup(page, job, cfg):
     # (session must land here) and verifies the console before proceeding.
     if _page_says(page, VERIFY_NEEDLES):
         if not pause_for_email_verify(page, job, cfg):
-            return _fail(f"{cfg['name']} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).", extra={"no_retry": True})
+            return _fail(_verify_fail_msg(cfg["name"]), extra={"no_retry": True})
     if check_stop():
         return _stopped()
     progress("running", "api-key", "API key create chesthunna.", page.url)
@@ -1109,7 +1186,7 @@ def flow_cloudflare(page, job, cfg):
     # Email verification pause (same as the other providers, v39 C7).
     if _page_says(page, VERIFY_NEEDLES):
         if not pause_for_email_verify(page, job, cfg):
-            return _fail(f"{cfg['name']} sign-in complete avvaledu — verification link open chesi sign in ayyaka malli setup run cheyyi (step: email verification).", extra={"no_retry": True})
+            return _fail(_verify_fail_msg(cfg["name"]), extra={"no_retry": True})
     if check_stop():
         return _stopped()
     # (b) API token with Workers deploy permissions, via the dashboard.
