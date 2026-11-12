@@ -3545,6 +3545,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
   if (p === "setup/runner/progress" && req.method === "POST") {
     const state = ["queued", "running", "paused", "done", "failed", "stopped"].includes(body.state) ? body.state : "running";
     const prevState = rec.state;
+    const prevStep = rec.step, prevNote = rec.note, prevUpd = rec.upd || 0; // v64 write-budget: coalescing baseline
     rec.state = state; rec.step = String(body.step || rec.step || "").slice(0, 80); rec.note = String(body.note || "").slice(0, 300); rec.url = String(body.url || rec.url || "").slice(0, 500); rec.upd = Date.now();
     // v38 merge fix: the runner reports pauses with a reason. Email/SMS are
     // the only two the user must act on; captcha/signin are last-resort
@@ -3554,7 +3555,12 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // to tap an email link that does not exist).
     if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); if (prevState !== "paused") rec.pausedAt = Date.now(); /* v40: job.upd at pause, for the mail recency guard */ rec.tc = !!body.tc; /* v48: Take Control live-view active for this pause */ }
     else if (state === "running") { rec.pauseReason = ""; rec.tc = false; delete rec.pausedAt; }
-    await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    // v64 WRITE-BUDGET (Ajju: server error must never come back): the runner
+    // posts progress on every small step; identical heartbeats used to burn
+    // one KV write each and eat the free daily budget. Write only when the
+    // meaningful state changed, on terminal states, or at most every 20s.
+    const meaningful = state !== prevState || rec.step !== prevStep || rec.note !== prevNote || state === "done" || state === "failed" || state === "stopped";
+    if (meaningful || Date.now() - prevUpd > 20000) await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     // Chain: provider done → auto-start the next one with the same consent.
     if (state === "done") {
       const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
