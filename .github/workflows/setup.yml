@@ -10,6 +10,11 @@ on:
         description: "Provider id (groq, openrouter, gemini, cloudflare — or 'chain' for all four in order)"
         required: true
         type: string
+      browser:
+        description: "Browser mode (R51): 'profile' = persistent-profile real browser, 'ephemeral' = original headless"
+        required: false
+        type: string
+        default: "ephemeral"
 jobs:
   setup:
     runs-on: ubuntu-latest
@@ -32,4 +37,5 @@ jobs:
           RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
           JOB: ${{ inputs.job }}
           PROVIDER: ${{ inputs.provider }}
+          BROWSER_MODE: ${{ inputs.browser }}
         run: python setup.py

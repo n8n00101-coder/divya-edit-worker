@@ -1227,6 +1227,24 @@ async function openSetupPass(env, n) {
     return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(iv), additionalData: te8(`${n}:setup`) }, k, unb64(ct)));
   } catch { return ""; }
 }
+async function openBrowserProfile(env, n) {
+  // v47 (R51): the user's persistent BROWSER profile (Playwright
+  // storage state: cookies + localStorage origins), sealed with the
+  // app KEK exactly like API keys (additionalData "<n>:browser").
+  // Returned ONLY on the authenticated runner channel — never to the
+  // app, never logged. A login done once survives into later runs.
+  try {
+    const rec = JSON.parse((await env.KV.get(`uprofile:${n}`)) || "null"); if (!rec?.ct) return null;
+    const k = await appKek(env); if (!k) return null;
+    const [iv, ct] = rec.ct.split(".");
+    const plain = new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(iv), additionalData: te8(`${n}:browser`) }, k, unb64(ct)));
+    const st = JSON.parse(plain);
+    return (st && Array.isArray(st.cookies)) ? st : null;
+  } catch { return null; }
+}
+async function storeBrowserProfile(env, n, state) {
+  await env.KV.put(`uprofile:${n}`, JSON.stringify({ ct: await sealKey(env, n, "browser", JSON.stringify(state)), at: Date.now() }), { expirationTtl: 86400 * 365 });
+}
 async function storeKey(env, n, prov, key, res) {
   await env.KV.put(`ukey:${n}:${prov}`, JSON.stringify({ ct: await sealKey(env, n, prov, key), at: Date.now(), ok: true, who: res.who || "", tested: Date.now() }));
 }
@@ -1894,8 +1912,13 @@ const SETUP_PROVIDERS = {
 };
 function setupJobId() { return [...crypto.getRandomValues(new Uint8Array(10))].map(b => b.toString(16).padStart(2, "0")).join(""); }
 function setupPass() { const c = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#"; const r = crypto.getRandomValues(new Uint8Array(16)); return [...r].map(b => c[b % c.length]).join(""); }
-async function setupDispatch(env, job, provider) {
-  const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/setup.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs: { job, provider } }) }).catch(() => null);
+async function setupDispatch(env, job, provider, browser) {
+  // v47 (R51): `browser` selects the runner's browser mode — "profile"
+  // (persistent-profile real browser, session restored from KV) or
+  // "ephemeral" (the original throwaway headless contexts).
+  const inputs = { job, provider };
+  if (browser) inputs.browser = browser;
+  const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/setup.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs }) }).catch(() => null);
   return !!r && r.status === 204;
 }
 // v39 (setup-flow fix, 2026-11-11): a setup run must NEVER hang forever.
@@ -2465,7 +2488,10 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // asking the user again.
     await env.KV.put(`setupconsent:${u.n}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ids, email }), { expirationTtl: 86400 * 7 });
     const pass = setupPass();
-    const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now() };
+    // v47 (R51): browser mode for this run — "profile" runs the flows
+    // in the persistent-profile real browser (session survives between
+    // runs); anything else keeps the original ephemeral contexts.
+    const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: body.browser === "profile" ? "profile" : "ephemeral" };
     // v39 Phase 2: seal the generated provider-account password so a later
     // autonomous run can sign back in to the accounts this run creates
     // (replacement keys). Sealed with the app KEK, never returned by any API.
@@ -2683,7 +2709,7 @@ async function setupStartNext(env, n) {
     if (cur0 && cur0.provider === nextId && ["queued", "running", "paused"].includes(cur0.state)) return { ok: true, already: true, job: chain.current, provider: nextId };
   }
   const job = setupJobId();
-  const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
+  const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, browser: chain.browser || "ephemeral", state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
   await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
   chain.current = job;
   await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
@@ -2723,7 +2749,7 @@ async function setupStartNext(env, n) {
     await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
     return setupStartNext(env, n); // advance to the next provider
   }
-  const ok = await setupDispatch(env, job, nextId);
+  const ok = await setupDispatch(env, job, nextId, rec.browser);
   if (!ok) { await env.KV.delete(`setupjob:${job}`); return { ok: false, error: "dispatch failed" }; }
   return { ok: true, job, provider: nextId };
 }
@@ -2745,6 +2771,25 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     if (ctx && ctx.waitUntil) { ctx.waitUntil(pr); return Promise.resolve(); }
     return pr;
   };
+  if (p === "setup/runner/profile" && req.method === "GET") {
+    // v47 (R51): hand the runner the user's saved browser session
+    // (unsealed here — the runner holds no KEK). Runner channel only:
+    // same trust level as the job record (email/pass). Never logged,
+    // never returned by any app-facing endpoint.
+    const profile = await openBrowserProfile(env, rec.user);
+    return Response.json({ ok: true, profile });
+  }
+  if (p === "setup/runner/profile" && req.method === "POST") {
+    // The runner saves the session back after a provider attempt.
+    // Shape-checked + size-capped, then sealed at rest like a key.
+    const prof = body.profile;
+    if (!prof || typeof prof !== "object" || !Array.isArray(prof.cookies) || !Array.isArray(prof.origins)) return new Response("bad profile", { status: 400 });
+    if (JSON.stringify(prof).length > 512000) return new Response("profile too large", { status: 400 });
+    if (!env.APP_KEK) return new Response("profile storage not ready", { status: 503 });
+    try { await storeBrowserProfile(env, rec.user, prof); }
+    catch (e) { return new Response("profile storage failed", { status: 500 }); }
+    return Response.json({ ok: true, stored: true });
+  }
   if (p === "setup/runner/job") {
     // v40 (R19): paused on email verification — feed the magic link
     // server-side from the user's Gmail (never through the agent's
