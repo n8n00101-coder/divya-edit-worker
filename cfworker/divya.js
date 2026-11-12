@@ -3620,9 +3620,99 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
 }
 // ===== DIVYA APP API — end =====
 
+// ---------- v66 (Ajju: money lekunda permanent fix) ----------
+// Cloudflare's FREE KV allows only 1,000 writes/day per account — a busy
+// day burns it and every save action (signup, login, setup, chat) fails
+// with "server error". Durable Objects with SQLite storage on the SAME
+// free plan allow ~100,000 row-writes/day. JulieState is a tiny
+// key-value store on that SQLite; wrapEnv() routes every app record
+// (accounts, sessions, keys, setup, jobs, history, tokens) through it.
+// Only media byte staging (upl:/res:) stays in KV — rare, user-initiated
+// transfers, not app state. Reads fall back to the old KV copy and
+// backfill, so existing accounts/keys/sessions migrate seamlessly.
+// Without the STATE binding (tests, older deploys) wrapEnv is a no-op.
+export class JulieState {
+  constructor(ctx, env) {
+    this.ctx = ctx;
+    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT, exp INTEGER)");
+  }
+  async fetch(req) {
+    const b = await req.json().catch(() => ({}));
+    const sql = this.ctx.storage.sql;
+    const now = Date.now();
+    if (b.op === "get") {
+      const row = [...sql.exec("SELECT v, exp FROM kv WHERE k = ?", b.key)][0];
+      if (!row) return Response.json({ v: null });
+      if (row.exp && row.exp < now) { sql.exec("DELETE FROM kv WHERE k = ?", b.key); return Response.json({ v: null }); }
+      return Response.json({ v: row.v });
+    }
+    if (b.op === "put") {
+      sql.exec("INSERT INTO kv (k, v, exp) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v, exp = excluded.exp", b.key, String(b.value), b.exp || 0);
+      return Response.json({ ok: true });
+    }
+    if (b.op === "del") { sql.exec("DELETE FROM kv WHERE k = ?", b.key); return Response.json({ ok: true }); }
+    if (b.op === "list") {
+      const like = String(b.prefix || "").replace(/[%_\\]/g, "\\$&") + "%";
+      const rows = [...sql.exec("SELECT k, exp FROM kv WHERE k LIKE ? ESCAPE '\\' ORDER BY k LIMIT ?", like, b.limit || 1000)];
+      return Response.json({ keys: rows.filter(r => !r.exp || r.exp >= now).map(r => ({ name: r.k })), list_complete: true, cacheStatus: null });
+    }
+    return new Response("bad op", { status: 400 });
+  }
+}
+const KV_MEDIA_PREFIXES = ["upl:", "res:"];
+function wrapEnv(env) {
+  if (!env || !env.KV || !env.STATE) return env;
+  const real = env.KV;
+  const stub = env.STATE.get(env.STATE.idFromName("julie-state-v1"));
+  const call = body => stub.fetch("https://state/op", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const toState = key => !KV_MEDIA_PREFIXES.some(p => String(key).startsWith(p));
+  const facade = {
+    async get(key, opts) {
+      if (!toState(key)) return real.get(key, opts);
+      const type = typeof opts === "string" ? opts : (opts && opts.type) || "text";
+      const r = await call({ op: "get", key });
+      const d = await r.json().catch(() => ({ v: null }));
+      if (d.v != null) {
+        if (type === "json") { try { return JSON.parse(d.v); } catch { return null; } }
+        if (type === "arrayBuffer") return new TextEncoder().encode(d.v).buffer;
+        return d.v;
+      }
+      // Migration fallback: the record may still live only in the old KV.
+      // Backfill into the DO with a BOUNDED expiry — short-lived records
+      // (OTPs, cooldowns, OAuth state: 10 min) must never become permanent,
+      // and even 30-day sessions keep a 30-day cap.
+      const kv = await real.get(key, opts);
+      if (kv != null) {
+        const s = type === "json" ? JSON.stringify(kv) : String(kv);
+        const short = ["otp:", "otpcool:", "oauth:", "pcool:"].some(pfx => String(key).startsWith(pfx));
+        call({ op: "put", key, value: s, exp: Date.now() + (short ? 600000 : 86400e3 * 30) }).catch(() => {});
+      }
+      return kv;
+    },
+    async put(key, value, opts) {
+      if (!toState(key)) return real.put(key, value, opts);
+      const exp = opts && opts.expirationTtl ? Date.now() + opts.expirationTtl * 1000 : (opts && opts.expiration ? opts.expiration * 1000 : 0);
+      await call({ op: "put", key, value: typeof value === "string" ? value : new TextDecoder().decode(value), exp });
+    },
+    async delete(key) {
+      if (!toState(key)) return real.delete(key);
+      await call({ op: "del", key });
+      await real.delete(key).catch(() => {}); // clear any stale pre-migration copy so it cannot resurrect
+    },
+    async list(opts) {
+      const prefix = (opts && opts.prefix) || "";
+      if (!toState(prefix)) return real.list(opts);
+      const r = await call({ op: "list", prefix, limit: (opts && opts.limit) || 1000 });
+      return r.json();
+    },
+  };
+  return new Proxy(env, { get(t, p) { if (p === "KV") return facade; const v = t[p]; return typeof v === "function" ? v.bind(t) : v; } });
+}
+
 export default {
   // Optional cron ping of the call server (no cron set: SnapDeploy free hours are limited).
   async scheduled(ev, env, ctx) {
+    env = wrapEnv(env);
     ctx.waitUntil(fetch((env.CALL_URL || CALL_URL) + "/health").then(r => env.KV.put("dbg:callping", `${new Date().toISOString()} ${r.status}`, { expirationTtl: 86400 * 2 })).catch(() => {}));
     // v39 Phase 2: autonomous key-health + usage check for every user with
     // a one-tap allow on file (throttled inside maybeAutoCheck). Fires only
@@ -3631,6 +3721,7 @@ export default {
     ctx.waitUntil(autoCheckAll(env).catch(() => {}));
   },
   async fetch(req, env, ctx) {
+    env = wrapEnv(env);
     const url = new URL(req.url);
     if (url.pathname.startsWith("/api/")) {
       // v50: last-resort guard — an unexpected throw inside the app API
