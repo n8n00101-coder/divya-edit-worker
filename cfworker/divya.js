@@ -2114,6 +2114,18 @@ async function appRunner(req, env, p, url, body) {
 // own. Never a third-party captcha service, never silent. Cloudflare
 // (server) is the last step of the chain, after the API-key providers —
 // the runner-side flow_cloudflare() posts its token back via setup/runner/key.
+function parseRec(s) {
+  // v50: defensive KV-record parse for the setup/gmail paths. A record
+  // that is missing, unparseable, or not an object reads as ABSENT —
+  // never as a thrown SyntaxError. (Live break 2026-11-12: a tok:*:google
+  // record that was not valid JSON made gmailStateFor AND googleToken
+  // throw on their bare JSON.parse, so setup/status and gmail/verify
+  // both returned HTTP 500/1101 while every other endpoint worked. The
+  // honest degradation for a corrupt token record is "not connected" —
+  // the app shows the re-consent card and a fresh consent rewrites a
+  // clean record.)
+  try { const v = JSON.parse(s || "null"); return (v && typeof v === "object") ? v : null; } catch { return null; }
+}
 const SETUP_PROVIDERS = {
   groq: { name: "Groq", site: "console.groq.com", url: "https://console.groq.com/signup", flow: "email" },
   openrouter: { name: "OpenRouter", site: "openrouter.ai", url: "https://openrouter.ai/sign-up", flow: "email" },
@@ -2151,7 +2163,7 @@ async function setupWatchdog(env, n, chain) {
   // (and clears the chain), else null. Idempotent: once the chain is
   // gone, later calls take the no-chain path.
   if (!chain || !chain.current) return null;
-  const cur = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
+  const cur = parseRec(await env.KV.get(`setupjob:${chain.current}`));
   if (!cur) return null;
   const last = cur.upd || cur.at || 0;
   const limit = cur.state === "paused" ? SETUP_STALE_PAUSED_MS : SETUP_STALE_RUNNING_MS;
@@ -2199,9 +2211,12 @@ function setupStepText(id, st, lang, note, kind) {
   return en ? `${name} — waiting.` : `${name} — wait chesthondhi.`;
 }
 function setupSteps(chain, cur, fin, keys, lang) {
-  const ids = chain ? chain.providers : Object.keys(SETUP_PROVIDERS);
-  const doneSet = new Set(chain ? chain.done : ((fin && fin.done) || []));
-  const failedSet = new Set(chain ? (chain.failed || []) : ((fin && fin.failed) || []));
+  // v50: coerce every record field before use — a stale/partial chain or
+  // finished record (providers/done/failed missing or not arrays, an
+  // unknown provider id) must degrade to sane steps, never throw.
+  const ids = (chain && Array.isArray(chain.providers) ? chain.providers : Object.keys(SETUP_PROVIDERS)).filter(id => SETUP_PROVIDERS[id]);
+  const doneSet = new Set(chain ? (Array.isArray(chain.done) ? chain.done : []) : ((fin && Array.isArray(fin.done)) ? fin.done : []));
+  const failedSet = new Set(chain ? (Array.isArray(chain.failed) ? chain.failed : []) : ((fin && Array.isArray(fin.failed)) ? fin.failed : []));
   return ids.map(id => {
     // v38 merge fix: the app (renderSetupBox) matches state === "paused"
     // exactly and reads step.note + step.kind — so a paused step reports
@@ -2233,7 +2248,7 @@ async function setupFinalize(env, n, done) {
   // setupStartNext deletes it only after finalize returns.
   let auto = false;
   try {
-    const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
+    const chain = parseRec(await env.KV.get(`setupchain:${n}`));
     if (chain && chain.auto) {
       auto = true;
       for (const id of (chain.done || [])) if (keys[id]) await autoLogAppend(env, n, { provider: id, action: "key-added", why: (chain.why && chain.why[id]) || "key missing — auto-provisioned", result: "ok" });
@@ -2319,7 +2334,7 @@ async function maybeAutoCheck(env, n, email, force) {
   const last = parseInt((await env.KV.get(`setupautolast:${n}`)) || "0", 10) || 0;
   if (!force && now - last < AUTO_CHECK_MIN_MS) return { checked: false, reason: "throttled" };
   await env.KV.put(`setupautolast:${n}`, String(now), { expirationTtl: 86400 * 2 });
-  const consent = JSON.parse((await env.KV.get(`setupconsent:${n}`)) || "null");
+  const consent = parseRec(await env.KV.get(`setupconsent:${n}`));
   if (!consent) {
     // A brand-new user who never gave the allow gets no log spam — the
     // login-time setup prompt is the ask. Log only when an EXISTING user
@@ -2328,7 +2343,7 @@ async function maybeAutoCheck(env, n, email, force) {
     if (hadSetup) await autoLogAppend(env, n, { provider: "", action: "skipped", why: "one-tap allow expired or missing — needs one tap in Setup", result: "needs-consent" });
     return { checked: true, action: "needs-consent" };
   }
-  const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
+  const chain = parseRec(await env.KV.get(`setupchain:${n}`));
   if (chain) return { checked: true, action: "already-running" };
   const health = await keyHealthCheck(env, n);
   const usage = await usageAnalysis(env, n, health);
@@ -2403,11 +2418,15 @@ async function googleToken(env, n) {
   // Same refresh pattern as ytToken: expired + refresh_token -> refresh
   // via oauth2.googleapis.com/token, store back, return the fresh token.
   // No refresh token / refresh fails -> null (caller surfaces re-consent).
-  const t = JSON.parse((await env.KV.get(`tok:${n}:google`)) || "null");
+  const t = parseRec(await env.KV.get(`tok:${n}:google`));
   if (!t || !t.access_token) return null;
   if (t.expires_in && t.at && Date.now() - t.at > (t.expires_in - 300) * 1000) {
     if (!t.refresh_token) return null;
-    const nt = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) })).json().catch(() => ({}));
+    // v50: a network-level failure of the refresh fetch must read as
+    // "no token" (callers surface re-consent), never as a thrown error
+    // escaping to a 500 — the bare `await fetch` here used to do that.
+    let nt = {};
+    try { const resp = await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) }); nt = await resp.json().catch(() => ({})); } catch { return null; }
     if (!nt.access_token) return null;
     const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in };
     await env.KV.put(`tok:${n}:google`, JSON.stringify(merged));
@@ -2432,14 +2451,15 @@ function b64urlDecode(s) {
   const pad = b64.length % 4 ? "=".repeat(4 - (b64.length % 4)) : "";
   try { return atob(b64 + pad); } catch { return ""; }
 }
-function gmailWalkParts(part, out) {
+function gmailWalkParts(part, out, depth = 0) {
   // RECURSIVE body walk: multipart/mixed -> multipart/alternative ->
   // text/plain + text/html at any depth (the old gmail/verify only
-  // joined top-level parts and missed nested bodies).
-  if (!part) return;
+  // joined top-level parts and missed nested bodies). v50: depth-capped
+  // — a pathological payload must never recurse into a stack overflow.
+  if (!part || depth > 30) return;
   const mime = String(part.mimeType || "");
   if (mime === "text/plain" || mime === "text/html") { out.push({ mime, data: part.body?.data || "" }); return; }
-  for (const sub of part.parts || []) gmailWalkParts(sub, out);
+  for (const sub of part.parts || []) gmailWalkParts(sub, out, depth + 1);
 }
 function qpDecode(t) {
   // Quoted-printable bodies (common for provider mail): a "=" at the
@@ -2583,7 +2603,7 @@ async function gmailStateFor(env, n, job) {
   if (mf === "api-not-enabled") return { state: "api-not-enabled", provider };
   if (mf === "no-mail-yet") return { state: "no-mail-yet", provider };
   if (mf === "gmail-error") return { state: "error", provider };
-  const tok = JSON.parse((await env.KV.get(`tok:${n}:google`)) || "null");
+  const tok = parseRec(await env.KV.get(`tok:${n}:google`));
   if (!tok || !tok.access_token) return { state: "no-token", provider };
   return { state: "no-mail-yet", provider };
 }
@@ -2607,8 +2627,8 @@ function stripChainSecrets(c) {
 async function appSetupUser(req, env, u, p, body, lang) {
   const en = lang === "en";
   if (p === "setup/status") {
-    let chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
-    const consent = JSON.parse((await env.KV.get(`setupconsent:${u.n}`)) || "null");
+    let chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
+    const consent = parseRec(await env.KV.get(`setupconsent:${u.n}`));
     const keys = {};
     for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${u.n}:${id}`)) keys[id] = true;
     if (await env.KV.get(`umodel:${u.n}`)) keys.custom = true; // v48 (R54): a saved own model counts as set up
@@ -2629,12 +2649,12 @@ async function appSetupUser(req, env, u, p, body, lang) {
         const autoLog = await autoLogRead(env, u.n);
         return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(stalled), keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (stalled && stalled.geminiVerify) || null, autoLog: autoLog.slice(0, 10) };
       }
-      chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+      chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     }
     // v24: when the chain is gone, report the recorded outcome (done/failed)
     // so the app can show it instead of the mini-box vanishing silently.
     if (!chain) {
-      const fin = JSON.parse((await env.KV.get(`setupdone:${u.n}`)) || "null");
+      const fin = parseRec(await env.KV.get(`setupdone:${u.n}`));
       const state = setupStateFor(null, null, fin, keys);
       // v39 Phase 2: opportunistic autonomous check (throttled to one
       // check per user per 6h, never while a run is active). Best-effort
@@ -2644,7 +2664,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       const autoLog = await autoLogRead(env, u.n);
       return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(fin), keys, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
     }
-    let cur = chain.current ? JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null") : null;
+    let cur = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null;
     // v40 (R19): paused on email verification — try feeding the magic link
     // server-side from Gmail (throttled inside maybeFeedVerifyLink, so the
     // app's polling can't spam the Gmail API). Covers the case where the
@@ -2687,7 +2707,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // happened" came from a fresh start overwriting a dead one). A stale
     // chain is recorded as stalled first (watchdog), so its outcome is
     // not lost when the new run replaces it.
-    const prev = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    const prev = parseRec(await env.KV.get(`setupchain:${u.n}`));
     if (prev) {
       const stalled = await setupWatchdog(env, u.n, prev);
       if (!stalled) return { ok: false, error: en ? "Setup is already running — wait for it to finish." : "Setup already nadusthondhi — ayye varaku wait cheyu.", alreadyRunning: true };
@@ -2713,8 +2733,8 @@ async function appSetupUser(req, env, u, p, body, lang) {
     return { ok: true, job: next.job, provider: next.provider };
   }
   if (p === "setup/stop" && req.method === "POST") {
-    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
-    if (chain && chain.current) { const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null"); if (j) { j.state = "stopped"; j.upd = Date.now(); await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 }); } }
+    const chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
+    if (chain && chain.current) { const j = parseRec(await env.KV.get(`setupjob:${chain.current}`)); if (j) { j.state = "stopped"; j.upd = Date.now(); await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 }); } }
     await env.KV.delete(`setupchain:${u.n}`);
     return { ok: true };
   }
@@ -2729,9 +2749,9 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // Control button silently recorded an "email" pause instead.
     const reason = String(body.reason || "email").trim().toLowerCase();
     if (!["email", "sms", "signin", "captcha"].includes(reason)) return { ok: false, error: en ? "Setup pauses only for the email link, the SMS code, a sign-in, or a captcha." : "Setup email link, SMS code, sign-in leda captcha kosam matrame aaguthundi." };
-    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    const chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     if (!chain || !chain.current) return { ok: false, error: "no job" };
-    const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
+    const j = parseRec(await env.KV.get(`setupjob:${chain.current}`));
     if (!j) return { ok: false, error: "no job" };
     // v40: pausedAt = job.upd at pause (recency guard for the mail reader).
     // Set only on the transition into paused — the runner heartbeats while
@@ -2746,9 +2766,9 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // Resume after a pause (email link tapped / SMS code entered). The
     // runner polls setup/runner/job and resumes when the job flips back to
     // "running" — no further user action needed after this one tap.
-    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    const chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     if (!chain || !chain.current) return { ok: false, error: "no job" };
-    const j = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
+    const j = parseRec(await env.KV.get(`setupjob:${chain.current}`));
     if (!j) return { ok: false, error: "no job" };
     j.state = "running"; j.note = ""; j.pauseReason = ""; j.resumedAt = Date.now(); j.upd = Date.now();
     delete j.pausedAt; // v40: pause over, recency guard resets for the next pause
@@ -2765,9 +2785,9 @@ async function appSetupUser(req, env, u, p, body, lang) {
   if (p === "setup/tc" && req.method === "GET") {
     // v48 (Take Control): the owner's live view of the paused runner
     // browser — the latest streamed frame for THEIR current job only.
-    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    const chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     if (!chain || !chain.current) return { ok: true, active: false };
-    const fr = JSON.parse((await env.KV.get(`tcframe:${chain.current}`)) || "null");
+    const fr = parseRec(await env.KV.get(`tcframe:${chain.current}`));
     if (!fr) return { ok: true, active: false };
     return { ok: true, active: true, img: fr.img, url: fr.url || "", at: fr.at || 0 };
   }
@@ -2776,7 +2796,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // nav) for the runner, which applies it to the live browser on its
     // next poll. Inputs are the owner's own taps/typing during their one
     // sign-in step — validated, capped, never logged.
-    const chain = JSON.parse((await env.KV.get(`setupchain:${u.n}`)) || "null");
+    const chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     if (!chain || !chain.current) return { ok: false, error: "no job" };
     const type = String(body.type || "");
     const inp = { type, at: Date.now() };
@@ -2933,9 +2953,12 @@ async function provisionGeminiKey(env, n) {
   }
 }
 async function setupStartNext(env, n) {
-  const chain = JSON.parse((await env.KV.get(`setupchain:${n}`)) || "null");
+  const chain = parseRec(await env.KV.get(`setupchain:${n}`));
   if (!chain) return { ok: false, error: "no chain" };
-  chain.failed = chain.failed || [];
+  // v50: a partial chain record must fail the advance cleanly, not throw.
+  if (!Array.isArray(chain.providers)) return { ok: false, error: "bad chain" };
+  if (!Array.isArray(chain.done)) chain.done = [];
+  chain.failed = Array.isArray(chain.failed) ? chain.failed : [];
   const nextId = chain.providers.find(id => !chain.done.includes(id) && !chain.failed.includes(id));
   // v24: record the outcome before deleting the chain — otherwise the app has
   // nothing to show when the setup ends (the mini-box just vanished).
@@ -2946,7 +2969,7 @@ async function setupStartNext(env, n) {
   // they may overlap). If the current job already targets nextId and is
   // still live, an earlier advance already created it — do nothing.
   if (chain.current) {
-    const cur0 = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
+    const cur0 = parseRec(await env.KV.get(`setupjob:${chain.current}`));
     if (cur0 && cur0.provider === nextId && ["queued", "running", "paused"].includes(cur0.state)) return { ok: true, already: true, job: chain.current, provider: nextId };
   }
   const job = setupJobId();
@@ -2997,7 +3020,7 @@ async function setupStartNext(env, n) {
 async function appSetupRunner(req, env, p, url, body, ctx) {
   if (!env.RUNNER_KEY || req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
   const job = String(url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, "");
-  const rec = job ? JSON.parse((await env.KV.get(`setupjob:${job}`)) || "null") : null;
+  const rec = job ? parseRec(await env.KV.get(`setupjob:${job}`)) : null;
   if (!rec) return new Response("missing", { status: 404 });
   // v42: chain advance can run for minutes (the server-side Gemini
   // provision lives inside setupStartNext). It must NOT block the
@@ -3042,7 +3065,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // redacted tool layer). Best-effort; never breaks the runner's poll.
     if (rec.state === "paused" && (rec.pauseReason || "email") === "email" && !rec.verifyLink && !rec.verifyCode) {
       let chainAt = 0;
-      try { const ch = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null"); chainAt = ch?.at || 0; } catch {}
+      try { const ch = parseRec(await env.KV.get(`setupchain:${rec.user}`)); chainAt = ch?.at || 0; } catch {}
       const updated = await maybeFeedVerifyLink(env, rec, chainAt);
       return Response.json({ ok: true, job: { ...updated, tcInputs } });
     }
@@ -3074,17 +3097,17 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     // Chain: provider done → auto-start the next one with the same consent.
     if (state === "done") {
-      const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null");
+      const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
       if (chain && chain.current === job) { if (!chain.done.includes(rec.provider)) chain.done.push(rec.provider); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
     }
     // v38 merge fix: a failed provider must ADVANCE the chain, not end it
     // (one provider's broken signup flow must not kill the other three).
     // Only "stopped" (the user stopped the setup) ends the whole chain.
     if (state === "failed") {
-      const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null");
+      const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
       if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
     }
-    if (state === "stopped") { const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null"); if (chain && chain.current === job) { await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state, done: chain.done, failed: chain.failed || [], provider: rec.provider, note: rec.note || "", at: Date.now() }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${rec.user}`); } }
+    if (state === "stopped") { const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`)); if (chain && chain.current === job) { await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state, done: chain.done, failed: chain.failed || [], provider: rec.provider, note: rec.note || "", at: Date.now() }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${rec.user}`); } }
     return Response.json({ ok: true });
   }
   if (p === "setup/runner/key" && req.method === "POST") {
@@ -3113,7 +3136,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // on the job record for the Cloudflare result.
     const provider = String(body.provider || rec.provider || "").trim();
     const status = ["done", "failed", "stopped"].includes(String(body.status || "").trim()) ? String(body.status).trim() : "failed";
-    const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null");
+    const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
     if (body.account_id) { rec.accountId = String(body.account_id).slice(0, 80); }
     if (body.error) rec.note = String(body.error).slice(0, 300);
     rec.upd = Date.now();
