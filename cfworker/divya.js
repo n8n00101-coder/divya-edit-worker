@@ -840,7 +840,7 @@ function chatFirst(text) {
   if (/(styles|templates)/i.test(t) && /(chupinchu|choopinchu|show|list|cheppu|chudu)/i.test(t)) return true;
   return false;
 }
-async function appApi(req, env, url) {
+async function appApi(req, env, url, ctx) {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: appCors(req) });
   const p = url.pathname.slice(5);
   const body = req.method === "POST" && (req.headers.get("content-type") || "").includes("json") ? await req.json().catch(() => ({})) : {};
@@ -869,7 +869,7 @@ async function appApi(req, env, url) {
   if (p === "health") return appJson(req, { ok: true });
   if (p.startsWith("auth/") && req.method === "POST") return acctPublic(req, env, p, body);
   if (p.startsWith("runner/")) return appRunner(req, env, p, url, body);
-  if (p.startsWith("setup/runner/")) return appSetupRunner(req, env, p, url, body);
+  if (p.startsWith("setup/runner/")) return appSetupRunner(req, env, p, url, body, ctx);
   const u = await appAuth(env, req);
   if (!u || !u.ok) return appJson(req, { ok: false, error: "login" }, 401);
   const lang = body.lang === "en" || url.searchParams.get("lang") === "en" ? "en" : "te";
@@ -2660,6 +2660,14 @@ async function setupStartNext(env, n) {
   // nothing to show when the setup ends (the mini-box just vanished).
   // v38 merge fix: if NO provider produced a key, the run failed (not done).
   if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, failReason: chain.failReason || null, ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
+  // v42: double-advance guard — the runner's result + terminal progress
+  // events can both trigger an advance (now deferred via waitUntil, so
+  // they may overlap). If the current job already targets nextId and is
+  // still live, an earlier advance already created it — do nothing.
+  if (chain.current) {
+    const cur0 = JSON.parse((await env.KV.get(`setupjob:${chain.current}`)) || "null");
+    if (cur0 && cur0.provider === nextId && ["queued", "running", "paused"].includes(cur0.state)) return { ok: true, already: true, job: chain.current, provider: nextId };
+  }
   const job = setupJobId();
   const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
   await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
@@ -2705,11 +2713,24 @@ async function setupStartNext(env, n) {
   if (!ok) { await env.KV.delete(`setupjob:${job}`); return { ok: false, error: "dispatch failed" }; }
   return { ok: true, job, provider: nextId };
 }
-async function appSetupRunner(req, env, p, url, body) {
+async function appSetupRunner(req, env, p, url, body, ctx) {
   if (!env.RUNNER_KEY || req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
   const job = String(url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, "");
   const rec = job ? JSON.parse((await env.KV.get(`setupjob:${job}`)) || "null") : null;
   if (!rec) return new Response("missing", { status: 404 });
+  // v42: chain advance can run for minutes (the server-side Gemini
+  // provision lives inside setupStartNext). It must NOT block the
+  // runner's response — in the 2026-11-12 acceptance re-run the
+  // runner's 20s read timeout fired mid-provision, the invocation
+  // died with the disconnect, the gemini job froze at "creating key"
+  // and the watchdog stalled the whole chain (cloudflare never ran).
+  // The outcome is always persisted BEFORE this is called; defer the
+  // advance via waitUntil so the response returns immediately.
+  const deferAdvance = () => {
+    const pr = setupStartNext(env, rec.user).catch(() => {});
+    if (ctx && ctx.waitUntil) { ctx.waitUntil(pr); return Promise.resolve(); }
+    return pr;
+  };
   if (p === "setup/runner/job") {
     // v40 (R19): paused on email verification — feed the magic link
     // server-side from the user's Gmail (never through the agent's
@@ -2738,14 +2759,14 @@ async function appSetupRunner(req, env, p, url, body) {
     // Chain: provider done → auto-start the next one with the same consent.
     if (state === "done") {
       const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null");
-      if (chain && chain.current === job) { if (!chain.done.includes(rec.provider)) chain.done.push(rec.provider); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await setupStartNext(env, rec.user); }
+      if (chain && chain.current === job) { if (!chain.done.includes(rec.provider)) chain.done.push(rec.provider); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
     }
     // v38 merge fix: a failed provider must ADVANCE the chain, not end it
     // (one provider's broken signup flow must not kill the other three).
     // Only "stopped" (the user stopped the setup) ends the whole chain.
     if (state === "failed") {
       const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null");
-      if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await setupStartNext(env, rec.user); }
+      if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
     }
     if (state === "stopped") { const chain = JSON.parse((await env.KV.get(`setupchain:${rec.user}`)) || "null"); if (chain && chain.current === job) { await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state, done: chain.done, failed: chain.failed || [], provider: rec.provider, note: rec.note || "", at: Date.now() }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${rec.user}`); } }
     return Response.json({ ok: true });
@@ -2783,8 +2804,8 @@ async function appSetupRunner(req, env, p, url, body) {
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     if (!chain || chain.current !== job) return Response.json({ ok: true, advanced: false });
     chain.failed = chain.failed || [];
-    if (status === "done") { if (!chain.done.includes(provider)) chain.done.push(provider); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await setupStartNext(env, rec.user); return Response.json({ ok: true, advanced: true }); }
-    if (status === "failed") { if (!chain.failed.includes(provider)) chain.failed.push(provider); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await setupStartNext(env, rec.user); return Response.json({ ok: true, advanced: true }); }
+    if (status === "done") { if (!chain.done.includes(provider)) chain.done.push(provider); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); return Response.json({ ok: true, advanced: true }); }
+    if (status === "failed") { if (!chain.failed.includes(provider)) chain.failed.push(provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[provider]) chain.failReason[provider] = String(body.error || rec.note || "").slice(0, 80); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); return Response.json({ ok: true, advanced: true }); }
     // stopped: the user stopped the setup — end the whole chain.
     await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state: "stopped", done: chain.done, failed: chain.failed, provider, note: rec.note || "", at: Date.now() }), { expirationTtl: 86400 });
     await env.KV.delete(`setupchain:${rec.user}`);
@@ -2806,7 +2827,7 @@ export default {
   },
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
-    if (url.pathname.startsWith("/api/")) return appApi(req, env, url);
+    if (url.pathname.startsWith("/api/")) return appApi(req, env, url, ctx);
     if (url.pathname === "/webhook" && req.method === "GET") {
       if (url.searchParams.get("hub.mode") === "subscribe" && url.searchParams.get("hub.verify_token") === env.VERIFY_TOKEN)
         return new Response(url.searchParams.get("hub.challenge") || "");

@@ -188,8 +188,11 @@ def report_result(provider, status, key=None, error=None, extra=None):
     if extra:
         payload.update(extra)
     try:
+        # v42: 180s, not 20 — this POST is the authoritative outcome
+        # record; the 20s read timeout fired live (2026-11-12) when the
+        # Worker was slow answering, nearly losing a provider outcome.
         httpx.post(f"{WORKER}/api/setup/runner/result", params={"job": JOB},
-                   json=payload, headers=H, timeout=20)
+                   json=payload, headers=H, timeout=180)
         return True
     except Exception as e:
         print("result report failed:", e)
