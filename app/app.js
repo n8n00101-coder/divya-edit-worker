@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v32";
+const APP_V = "julie-v33";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -1328,25 +1328,10 @@ function updateLiveStatus() {
   const m = $("#mascotImg"); if (m) m.classList.toggle("working", active);
 }
 function setLive(src, text) { liveSrc[src] = text || ""; updateLiveStatus(); }
-/* v54: LIVE mascot animator — Julie moves like a live avatar: frame swaps
-   between the base pose and a mid-typing pose in short bursts, plus a
-   blink every few seconds. While a task is active (.working) the typing
-   runs near-continuously; idle = gentle blinks and a rare tap. Pure
-   frame animation (no video) + the CSS bob on .mascot. */
-(function liveMascot() {
-  const m = document.querySelector("#mascotImg"); if (!m) return;
-  const F = { base: "mascot.webp", type: "mascot-type.webp", blink: "mascot-blink.webp" };
-  [F.type, F.blink].forEach(s => { const i = new Image(); i.src = s; });
-  let busy = false;
-  const show = f => { if (m.getAttribute("src") !== f) m.src = f; };
-  function blink() { if (!busy) { show(F.blink); setTimeout(() => { if (!busy) show(F.base); }, 170); } setTimeout(blink, 2600 + Math.random() * 2200); }
-  function typeBurst() {
-    busy = true; let n = 3 + (Math.random() * 3 | 0);
-    (function step() { show(Math.random() < .5 ? F.type : F.base); if (--n > 0) setTimeout(step, 165); else { busy = false; show(F.base); schedule(); } })();
-  }
-  function schedule() { setTimeout(typeBurst, m.classList.contains("working") ? 500 + Math.random() * 500 : 3400 + Math.random() * 2600); }
-  setTimeout(blink, 1800); schedule();
-})();
+/* v54→v55: the header mascot is an animated WebP (mascot-live.webp) — a
+   seamless loop with a gentle bob, typing bursts and a blink, baked in.
+   It animates by itself; the .working glow/bob CSS still applies on top.
+   (The v54 JS frame-swapper was retired — it fought the WebP loop.) */
 let lastJob = null;
 function setJob(kind, when, job) {
   lastJob = job || null;
