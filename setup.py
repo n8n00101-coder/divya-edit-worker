@@ -1160,12 +1160,26 @@ def _wait_auth_fields(page, email_sels, pass_sels, step):
     """Wait for the email+password fields of a JS-rendered auth form to
     be VISIBLE (up to ~45s, one reload, progress posted). Returns
     "ok" | "missing" | "stopped". v45: fill() only acts on visible
-    matches, so a fixed sleep races the SPA render."""
+    matches, so a fixed sleep races the SPA render. v46: some auth
+    pages (Cloudflare included) open on an SSO chooser — the email
+    form appears only after clicking the email option — so click it
+    when offered; and when the fields never appear, print what the
+    page actually is (title + visible-text snippet + URL, no secrets)
+    so the failure names itself in the run log."""
+    clicked_email_option = False
     for attempt in range(2):
         deadline = time.time() + 45
         while time.time() < deadline and not (_visible(page, email_sels) and _visible(page, pass_sels)):
             if check_stop():
                 return "stopped"
+            if not clicked_email_option and click(page, ["button:has-text('Continue with email')",
+                                                         "a:has-text('Continue with email')",
+                                                         "button:has-text('Sign up with email')",
+                                                         "a:has-text('Sign up with email')",
+                                                         "button:has-text('Use email')",
+                                                         "a:has-text('Use email')"]):
+                clicked_email_option = True
+                progress("running", step, "Email option select chesaa — form load avthondhi…", page.url)
             page.wait_for_timeout(2000)
         if _visible(page, email_sels) and _visible(page, pass_sels):
             return "ok"
@@ -1176,6 +1190,13 @@ def _wait_auth_fields(page, email_sels, pass_sels, step):
             except Exception:
                 pass
             page.wait_for_timeout(2000)
+    try:
+        from urllib.parse import urlsplit
+        sp = urlsplit(page.url)
+        print(f"auth form missing at step={step}: url={sp.scheme}://{sp.hostname}{sp.path} "
+              f"title={page.title()!r} {_page_snippet(page)}", flush=True)
+    except Exception:
+        pass
     return "missing"
 
 
