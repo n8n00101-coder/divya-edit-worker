@@ -424,6 +424,9 @@ async function oauthRoutes(env, url) {
       return Response.redirect("https://divya-app.n8n00101.workers.dev/?gtoken=" + encodeURIComponent(await newSession(env, a)), 302);
     }
     await env.KV.put(`tok:${s.user}:${s.prov}`, JSON.stringify({ ...tok, at: Date.now(), who }));
+    // v61: app-originated connects return INTO the app (the old plain
+    // page dead-ended app users on the API host, outside Julie).
+    if (s.app) return Response.redirect("https://divya-app.n8n00101.workers.dev/?connected=" + encodeURIComponent(s.prov), 302);
     await say(env, s.user, `✅ ${PROVIDERS[s.prov].title.replace(" connect", "")} connect ayyindi ${who}. Post cheyyadaniki mundu prathi sari nee OK adugutha.`);
     return page(`✅ Connect ayyindi ${who}. Ippudu WhatsApp ki tirigi vellu.`);
   }
@@ -1031,7 +1034,7 @@ async function appApi(req, env, url, ctx) {
     const ready = (GSCOPE[prov] && env.GOOGLE_CLIENT_ID) || (MSCOPE[prov] && env.FB_APP_SECRET) || (prov === "telegram" && env.TG_BOT);
     if (!ready) return appJson(req, { ok: false, ready: false, error: lang === "en" ? "Still being set up." : "Inka setup lo undi." });
     const state = crypto.randomUUID().replace(/-/g, "");
-    await env.KV.put(`oauth:${state}`, JSON.stringify({ user: u.n, prov }), { expirationTtl: 900 });
+    await env.KV.put(`oauth:${state}`, JSON.stringify({ user: u.n, prov, app: true }), { expirationTtl: 900 });
     return appJson(req, { ok: true, url: prov === "telegram" ? `https://t.me/${env.TG_BOT}?start=${state}` : `https://divya.n8n00101.workers.dev/c/${state}` });
   }
   // ---- Post to connected YouTube / Instagram (owner-OK gate: body.confirm must be true) ----

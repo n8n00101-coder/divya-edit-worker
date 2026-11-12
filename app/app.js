@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v37";
+const APP_V = "julie-v38";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -1422,9 +1422,13 @@ $("#profLogout").onclick = () => logout(false);
 const PDESC = { te: { youtube: "Videos upload cheyadaniki", google: "Gmail, Drive", instagram: "Reels post cheyadaniki", facebook: "Page lo post cheyadaniki", telegram: "Telegram lo kuda Julie" }, en: { youtube: "Upload videos", google: "Gmail, Drive", instagram: "Post Reels", facebook: "Post to your Page", telegram: "Julie on Telegram too" } };
 let connData = [];
 async function connectLink(prov) {
-  const w = window.open("about:blank", "_blank");
+  // v61: NO pre-opened blank tab (it threw the user into a stray browser
+  // tab, and stranded them there when the call failed). Ask the server
+  // first — through the two-door resilient api() — then go in THIS tab;
+  // the OAuth callback redirects back into the app (?connected=...).
   const r = await api("connect/link", { method: "POST", json: { provider: prov } }).catch(() => ({}));
-  if (r.ok && r.url) { if (w) w.location = r.url; else location.href = r.url; } else { w?.close(); toast(r.error || t("netErr")); }
+  if (r.ok && r.url) location.href = r.url;
+  else toast(r.error || t("netErr"));
 }
 async function loadConnect() {
   try {
@@ -1851,6 +1855,15 @@ if (location.pathname.endsWith("/setup") || new URLSearchParams(location.search)
 // Google login callback lands on /?gtoken=... — store the session and enter.
 const gt = new URLSearchParams(location.search).get("gtoken");
 if (gt) { S.token = gt; store.set("token", gt); history.replaceState(null, "", BASE + "#/home"); }
+// v61: a provider connect (Gmail/YouTube/…) callback lands on
+// /?connected=<prov> — the flow returns INTO the app; confirm in chat,
+// refresh the connect list, and resume setup polling so a waiting setup
+// continues on its own.
+const connBack = new URLSearchParams(location.search).get("connected");
+if (connBack) {
+  history.replaceState(null, "", BASE + "#/chat");
+  setTimeout(() => { toast("✓ " + connBack + " connect ayyindi"); loadConnect().catch(() => {}); if (S.token) pollSetup(); }, 600);
+}
 applyTheme(); applyLang(); $("#setVoice").checked = S.voice; $("#setVF").checked = S.vf; $("#setBlind").checked = S.blind; applyBlind(); $("#wakeToggle").checked = S.wake && !!SR; $("#wakeToggle").disabled = !SR; updateBtn(); setJob(null); setVState("idle");
 if (S.token) { enter(); netCheck(); } else showLogin();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
