@@ -2,8 +2,8 @@
    warm brown text, caramel accent; iOS radii, typography and soft shadows.
    Dark = warm espresso (same family, never pure black). */
 :root{
-  --bg:#FAF3E3;--surface:#FFFBEF;--surface2:#F1E3C6;--text:#5B4632;--muted:#9A8266;--line:#EADFC6;
-  --accent:#C68B4E;--accent2:#D9A05B;--on-accent:#FFF9EE;--me:#C68B4E;--on-me:#FFFBF2;--bot:#FFFDF6;
+  --bg:#EFC97E;--surface:#F8E5B4;--surface2:#E9C173;--text:#57401E;--muted:#8A6A34;--line:#DDAF5E;
+  --accent:#B07627;--accent2:#C68B3A;--on-accent:#FFF6DE;--me:#B07627;--on-me:#FFF6DE;--bot:#FAEDC8;
   --shadow:0 1px 2px rgba(122,84,38,.05),0 6px 20px rgba(122,84,38,.07);--r:22px;
   --sat:env(safe-area-inset-top);--sab:env(safe-area-inset-bottom);
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Noto Sans","Noto Sans Telugu",system-ui,sans-serif;
