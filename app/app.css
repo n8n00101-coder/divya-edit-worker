@@ -3,15 +3,15 @@
    colour; raised/pressed read through a paired dark + light shadow.
    Dark = deep pista night with wheat text. */
 :root{
-  --bg:#EAC87E;--surface:#EAC87E;--surface2:#C9CF8F;--text:#454D1C;--muted:#7A7A3D;--line:rgba(90,110,40,.18);
-  --accent:#6FA84F;--accent2:#93C572;--on-accent:#F7F3D8;--me:#7FB069;--on-me:#FBF7E0;--bot:#EAC87E;
-  --shadow:5px 5px 12px rgba(150,110,40,.26),-5px -5px 12px rgba(250,244,205,.5);--r:24px;
+  --bg:#E9D8B4;--surface:#E9D8B4;--surface2:#CBD69E;--text:#46351D;--muted:#87764C;--line:rgba(120,95,50,.20);
+  --accent:#6FA84F;--accent2:#93C572;--on-accent:#F7F1DC;--me:#7FB069;--on-me:#F7F1DC;--bot:#E9D8B4;
+  --shadow:5px 5px 12px rgba(133,102,55,.26),-5px -5px 12px rgba(248,240,214,.5);--r:24px;
   --sat:env(safe-area-inset-top);--sab:env(safe-area-inset-bottom);
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Noto Sans","Noto Sans Telugu",system-ui,sans-serif;
   color-scheme:light;
 }
-html[data-theme=dark]{--bg:#332A1E;--surface:#332A1E;--surface2:#453723;--text:#F2E4BE;--muted:#C9B18A;--line:rgba(242,228,190,.12);--accent:#A9C98B;--accent2:#BCD6A0;--on-accent:#2A2118;--me:#7FA85C;--on-me:#F7F1DC;--bot:#332A1E;--shadow:5px 5px 12px rgba(12,8,3,.5),-5px -5px 12px rgba(230,205,150,.14);color-scheme:dark}
-@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#332A1E;--surface:#332A1E;--surface2:#453723;--text:#F2E4BE;--muted:#C9B18A;--line:rgba(242,228,190,.12);--accent:#A9C98B;--accent2:#BCD6A0;--on-accent:#2A2118;--me:#7FA85C;--on-me:#F7F1DC;--bot:#332A1E;--shadow:5px 5px 12px rgba(12,8,3,.5),-5px -5px 12px rgba(230,205,150,.14);color-scheme:dark}}
+html[data-theme=dark]{--bg:#332A1E;--surface:#332A1E;--surface2:#453723;--text:#F1E6CB;--muted:#C9B18A;--line:rgba(241,230,203,.12);--accent:#A9C98B;--accent2:#BCD6A0;--on-accent:#2A2118;--me:#7FA85C;--on-me:#F7F1DC;--bot:#332A1E;--shadow:5px 5px 12px rgba(12,8,3,.5),-5px -5px 12px rgba(230,205,150,.14);color-scheme:dark}
+@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#332A1E;--surface:#332A1E;--surface2:#453723;--text:#F1E6CB;--muted:#C9B18A;--line:rgba(241,230,203,.12);--accent:#A9C98B;--accent2:#BCD6A0;--on-accent:#2A2118;--me:#7FA85C;--on-me:#F7F1DC;--bot:#332A1E;--shadow:5px 5px 12px rgba(12,8,3,.5),-5px -5px 12px rgba(230,205,150,.14);color-scheme:dark}}
 /* v62 (Ajju): NO shadow/glow effects inside input boxes — flat, clean,
    professional fields: soft fill, one hairline border, pista focus ring. */
 input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),textarea,select{box-shadow:none!important;background:color-mix(in srgb,var(--surface2) 45%,var(--bg));border:1px solid var(--line)}
@@ -257,7 +257,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 /* App update banner: fixed above the tab bar, one tap to refresh to the new version. */
 .upd-banner{position:fixed;left:12px;right:12px;bottom:84px;z-index:95;display:flex;gap:10px;align-items:center;background:var(--accent);color:var(--on-accent);border-radius:16px;padding:12px 14px;box-shadow:0 4px 18px rgba(122,84,38,.35);font-size:14px;line-height:1.4}
 .upd-banner span{flex:1}
-.upd-banner .btn{flex:none;background:#F7F3D8;color:#4E7A33;min-height:44px}
+.upd-banner .btn{flex:none;background:#F1E6CB;color:#4E7A33;min-height:44px}
 .upd-banner[hidden]{display:none}
 .acct-card .h3{margin:0}
 .acct-card p{margin:0}
