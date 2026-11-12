@@ -646,13 +646,14 @@ async function appTalk(env, u, text, lang, voiceId) {
   const busyNow = await env.KV.get(`busy:${u.n}`);
   const appjob = JSON.parse((await env.KV.get(`appjob:${u.n}`)) || "null");
   const isStatusQ = /(ayindha|ayyindha|ready|status|progress|ekkada\s*varaku|inka\s*(entha|emi)|ayipoyindha|vachindha|complete|done\s*ah|entha\s*dooram)/i.test(cleanText) && !isCreateOrder(cleanText);
-  if (isStatusQ && (busyNow || appjob)) {
+  const lastHist = isStatusQ ? (await histList(env, u.n, 1))[0] : null;
+  if (isStatusQ && (busyNow || appjob || lastHist)) {
     let a2;
     const mins = appjob && appjob.at ? Math.max(0, Math.round((Date.now() - appjob.at) / 60000)) : 0;
     const topic = appjob && appjob.brief ? appjob.brief.replace(/^(AUTO|topic[:\s]*)/i, "").slice(0, 80) : "";
     if (busyNow) a2 = lang === "en" ? `Your video is still being made${topic ? ` — ${topic}` : ""}. Started ${mins} min ago. I'll send it here the moment it's ready.` : `Nee video inka tayaru avuthondi${topic ? ` — ${topic}` : ""}. Start ayyi ${mins} min ayindhi. Ready ayina ventane ikkade pampistha.`;
     else {
-      const last = (await histList(env, u.n, 1))[0];
+      const last = lastHist;
       if (last && last.state === "done") a2 = lang === "en" ? "Your last video is ready — it's in My videos (History), you can watch and download it there." : "Nee last video ready ayyindhi — My videos (History) lo undhi, akkada nunchi chusi download cheskovachu.";
       else if (last && last.state === "failed") a2 = lang === "en" ? "The last video didn't finish — it failed at the machine. Say the word and I'll start it again." : "Last video machine daggara fail ayyindhi. Cheppu, malli start chestha.";
       else a2 = lang === "en" ? "No video is running right now. Tell me a topic and I'll start one." : "Ippudu em video run avvatledhu. Topic cheppu, start chestha.";
