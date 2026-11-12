@@ -2208,11 +2208,22 @@ function gmailWalkParts(part, out) {
   if (mime === "text/plain" || mime === "text/html") { out.push({ mime, data: part.body?.data || "" }); return; }
   for (const sub of part.parts || []) gmailWalkParts(sub, out);
 }
+function qpDecode(t) {
+  // Quoted-printable bodies (common for provider mail): a "=" at the
+  // end of a line is a soft break — the line continues — and =XX is a
+  // hex-escaped byte (a URL's "=" arrives as =3D). The Gmail API hands
+  // back the raw part content, so without this a soft-wrapped magic
+  // link is extracted TRUNCATED at the wrap and the provider rejects
+  // it. Applied only when a soft break is present (that marker cannot
+  // occur in a plain body), so plain text is never touched.
+  if (!/=\r?\n/.test(t)) return t;
+  return t.replace(/=\r?\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
 function gmailBodyText(msg) {
   const parts = []; gmailWalkParts(msg.payload, parts);
-  const plain = parts.filter(p => p.mime === "text/plain").map(p => b64urlDecode(p.data)).join("\n");
+  const plain = parts.filter(p => p.mime === "text/plain").map(p => qpDecode(b64urlDecode(p.data))).join("\n");
   if (plain.trim()) return plain;
-  const html = parts.filter(p => p.mime === "text/html").map(p => b64urlDecode(p.data)).join("\n");
+  const html = parts.filter(p => p.mime === "text/html").map(p => qpDecode(b64urlDecode(p.data))).join("\n");
   return html.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 }
 function gmailPickLink(text, domains) {
@@ -2269,12 +2280,15 @@ async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
   } catch { return { ok: false, reason: "gmail-error" }; }
   const ids = (list.messages || []).map(x => x.id).filter(Boolean);
   if (!ids.length) return { ok: false, reason: "no-mail-yet" };
-  // Recency guard: only a mail from THIS run. pauseStart = later of the
-  // pause time (job.upd at pause, captured as pausedAt), the job start
-  // and the chain start, minus a 5-min grace — the provider sends the
-  // mail the moment the runner submits the form, which can be seconds
-  // BEFORE the runner notices the "check your email" page and pauses.
-  const pauseStart = Math.max((job && job.pausedAt) || 0, (job && job.at) || 0, chainAt || 0) - 5 * 60 * 1000;
+  // Recency guard: only a mail from THIS run. The provider sends the
+  // mail when THIS job's runner submits the form — always AFTER the
+  // job was dispatched (job.at) — so a mail older than the dispatch
+  // (minus a 60s clock-skew grace) belongs to a previous run. v44: the
+  // old formula (pausedAt - 5 min) let a just-CONSUMED link from a run
+  // minutes earlier pass when runs were back-to-back — the feed handed
+  // it over within seconds, before the fresh mail arrived, and Stytch
+  // answered redirect-error (proven live 2026-11-12).
+  const pauseStart = Math.max((job && job.at) || 0, chainAt || 0) - 60 * 1000;
   for (const id of ids) {
     let msg;
     try {
