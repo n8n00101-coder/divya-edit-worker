@@ -11,13 +11,19 @@ def load_job():
     r = httpx.post(f"{WORKER}/job", json={"job": JOB}, headers={"x-runner-key": KEY}, timeout=30)
     r.raise_for_status()
     j = r.json()
-    for k in ("WA_TOKEN", "GROQ_KEY"):
+    for k in ("WA_TOKEN", "GROQ_KEY", "PEXELS_KEY", "PIXABAY_KEY"):
         for v in str(j.get(k, "")).split(","):
             if v.strip():
                 print(f"::add-mask::{v.strip()}")
     os.environ["WA_TOKEN"] = j["WA_TOKEN"]
     os.environ["WA_PHONE_ID"] = j["PHONE_ID"]
     os.environ["GROQ_KEY"] = j["GROQ_KEY"]
+    # v69: stock B-roll keys (doc.py/broll.py). Optional — the Worker only
+    # sends them when the secrets exist; absent/empty keeps today's
+    # code-drawn-only behaviour.
+    for k in ("PEXELS_KEY", "PIXABAY_KEY"):
+        if j.get(k):
+            os.environ[k] = str(j[k])
     os.environ.setdefault("DATA_DIR", "/tmp/divya")
     os.makedirs(os.environ["DATA_DIR"], exist_ok=True)
     return j
@@ -508,25 +514,81 @@ def analysis_gate(path, facts=None):
     return True, flaws, dropped
 
 
+def parse_requested_seconds(brief):
+    """v69: the length the owner actually asked for, in seconds (None =
+    no length stated -> the short engine's default). The Worker's
+    'FINAL VIDEO LENGTH: exactly ...' line (startCreate) is authoritative
+    and wins first; then explicit hour/minute/second phrasing in the
+    brief; a bare 'long'/'documentary' means the 5-minute long-form
+    default. Capped at 3600 (1 hour — Ajju's order). 'up to N min'
+    (the brain's menu phrasing) is NOT an owner-stated length."""
+    b = brief or ""
+    m = re.search(r"FINAL VIDEO LENGTH:\s*exactly\s*(\d+)\s*minutes", b, re.I)
+    if m:
+        return min(int(m.group(1)) * 60, 3600)
+    m = re.search(r"FINAL VIDEO LENGTH:\s*exactly\s*(\d+)\s*seconds", b, re.I)
+    if m:
+        return int(m.group(1))
+    if re.search(r"\bone\s+hour\b", b, re.I):
+        return 3600
+    m = re.search(r"(?<!up to )\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b", b, re.I)
+    if m:
+        return min(int(float(m.group(1)) * 3600), 3600)
+    m = re.search(r"(?<!up to )\b(\d+)\s*(?:minutes?|mins?)\b", b, re.I)
+    if m:
+        return min(int(m.group(1)) * 60, 3600)
+    m = re.search(r"\b(\d+)\s*seconds\b", b, re.I)
+    if m:
+        return int(m.group(1))
+    if re.search(r"\b(?:long|documentary)\b", b, re.I):
+        return 300
+    return None
+
+
 async def create_job(j, wa, note):
     import create as _engines
     create = _engines.engine_module()  # DIVYA_ENGINE=v3 -> doc3, default doc (v2)
     to = j["to"]
     try:
         res = None
-        for attempt in range(2):
-            try:
-                # v28: the last 5 looks (from KV, via the job) so the look never
-                # repeats — only the v2 engine (doc.py, pick_look) takes it.
-                kw = {"recent": j.get("recent", "")}
-                if hasattr(create, "pick_look"):
-                    kw["recent_styles"] = j.get("recent_styles") or []
-                res = await create.make_video(j.get("brief", ""), groq_chat, notify=note, **kw)
-                print("look", res.get("plan", {}).get("look"), res.get("plan", {}).get("accent"))
-                break
-            except (ValueError, KeyError) as e:  # bad plan JSON -> retry once
-                if attempt:
-                    raise
+        # v69 FIX (Ajju 2026-11-13): WhatsApp creates only ever made ~1-min
+        # videos — create_job always called the SHORT engine (doc.py,
+        # default 50-60 s) and long_video.py was never routed to, while
+        # the Worker charged for up to 60 min. Now: a requested length
+        # over ~90 s goes to the chaptered long pipeline (long_video.
+        # make_long_video, totals up to 60 min). Short orders keep the
+        # exact old path. The long pipeline renders via doc.make_video,
+        # so it only applies when the live engine is doc (v2).
+        _target_s = parse_requested_seconds(j.get("brief", ""))
+        if _target_s is not None and _target_s > 90 \
+                and getattr(create, "__name__", "") == "doc":
+            import time as _time
+            import long_video
+            _target_min = max(2, int(round(_target_s / 60)))
+            _budget = int(os.environ.get("DIVYA_LONG_BUDGET_S", "3000") or 3000)
+            print(f"long route: target {_target_min} min, budget {_budget}s")
+            res = await long_video.make_long_video(
+                j.get("brief", ""), groq_chat,
+                workdir=os.path.join(os.environ.get("DATA_DIR", "/tmp/divya"),
+                                     f"long_{JOB}"),
+                target_minutes=_target_min, notify=note,
+                deadline=_time.monotonic() + _budget)
+            print("long video", res["path"], res.get("duration"),
+                  "partial" if res.get("partial") else "complete")
+        else:
+            for attempt in range(2):
+                try:
+                    # v28: the last 5 looks (from KV, via the job) so the look never
+                    # repeats — only the v2 engine (doc.py, pick_look) takes it.
+                    kw = {"recent": j.get("recent", "")}
+                    if hasattr(create, "pick_look"):
+                        kw["recent_styles"] = j.get("recent_styles") or []
+                    res = await create.make_video(j.get("brief", ""), groq_chat, notify=note, **kw)
+                    print("look", res.get("plan", {}).get("look"), res.get("plan", {}).get("accent"))
+                    break
+                except (ValueError, KeyError) as e:  # bad plan JSON -> retry once
+                    if attempt:
+                        raise
         size = os.path.getsize(res["path"]) / 1e6
         print("video", res["path"], round(size, 2), "MB", res.get("duration"))
         # v24 duration backstop: the brief's hard length was ignored (video 5 =
@@ -559,12 +621,23 @@ async def create_job(j, wa, note):
             caption = caption.replace(f, "").strip()
         if gate_flaws:
             qcline += "\nFlaws: " + "; ".join(gate_flaws)[:250]
+        # v69: honest long-video + B-roll notes on the delivery caption.
+        if res.get("partial"):
+            qcline += f"\n⚠️ Long video partial: {res.get('chapters_done')}/{res.get('chapters_total')} chapters (job time limit) — longest completed version pampincha."
+        _broll_used = res.get("broll") or []
+        if _broll_used:
+            qcline += f"\n🎞️ B-roll: {len(_broll_used)} stock footage clips ({', '.join(sorted({s.get('provider', '') for s in _broll_used}))})"
         try:
             up = fit_size(res["path"], 23)
             # v28: report the chosen style (look + motion + transition) so the
             # Worker stores it in KV (styles:<user>) for the next video's no-repeat.
             _pl = res.get("plan", {}) or {}
-            rr = httpx.post(f"{WORKER}/api/runner/result", params={"job": JOB, "note": f"{res.get('summary', '')[:200]}"[:290],
+            # v69: the result note carries the B-roll licence trail
+            # (provider page URLs) when the summary doesn't already.
+            _note = (res.get("summary") or "")[:200]
+            if _broll_used and "B-roll" not in _note:
+                _note = (_note + " B-roll sources: " + ", ".join(s.get("source_url", "") for s in _broll_used[:3]))[:290]
+            rr = httpx.post(f"{WORKER}/api/runner/result", params={"job": JOB, "note": _note,
                             "look": str(_pl.get("look", "")), "motion": str(_pl.get("motion_personality", "")),
                             "transition": str(_pl.get("transition_family", ""))}, content=open(up, "rb").read(), headers={"x-runner-key": KEY, "content-type": "video/mp4"}, timeout=300)
             print("result upload", rr.status_code)
