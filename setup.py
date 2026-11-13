@@ -3,7 +3,7 @@
 Runs on the GitHub runner (free, public repo) with Playwright headless
 Chromium. No browser ever opens on the user's screen. Drives one provider
 signup + API-key flow (or the whole chain groq -> openrouter -> gemini ->
-cloudflare when PROVIDER=chain), posts progress to the Worker (the chat
+cloudflare -> pexels when PROVIDER=chain), posts progress to the Worker (the chat
 mini-box reads it), and posts each created key back (never printed, never
 logged).
 
@@ -85,7 +85,7 @@ JOB = os.environ["JOB"]
 PROVIDER = os.environ["PROVIDER"]
 H = {"x-runner-key": KEY}
 
-CHAIN_ORDER = ["groq", "openrouter", "gemini", "cloudflare"]
+CHAIN_ORDER = ["groq", "openrouter", "gemini", "cloudflare", "pexels"]
 MAX_TRIES = 2
 CURRENT_PROVIDER = None
 
@@ -834,6 +834,14 @@ def test_key(provider, key):
         if provider == "gemini":
             r = httpx.get("https://generativelanguage.googleapis.com/v1beta/models",
                           params={"key": key}, timeout=20)
+            return r.status_code == 200
+        if provider == "pexels":
+            # v70: same auth shape broll.py uses — the raw key in the
+            # Authorization header (no Bearer). One key serves both the
+            # photo and video APIs; the curated endpoint is the cheap probe.
+            r = httpx.get("https://api.pexels.com/v1/curated",
+                          params={"per_page": 1},
+                          headers={"Authorization": key}, timeout=20)
             return r.status_code == 200
         if provider == "cloudflare":
             return cf_verify_token(key)
@@ -1695,6 +1703,222 @@ def flow_cloudflare(page, job, cfg):
     return _ok(key=token, extra={"account_id": account_id, "token_missing_perms": _cf_missing})
 
 
+# ---------- v70: Pexels (the user's OWN stock-footage key) ----------
+# Ajju (2026-11-13): "anni kuda thaane cheskoavali" — Julie creates every
+# key herself, not just the brain keys. Pexels is an ENHANCEMENT key (it
+# feeds broll.py's stock footage in create videos); it is not a brain
+# provider, so its failure must never fail the chain or setup itself.
+# Verified live 2026-11-13: Pexels has PAUSED new API key issuance — the
+# API page states "New API key issuance is currently paused and cannot
+# be requested" and its Get Started button is disabled. An account that
+# already HAS a key can still view it on the API page; an account
+# without one gets an honest unavailable result (below), never a loop,
+# never a retry-grind, never an invented key.
+
+_PEXELS_PAUSED_NEEDLES = ("new api key issuance is currently paused",
+                          "api key issuance is currently paused",
+                          "issuance is currently paused",
+                          "cannot be requested")
+
+
+def _pexels_key_shape(v):
+    """A Pexels API key is a 40-64 char alphanumeric token holding both
+    letters and digits. Anything else (hex hashes, ids, slugs) must
+    never be mistaken for it."""
+    return (isinstance(v, str) and 40 <= len(v) <= 64 and v.isalnum()
+            and any(c.isdigit() for c in v) and any(c.isalpha() for c in v))
+
+
+def parse_pexels_key(html, text=""):
+    """Find the account's Pexels API key on the API page. Pure.
+
+    The key appears (a) as the value of the key field in the "Your API
+    Key" section (a readonly and/or key-named input), and/or (b) as bare
+    text right after the "Your API Key" label. Only those two spots are
+    trusted — the page carries plenty of other long tokens that are NOT
+    keys. Returns the key or None. The value is never printed or logged."""
+    html = html or ""
+    for tag in re.findall(r"<input[^>]*>", html):
+        if "readonly" in tag.lower() or "key" in tag.lower():
+            m = re.search(r"value=['\"]([A-Za-z0-9]{40,64})['\"]", tag)
+            if m and _pexels_key_shape(m.group(1)):
+                return m.group(1)
+    blob = text or ""
+    low = blob.lower()
+    for marker in ("your api key", "api key"):
+        i = low.find(marker)
+        while i >= 0:
+            m = re.search(r"\b([A-Za-z0-9]{40,64})\b", blob[i:i + 300])
+            if m and _pexels_key_shape(m.group(1)):
+                return m.group(1)
+            i = low.find(marker, i + 1)
+    return None
+
+
+def classify_pexels_page(text, html=""):
+    """What state is the Pexels API page in? Pure.
+
+    "has-key" — the account's key is displayed (read + save it).
+    "paused" — Pexels is not issuing new keys right now and this
+    account has none (the issuance-paused notice is on the page).
+    "can-request" — signed in, no key yet, the access form is live."""
+    if parse_pexels_key(html, text):
+        return "has-key"
+    low = (text or "").lower()
+    if any(n in low for n in _PEXELS_PAUSED_NEEDLES):
+        return "paused"
+    return "can-request"
+
+
+def _pexels_snapshot(page):
+    """(visible text, html) of the current page — best-effort."""
+    try:
+        text = page.inner_text("body") or ""
+    except Exception:
+        text = ""
+    try:
+        html = page.content() or ""
+    except Exception:
+        html = ""
+    return text, html
+
+
+def _pexels_signed_out(page):
+    """True when the Pexels header is the logged-out one (Log in / Join
+    showing, no Upload button — Upload only exists when signed in)."""
+    if _visible(page, ["button:has-text('Upload')", "a:has-text('Upload')"]):
+        return False
+    return _visible(page, ["a:has-text('Log in')", "button:has-text('Log in')",
+                           "a:has-text('Join')", "button:has-text('Join')"])
+
+
+def _pexels_unavailable(name):
+    """Issuance-paused outcome: honest, non-fatal, no-retry. The chain
+    records this provider as failed-with-reason and moves on (the Worker
+    advances on "failed" exactly like any other provider failure);
+    needsSetup never counted Pexels, so setup itself is unaffected."""
+    msg = (f"{name} ipudu kotha API keys ivvatledhu — issuance paused. "
+           f"Nee account ki inka own key ledu kabatti ee step skip chesthunna; "
+           f"videos ki shared footage key pani chesthundhi. Pexels malli keys "
+           f"ivvagaane setup malli run chesthe nee own key save avthundhi.")
+    return _fail(msg, extra={"no_retry": True, "outcome": "unavailable"})
+
+
+def _pexels_fill_access_form(page, job):
+    """Best-effort fill of the Pexels API access form (reachable only
+    while issuance is open): name, app website, and the use description,
+    in the same spirit as the other flows' form fills. Never raises —
+    a field that is not there is skipped, and the caller re-reads the
+    page state afterwards either way."""
+    try:
+        email = str(job.get("email") or "")
+        if email:
+            fill(page, ["input[type='email']", "input[name='email']"], email)
+        fill(page, ["input[name*='name' i]", "input[placeholder*='name' i]"], "Julie")
+        fill(page, ["input[name*='website' i]", "input[placeholder*='website' i]",
+                    "input[name*='company' i]", "input[placeholder*='company' i]",
+                    "input[name*='url' i]"], "https://divya-app.n8n00101.workers.dev")
+        fill(page, ["textarea[name*='use' i]", "textarea[placeholder*='use' i]",
+                    "textarea[name*='description' i]", "textarea"],
+             "Julie is a personal AI assistant app. We use the Pexels API to fetch "
+             "royalty-free stock footage (B-roll) for videos our users create in the app.")
+        tick_consent(page)
+        click(page, ["button:has-text('Get Started')", "button:has-text('Request access')",
+                     "button:has-text('Request API access')", "button:has-text('Submit')",
+                     "button[type='submit']"])
+    except Exception as e:
+        print("pexels access form fill failed:", e)
+
+
+def flow_pexels(page, job, cfg):
+    """Pexels flow: sign in with the user's Google account, then read
+    the account's API key off the API page and save it (the standard
+    runner key path seals it as the user's own pexels key).
+
+    Sign-in rule (same as every other flow): the runner never types
+    Google credentials — when a sign-in is needed, the user does that
+    ONE step themselves: Take Control in profile mode (they sign in
+    inside this very browser; the session lands in their sealed
+    profile), the paused-signin pause otherwise. A captcha/bot wall is
+    never evaded — maybe_captcha + the run_flow wall handling apply,
+    exactly like the other providers."""
+    name = cfg["name"]
+    progress("running", "signin", f"{name} — API page open chesthunna.", cfg["url"])
+    if not goto(page, cfg["url"]):
+        return _fail(f"{name} page load avvaledu — site open avvaledu (step: API page, {cfg['url']}). Take Control tho try cheyyi.")
+    page.wait_for_timeout(2500)
+    if check_stop():
+        return _stopped()
+    maybe_captcha(page)
+    if check_stop():
+        return _stopped()
+    text, html = _pexels_snapshot(page)
+    state = classify_pexels_page(text, html)
+    if state != "has-key" and _pexels_signed_out(page):
+        # Sign in via Google (Pexels' login offers it; the job carries
+        # the user's Google email, and the account chooser is theirs).
+        progress("running", "signin", f"{name} — Google sign-in kavali.", cfg.get("login_url") or cfg["url"])
+        goto(page, cfg.get("login_url") or cfg["url"])
+        page.wait_for_timeout(2500)
+        click(page, ["button:has-text('Continue with Google')", "a:has-text('Continue with Google')",
+                     "button:has-text('Google')", "a:has-text('Google')"])
+        page.wait_for_timeout(3000)
+        if PROFILE_MODE:
+            resumed = take_control(page, job, cfg)
+        else:
+            resumed = pause_for_signin(page, cfg)
+        if not resumed:
+            try:
+                stopped = str(get_job().get("state") or "") == "stopped"
+            except Exception:
+                stopped = False
+            if stopped:
+                return _stopped()
+            return _fail(f"{name} sign-in time ayipoyindhi — sign in cheyaledhu, malli setup run cheyyachu (step: sign-in).", extra={"no_retry": True})
+        if check_stop():
+            return _stopped()
+        goto(page, cfg["url"])
+        page.wait_for_timeout(2500)
+        text, html = _pexels_snapshot(page)
+        state = classify_pexels_page(text, html)
+        if state != "has-key" and _pexels_signed_out(page):
+            return _fail(f"{name} sign-in complete avvaledu — inka login page lone undhi. Malli setup run cheyyi (step: sign-in).", extra={"no_retry": True})
+    if state != "has-key" and _page_says(page, VERIFY_NEEDLES):
+        # A fresh Pexels account can ask for email verification (Google
+        # signups usually skip it). Same pause kind as everywhere else:
+        # paused-email — the user taps the link in their mail, then
+        # Continue; the API page is re-read right after.
+        progress("paused", "verify-email", EMAIL_PAUSE_MSG, page.url, reason="email")
+        if wait_pause():
+            return _stopped()
+        goto(page, cfg["url"])
+        page.wait_for_timeout(2500)
+        text, html = _pexels_snapshot(page)
+        state = classify_pexels_page(text, html)
+    if state == "has-key":
+        key = parse_pexels_key(html, text) or extract_key(page, cfg["key_patterns"])
+        if key:
+            return _ok(key=key)
+        return _fail(f"{name} key kanipinchaledu (step: API page). Take Control tho try cheyyi.")
+    if state == "paused":
+        return _pexels_unavailable(name)
+    # can-request: the access form (only reachable while issuance is open).
+    progress("running", "api-key", f"{name} API access form fill chesthunna.", page.url)
+    _pexels_fill_access_form(page, job)
+    page.wait_for_timeout(4000)
+    if check_stop():
+        return _stopped()
+    text, html = _pexels_snapshot(page)
+    state = classify_pexels_page(text, html)
+    if state == "has-key":
+        key = parse_pexels_key(html, text) or extract_key(page, cfg["key_patterns"])
+        if key:
+            return _ok(key=key)
+    if state == "paused":
+        return _pexels_unavailable(name)
+    return _fail(f"{name} key kanipinchaledu — form tarvatha kuda key display avvaledu (step: API access form). Take Control tho try cheyyi.")
+
+
 FLOWS = {
     "groq": {"name": "Groq", "url": "https://console.groq.com/signup",
              "login_url": "https://console.groq.com/login",
@@ -1712,6 +1936,10 @@ FLOWS = {
                    "keys_url": "https://dash.cloudflare.com/profile/api-tokens",
                    "flow": "cloudflare",
                    "key_patterns": [r"\b([A-Za-z0-9_\-]{40})\b"]},
+    "pexels": {"name": "Pexels", "url": "https://www.pexels.com/api/",
+               "login_url": "https://www.pexels.com/login/",
+               "keys_url": "https://www.pexels.com/api/", "flow": "pexels",
+               "key_patterns": [r"\b([A-Za-z0-9]{56})\b"]},
 }
 
 
@@ -1748,7 +1976,7 @@ def run_flow(page, job, cfg):
         # and similar walls show on FIRST load. Give the page ~6s to
         # clear a managed challenge; if the wall persists, fail in
         # seconds (no_retry) instead of grinding through the whole flow.
-        if flow in ("cloudflare", "token", "email"):
+        if flow in ("cloudflare", "token", "email", "pexels"):
             try:
                 page.goto(cfg["url"], wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(2500)
@@ -1765,6 +1993,8 @@ def run_flow(page, job, cfg):
             return flow_cloudflare(page, job, cfg)
         if flow == "google":
             return flow_google(page, job, cfg)
+        if flow == "pexels":
+            return flow_pexels(page, job, cfg)
         return flow_email_signup(page, job, cfg)
     except WallHit as w:
         return _fail(f"{cfg['name']} security wall ({w}) — Take Control tho nuvve okkasari sign in cheyyi, tarvatha Julie ne continue chesthundhi.", extra={"no_retry": True, "wall": str(w)})

@@ -1,7 +1,7 @@
 // Julie — 24/7 WhatsApp brain on Cloudflare Workers (free plan, no card).
 // Chat + screenshot reading happen here. Video edits go to GitHub Actions (4 vCPU, free on public repo).
 // Secrets (set in dashboard / API): WA_TOKEN, GROQ_KEY, GH_TOKEN, VERIFY_TOKEN, RUNNER_KEY
-// Optional (v69, stock B-roll in create videos): PEXELS_KEY, PIXABAY_KEY — free API keys from pexels.com/api / pixabay.com/api/docs; unset = code-drawn backgrounds only.
+// Optional (v69, stock B-roll in create videos): PEXELS_KEY, PIXABAY_KEY — free API keys from pexels.com/api / pixabay.com/api/docs; unset = code-drawn backgrounds only. (v70: a user's own setup-created Pexels key, sealed as ukey:<user>:pexels, wins over the central PEXELS_KEY in /job.)
 // Vars: PHONE_ID, OWNERS (comma list, e.g. 919951950173), GH_REPO (owner/repo)
 // KV binding: KV
 
@@ -2639,6 +2639,7 @@ const SETUP_PROVIDERS = {
   openrouter: { name: "OpenRouter", site: "openrouter.ai", url: "https://openrouter.ai/sign-up", flow: "email" },
   gemini: { name: "Gemini (Google AI Studio)", site: "aistudio.google.com", url: "https://aistudio.google.com/", flow: "google" }, // v40: provisioned SERVER-SIDE by provisionGeminiKey() in setupStartNext — flow "google" stays as the runner fallback for manual runs only
   cloudflare: { name: "Cloudflare (server)", site: "dash.cloudflare.com", url: "https://dash.cloudflare.com/sign-up", flow: "token" },
+  pexels: { name: "Pexels", site: "pexels.com", url: "https://www.pexels.com/api/", flow: "pexels" }, // v70: the user's OWN stock-footage key, created by the runner's flow_pexels — an enhancement key (B-roll), NOT a brain provider: never in AUTO_PROVIDERS, never counted by needsSetup
 };
 function setupJobId() { return [...crypto.getRandomValues(new Uint8Array(10))].map(b => b.toString(16).padStart(2, "0")).join(""); }
 function setupPass() { const c = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#"; const r = crypto.getRandomValues(new Uint8Array(16)); return [...r].map(b => c[b % c.length]).join(""); }
@@ -3151,7 +3152,7 @@ function stripChainSecrets(c) {
 // = Julie added, the custom model = Manual. READS ONLY — status comes
 // from each record's own ok/tested fields, never a live probe (the v50
 // KV-write lesson), and no key value or ciphertext ever leaves here.
-const KEYLIST_PROVIDERS = [["groq", "Groq"], ["openrouter", "OpenRouter"], ["gemini", "Gemini (Google AI Studio)"], ["cloudflare", "Cloudflare (server)"], ["github", "GitHub"], ["huggingface", "Hugging Face"]];
+const KEYLIST_PROVIDERS = [["groq", "Groq"], ["openrouter", "OpenRouter"], ["gemini", "Gemini (Google AI Studio)"], ["cloudflare", "Cloudflare (server)"], ["pexels", "Pexels"], ["github", "GitHub"], ["huggingface", "Hugging Face"]];
 async function setupKeyList(env, n) {
   const rows = [];
   for (const [id, name] of KEYLIST_PROVIDERS) {
@@ -3243,7 +3244,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
     const email = String(body.email || (u.acct && u.acct.email) || "").trim().slice(0, 120);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: en ? "Give an email for the new accounts." : "Kotha accounts kosam oka email ivvu." };
-    const ids = (Array.isArray(body.providers) ? body.providers : ["groq", "openrouter", "gemini", "cloudflare"]).filter(id => SETUP_PROVIDERS[id]);
+    const ids = (Array.isArray(body.providers) ? body.providers : ["groq", "openrouter", "gemini", "cloudflare", "pexels"]).filter(id => SETUP_PROVIDERS[id]);
     if (!ids.length) return { ok: false, error: "no provider" };
     // v39: never silently orphan a live run. A fresh active chain means a
     // runner is working right now — say so instead of starting a second
@@ -3508,6 +3509,17 @@ async function setupStartNext(env, n) {
   // nothing to show when the setup ends (the mini-box just vanished).
   // v38 merge fix: if NO provider produced a key, the run failed (not done).
   if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, failReason: chain.failReason || null, ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
+  // v70: Pexels is an enhancement key (stock footage), not a brain key —
+  // a user who already has one sealed never re-runs the browser flow for
+  // it: the step counts as done and the chain moves on. (No other
+  // provider skips this way — their flows re-create keys on a re-run;
+  // Pexels re-reading would just fetch the same key, and while issuance
+  // is paused a needless run could only end "unavailable".)
+  if (nextId === "pexels" && (await env.KV.get(`ukey:${n}:pexels`))) {
+    chain.done.push("pexels");
+    await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+    return setupStartNext(env, n);
+  }
   // v42: double-advance guard — the runner's result + terminal progress
   // events can both trigger an advance (now deferred via waitUntil, so
   // they may overlap). If the current job already targets nextId and is
@@ -3856,7 +3868,14 @@ export default {
       const { job } = await req.json();
       const j = await env.KV.get(`job:${job}`);
       if (!j) return new Response("missing", { status: 404 });
-      return Response.json({ ...JSON.parse(j), WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "" });
+      const jrec = JSON.parse(j);
+      // v70: the job owner's OWN Pexels key (created by Julie in their
+      // setup, sealed as ukey:<owner>:pexels) beats the central env key —
+      // the same owner-first pattern the brain keys use (openKey ||
+      // env fallback). PIXABAY_KEY stays central-only (no per-user
+      // pixabay concept exists).
+      const ownPexels = jrec.to ? await openKey(env, jrec.to, "pexels") : "";
+      return Response.json({ ...jrec, WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: ownPexels || env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "" });
     }
     // Call media server fetches WA/Groq creds here (shared FORWARD_SECRET).
     if (url.pathname === "/callcreds" && req.method === "POST") {
