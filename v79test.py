@@ -109,6 +109,99 @@ def test_spec_engine():
     ok("capability: upfront line is one honest sentence", "except" in line and "instead" in line)
 
 
+# ---------------------------------------------------------------- 1b
+def test_spec_voice_language():
+    """v79.1: "<Language> voice" is a voice-LANGUAGE requirement, not
+    a named voice (production: Blind's FIX-7 test 1 stopped upfront
+    on exactly this). The gate must still stop genuinely unroutable
+    asks."""
+    import spec_engine as se
+    import compliance as cp
+
+    # Blind FIX-7 test 1, verbatim — the production failure prompt.
+    p1 = "30 second video on sleep, blue colour, no music, Telugu voice"
+    spec = se.extract_spec(p1)
+    vreq = [r for r in spec if r["type"] == "voice"]
+    ok("v79.1: 'Telugu voice' is a language-voice requirement",
+       len(vreq) == 1 and vreq[0].get("language") == "te"
+       and vreq[0]["quote"] == "Telugu voice" and "gender" not in vreq[0],
+       str(vreq))
+    ok("v79.1: test 1 has NO capability problems",
+       se.capability_check(spec, "short") == [])
+    cfg = se.resolve_render_config(spec, "short")
+    ok("v79.1: Telugu routes to a te-IN voice",
+       cfg["voice_id"] in ("te-IN-ShrutiNeural", "te-IN-MohanNeural"))
+    ok("v79.1: routing choice recorded (default gender, R-P7)",
+       cfg["voice_choice"]["language"] == "te"
+       and cfg["voice_choice"]["gender_source"] == "default"
+       and cfg["voice_choice"]["voice_id"] == cfg["voice_id"])
+    ok("v79.1: the rest of test 1 still extracts (30s, blue, music OFF)",
+       cfg["duration_s"] == 30.0 and cfg["accent"] == [80, 140, 255]
+       and cfg["music"] is False and cfg["lang"] == "te")
+
+    # The exact production shape: an LLM item whose value is the bare
+    # language name must resolve, not stop.
+    llm_shape = [{"id": "R1", "type": "voice", "value": "Telugu",
+                  "quote": "Telugu voice"}]
+    ok("v79.1: LLM-shaped 'voice: Telugu' resolves to te-IN",
+       se.resolve_render_config(llm_shape, "short")["voice_id"].startswith("te-IN-"))
+    # ... and the LLM merge path normalises it to the same shape.
+    def stub_chat(_msgs):
+        return '[{"type": "voice", "value": "Telugu voice", "quote": "Telugu voice"}]'
+    spec_llm = se.extract_spec("a video on sleep, Telugu voice", chat=stub_chat)
+    vreq_llm = [r for r in spec_llm if r["type"] == "voice"]
+    ok("v79.1: LLM merge normalises to language-voice",
+       len(vreq_llm) == 1 and vreq_llm[0].get("language") == "te",
+       str(vreq_llm))
+
+    # Gender stated in the prompt wins; other phrasings route too.
+    cfg_f = se.resolve_render_config(
+        se.extract_spec("Telugu female voice, 1 minute on farming"), "short")
+    ok("v79.1: 'Telugu female voice' -> ShrutiNeural, gender from prompt",
+       cfg_f["voice_id"] == "te-IN-ShrutiNeural"
+       and cfg_f["voice_choice"]["gender_source"] == "prompt")
+    ok("v79.1: 'voice in Hindi' routes to hi-IN",
+       se.resolve_render_config(se.extract_spec("voice in Hindi, a video"),
+                                "short")["voice_id"].startswith("hi-IN-"))
+    ok("v79.1: 'Telugu lo voice' routes to te-IN",
+       se.resolve_render_config(se.extract_spec("Telugu lo voice, cricket video"),
+                                "short")["voice_id"].startswith("te-IN-"))
+    ok("v79.1: 'Hindi male voice' -> MadhurNeural",
+       se.resolve_render_config(se.extract_spec("Hindi male voice, news video"),
+                                "short")["voice_id"] == "hi-IN-MadhurNeural")
+
+    # Genuinely unroutable asks still stop upfront — wording kept.
+    spec_k = se.extract_spec("Klingon voice, a video on space")
+    ok("v79.1: unknown language is extracted as a voice naming",
+       any(r["type"] == "voice" for r in spec_k))
+    probs_k = se.capability_check(spec_k, "short")
+    ok("v79.1: 'Klingon voice' still stops upfront",
+       len(probs_k) == 1 and "not a voice the engine has" in probs_k[0]["reason"])
+    ok("v79.1: upfront line still offers the alternative",
+       "Shall I go ahead?" in se.upfront_line(probs_k))
+    for named in ("Rowan Telugu HD", "Andrew"):
+        try:
+            se.resolve_render_config(
+                [{"id": "R1", "type": "voice", "value": named, "quote": named}], "short")
+            ok(f"v79.1: named voice '{named}' stops upfront", False, "no SpecImpossible")
+        except se.SpecImpossible:
+            ok(f"v79.1: named voice '{named}' stops upfront", True)
+
+    # The routing choice lands in the compliance report (R-P7).
+    verdicts = cp.requirement_verdicts(
+        vreq, cfg, {"voice_used": cfg["voice_id"], "lang": "te"}, {})
+    ok("v79.1: compliance PASSes the routed voice with the choice as evidence",
+       verdicts and verdicts[0]["status"] == "PASS"
+       and "routed to" in verdicts[0]["evidence"],
+       str(verdicts))
+
+    # FIX-7 test 2's phrasing carries no voice requirement at all.
+    spec2 = se.extract_spec(
+        "gutka video, use only real footage, no graphics, big white captions")
+    ok("v79.1: FIX-7 test 2 phrasing unaffected (no voice req)",
+       not any(r["type"] == "voice" for r in spec2))
+
+
 # ---------------------------------------------------------------- 2
 def test_captions():
     import compliance as cp
@@ -680,6 +773,7 @@ def test_ajju_frame_rules():
 
 def main():
     test_spec_engine()
+    test_spec_voice_language()
     test_captions()
     test_compliance_plan()
     test_broll_pool()

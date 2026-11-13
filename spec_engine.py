@@ -28,6 +28,12 @@ by an LLM summary) plus one LLM pass for the remaining requirement
 kinds, merged with a read-back coverage check (mail 2b point 1: count
 the requirements, re-read the prompt, look for anything not in the
 list — numbers and negations must appear in some quote).
+
+v79.1: "<Language> voice" ("Telugu voice", "voice in Hindi",
+"Telugu lo voice") is a voice-LANGUAGE requirement that routes to the
+engine's per-language edge-tts catalogue (LANGUAGE_VOICES) — it is
+NOT a named voice. Only a genuinely unroutable ask (a language with
+no TTS route, a named voice the engine lacks) stops upfront.
 """
 
 import json
@@ -42,6 +48,24 @@ MIN_SIDE = 360
 MAX_DURATION_S = 3600          # 60 minutes (long pipeline ceiling)
 MAX_CHAPTERS = 30
 LANGUAGES = {"en": ("english",), "te": ("telugu",), "hi": ("hindi",)}
+_LANG_NAME_TO_CODE = {name: code for code, names in LANGUAGES.items()
+                      for name in names}
+_LANG_DISPLAY = {code: names[0].capitalize()
+                 for code, names in LANGUAGES.items()}
+# Per-language TTS routes (edge-tts) — mirrors doc.VOICES, the
+# engine's actual synthesis catalogue (v79.1). A "<Language> voice"
+# requirement resolves through this map (gender from the prompt when
+# stated, DEFAULT_VOICE_GENDER otherwise, and the choice is recorded
+# in cfg["voice_choice"]). doc.VOICES' ("en", "male_calm") mood
+# variant is an engine default, not a prompt route, so it is absent.
+LANGUAGE_VOICES = {
+    "en": {"male": "en-US-AndrewMultilingualNeural",
+           "female": "en-US-AvaMultilingualNeural"},
+    "te": {"male": "te-IN-MohanNeural", "female": "te-IN-ShrutiNeural"},
+    "hi": {"male": "hi-IN-MadhurNeural", "female": "hi-IN-SwaraNeural"},
+}
+# doc.py's own default when a plan says nothing about gender.
+DEFAULT_VOICE_GENDER = "male"
 # edge-tts voices the engine will pass through: the doc.VOICES catalogue
 # plus any well-formed <lang>-<REGION>-<Name>Neural id (R-P5: a voice
 # named in the prompt is a renderer parameter, never re-chosen).
@@ -82,6 +106,36 @@ def _req(rtype, value, quote):
 
 def _sentences(text):
     return [s.strip() for s in re.split(r"(?<=[.!?\n])\s+", text or "") if s.strip()]
+
+
+def _parse_voice_language(value):
+    """v79.1 classification: if a voice VALUE is really a voice-
+    LANGUAGE ask — "Telugu", "Telugu voice", "female Telugu voice",
+    "Telugu female", "voice in Hindi", "Telugu lo voice" — return
+    (lang_code, gender|None). Anything else returns None: a named
+    voice ("Rowan Telugu HD", "en-US-AndrewNeural") or a description
+    ("a celebrity voice") is not a language, and the resolver treats
+    it as a named voice (passing it through when it is a real
+    edge-tts id, stopping upfront when the engine lacks it)."""
+    v = " " + re.sub(r"[^a-z ]", " ", str(value).lower()) + " "
+    gender = None
+    for g in ("female", "male"):
+        if f" {g} " in v:
+            gender = g
+            v = v.replace(f" {g} ", " ")
+    v = re.sub(r"\b(voice|in|lo|a|an|the)\b", " ", v)
+    v = re.sub(r"\s+", " ", v).strip()
+    code = _LANG_NAME_TO_CODE.get(v)
+    return (code, gender) if code else None
+
+
+# Words that, sitting directly before "voice", do NOT name a voice:
+# "slow the voice" is an edit instruction, "Rowan Telugu HD voice"
+# is a named voice whose trailing word is a quality tag (the LLM
+# pass carries the full name as the value in that case).
+_VOICE_STOPWORDS = {"the", "a", "an", "my", "your", "his", "her",
+                    "their", "our", "this", "that", "same", "own",
+                    "hd", "uhd"}
 
 
 def extract_deterministic(text):
@@ -143,14 +197,37 @@ def extract_deterministic(text):
             grab("language", code, m)
             break
 
-    # voice: named edge-tts id, or gender
+    # voice (v79.1 classification, in order): a named edge-tts id;
+    # a voice-LANGUAGE ask ("Telugu voice", "voice in Hindi",
+    # "Telugu lo voice", gender optional) — a language requirement
+    # with language=<code> (+ gender when stated), NOT a named voice;
+    # a bare gender ask; or any other "<word> voice" naming, kept
+    # verbatim so resolve_render_config stops it upfront when the
+    # engine truly lacks that voice — never silently dropped.
     m = re.search(r"\b[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural\b", text)
     if m:
         grab("voice", m.group(0), m)
     else:
-        m = re.search(r"\b(female|male)\s+voice\b|\bvoice\s*:\s*(female|male)\b", low)
+        lang_alt = "|".join(_LANG_NAME_TO_CODE)
+        m = (re.search(r"\b(?:(?:female|male)\s+)?(?:" + lang_alt + r")"
+                       r"(?:\s+(?:female|male))?\s+voice\b", low)
+             or re.search(r"\bvoice\s+in\s+(?:" + lang_alt + r")\b", low)
+             or re.search(r"\b(?:" + lang_alt + r")\s+lo\s+voice\b", low))
         if m:
-            grab("voice", m.group(1) or m.group(2), m)
+            code, gender = _parse_voice_language(m.group(0))
+            req = _req("voice", _LANG_DISPLAY[code], m.group(0))
+            req["language"] = code
+            if gender:
+                req["gender"] = gender
+            out.append(req)
+        else:
+            m = re.search(r"\b(female|male)\s+voice\b|\bvoice\s*:\s*(female|male)\b", low)
+            if m:
+                grab("voice", m.group(1) or m.group(2), m)
+            else:
+                m = re.search(r"\b([a-z]+)\s+voice\b", low)
+                if m and m.group(1) not in _VOICE_STOPWORDS:
+                    grab("voice", m.group(1), m)
 
     # chapters: "8 chapters", "8-9 chapters"
     m = re.search(r"\b(\d+)\s*(?:-\s*\d+\s*)?chapters?\b", low)
@@ -229,11 +306,26 @@ def extract_spec_full(prompt_text, chat=None):
                     continue
                 if q not in text and q.lower() not in text.lower():
                     continue  # a quote that is not the user's words is not evidence
-                key = (t, v.lower())
+                item = {"type": t, "value": v, "quote": q}
+                if t == "voice":
+                    # v79.1: an LLM "voice: Telugu" item is a voice-
+                    # LANGUAGE ask, not a named voice — normalise it
+                    # to the same shape the deterministic pass emits
+                    # (this exact shape stopped a valid job in
+                    # production before the fix), BEFORE the dedupe
+                    # below so it merges with the deterministic item
+                    # instead of duplicating it.
+                    parsed = _parse_voice_language(v)
+                    if parsed:
+                        item["value"] = _LANG_DISPLAY[parsed[0]]
+                        item["language"] = parsed[0]
+                        if parsed[1]:
+                            item["gender"] = parsed[1]
+                key = (t, item["value"].lower())
                 if key in seen:
                     continue
                 seen.add(key)
-                items.append({"type": t, "value": v, "quote": q})
+                items.append(item)
         except Exception:
             pass  # the deterministic pass stands on its own
 
@@ -327,19 +419,60 @@ def resolve_render_config(spec, kind="short"):
         lang = str(r["value"]).lower()
         cfg["spec_ids"]["language"] = r["id"]
     cfg["lang"] = lang
+    # v79.1: classify every voice requirement before deciding —
+    # a named edge-tts id (passes through exactly), a voice-LANGUAGE
+    # ask (routes via LANGUAGE_VOICES), a bare gender, or a genuinely
+    # unknown naming (stops upfront). A language ask stated alongside
+    # a named voice does not override the named voice.
     voice_id = voice_gender = None
+    voice_choice = None
+    named_voice = lang_voice = gender_ask = None
     for r in _find(spec, "voice"):
         v = str(r["value"]).strip()
         cfg["spec_ids"]["voice"] = r["id"]
         if VOICE_ID_RE.match(v):
-            voice_id = v
-        elif v.lower() in ("male", "female"):
-            voice_gender = v.lower()
-        elif v:
+            named_voice = v
+            continue
+        code = r.get("language")
+        if code not in LANGUAGE_VOICES:
+            code = _LANG_NAME_TO_CODE.get(str(code).lower()) if code else None
+        parsed = _parse_voice_language(v)
+        if parsed:
+            code = code or parsed[0]
+        if code:
+            lang_voice = (code, r.get("gender") or (parsed[1] if parsed else None))
+            continue
+        if v.lower() in ("male", "female"):
+            gender_ask = v.lower()
+            continue
+        if v:
             raise SpecImpossible(r["id"],
                                  f"voice '{v}' is not a voice the engine has",
-                                 "a named edge-tts voice (e.g. en-US-AndrewNeural), male or female")
+                                 "a named edge-tts voice (e.g. en-US-AndrewNeural), "
+                                 "male or female, or a voice language the engine "
+                                 "speaks (English, Telugu, Hindi)")
+    if named_voice:
+        voice_id = named_voice
+    elif lang_voice:
+        code, gender = lang_voice
+        use_gender = gender or gender_ask or DEFAULT_VOICE_GENDER
+        voice_id = LANGUAGE_VOICES[code][use_gender]
+        voice_gender = use_gender
+        # Record the routing choice for the compliance artifacts
+        # (R-P7: the delivery says what was actually used, and why).
+        voice_choice = {"via": "language", "language": code,
+                        "gender": use_gender,
+                        "gender_source": "prompt" if (gender or gender_ask) else "default",
+                        "voice_id": voice_id}
+        if lang is None:
+            # "Telugu voice" also fixes the narration language when
+            # no separate language requirement spoke.
+            lang = code
+            cfg["lang"] = code
+    elif gender_ask:
+        voice_gender = gender_ask
     cfg["voice_id"], cfg["voice_gender"] = voice_id, voice_gender
+    cfg["voice_choice"] = voice_choice
 
     # --- music / sfx / captions switches (FIX 2: a conflicting
     # default is switched off) ---
