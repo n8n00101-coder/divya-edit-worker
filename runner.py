@@ -130,6 +130,32 @@ def app_state(state, note=""):
         print("state post failed", type(e).__name__)
 
 
+def upload_artifacts(wd):
+    """v79 (FIX 1/4/5): upload the video's contract artifacts —
+    prompt_spec.json, footage.json, compliance_report.json and the
+    saved project.json — to the Worker (runner/artifacts route), so
+    they are retrievable with the result and Blind can review from
+    them. Best-effort per file; a missing file is skipped, never
+    fatal (delivery already happened)."""
+    if not wd:
+        return
+    for name in ("prompt_spec.json", "footage.json",
+                 "compliance_report.json", "project.json"):
+        p = os.path.join(str(wd), name)
+        try:
+            if not os.path.exists(p):
+                continue
+            with open(p, encoding="utf-8") as f:
+                content = f.read()
+            r = httpx.post(f"{WORKER}/api/runner/artifacts",
+                           params={"job": JOB},
+                           json={"name": name, "content": content},
+                           headers={"x-runner-key": KEY}, timeout=60)
+            print("artifact upload", name, r.status_code)
+        except Exception as e:
+            print("artifact upload failed", name, str(e)[:120])
+
+
 def fetch_source(j) -> str:
     """App edit source: an upload kept by the Worker, or a link (Google Drive / YouTube / direct URL)."""
     import re, subprocess
@@ -702,6 +728,52 @@ async def create_job(j, wa, note):
                 print("refvoice: route answered", _rr.status_code, "— continuing without it")
         except Exception as e:
             print("refvoice download failed:", str(e)[:150])
+    # v79 (FIX 1/2/6 + R-P1..R-P7): the user's prompt is a CONTRACT.
+    # Extract prompt_spec from the user's EXACT words (the Worker
+    # stores them on the job as user_prompt; the brief is the
+    # fallback), resolve the render config from the spec, and check
+    # every requirement against the capability list BEFORE rendering.
+    # An impossible requirement fails the job HERE with the one-line
+    # upfront message — never a silent substitution, never a render
+    # first and an apology after (mail 2b, point 5).
+    _spec, _cfg = [], None
+    _target_s = parse_requested_seconds(j.get("brief", ""))
+    _kind = "long" if (_target_s is not None and _target_s > 90) else "short"
+    if getattr(create, "__name__", "") == "doc":
+        try:
+            import spec_engine as _se
+            import broll as _broll_mod
+            _src_text = str(j.get("user_prompt") or j.get("brief") or "")
+            _spec = _se.extract_spec(_src_text, chat=groq_chat)
+            _problems = _se.capability_check(
+                _spec, _kind,
+                footage_available=_broll_mod.FootagePool().available())
+            if not _problems:
+                try:
+                    _cfg = _se.resolve_render_config(_spec, _kind)
+                except _se.SpecImpossible as _e:
+                    _problems = [{"id": _e.req_id, "reason": _e.reason,
+                                  "alternative": _e.alternative}]
+            if _problems:
+                _line = _se.upfront_line(_problems)
+                print("v79 upfront stop:", _line)
+                app_state("failed", _line)
+                try:
+                    await wa.send_text(to, _line)
+                except Exception:
+                    pass
+                return
+            print(f"v79 spec: {len(_spec)} requirements, cfg "
+                  f"{_cfg['width']}x{_cfg['height']} music={_cfg['music']} "
+                  f"lang={_cfg['lang']}")
+        except Exception as e:
+            # The spec machinery itself must never kill a job it
+            # cannot read — but a failure HERE is logged loudly, and
+            # extraction problems (capability_check) above already
+            # returned. A crash in extraction = no spec = old path.
+            print("v79 spec extraction failed (continuing without spec):",
+                  str(e)[:200])
+            _spec, _cfg = [], None
     try:
         res = None
         # v69 FIX (Ajju 2026-11-13): WhatsApp creates only ever made ~1-min
@@ -712,7 +784,6 @@ async def create_job(j, wa, note):
         # make_long_video, totals up to 60 min). Short orders keep the
         # exact old path. The long pipeline renders via doc.make_video,
         # so it only applies when the live engine is doc (v2).
-        _target_s = parse_requested_seconds(j.get("brief", ""))
         if _target_s is not None and _target_s > 90 \
                 and getattr(create, "__name__", "") == "doc":
             import time as _time
@@ -726,7 +797,8 @@ async def create_job(j, wa, note):
                                      f"long_{JOB}"),
                 target_minutes=_target_min, notify=note,
                 deadline=_time.monotonic() + _budget,
-                ref_voice=_ref, amendments=amend)
+                ref_voice=_ref, amendments=amend,
+                spec=_spec or None, cfg=_cfg)
             print("long video", res["path"], res.get("duration"),
                   "partial" if res.get("partial") else "complete")
         else:
@@ -741,6 +813,11 @@ async def create_job(j, wa, note):
                         kw["ref_voice"] = _ref
                     if getattr(create, "AMENDMENTS", False):
                         kw["amendments"] = amend
+                    # v79: the contract (spec + resolved config) rides
+                    # into the engine — every step renders FROM it.
+                    if _cfg is not None:
+                        kw["spec"] = _spec
+                        kw["cfg"] = _cfg
                     res = await create.make_video(j.get("brief", ""), groq_chat, notify=note, **kw)
                     print("look", res.get("plan", {}).get("look"), res.get("plan", {}).get("accent"))
                     break
@@ -805,6 +882,15 @@ async def create_job(j, wa, note):
         if _am_missed:
             _am_note = (_am_note + " Amendments missed: " + "; ".join(it["text"][:40] for it in _am_missed[:3])).strip()
             qcline += "\n⚠️ Ee changes ee video ki time ki andaledhu: " + "; ".join(it["text"][:50] for it in _am_missed[:3]) + " — ivvi kavali ante \"cancel chesi malli chey\" ani cheppu; nene ee video ni aa changes tho malli chestha."
+        # v79 (R-P7): every delivery carries the compliance
+        # done / not-done line — what was asked, what was done, what
+        # could not be done and why. No silent substitutions, ever.
+        if res.get("compliance"):
+            try:
+                import compliance as _comp_mod
+                qcline += "\n" + _comp_mod.done_not_done_line(res["compliance"])
+            except Exception as e:
+                print("done/not-done line failed:", str(e)[:120])
         try:
             up = fit_size(res["path"], 23)
             # v28: report the chosen style (look + motion + transition) so the
@@ -823,6 +909,8 @@ async def create_job(j, wa, note):
             print("result upload", rr.status_code)
             if rr.status_code == 200:
                 mark_result_delivered()  # v78: delivered is terminal
+                # v79: the contract artifacts travel with the result.
+                upload_artifacts(res.get("workdir"))
         except Exception as e:
             print("result upload failed", str(e)[:200])
         # v78: WhatsApp delivery is best-effort AFTER the app result —
