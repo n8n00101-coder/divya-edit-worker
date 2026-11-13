@@ -515,8 +515,16 @@ def vis_warning(t, st=0, d=.5, text="!", col=(255, 200, 0), cx=W/2, cy=620, puls
 
 @reg("source_line", ["source", "study", "credit", "fact"])
 def vis_source(t, st=0, d=.4, text="Source: WHO, 2023", y=1110, accent=Y):
-    """Small source credit that fades up at the bottom of the safe box (always add when a fact is shown)."""
-    L = _L(); q = _oe(_p(t, st, d)); ImageDraw.Draw(L).text((W/2, y+(1-q)*20), text, font=_font(30, "small"), fill=(200, 200, 210, int(220*q)), anchor="mm"); return L
+    """Source credit that fades up at the bottom of the safe box.
+    v79 (Ajju A3, 2026-11-13): LEGIBLE OR NOTHING — Ajju circled the
+    old faint dark-grey microtext ('Source: ICMR 2021') yellow: he
+    did not even know what it was. The line now renders at 34 px on
+    this 720-wide layer (= 51 px at the 1080 frame, above the 30 px
+    floor Blind's method sets) in near-white (255,255,255 at ~92%
+    alpha — above the 60%-white floor). Whether a line appears at
+    all is governed by R5 (a real source for that exact claim, or
+    none) at plan/compliance level."""
+    L = _L(); q = _oe(_p(t, st, d)); ImageDraw.Draw(L).text((W/2, y+(1-q)*20), text, font=_font(34, "small"), fill=(255, 255, 255, int(235*q)), anchor="mm"); return L
 
 # ============================ HARK ENGINE (v34) ============================
 def _person(col, s=1.0):

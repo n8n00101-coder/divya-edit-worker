@@ -351,6 +351,16 @@ stick_figure=a person/feeling, quote_card=a quote, arrows_steps=a process, check
 polaroid=a memory, icon_row=a set of items, bar_compare=two numbers compared,
 four=one-in-N people, question=a big question, card=a phone number or helpline,
 watch=a stopwatch or rate, stamp=a ban or verdict, stamp_cta=the final call to action).
+FRAME-FILL RULE (v79, Ajju A1 — hard rule): every scene must FILL the frame — full-frame footage, or a COMPOSED
+graphic scene with several related elements (a document, a map, a photo card, a timeline, a split comparison).
+A lone small widget floating on a plain gradient (one donut, one counter, one heart in empty space) is BANNED —
+the delivery check measures each frame's content coverage and fails empty scenes.
+CREATIVITY RULE (v79, Ajju A5): the number widgets (donut, counter, bar, graph, gauge, dot_grid) are a FALLBACK
+for real numbers and lists ONLY — they are not the menu. Most scenes must be composed scenes pictured from the
+line itself: photo_frame/polaroid (a photo of the thing), document/newspaper/receipt (papers, reports, headlines),
+india_map/world_dots (places), timeline_cards (events over time), versus/balance_scale (two sides), filmstrip/
+film_camera (media), speech_bubble/chat (what people say), magnifier (looking closer), product_packet (a product),
+warning_sign (danger). Picture what a human editor would show for THIS line, not which widget is free.
 If no clear topic is given ("nuvve select chesko", "any", "AUTO", empty) choose a fresh high-retention topic yourself (psychology,
 history mysteries, science facts, money habits, health, tech, motivation). Avoid these recent topics: {recent}.
 Owner request: """ % C.VISUALS
@@ -1084,23 +1094,15 @@ def wrap_title(title, max_w, d, start=34, min_s=20):
 
 
 def header(d, p, idx, n, t, sc_d, acc, look=None):
-    # v36 (Blind A1/A4 — fixed zones): the header is COMPACT and lives ABOVE
-    # the title zone: progress bar y 28-34, video title ONE line at 44 px
-    # (the 44 px label minimum, A4) y 40-84. The scene label (the "title",
-    # 96 px+) owns y 120-450 below it, so the two can never collide. The old
-    # header wrapped to 2 lines at 34 px down to y 164, crowding the label.
-    seg = (W - 240) / n
-    for i in range(n):
-        x0 = 120 + i * seg; fill = 1 if i < idx else (clamp(t / max(sc_d, 0.1)) if i == idx else 0)
-        d.rectangle([x0, 28, x0 + seg - 8, 34], fill=(60, 60, 70))
-        if fill: d.rectangle([x0, 28, x0 + (seg - 8) * fill, 34], fill=acc)
-    title = str(p["title"])
-    f = montserrat(44)
-    while d.textlength(title, font=f) > W - 240 and len(title) > 4:
-        title = title[:-2]
-    if len(title) < len(str(p["title"])):
-        title = title.rstrip() + "…"
-    d.text((120, 40), title, font=montserrat(44), fill=(225, 225, 230))
+    # v79 (Ajju A2, 2026-11-13): REMOVED. The top strip — the video
+    # title text ("ALCOHOL TRUTH") plus the segmented progress
+    # dashes — is GONE from the scene design entirely (shorts and
+    # long): Ajju circled it green as purposeless clutter that reads
+    # as a bug, and Blind's review flagged its breadcrumb errors
+    # (item 18). A chapter's name belongs on its chapter card only.
+    # This function is kept as a no-op so the one historical call
+    # site stays harmless; nothing may draw here again.
+    return
 
 # v32: plan visual kind -> visuals_lib name (used when the plan's kind has a
 # richer VL equivalent; the scene's stored lib_visual wins over this map).
@@ -1537,7 +1539,12 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None):
             queries = [q for q in dict.fromkeys(
                 (" ".join((topic + " " + label).split()), topic, label)) if q]
         dur_s = float(sc.get("d") or 6)
-        blur = bool(_comp.widget_kind(sc)) and bool(cfg.get("kind") == "long" or cfg.get("footage_only"))
+        # v79 (A4 — Ajju's ASSAULTS frame is the canonical failure: a
+        # warning triangle pasted ON the hand/bottle): a widget/icon
+        # scene NEVER pastes its graphic over the footage subject, in
+        # shorts too — the footage under it is blurred + darkened so
+        # the graphic owns a treated frame (Blind mail 1, Part 2).
+        blur = bool(_comp.needs_blur_treatment(sc))
         rec = None
         # v79 (FIX 4): an edit render re-fetches the SAVED clip for a
         # scene the edit did not touch — same clip id, same start,
@@ -1760,7 +1767,7 @@ def scene_frame(p, idx, t, return_layers=False):
             _sl = VL.VIS["source_line"](pt, 0.0, sc["d"], text=f"Source: {_src}", y=1200, accent=acc)
             if _sl is not None and _sl.size == (720, 1280):
                 lay.alpha_composite(_sl.resize((W, H), Image.BICUBIC))
-                _sw = ImageDraw.Draw(lay).textlength(f"Source: {_src}", font=VL._font(30, "small")) * 1.5
+                _sw = ImageDraw.Draw(lay).textlength(f"Source: {_src}", font=VL._font(34, "small")) * 1.5
                 _src_bb = (int(W / 2 - _sw / 2), 1782, int(W / 2 + _sw / 2), 1818)
         except Exception as e:
             print(f"source_line scene {idx} failed: {str(e)[:100]}")
@@ -2976,6 +2983,21 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                                    measure=lambda txt, size: _label_width(ImageDraw.Draw(Image.new("RGB", (8, 8))), txt) if txt else 0,
                                    have_timing=True)
         _checks += _comp.audit_footage(p["scenes"], cfg or {"kind": "short"})
+        # v79 (A1): the frame-fill gate — one mid-scene frame per
+        # scene, measured for content coverage. A graphic scene that
+        # is mostly empty background FAILS (Ajju's red marks).
+        try:
+            _frames = []
+            for _i, _s in enumerate(p["scenes"]):
+                # the closing CTA card is a deliberate card (like a
+                # chapter card), not a scene — exempt from the gate.
+                if _i == len(p["scenes"]) - 1 and _s.get("visual") == "stamp_cta":
+                    continue
+                _img = scene_frame(p, _i, max(0.6, float(_s.get("d") or 4) / 2))
+                _frames.append((_i + 1, _img, bool(_s.get("has_footage"))))
+            _checks += _comp.audit_frame_fill(_frames)
+        except Exception as _e:
+            print("frame-fill audit failed:", str(_e)[:120])
         _mchecks, _minfo = _comp.audit_media(out, cfg or {"kind": "short"}, spec or [])
         _checks += _mchecks
         _plan_info = {

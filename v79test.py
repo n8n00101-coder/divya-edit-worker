@@ -512,6 +512,172 @@ def test_edit_mode():
        and [r["id"] for r in merged] == ["R1", "R2"])
 
 
+# ---------------------------------------------------------------- 8
+def test_ajju_frame_rules():
+    """Ajju's 2026-11-13 annotations on the ALCOHOL TRUTH frames
+    (A1-A5) — they sharpen Blind's spec and are hard rules too."""
+    import compliance as cp
+    import doc
+    from PIL import Image, ImageDraw
+
+    # ---- A1: the frame-fill gate
+    def gradient_frame():
+        img = Image.new("RGB", (270, 480), (30, 22, 16))
+        px = img.load()
+        for y in range(480):
+            for x in range(270):
+                v = int(14 * (1 - abs(y - 240) / 240))
+                px[x, y] = (30 + v, 22 + v, 16 + v)
+        return img
+
+    empty = gradient_frame()
+    d = ImageDraw.Draw(empty)
+    d.ellipse([120, 225, 150, 255], fill=(255, 200, 0))  # a lone "0"-sized element
+    checks = cp.audit_frame_fill([(1, empty, False)])
+    ok("A1: a lone small element on a plain gradient FAILS the fill gate",
+       any(c["rule"] == "A1" for c in checks), str(checks))
+    ok("A1: the same frame as footage is exempt (full-frame by construction)",
+       cp.audit_frame_fill([(1, empty, True)]) == [])
+    composed = gradient_frame()
+    d = ImageDraw.Draw(composed)
+    for i in range(9):  # a document-like composed scene: text bars + a box + a seal
+        d.rectangle([30, 60 + i * 34, 240 - (i % 3) * 40, 74 + i * 34], fill=(220, 215, 200))
+    d.rectangle([30, 380, 240, 440], outline=(255, 200, 0), width=4)
+    d.ellipse([180, 385, 230, 435], fill=(200, 60, 40))
+    ok("A1: a composed scene passes the fill gate",
+       cp.audit_frame_fill([(1, composed, False)]) == [],
+       str(cp.frame_fill_metrics(composed)))
+    share, edge = cp.frame_fill_metrics(empty)
+    ok("A1: metrics separate the cases (lone element share < composed share)",
+       share < cp.frame_fill_metrics(composed)[0])
+
+    # ---- A2: the top strip is gone
+    img = Image.new("RGB", (200, 200), (10, 10, 12))
+    before = img.tobytes()
+    doc.header(ImageDraw.Draw(img), {"title": "ALCOHOL TRUTH"}, 0, 5, 0.5, 5.0, (255, 200, 0))
+    ok("A2: header() draws nothing (breadcrumb + progress strip removed)",
+       img.tobytes() == before)
+
+    # ---- A3: the source line is legible or nothing
+    import visuals_lib as VL
+    import numpy as np
+    layer = VL.VIS["source_line"](2.0, 0.0, 0.4, text="Source: MoHFW 2023", y=1110)
+    a = np.asarray(layer.convert("RGBA")).astype(int)
+    textpx = a[a[:, :, 3] > 100]
+    ok("A3: source text renders near-white (>=60% white rule)",
+       len(textpx) > 50 and textpx[:, 0].mean() > 200 and textpx[:, 3].mean() > 153,
+       f"n={len(textpx)}")
+    ys = np.where(a[:, :, 3] > 100)[0]
+    ok("A3: source line font is >= 30 px (Blind's floor; ours is 34)",
+       VL._font(34, "small").size >= 30
+       and len(ys) and (ys.max() - ys.min()) >= 25,
+       f"ink h={ys.max() - ys.min() if len(ys) else 0}")
+
+    # ---- A4: a widget scene's footage is blurred (never pasted on
+    # the subject) — Ajju's ASSAULTS frame is the canonical failure.
+    plan_json = {
+        "topic": "alcohol truth", "title": "ALCOHOL TRUTH", "lang": "en",
+        "voice": "male", "caption": "x", "end_question": "?",
+        "scenes": [
+            {"vo": "About 30 percent of drinkers binge weekly.", "label": "BINGE WEEKLY",
+             "mood": "tense", "visual": "donut", "value": "30%", "source": "",
+             "why": "donut shows percent of drinkers", "queries": ["bar crowd drinking"],
+             "fulfils": []},
+            {"vo": "The hospital report lists the damage clearly.", "label": "DAMAGE REPORT",
+             "mood": "sad", "visual": "document", "value": "", "source": "",
+             "why": "document shows the hospital report", "queries": ["hospital corridor"],
+             "fulfils": []},
+            {"vo": "One drink slows your reaction time badly.", "label": "SLOW REACTION",
+             "mood": "tense", "visual": "watch", "value": "", "source": "",
+             "why": "watch shows reaction time", "queries": ["car night road"],
+             "fulfils": []},
+            {"vo": "So think before the next drink tonight.", "label": "THINK FIRST",
+             "mood": "hopeful", "visual": "question", "value": "", "source": "",
+             "why": "question for the choice", "queries": ["man thinking window"],
+             "fulfils": []},
+        ],
+    }
+
+    def fake_chat(messages):
+        return json.dumps(plan_json)
+
+    p = doc.plan("topic ALCOHOL TRUTH", fake_chat)
+    # A2 at scene level: the video title no longer appears at the
+    # top of any scene — two plans differing only in title render
+    # identical top bands (no breadcrumb text, no progress dashes).
+    import copy as _copy
+    p_alt = _copy.deepcopy(p)
+    p_alt["title"] = "A COMPLETELY DIFFERENT TITLE"
+    for pl in (p, p_alt):
+        for s in pl["scenes"]:
+            s.setdefault("d", 5.0)
+            s.setdefault("words", [(0.1, 0.3, w) for w in s["vo"].split()[:4]])
+    top1 = doc.scene_frame(p, 1, 0.5).crop((0, 0, doc.W, 110)).tobytes()
+    top2 = doc.scene_frame(p_alt, 1, 0.5).crop((0, 0, doc.W, 110)).tobytes()
+    ok("A2: scene top band carries no title/breadcrumb (identical across titles)",
+       top1 == top2)
+    captured = {}
+
+    class FakePool:
+        def assign(self, scene_no, queries, needed_s, workdir, orientation="portrait", line=""):
+            return {"path": "/tmp/none.mp4", "clip_id": f"pexels:{scene_no}",
+                    "provider": "pexels", "source_url": "u", "query": queries[0],
+                    "keyword": "x", "start": 0.0, "static": False, "uploader": "A"}
+
+        def footage_json(self):
+            return {"clips": [], "rejected": []}
+
+    orig_extract = doc._extract_broll_frames
+
+    def fake_extract(path, fdir, dur_s, start_s=1.0, static=False, blur=False):
+        captured[fdir] = blur
+        return 5
+
+    doc._extract_broll_frames = fake_extract
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            doc._attach_broll(p, td, all_scenes=True, cfg={"kind": "short"},
+                              pool=FakePool())
+    finally:
+        doc._extract_broll_frames = orig_extract
+    ok("A4: widget scenes (donut, watch) get the blurred-footage treatment in a SHORT",
+       any("sc0" in k and v is True for k, v in captured.items())
+       and any("sc2" in k and v is True for k, v in captured.items()),
+       str(captured))
+    ok("A4: a composed scene (document) keeps its footage sharp",
+       any(("sc1" in k and v is False) for k, v in captured.items()), str(captured))
+
+    # ---- A5: widgets are the fallback, not the menu
+    cfg_s = {"kind": "short", "width": 1080}
+    scenes = [
+        _scene("30 percent of people agree", label="MANY AGREE", visual="donut", value="30%",
+               why="donut shows percent", transition="a", sfx="pop", bg_kind="x"),
+        _scene("the count reached 42 today", label="COUNT TODAY", visual="counter", value="42",
+               why="counter shows the count", transition="b", sfx="tick", bg_kind="y"),
+        _scene("levels rose this year", label="LEVELS ROSE", visual="graph", value="",
+               why="graph shows levels", transition="c", sfx="hit", bg_kind="z"),
+        _scene("the gauge is full now", label="GAUGE FULL", visual="gauge", value="",
+               why="gauge shows full", transition="d", sfx="whoosh", bg_kind="x"),
+        _scene("a letter arrived today", label="LETTER CAME", visual="document", value="",
+               why="document shows the letter", transition="e", sfx="paper", bg_kind="y"),
+        _scene("two sides of the story", label="TWO SIDES", visual="versus", value="",
+               why="versus shows two sides", transition="f", sfx="pop", bg_kind="z"),
+    ]
+    bad = cp.audit_plan(scenes, cfg_s, topic_text="habits")
+    ok("A5: >half widget scenes fails (pool rotation is not creativity)",
+       any(c["rule"] == "A5" for c in bad if c["status"] == "FAIL"), str([c["rule"] for c in bad]))
+    pools = {"visuals": ["counter", "bar", "donut", "graph", "list", "heart", "clock"],
+             "transitions": ["cut_a", "wipe_b", "fade_c", "slide_d"],
+             "sfx": ["pop", "tick", "hit", "whoosh"], "bg_kinds": ["dark", "navy", "wine"],
+             "pattern_bg": "paper"}
+    cp.repair_plan(scenes, cfg_s, pools, bad)
+    bad2 = cp.audit_plan(scenes, cfg_s, topic_text="habits")
+    ok("A5: repair swaps value-less widgets to composed scenes; numbered widgets stay",
+       not any(c["rule"] == "A5" for c in bad2 if c["status"] == "FAIL")
+       and scenes[0]["visual"] == "donut" and scenes[1]["visual"] == "counter",
+       str([s["visual"] for s in scenes]))
+
+
 def main():
     test_spec_engine()
     test_captions()
@@ -520,6 +686,7 @@ def main():
     test_doc_integration()
     test_media_checks()
     test_edit_mode()
+    test_ajju_frame_rules()
     print()
     if _fails:
         print(f"v79 tests: {len(_fails)} FAILED: {_fails}")
