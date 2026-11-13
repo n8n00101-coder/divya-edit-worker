@@ -895,14 +895,16 @@ async function startOneTapSetup() {
     let email = "";
     try { const me = await api("me"); email = (me.account && me.account.email) || ""; } catch {}
     if (!email) { toast(t("setupNeedEmail"), true); return; }
-    const d = await api("setup/start", { method: "POST", json: { email, providers: ["groq", "openrouter", "gemini", "pexels"] } });
-    // R48 note: Cloudflare stays out of this list until setup.py has a
-    // Cloudflare flow (FLOWS has only email/google flows today) — starting it
-    // now would stall the chain. The mini-box still renders a Cloudflare step
-    // when setup/status reports one.
+    const d = await api("setup/start", { method: "POST", json: { email, providers: ["groq", "openrouter", "gemini", "cohere", "together", "sambanova", "fireworks", "cerebras", "nvidia", "mistral", "ai21", "voyage", "tavily", "serper", "exa", "deepgram", "assemblyai", "elevenlabs", "stability", "jina", "pexels"] } });
+    // R48 note: Cloudflare (the user's own server) stays out of this
+    // list — it is set up from its own step. The mini-box still renders
+    // a Cloudflare step when setup/status reports one.
     // v70: Pexels runs LAST — Julie creates the user's own stock-footage
     // key (an enhancement key: its failure never blocks the brain keys,
     // and the Worker skips the step entirely when a key is already saved).
+    // v81: the chain is wide now (R59) — more free chat/search/media
+    // keys, each created + verified by Julie herself; any one failing
+    // never blocks the rest.
     if (!d.ok) { toast(d.error || t("netErr"), true); return; }
     location.hash = "#/chat";
     bubble("bot", t("setupRunning"));
@@ -1548,7 +1550,7 @@ $("#loginGoogleBtn") && ($("#loginGoogleBtn").onclick = async () => { const r = 
    hardcoded providers, each with its own page link, key format and
    buttons) and the voice guide are GONE. PNAMES is only a display-name
    map for the automate run's own step labels / auto-log lines. */
-const PNAMES = { groq: "Groq", openrouter: "OpenRouter", gemini: "Gemini", cloudflare: "Cloudflare", pexels: "Pexels" };
+const PNAMES = { groq: "Groq", openrouter: "OpenRouter", gemini: "Gemini", cloudflare: "Cloudflare", pexels: "Pexels", cohere: "Cohere", together: "Together AI", sambanova: "SambaNova", fireworks: "Fireworks AI", cerebras: "Cerebras", nvidia: "NVIDIA NIM", mistral: "Mistral AI", ai21: "AI21", voyage: "Voyage AI", tavily: "Tavily", serper: "Serper", exa: "Exa", deepgram: "Deepgram", assemblyai: "AssemblyAI", elevenlabs: "ElevenLabs", stability: "Stability AI", jina: "Jina AI" };
 let modelState = null;
 async function loadModel() {
   try { const d = await api("model"); modelState = d && d.ok ? d.model : null; } catch { modelState = null; }
