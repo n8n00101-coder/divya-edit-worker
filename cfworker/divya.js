@@ -1,6 +1,7 @@
 // Julie — 24/7 WhatsApp brain on Cloudflare Workers (free plan, no card).
 // Chat + screenshot reading happen here. Video edits go to GitHub Actions (4 vCPU, free on public repo).
 // Secrets (set in dashboard / API): WA_TOKEN, GROQ_KEY, GH_TOKEN, VERIFY_TOKEN, RUNNER_KEY
+// Optional (v69, stock B-roll in create videos): PEXELS_KEY, PIXABAY_KEY — free API keys from pexels.com/api / pixabay.com/api/docs; unset = code-drawn backgrounds only.
 // Vars: PHONE_ID, OWNERS (comma list, e.g. 919951950173), GH_REPO (owner/repo)
 // KV binding: KV
 
@@ -3855,7 +3856,7 @@ export default {
       const { job } = await req.json();
       const j = await env.KV.get(`job:${job}`);
       if (!j) return new Response("missing", { status: 404 });
-      return Response.json({ ...JSON.parse(j), WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID });
+      return Response.json({ ...JSON.parse(j), WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "" });
     }
     // Call media server fetches WA/Groq creds here (shared FORWARD_SECRET).
     if (url.pathname === "/callcreds" && req.method === "POST") {

@@ -1170,6 +1170,106 @@ def pick_one_effect(sc, idx, pop_t):
     return choice
 
 
+# ---------------- v69: stock B-roll backgrounds (broll.py) ----------------
+# make_video() attaches footage to ~half the scenes (alternating, pattern-
+# interrupt style): the clip is looped/trimmed by ffmpeg to the scene's
+# duration, scaled/cropped to the frame and extracted as a JPG sequence
+# under <workdir>/broll_frames/sc<idx>/. scene_frame() then uses the frame
+# for the scene-local time t as the full-frame background. Every step is
+# failure-grace: no API key / no network / no match / bad clip -> the
+# scene keeps its code-drawn background, unchanged.
+_BROLL_CACHE = {}
+_BROLL_SHADE_IMG = None
+
+
+def _broll_shade():
+    global _BROLL_SHADE_IMG
+    if _BROLL_SHADE_IMG is None:
+        _BROLL_SHADE_IMG = Image.new("RGBA", (W, H), (0, 0, 0, 64))
+    return _BROLL_SHADE_IMG
+
+
+def _broll_frame(p, idx, t):
+    """The B-roll background image for scene idx at scene-local time t,
+    or None when the scene has no footage (or the frame is unreadable)."""
+    try:
+        info = (p.get("broll") or {}).get(idx)
+        if not info:
+            return None
+        n = int(max(0.0, float(t)) * FPS) % int(info["frames"])
+        key = (info["dir"], n)
+        img = _BROLL_CACHE.get(key)
+        if img is None:
+            fp = os.path.join(info["dir"], f"f{n + 1:05d}.jpg")
+            if not os.path.exists(fp):
+                return None
+            img = Image.open(fp).convert("RGB")
+            if len(_BROLL_CACHE) > 24:
+                _BROLL_CACHE.clear()
+            _BROLL_CACHE[key] = img
+        return img
+    except Exception:
+        return None
+
+
+def _extract_broll_frames(clip_path, outdir, dur_s):
+    """Loop/trim clip_path to dur_s at the frame size (ffmpeg scale+crop)
+    and extract it as f%05d.jpg frames at FPS. Returns the frame count
+    (0 on any failure)."""
+    try:
+        os.makedirs(outdir, exist_ok=True)
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
+                        "-stream_loop", "-1", "-i", str(clip_path),
+                        "-ss", "1", "-t", f"{max(0.5, float(dur_s)):.2f}",
+                        "-vf", (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+                                f"crop={W}:{H},fps={FPS}"),
+                        "-q:v", "5", os.path.join(outdir, "f%05d.jpg")],
+                       check=True, timeout=300)
+        return len([f for f in os.listdir(outdir) if f.endswith(".jpg")])
+    except Exception:
+        return 0
+
+
+def _attach_broll(p, wd):
+    """Attach stock footage to ~half the scenes of plan p (even indices,
+    never the final CTA scene). Sets p["broll"] = {idx: {"dir", "frames"}}
+    and p["broll_sources"] = [{scene, provider, source_url, query}] (the
+    licence trail Hark's method requires). No-op when nothing is found."""
+    import broll as _br
+    scenes = p["scenes"]
+    n = len(scenes)
+    targets = [i for i in range(n) if i % 2 == 0 and i != n - 1]
+    topic = str(p.get("topic") or "").strip()
+    attached, sources = {}, []
+    for i in targets:
+        sc = scenes[i]
+        label = str(sc.get("label") or "").strip()
+        queries = [q for q in dict.fromkeys(
+            (" ".join((topic + " " + label).split()), topic, label)) if q]
+        clip = None
+        for q in queries:
+            clip = _br.fetch_broll(q, os.path.join(wd, "broll_dl"),
+                                   orientation="portrait")
+            if clip:
+                break
+        if not clip:
+            continue
+        fdir = os.path.join(wd, "broll_frames", f"sc{i}")
+        nframes = _extract_broll_frames(clip["path"], fdir,
+                                        float(sc.get("d") or 6))
+        if nframes <= 0:
+            continue
+        attached[i] = {"dir": fdir, "frames": nframes}
+        sources.append({"scene": i + 1, "provider": clip["provider"],
+                        "source_url": clip["source_url"],
+                        "query": clip["query"]})
+    if attached:
+        p["broll"] = attached
+        p["broll_sources"] = sources
+        print(f"broll: footage on {len(attached)}/{n} scenes "
+              f"({', '.join(s['provider'] for s in sources)})")
+
+
 def scene_frame(p, idx, t, return_layers=False):
     # return_layers (v35 frame-QC): also return the visual/label layer alpha
     # bboxes + the effect choice, so the QC can check geometry (overlap,
@@ -1185,25 +1285,37 @@ def scene_frame(p, idx, t, return_layers=False):
     # layer is composited onto the background. This is the fix for Ajju's
     # "background colour zooms" complaint — Divya's old camera cropped the WHOLE
     # frame (bg + content), so the bg zoomed and content went outside the screen.
-    bg = background(mood, look, sc.get("section")).convert("RGBA")
-    # v36 (Blind C3): the FAR layer — two soft shape layers drifting at
-    # 2 px/s and 6 px/s (different speeds), tiled so they wrap. The camera
-    # stays static — only the background layers drift. (Bokeh = mid, dust = near.)
-    for _idx, _spd in ((0, 2.0), (1, 6.0)):
-        _pl = _parallax_layer(mood, look, _idx)
-        _off = int(-_spd * t) % W
-        bg.alpha_composite(_pl, (_off, 0))
-        bg.alpha_composite(_pl, (_off - W, 0))
-    # v32 (Blind): per-scene background kind (changes only when the mood
-    # changes, set in plan()) — VL.scene_bg upscaled, 35% alpha over the
-    # look bg, cached per kind in _SBG.
-    _bk = sc.get("bg_kind")
-    if _bk and _bk in VL.SCENE_BG:
-        if _bk not in _SBG:
-            _sb = VL.scene_bg(_bk).resize((W, H), Image.BICUBIC).convert("RGBA")
-            _sb.putalpha(_sb.split()[3].point(lambda v: int(v * 0.35)))
-            _SBG[_bk] = _sb
-        bg.alpha_composite(_SBG[_bk])
+    # v69 (Ajju — Hark uses real footages, Divya used only plain drawn
+    # backgrounds): if make_video attached a stock B-roll clip to this
+    # scene (p["broll"]), the footage frame IS the full-frame background
+    # and every overlay below (header, visual, label, source, captions)
+    # draws over it exactly as before. A slight dark shade keeps the
+    # labels readable on bright footage. No clip -> the code-drawn
+    # background below, byte-for-byte the old behaviour.
+    _fb = _broll_frame(p, idx, t)
+    if _fb is not None:
+        bg = _fb.convert("RGBA")
+        bg.alpha_composite(_broll_shade())
+    else:
+        bg = background(mood, look, sc.get("section")).convert("RGBA")
+        # v36 (Blind C3): the FAR layer — two soft shape layers drifting at
+        # 2 px/s and 6 px/s (different speeds), tiled so they wrap. The camera
+        # stays static — only the background layers drift. (Bokeh = mid, dust = near.)
+        for _idx, _spd in ((0, 2.0), (1, 6.0)):
+            _pl = _parallax_layer(mood, look, _idx)
+            _off = int(-_spd * t) % W
+            bg.alpha_composite(_pl, (_off, 0))
+            bg.alpha_composite(_pl, (_off - W, 0))
+        # v32 (Blind): per-scene background kind (changes only when the mood
+        # changes, set in plan()) — VL.scene_bg upscaled, 35% alpha over the
+        # look bg, cached per kind in _SBG.
+        _bk = sc.get("bg_kind")
+        if _bk and _bk in VL.SCENE_BG:
+            if _bk not in _SBG:
+                _sb = VL.scene_bg(_bk).resize((W, H), Image.BICUBIC).convert("RGBA")
+                _sb.putalpha(_sb.split()[3].point(lambda v: int(v * 0.35)))
+                _SBG[_bk] = _sb
+            bg.alpha_composite(_SBG[_bk])
     lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     for (x, y, r, sp) in PART:
         yy = (y - t * sp - idx * 140) % (H + 200) - 100
@@ -2067,6 +2179,16 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     for s in p["scenes"]: starts.append(t); t += s["d"]
     p["starts"] = starts; p["voice_end"] = t; total = t + OUTRO
     if notify: await notify("Voice ready. Scenes render chestunna (animation + music).")
+    # v69: stock B-roll for ~half the scenes (see _attach_broll). Runs
+    # BEFORE the pre-render geometry QC so the QC renders the real
+    # footage-backed frames. Any failure leaves the plan untouched.
+    try:
+        _attach_broll(p, wd)
+    except Exception as e:
+        print("broll attach failed:", str(e)[:150])
+    if p.get("broll_sources") and notify:
+        await notify(f"B-roll: {len(p['broll_sources'])} stock footage clips "
+                     f"({', '.join(sorted({s['provider'] for s in p['broll_sources']}))}).")
     # v36 (Blind E6 — pre-render geometry QC + auto-fix): BEFORE the chunk
     # render, check every scene's layer geometry at mid-scene. If two layers
     # intersect, scale the visual to 80% and re-check; still hitting, drop
@@ -2177,4 +2299,5 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     record_look(p.get("look"))
     return {"path": out, "delivery_path": delivery, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
             "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total,
+            "broll": p.get("broll_sources", []),
             "frame_qc": _fq, "qc_passed": _fq["passed"]}

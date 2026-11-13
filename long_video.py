@@ -1,9 +1,11 @@
-"""Long-form videos (5-10 min) for Divya (divya-edit-worker).
+"""Long-form videos (up to 60 min) for Divya (divya-edit-worker).
 
 Structure follows DIVYA_LONG_VIDEOS_BOOKS_TUTORIALS.md section 1: never
-render 10 minutes as one script. Instead:
+render a long video as one script. Instead:
 
-1. :func:`outline` asks the LLM for an outline (hook -> chapters -> payoff).
+1. :func:`outline` asks the LLM for an outline (hook -> chapters -> payoff)
+   whose chapters total the requested length (v69: up to 60 minutes;
+   without an explicit target it keeps the original 5-10 minute shape).
 2. :func:`render_chapters` renders each chapter as its own
    ``doc.make_video`` job (one chapter = one 60-120 s short, so a failed
    chapter can be retried without redoing the whole video).
@@ -11,9 +13,15 @@ render 10 minutes as one script. Instead:
    chapter title card between chapters, loudness-normalises the final
    audio, and writes a ``chapters.txt`` with timestamps.
 
-CLI: ``python long_video.py "<brief>" <out.mp4>`` — needs a live Groq key
-(``GROQ_KEY`` env, same endpoint/models as ``runner.groq_chat``).
-A full 5-minute render is NOT run as part of this module's tests; see the
+:func:`make_long_video` is the runner entry point (v69): outline ->
+chapters -> assemble, honouring an optional wall-clock deadline — when
+the budget runs out (or a chapter fails midway) it assembles whatever
+chapters finished and flags the result partial instead of failing the
+whole job.
+
+CLI: ``python long_video.py "<brief>" <out.mp4> [minutes]`` — needs a live
+Groq key (``GROQ_KEY`` env, same endpoint/models as ``runner.groq_chat``).
+A full render is NOT run as part of this module's tests; see the
 ``__main__`` self-test, which checks the outline parser against a stubbed
 chat reply and ``assemble`` against two dummy clips.
 """
@@ -22,10 +30,12 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import textwrap
+import time
 from pathlib import Path
 
 import doc  # v2 engine: make_video(brief, chat, notify, workdir, ...) -> dict
@@ -48,22 +58,65 @@ its own and must make sense without the others.
 Owner request: """
 
 
-def outline(brief, chat):
+def _outline_prompt(target_minutes):
+    """The outline prompt. target_minutes=None keeps the original 5-10 min
+    shape; an explicit target (v69, up to 60) sizes the chapter count to
+    it and demands terse chapter briefs so a 60-chapter outline still fits
+    one LLM reply."""
+    if not target_minutes:
+        return OUTLINE_PROMPT
+    target = int(target_minutes)
+    lo = 2 if target <= 4 else 3
+    hi = target  # every chapter at 1 minute
+    return (
+        "You are a top YouTube documentary writer and director. Plan ONE "
+        f"faceless long-form video of exactly {target} minutes from the "
+        "owner's request below.\n"
+        "Structure: a hook in the first 15 seconds (strongest visual + the "
+        "question, promise what they will learn), then chapters that each "
+        "answer ONE question and end with a mini cliffhanger to the next, "
+        "then a recap + payoff that answers the opening question (3 key "
+        "points), then a short end screen.\n"
+        "Return ONLY JSON:\n"
+        '{"title": "<short English title>", "chapters": [{"title": '
+        '"<chapter title>", "brief": "<what this chapter covers, with the '
+        'visual idea>", "minutes": <1 or 2>}, ...]}\n'
+        f"Rules: {lo}-{hi} chapters; minutes are whole minutes, 1 or 2 "
+        f"each; the chapters must total EXACTLY {target} minutes. Keep "
+        "every chapter brief under 15 words — the outline is long. Keep "
+        "each brief self-contained — a chapter is rendered on its own and "
+        "must make sense without the others.\n"
+        "Owner request: "
+    )
+
+
+def outline(brief, chat, target_minutes=None):
     """Ask the LLM (same [{"role": ...}] message format as doc.plan) for a
-    long-video outline. Returns {"title": ..., "chapters": [...]} with
-    3-6 chapters totalling 5-10 minutes. Raises ValueError on bad JSON or
-    on an outline that breaks the chapter/total rules.
+    long-video outline. Returns {"title": ..., "chapters": [...]}.
+    Without target_minutes: 3-6 chapters totalling 5-10 minutes (the
+    original contract). With target_minutes (2-60): enough 1-2 minute
+    chapters to total EXACTLY the target. Raises ValueError on bad JSON
+    or on an outline that breaks the chapter/total rules.
     """
     raw = chat([{"role": "system", "content": OUTLINE_SYSTEM},
-                {"role": "user", "content": OUTLINE_PROMPT + (brief or "AUTO")}])
+                {"role": "user", "content": _outline_prompt(target_minutes)
+                 + (brief or "AUTO")}])
     try:
         data = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
     except Exception:
         raise ValueError(f"outline: LLM did not return JSON: {raw[:300]!r}")
     title = str(data.get("title", "")).strip()
     chapters = data.get("chapters", [])
-    if not title or not isinstance(chapters, list) or not 3 <= len(chapters) <= 6:
-        raise ValueError(f"outline: need a title + 3-6 chapters, got: {data!r}"[:300])
+    if target_minutes:
+        target = int(target_minutes)
+        lo = 2 if target <= 4 else 3
+        hi = target
+    else:
+        target, lo, hi = None, 3, 6
+    if not title or not isinstance(chapters, list) \
+            or not lo <= len(chapters) <= hi:
+        raise ValueError(
+            f"outline: need a title + {lo}-{hi} chapters, got: {data!r}"[:300])
     total = 0
     for ch in chapters:
         if not isinstance(ch, dict) or not str(ch.get("title", "")).strip() \
@@ -77,7 +130,11 @@ def outline(brief, chat):
             raise ValueError(f"outline: chapter minutes must be 1 or 2, got {mins}")
         ch["minutes"] = mins
         total += mins
-    if not 5 <= total <= 10:
+    if target is not None:
+        if total != target:
+            raise ValueError(
+                f"outline: chapters total {total} min, need exactly {target}")
+    elif not 5 <= total <= 10:
         raise ValueError(f"outline: chapters total {total} min, need 5-10")
     return {"title": title, "chapters": chapters}
 
@@ -96,21 +153,105 @@ def chapter_brief(outline_data, idx):
     )
 
 
-async def render_chapters(outline_data, chat, workdir, notify=None):
+async def render_chapters(outline_data, chat, workdir, notify=None,
+                          deadline=None, results_out=None):
     """Render each chapter with doc.make_video (async), one chapter per
     sub-directory of workdir, sequentially — make_video already uses a
     process pool, so parallel chapters would oversubscribe the CPU.
     Returns the list of chapter mp4 paths, in order.
+
+    v69: `deadline` is a time.monotonic() wall — once it passes, no NEW
+    chapter is started and the chapters finished so far are returned
+    (the caller assembles them as a partial). A chapter that raises
+    midway likewise stops the loop when at least one chapter is done;
+    with zero chapters done the error propagates. Chapter result dicts
+    are appended to `results_out` when given.
     """
     wd = Path(workdir)
     wd.mkdir(parents=True, exist_ok=True)
     paths = []
     for i in range(len(outline_data["chapters"])):
+        if deadline is not None and paths and time.monotonic() > deadline:
+            print(f"render_chapters: time budget reached — stopping "
+                  f"after {len(paths)}/{len(outline_data['chapters'])} chapters")
+            break
         ch_dir = wd / f"ch{i + 1:02d}"
-        res = await doc.make_video(chapter_brief(outline_data, i), chat,
-                                   notify=notify, workdir=str(ch_dir))
+        try:
+            res = await doc.make_video(chapter_brief(outline_data, i), chat,
+                                       notify=notify, workdir=str(ch_dir))
+        except Exception as e:
+            if not paths:
+                raise
+            print(f"render_chapters: chapter {i + 1} failed "
+                  f"({str(e)[:150]}) — assembling the {len(paths)} "
+                  f"finished chapters")
+            break
         paths.append(res["path"])
+        if results_out is not None:
+            results_out.append(res)
+        # The chapter mp4 is final — its extracted B-roll frames (tens of
+        # MB per chapter) are dead weight on the runner disk from here.
+        shutil.rmtree(ch_dir / "broll_frames", ignore_errors=True)
     return paths
+
+
+async def make_long_video(brief, chat, workdir, target_minutes,
+                          notify=None, deadline=None):
+    """Runner entry point (v69): outline -> chaptered render -> assemble
+    for a requested length of target_minutes (2-60). Returns a result
+    dict shaped like doc.make_video's (path/title/duration/lang/caption/
+    topic/plan) plus: broll (aggregated chapter B-roll sources), summary,
+    partial, chapters_done, chapters_total, long=True. A partial result
+    (deadline hit or a midway chapter failure) still returns the longest
+    completed assembly — it never silently shortens a finished plan:
+    `partial` says exactly how many chapters are missing.
+    """
+    out, last_err = None, None
+    for attempt in range(2):
+        try:
+            b = brief if attempt == 0 else (
+                (brief or "") +
+                f"\n(The outline MUST total exactly {target_minutes} "
+                f"minutes — count the chapter minutes.)")
+            out = outline(b, chat, target_minutes)
+            break
+        except ValueError as e:
+            last_err = e
+    if out is None:
+        raise last_err
+    total_ch = len(out["chapters"])
+    if notify:
+        await notify(f"Long video: {out['title']} — {total_ch} chapters, "
+                     f"~{target_minutes} min. Chapters render chestunna.")
+    results = []
+    paths = await render_chapters(out, chat, workdir, notify=notify,
+                                  deadline=deadline, results_out=results)
+    if not paths:
+        raise RuntimeError("long video: no chapters rendered")
+    titles = [ch["title"] for ch in out["chapters"]][:len(paths)]
+    final = assemble(paths, str(Path(workdir) / "long_final.mp4"), titles)
+    duration = _probe_duration(final)
+    broll_sources = []
+    for r in results:
+        broll_sources += (r.get("broll") or [])
+    first = results[0] if results else {}
+    partial = len(paths) < total_ch
+    summary = (f"{out['title']} — long video, {len(paths)}/{total_ch} "
+               f"chapters, {duration / 60:.1f} min")
+    if partial:
+        summary += (" (PARTIAL — job time budget reached; longest "
+                    "completed assembly delivered)")
+    if broll_sources:
+        summary += (f"; B-roll: {len(broll_sources)} stock clips "
+                    f"({', '.join(sorted({s.get('provider', '') for s in broll_sources}))})")
+    return {"path": final, "title": out["title"], "duration": duration,
+            "lang": first.get("lang", "te"),
+            "caption": first.get("caption", ""),
+            "topic": first.get("topic", brief),
+            "plan": first.get("plan", {}),
+            "broll": broll_sources, "summary": summary,
+            "partial": partial, "chapters_done": len(paths),
+            "chapters_total": total_ch, "long": True}
 
 
 # ---------------------------------------------------------------- assemble
@@ -318,10 +459,20 @@ def _groq_chat(messages):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if len(argv) != 2:
-        print('usage: python long_video.py "<brief>" <out.mp4>', file=sys.stderr)
+    if len(argv) not in (2, 3):
+        print('usage: python long_video.py "<brief>" <out.mp4> [minutes]',
+              file=sys.stderr)
         return 2
-    brief, out_path = argv
+    brief, out_path = argv[0], argv[1]
+    if len(argv) == 3:  # v69: explicit target length -> the runner path
+        target = int(argv[2])
+        wd = str(Path(out_path).resolve().parent / "longvid_work")
+        res = asyncio.run(make_long_video(brief, _groq_chat, wd, target))
+        if os.path.abspath(res["path"]) != os.path.abspath(out_path):
+            shutil.copyfile(res["path"], out_path)
+        print(f"done: {out_path} — {res['summary']}")
+        print(f"chapters: {Path(res['path']).with_name('chapters.txt')}")
+        return 0
     out = outline(brief, _groq_chat)
     total = sum(ch["minutes"] for ch in out["chapters"])
     print(f"outline: {out['title']} — {len(out['chapters'])} chapters, "
@@ -368,6 +519,28 @@ def _self_test():
         print("outline() bad-JSON test: PASS (ValueError raised)")
     else:
         raise AssertionError("outline() should raise ValueError on bad JSON")
+
+    # v69: explicit targets — a 10-min outline (5 x 2 min) and a full
+    # 60-min outline (30 x 2 min) must validate; a wrong total must not.
+    def _mk_stub(n_ch, mins):
+        return _stub_chat_factory(json.dumps({
+            "title": "Target test",
+            "chapters": [{"title": f"Chapter {i + 1}",
+                          "brief": f"Covers part {i + 1}.",
+                          "minutes": mins} for i in range(n_ch)]}))
+    out10 = outline("ten minutes please", _mk_stub(5, 2), target_minutes=10)
+    assert sum(c["minutes"] for c in out10["chapters"]) == 10
+    print("outline(target=10) stub test: PASS (5 chapters, 10 min total)")
+    out60 = outline("one hour please", _mk_stub(30, 2), target_minutes=60)
+    assert len(out60["chapters"]) == 30
+    assert sum(c["minutes"] for c in out60["chapters"]) == 60
+    print("outline(target=60) stub test: PASS (30 chapters, 60 min total)")
+    try:
+        outline("x", _mk_stub(4, 2), target_minutes=10)  # totals 8, need 10
+    except ValueError:
+        print("outline(target=10) wrong-total test: PASS (ValueError raised)")
+    else:
+        raise AssertionError("outline() should reject a wrong total")
 
     with tempfile.TemporaryDirectory(prefix="longvid_test_") as td:
         dummies = []
