@@ -1,6 +1,6 @@
 """GitHub Actions edit runner for Divya. Gets job + creds from the Cloudflare Worker, edits, sends back on WhatsApp.
 Never prints secrets (they are masked too)."""
-import asyncio, json, os, re, sys, httpx
+import asyncio, json, os, re, sys, time, httpx
 
 WORKER = os.environ["WORKER_URL"].rstrip("/")
 KEY = os.environ["RUNNER_KEY"]
@@ -31,6 +31,23 @@ def load_job():
 
 async def main():
     j = load_job()
+    # v75: guaranteed terminal reporting. A job used to be able to die
+    # with a traceback the Worker never heard about — both long-video
+    # deaths (runs 43355930702, 43373013930) sat at "editing" until
+    # the v73 rescue noticed. Now ANY exit path out of the job
+    # (exception, SystemExit, a crash inside a chapter) posts
+    # runner/state=failed first, which also triggers the Worker's
+    # v73 token refund. At most once per process: branch handlers
+    # post their own specific failure note first (see _FAILED_POSTED).
+    try:
+        return await _run_job(j)
+    except BaseException as e:
+        if not _FAILED_POSTED:
+            app_state("failed", f"Job fail ayyindi: {str(e)[:250]}")
+        raise
+
+
+async def _run_job(j):
     import whatsapp as wa, autoedit  # import after env is set (config reads env)
     to = j["to"]
     note = lambda t: wa.send_text(to, t)
@@ -72,7 +89,13 @@ def _pct_for(state, note):
         if k in t: return v
     return None
 
+_FAILED_POSTED = False  # v75: main()'s reporting guarantee fires at most once
+
+
 def app_state(state, note=""):
+    global _FAILED_POSTED
+    if state == "failed":
+        _FAILED_POSTED = True
     try:
         httpx.post(f"{WORKER}/api/runner/state", params={"job": JOB}, json={"state": state, "note": note[:300], "pct": _pct_for(state, note)},
                    headers={"x-runner-key": KEY}, timeout=20)
@@ -410,20 +433,57 @@ async def app_edit_job(j, wa):
 CHAT_MODELS = ["openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905", "openai/gpt-oss-20b"]
 
 
-def groq_chat(messages):
+_CHAT_BACKOFF_S = (5, 15, 45)
+
+
+def _chat_sweep(messages):
+    """One pass over every key x model (the historical behaviour).
+    Returns (text, last, transient): text is None when the sweep
+    failed; transient says whether at least one failure was retryable
+    (HTTP 429 / 5xx, a transport error, or an empty reply)."""
     last = ""
+    transient = False
     for k in [x.strip() for x in os.environ["GROQ_KEY"].split(",") if x.strip()]:
         for m in CHAT_MODELS:
             body = {"model": m, "messages": messages, "temperature": 0.8, "max_tokens": 2500}
             if m.startswith("openai/gpt-oss"):
                 body["reasoning_effort"] = "low"
-            r = httpx.post("https://api.groq.com/openai/v1/chat/completions", json=body,
-                           headers={"Authorization": f"Bearer {k}"}, timeout=90)
+            try:
+                r = httpx.post("https://api.groq.com/openai/v1/chat/completions", json=body,
+                               headers={"Authorization": f"Bearer {k}"}, timeout=90)
+            except httpx.HTTPError as e:
+                last = f"{m} network {type(e).__name__}"
+                transient = True
+                continue
             if r.status_code == 200:
                 out = r.json()["choices"][0]["message"]["content"] or ""
                 if out.strip():
-                    return out
+                    return out, last, transient
+                last = f"{m} empty"
+                transient = True
+                continue
             last = f"{m} {r.status_code}"
+            if r.status_code == 429 or r.status_code >= 500:
+                transient = True
+    return None, last, transient
+
+
+def groq_chat(messages):
+    # v75: retry transient failures with backoff (5s/15s/45s, 3
+    # retries) before raising. Run 43355930702 died in chapter 1's
+    # plan() on a single Groq 429 — a rate limit must never kill a
+    # job outright. Non-transient failures (e.g. every model 400s)
+    # raise immediately, exactly as before.
+    last = ""
+    for attempt in range(len(_CHAT_BACKOFF_S) + 1):
+        out, last, transient = _chat_sweep(messages)
+        if out is not None:
+            return out
+        if not transient or attempt == len(_CHAT_BACKOFF_S):
+            break
+        print(f"groq_chat: transient LLM failure ({last}) — "
+              f"retry {attempt + 1} in {_CHAT_BACKOFF_S[attempt]}s")
+        time.sleep(_CHAT_BACKOFF_S[attempt])
     raise RuntimeError("LLM failed: " + last)
 
 
@@ -740,6 +800,10 @@ async def create_job(j, wa, note):
         except Exception:
             pass
     except Exception as e:
+        # v75: report the failure to the Worker (refund + honest job
+        # state), not only to WhatsApp — this except used to be the
+        # silent-death path: WA got a text, the Worker heard nothing.
+        app_state("failed", f"Video create fail ayyindi: {str(e)[:250]}")
         await wa.send_text(to, f"⚠️ Video create lo problem vachindi: {str(e)[:250]}. Malli try chestha, leda topic marchi adugu.")
         raise
 

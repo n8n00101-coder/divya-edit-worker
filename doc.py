@@ -537,6 +537,14 @@ async def tts(text, voice, mood, out, rate_add=0):
         except ValueError:
             _base = 0
         rate = f"{max(-25, min(25, _base + rate_add)):+d}%"
+    # v75: the output file's directory must exist before the write.
+    # A missing dir (long_video chapter dirs) used to surface only as
+    # "TTS failed: [Errno 2] ... vo0.mp3" after 4 doomed retries — the
+    # real cause (nothing created the directory) was masked as a
+    # synthesis failure.
+    _out_dir = os.path.dirname(os.path.abspath(out))
+    if _out_dir:
+        os.makedirs(_out_dir, exist_ok=True)
     last = None
     for attempt in range(4):
         try:
@@ -545,10 +553,15 @@ async def tts(text, voice, mood, out, rate_add=0):
                 if ch["type"] == "audio": buf += ch["data"]
                 elif ch["type"] == "WordBoundary": words.append((ch["offset"] / 1e7, ch["duration"] / 1e7, ch["text"]))
             if not buf: raise RuntimeError("no audio")
-            open(out, "wb").write(bytes(buf)); return words
+            open(out, "wb").write(bytes(buf))
+            if not os.path.getsize(out):
+                raise RuntimeError("synthesis wrote an empty file")
+            return words
         except Exception as e:
             last = e; await asyncio.sleep(1.5 * (attempt + 1))
-    raise RuntimeError(f"TTS failed: {last}")
+    # v75: name the exception TYPE so a masked cause can never hide
+    # behind a bare errno string again.
+    raise RuntimeError(f"TTS failed ({type(last).__name__}): {last}")
 
 
 # ---------------- v71: reference voice (the user's own saved sample) ----
@@ -2379,6 +2392,11 @@ def _amend_checkpoint(box, p, stage, chat=None):
 async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False, ref_voice=None, amendments=None):
     global _P
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
+    # v75: a caller-supplied workdir is NOT created for us (the default
+    # mkdtemp is). long_video's chapter dirs never existed on disk, so
+    # the plan.json + vo*.mp3 writes inside died with ENOENT. The dir
+    # this function writes into must provably exist from here on.
+    os.makedirs(wd, exist_ok=True)
     abox = _AmendBox(amendments) if amendments is not None else None
     aflags = {}
     p = plan(brief, chat, recent, recent_styles, recent_families)
