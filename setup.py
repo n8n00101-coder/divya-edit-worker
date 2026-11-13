@@ -1446,6 +1446,39 @@ def try_login(page, job, cfg):
     return False
 
 
+def _fill_identity_fields(page, job):
+    """v81 (proof-driven): many consoles (Cohere, Deepgram, …) require a
+    NAME field on the signup form — the generic flow filled only
+    email+password, so the submit silently failed validation and the
+    keys page later redirected to login. Fill still-empty visible
+    name/company fields (never overwrite): the app name for a person
+    name — the same convention flow_pexels already uses — and a
+    username derived from the account email."""
+    try:
+        user = re.sub(r"[^a-z0-9_]", "", (job.get("email") or "julie").split("@")[0].lower()) or "julie"
+        for sels, val in (
+            (["input[name*='fullname' i]", "input[name*='full_name' i]", "input[name='name']",
+              "input[placeholder*='full name' i]", "input[autocomplete='name']"], "Julie"),
+            (["input[name*='firstname' i]", "input[name*='first_name' i]",
+              "input[placeholder*='first name' i]", "input[autocomplete='given-name']"], "Julie"),
+            (["input[name*='lastname' i]", "input[name*='last_name' i]",
+              "input[placeholder*='last name' i]", "input[autocomplete='family-name']"], "Julie"),
+            (["input[name*='company' i]", "input[name*='organization' i]",
+              "input[placeholder*='company' i]"], "Julie"),
+            (["input[name*='username' i]", "input[placeholder*='username' i]"], user),
+        ):
+            for sel in sels:
+                loc = page.locator(sel)
+                try:
+                    if loc.count() and loc.first.is_visible() and not (loc.first.input_value() or "").strip():
+                        loc.first.fill(val)
+                        break
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+
 def flow_email_signup(page, job, cfg):
     """Email-signup flow, v39: detect the rendered auth page first.
 
@@ -1533,13 +1566,24 @@ def flow_email_signup(page, job, cfg):
             if check_stop():
                 return _stopped()
         elif mode2 in ("email-password", "email-first"):
-            if not fill(page, _AUTH_PASS, password):
-                return _fail(f"{name} signup form lo password field kanipinchaledu (step: signup form). Take Control tho try cheyyi.")
-            tick_consent(page)
-            click_submit(page)
-            page.wait_for_timeout(4000)
+            # v81 (proof-driven): Clerk-style consoles (Tavily, Exa)
+            # answer the email step with a verification-CODE form, not
+            # a password field. That code step is the existing SMS/code
+            # pause (the code arrives by email; the server feeds it the
+            # same way) — handle it before demanding a password.
+            code = maybe_sms(page, job)
+            if code is False:
+                return _stopped()
+            if code is None:
+                _fill_identity_fields(page, job)
+                if not fill(page, _AUTH_PASS, password):
+                    return _fail(f"{name} signup form lo password field kanipinchaledu (step: signup form). Take Control tho try cheyyi.")
+                tick_consent(page)
+                click_submit(page)
+                page.wait_for_timeout(4000)
         # mode2 == "unknown": no auth form any more — proceed to key creation.
     elif mode == "email-password":
+        _fill_identity_fields(page, job)
         ok = fill(page, _AUTH_EMAIL, email)
         ok = fill(page, _AUTH_PASS, password) and ok
         if not ok:
@@ -1595,6 +1639,17 @@ def flow_email_signup(page, job, cfg):
     progress("running", "api-key", "API key create chesthunna.", page.url)
     goto(page, cfg["keys_url"])
     page.wait_for_timeout(2500)
+    # v81 (proof-driven): some consoles (Deepgram) create the account
+    # without holding the session — the keys URL lands back on a login
+    # form. One explicit login with the job's own credentials, then
+    # re-open the keys page, instead of failing as a "layout" miss.
+    try:
+        if page.locator("input[type='password']").count() and _page_says(page, ["log in", "sign in"]):
+            if try_login(page, job, cfg):
+                goto(page, cfg["keys_url"])
+                page.wait_for_timeout(2500)
+    except Exception:
+        pass
     maybe_captcha(page)
     # v81: some consoles open on a dashboard — walk the optional nav
     # hints to the API-keys view first (Cerebras, Voyage, Deepgram…).

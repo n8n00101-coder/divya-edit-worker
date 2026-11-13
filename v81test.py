@@ -315,3 +315,23 @@ if __name__ == "__main__":
     test_cross_file_consistency()
     test_audit_exclusions()
     print("v81 tests: ALL PASS")
+
+
+def test_proof_driven_flow_fixes():
+    """v81 live-proof findings, locked in: (1) signup forms that require
+    a name field silently failed validation -> identity filler;
+    (2) Clerk-style email->CODE signups died demanding a password ->
+    code pause first; (3) consoles that drop the session landed the
+    keys page on a login form -> one explicit re-login."""
+    print("test_proof_driven_flow_fixes")
+    src = open(os.path.join(HERE, "setup.py"), encoding="utf-8").read()
+    check("def _fill_identity_fields" in src, "identity-field filler exists")
+    check(src.count("_fill_identity_fields(page, job)") >= 2,
+          "identity filler used in both signup branches")
+    clerk = src.find("Clerk-style")
+    pw_fail = src.find("password field kanipinchaledu")
+    check(0 < clerk < pw_fail, "code pause is attempted before the password demand")
+    check(src.count("try_login(page, job, cfg)") >= 2,
+          "keys-page re-login present alongside the already-exists login")
+    check("maybe_sms(page, job)" in src[clerk:pw_fail],
+          "the Clerk branch routes through the code pause")
