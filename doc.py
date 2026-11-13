@@ -311,9 +311,12 @@ Return ONLY JSON:
 {"topic": "...", "title": "<2-5 word English title, caps>", "lang": "en|te|hi", "voice": "male|female",
  "caption": "<post caption with 3-5 hashtags>",
  "end_question": "<one short question to the viewers for the 1 s end card, e.g. 'Did you know this?'>",
- "scenes": [{"vo": "...", "label": "<1-3 word ENGLISH punch label, caps>", "mood": "calm|tense|hopeful|sad|excited|mystery",
+ "scenes": [{"vo": "...", "label": "<the on-screen TITLE: a 1-3 word phrase from THIS scene's content, caps — never a production label like HOOK, FACT, CTA, NEXT, RECAP, STATS>", "mood": "calm|tense|hopeful|sad|excited|mystery",
              "visual": "<one of %s>", "value": "<short number/word for the visual>",
-             "source": "<short official source for the fact/number, e.g. WHO 2023, Govt of India 2012, Harvard 2020, or empty>"}]}
+             "why": "<one sentence: why THIS visual for THIS line — it must mention a word from the vo line>",
+             "queries": ["<stock-footage search query 1 that SHOWS the meaning of this line>", "<query 2, a different angle on the same meaning>"],
+             "fulfils": ["<prompt requirement ids this scene satisfies, if a spec was given>"],
+             "source": "<ONLY a source you are actually citing for this scene's claim, e.g. WHO 2023 — or empty. Never stamp a source you did not use>"}]}
 DESIGN LOOK (v25, Hark aesthetic variety): {look} — design every scene for this look: palette, background,
 visuals and chapter style all follow it. A science: graph/clock/counter/bar visuals, diagram labels.
 B myth/safety: warning/versus/check visuals, stamp chapter cards, huge bold labels.
@@ -333,9 +336,15 @@ size the total vo words to the target duration. 9-14 scenes, each vo 6-22 words.
 Writing: documentary storytelling that sounds like a real human talking to a friend - contractions, short punchy sentences,
 rhetorical questions, a surprising fact or tension in the first line (hook), then context, a twist, the payoff, and a short
 call to follow at the end. Use commas, "..." and dashes for natural pauses. No emojis, no hashtags in vo. Vary the mood per scene to
-build an emotional arc. SOURCE RULE (v36, Blind E3): EVERY scene that states a fact or a number MUST have a short official source
-(WHO, Govt of India, Harvard, RBI, Census, ICMR, NHS, CDC) in the source field — never leave it empty on a fact/number scene.
-Only a pure opinion/hook/CTA scene (no fact, no number) may leave it empty. Each visual must literally show the line's idea (battery=energy, chat=messages/people, graph=growth or fall,
+build an emotional arc. SOURCE RULE (v79, Blind R5 — replaces the v36 rule): put a source ONLY when you are actually citing
+that source for this scene's claim. If you do not know a real source for the claim, leave the source field EMPTY — a missing
+source is honest, a stamped one (the same famous name on every scene) destroys trust and fails the compliance check.
+SHOT LIST RULE (v79, Blind mail 1 Part 2 + R2/R10): choose every visual from the MEANING of the line — ask "what would a
+person actually picture?" — never from the scene's type. Every scene carries "why" (one sentence tied to a word in the
+line) and 2 footage "queries" that SHOW the meaning (for a liver line: "doctor holding liver scan", "hospital corridor
+night" — never just the topic word). A clock only when the line is about time. A graphic only when the line has a real
+number or a real list. Numbers: the "value" must be the exact number the vo line says, with its unit, and never 0.
+Each visual must literally show the line's idea (battery=energy, chat=messages/people, graph=growth or fall,
 clock=time, calendar=days, warning=danger/mistake, check=right way, versus=comparison, counter=a number, list=steps, heart=love/health,
 bar=progress, dot_grid/donut=a percentage of people, gauge=a level, toggle=on/off, phone_buzz=phone notifications,
 stick_figure=a person/feeling, quote_card=a quote, arrows_steps=a process, checklist=steps, document=a report,
@@ -377,7 +386,24 @@ def _topic_transition_name(sc):
     return None
 
 
-def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
+def _spec_block(spec):
+    """FIX 3 (Blind mail 2): the script step receives prompt_spec.json.
+    Every step downstream gets it too (it rides on the plan). The
+    instruction is Blind's, verbatim in substance: implement every
+    requirement exactly; do not replace them with the usual style."""
+    if not spec:
+        return ""
+    lines = ["\nPROMPT SPEC (the user's contract — implement every requirement exactly. "
+             "Do not replace them with your usual style. If you cannot do one, the "
+             "compliance check will say which and why):"]
+    for r in spec:
+        lines.append(f"- {r.get('id')} [{r.get('type')}] {r.get('value')} (user said: \"{r.get('quote')}\")")
+    lines.append("In every scene's \"fulfils\" list, name the requirement ids that scene satisfies. "
+                 "Every requirement must be satisfied by at least one scene or step.")
+    return "\n".join(lines) + "\n"
+
+
+def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=None, cfg=None):
     # v25: the TOPIC MOOD picks the design system (A/B/C/D) FIRST, so the LLM
     # designs every scene for that look — never one fixed style.
     # v27 (Hark kit style plan): the look also carries a motion personality +
@@ -407,7 +433,7 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
                  f"Transition family: {LOOKS[look]['transition_family']}."
                  + (f" Topic family: {fam} ({TOPIC_FAMILIES[fam]['desc']})." if fam else ""))
     raw = chat([{"role": "system", "content": "You output strict JSON only."},
-                {"role": "user", "content": PLAN.replace("{recent}", recent or "none").replace("{look}", look_line) + (brief or "AUTO")}])
+                {"role": "user", "content": PLAN.replace("{recent}", recent or "none").replace("{look}", look_line) + _spec_block(spec) + (brief or "AUTO")}])
     p = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
     # v36 (Blind E4): the end card needs a question; default if the LLM omits it.
     if not str(p.get("end_question", "")).strip():
@@ -419,9 +445,21 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
         s["vo"] = re.sub(r"[#*_`]", "", str(s["vo"])).strip()
         if s.get("visual") not in C.VISUALS: s["visual"] = random.choice(C.VISUALS)
         if s.get("mood") not in MOODS: s["mood"] = "calm"
-        s["label"] = re.sub(r"[^A-Z0-9 %!?'&-]", "", str(s.get("label", "")).upper())[:20] or "WAIT"
+        # v79 (R6): an empty label stays EMPTY — the old "WAIT" default
+        # drew a meaningless title box (mail 3, mistake 17: empty title
+        # box = fail). The enforcement pass derives a content title
+        # from the line, or the scene renders with no title box at all.
+        s["label"] = re.sub(r"[^A-Z0-9 %!?'&-]", "", str(s.get("label", "")).upper())[:20]
         s["value"] = str(s.get("value", ""))[:8]
         s["source"] = str(s.get("source", "") or "")[:40]
+        # v79 shot list (mail 1 Part 2 / R2): the meaning record rides
+        # with the scene — why this visual, the 2 footage queries that
+        # show the meaning, and the spec ids the scene fulfils (FIX 3).
+        s["why"] = str(s.get("why", "") or "")[:200]
+        _q = s.get("queries") or []
+        s["queries"] = [str(q)[:80] for q in _q if str(q).strip()][:2]
+        _f = s.get("fulfils") or []
+        s["fulfils"] = [str(x)[:8] for x in _f if str(x).strip()][:6]
     p["scenes"] = sc
     p["lang"] = p.get("lang") if p.get("lang") in ("en", "te", "hi") else "te"
     # v32 (Blind): the title is NOT truncated to 26 chars any more — header()
@@ -488,12 +526,24 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
             _ki = (_ki + 1) % len(_kinds)
             _prev_mood = s["mood"]
         s["bg_kind"] = _kinds[_ki]
-    # v32 (M8): the fact type picks the visual kind FIRST (deterministic).
+    # v79 (Blind mail 4 Part 2 — the round-effects diagnosis): the old
+    # v32 rule REPLACED the writer's visual with a fixed template per
+    # fact type ("FACT -> donut", "HOOK -> clock", "STATS -> counter")
+    # — with ~10 templates and 100+ scenes, every template HAD to
+    # repeat 10+ times. That mapping is REMOVED. The visual the writer
+    # chose from the line's MEANING stands; the only override left is
+    # Blind's own widget-by-number-kind table (mail 1 Part 3), applied
+    # when the scene actually carries a number: percentage -> donut,
+    # "X times" -> two bars, count -> counter, years -> line chart,
+    # "1 every N seconds" -> timer.
+    import compliance as _comp
     for s in sc:
         ft = fact_type_of(s)
         s["fact_type"] = ft
-        if ft in FACT_VISUALS:
-            s["visual"] = FACT_VISUALS[ft]
+        if str(s.get("value", "")).strip():
+            _want = _comp.widget_for_number_kind(s.get("vo"), s.get("value"))
+            if _want and _want in C.VISUALS:
+                s["visual"] = _want
     # v34: "place" scenes get the real map from visuals_lib (india_map /
     # world_dots) via lib_visual — the codegen's own choice still overrides
     # this in load_video_fx.
@@ -503,9 +553,13 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
             s["lib_visual"] = "india_map" if "india" in _t else "world_dots"
     # v34 (Hark stamp CTA, item 8): the last scene is the call to action — a
     # big word + a rotated stamp + a strikethrough, not a separate outro.
+    # v79 (mail 3, R8): a LONG video has ONE CTA at the very end — a
+    # chapter that is not the final chapter may not grow its own CTA
+    # stamp (the compromise video grew 7 mini-endings). cfg carries
+    # allow_cta=False for non-final chapters.
     _last = sc[-1]
     _cta = str(_last.get("label", "")).upper() in ("FOLLOW", "QUIT", "STOP", "TODAY", "SUBSCRIBE") or "follow" in str(_last.get("vo", "")).lower()
-    if _cta:
+    if _cta and (not cfg or cfg.get("allow_cta", True)):
         _last["visual"] = "stamp_cta"
     # v32 (M9): surface the per-cut transition + one SFX per scene in the
     # plan (the codegen's PLAN call already picks per-cut transitions; the
@@ -513,7 +567,57 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
     for i, s in enumerate(sc):
         s["transition"] = p["transitions"][i - 1] if 0 < i <= len(p["transitions"]) else ""
         s["sfx"] = SCENE_SFX.get(s.get("fact_type") or s.get("hit_type") or "calm", "pop")
+    # v79: the spec + render config ride on the plan (FIX 3 — every
+    # step receives prompt_spec.json), and the plan is enforced against
+    # Blind's rules BEFORE anything renders: audit -> repair, max 2
+    # rounds (FIX 5 / R12 fix loop, at plan level where a scene can
+    # still be re-picked). What still fails is recorded on the plan and
+    # lands in compliance_report.json — never silently shipped.
+    p["spec"] = spec or []
+    p["render_config"] = cfg or {}
+    if cfg:
+        if cfg.get("lang"):
+            p["lang"] = cfg["lang"]
+        if cfg.get("accent"):
+            p["accent"] = cfg["accent"]
+        if cfg.get("end_card"):
+            p["end_question"] = cfg["end_card"]
+        if "zoom" in (cfg.get("excludes") or []):
+            p["no_zoom"] = True
+    _enforce_plan(p, brief)
     return p
+
+
+def _enforce_plan(p, brief=""):
+    """v79 plan enforcement: compliance.audit_plan + repair_plan,
+    max 2 rounds. Repairs touch plan fields only (visual / title /
+    transition / sfx / bg kind) — never the voice line."""
+    import compliance as _comp
+    cfg = p.get("render_config") or {"kind": "short"}
+    pools = {"visuals": list(C.VISUALS),
+             "transitions": sorted(TL_BY_NAME),
+             "sfx": sorted(set(SCENE_SFX.values())),
+             "bg_kinds": list(VL.SCENE_BG),
+             "pattern_bg": "paper"}
+    fixes_all = []
+    checks = []
+    for _round in range(3):  # audit, repair, audit, repair, audit
+        checks = _comp.audit_plan(p["scenes"], cfg,
+                                  topic_text=str(p.get("topic") or "") + " " + str(brief or ""),
+                                  measure=lambda txt, size: _label_width(ImageDraw.Draw(Image.new("RGB", (8, 8))), txt) if txt else 0)
+        fails = [c for c in checks if c["status"] == "FAIL"]
+        if not fails or _round == 2:
+            break
+        fixes = _comp.repair_plan(p["scenes"], cfg, pools, checks)
+        if not fixes:
+            break
+        fixes_all += fixes
+    p["plan_checks"] = checks
+    p["plan_fixes"] = fixes_all
+    _bad = [c for c in checks if c["status"] == "FAIL"]
+    if _bad:
+        print(f"plan enforcement: {len(_bad)} check(s) still failing after repairs: "
+              + "; ".join(f"{c['rule']} s{c.get('scene')}" for c in _bad[:5]))
 
 
 # ---------------- voice ----------------
@@ -1268,10 +1372,27 @@ _BROLL_SHADE_IMG = None
 
 
 def _broll_shade():
+    """v79 (mail 1 Part 2): the text-on-footage scrim is a GRADIENT —
+    top 0-35% and bottom 60-100%, black fading 70% -> 0 — not the old
+    flat 25% shade (text fought the picture, mail 1 point 6). Cached
+    per frame size."""
     global _BROLL_SHADE_IMG
-    if _BROLL_SHADE_IMG is None:
-        _BROLL_SHADE_IMG = Image.new("RGBA", (W, H), (0, 0, 0, 64))
-    return _BROLL_SHADE_IMG
+    key = (W, H)
+    if not isinstance(_BROLL_SHADE_IMG, dict):
+        _BROLL_SHADE_IMG = {}
+    if key not in _BROLL_SHADE_IMG:
+        import numpy as _np
+        ys = _np.linspace(0, 1, H)
+        a = _np.zeros(H, dtype=_np.float32)
+        top = ys < 0.35
+        a[top] = 179.0 * (1.0 - ys[top] / 0.35)
+        bot = ys > 0.60
+        a[bot] = 179.0 * ((ys[bot] - 0.60) / 0.40)
+        alpha = _np.repeat(a[:, None], W, axis=1).astype("uint8")
+        img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        img.putalpha(Image.fromarray(alpha, "L"))
+        _BROLL_SHADE_IMG[key] = img
+    return _BROLL_SHADE_IMG[key]
 
 
 def _broll_frame(p, idx, t):
@@ -1281,6 +1402,22 @@ def _broll_frame(p, idx, t):
         info = (p.get("broll") or {}).get(idx)
         if not info:
             return None
+        # v79: a scene longer than 4 s gets 2 shots (mail 1) — the
+        # second clip's frames take over at the split point.
+        if info.get("dir2") and float(t) >= float(info.get("split") or 0):
+            lt = float(t) - float(info.get("split") or 0)
+            n = int(max(0.0, lt) * FPS) % int(info["frames2"])
+            key = (info["dir2"], n)
+            img = _BROLL_CACHE.get(key)
+            if img is None:
+                fp = os.path.join(info["dir2"], f"f{n + 1:05d}.jpg")
+                if not os.path.exists(fp):
+                    return None
+                img = Image.open(fp).convert("RGB")
+                if len(_BROLL_CACHE) > 24:
+                    _BROLL_CACHE.clear()
+                _BROLL_CACHE[key] = img
+            return img
         n = int(max(0.0, float(t)) * FPS) % int(info["frames"])
         key = (info["dir"], n)
         img = _BROLL_CACHE.get(key)
@@ -1297,17 +1434,38 @@ def _broll_frame(p, idx, t):
         return None
 
 
-def _extract_broll_frames(clip_path, outdir, dur_s):
+def _extract_broll_frames(clip_path, outdir, dur_s, start_s=1.0, static=False, blur=False):
     """Loop/trim clip_path to dur_s at the frame size (ffmpeg scale+crop)
     and extract it as f%05d.jpg frames at FPS. Returns the frame count
-    (0 on any failure)."""
+    (0 on any failure).
+
+    v79 (mail 1 Part 2): start_s is the clip's most ACTIVE window
+    (frame-difference scored in broll.active_window), not always the
+    first seconds. A static clip gets a slow 3% push-in over the scene
+    (per-frame crop shrink) so it never looks frozen. A graphic scene
+    that owns the frame gets the footage blurred + darkened behind it
+    (blur ~14, brightness ~45%) instead of the graphic pasted onto the
+    subject (mail 3, mistake 9). Every clip passes the same mild grade
+    so different clips feel like one film."""
     try:
         os.makedirs(outdir, exist_ok=True)
+        dur_s = max(0.5, float(dur_s))
+        if static:
+            n_frames = max(2, int(dur_s * FPS))
+            vf = (f"scale={int(W * 1.07)}:{int(H * 1.07)}:force_original_aspect_ratio=increase,"
+                  f"crop=w='iw*(1-0.03*n/{n_frames})':h='ih*(1-0.03*n/{n_frames})'"
+                  f":x='(iw-ow)/2':y='(ih-oh)/2',scale={W}:{H},fps={FPS}")
+        else:
+            vf = (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
+                  f"crop={W}:{H},fps={FPS}")
+        if blur:
+            vf += ",gblur=sigma=14,eq=brightness=-0.30:saturation=0.85"
+        else:
+            vf += ",eq=contrast=1.05:saturation=1.07"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
                         "-stream_loop", "-1", "-i", str(clip_path),
-                        "-ss", "1", "-t", f"{max(0.5, float(dur_s)):.2f}",
-                        "-vf", (f"scale={W}:{H}:force_original_aspect_ratio=increase,"
-                                f"crop={W}:{H},fps={FPS}"),
+                        "-ss", f"{max(0.0, float(start_s)):.2f}", "-t", f"{dur_s:.2f}",
+                        "-vf", vf,
                         "-q:v", "5", os.path.join(outdir, "f%05d.jpg")],
                        check=True, timeout=300)
         return len([f for f in os.listdir(outdir) if f.endswith(".jpg")])
@@ -1315,46 +1473,109 @@ def _extract_broll_frames(clip_path, outdir, dur_s):
         return 0
 
 
-def _attach_broll(p, wd, all_scenes=False):
-    """Attach stock footage to ~half the scenes of plan p (even indices,
-    never the final CTA scene; all_scenes=True — a v72 mid-flight
-    amendment asking for more footage — targets every non-final scene).
-    Sets p["broll"] = {idx: {"dir", "frames"}} and p["broll_sources"] =
-    [{scene, provider, source_url, query}] (the licence trail Hark's
-    method requires). No-op when nothing is found."""
+def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None):
+    """v79: attach stock footage by Blind's METHOD (mail 1 Part 2 +
+    mail 3 R10), replacing the v69 "~half the scenes, topic-word
+    query" heuristic:
+
+    - The shot list drives the search: each scene's own 2 meaning
+      queries (plan's "queries"), never just the topic word.
+    - The FootagePool enforces NO-REPEAT (used_ids for the whole
+      video — a long video shares one pool across chapters), filters,
+      scores, trims to the most active window, and logs rejections
+      for footage.json.
+    - Targets: footage-only / long videos -> every scene (a graphic
+      scene gets the footage blurred + darkened behind the graphic);
+      shorts -> the hook + ~55% alternating, never more than 2
+      footage or 2 graphic scenes in a row, end card stays graphic.
+    - A scene longer than 4 s gets 2 shots (a second clip at the
+      halfway split).
+    Sets p["broll"], p["broll_sources"] (legacy licence trail) and
+    p["footage"] (the pool's footage.json data)."""
     import broll as _br
+    import compliance as _comp
+    cfg = cfg or p.get("render_config") or {}
     scenes = p["scenes"]
     n = len(scenes)
-    targets = [i for i in range(n) if i != n - 1] if all_scenes else [i for i in range(n) if i % 2 == 0 and i != n - 1]
-    topic = str(p.get("topic") or "").strip()
+    orientation = cfg.get("orientation", "portrait")
+    every = all_scenes or cfg.get("footage_only") or cfg.get("kind") == "long"
+    if every:
+        targets = [i for i in range(n) if i != n - 1 or not cfg.get("allow_cta", True)]
+    else:
+        targets = []
+        want = max(1, round(0.55 * (n - 1)))
+        flags = [False] * n
+        if n > 1:
+            flags[0] = True  # hook = strongest footage
+        got = 1 if n > 1 else 0
+        for i in range(1, n - 1):
+            prev2 = flags[i - 2] if i >= 2 else None
+            if prev2 is False and flags[i - 1] is False:
+                flags[i] = True  # never 2 graphic scenes in a row... (this one breaks the run)
+                got += 1
+            elif prev2 is True and flags[i - 1] is True:
+                flags[i] = False  # never 2 footage in a row beyond a pair
+            elif got < want:
+                flags[i] = True
+                got += 1
+        targets = [i for i in range(n - 1) if flags[i]]
+    if pool is None:
+        pool = _br.FootagePool(state_path=os.path.join(wd, "footage_state.json"))
+    p["_footage_pool"] = pool
     attached, sources = {}, []
+    dl = os.path.join(wd, "broll_dl")
     for i in targets:
         sc = scenes[i]
-        label = str(sc.get("label") or "").strip()
-        queries = [q for q in dict.fromkeys(
-            (" ".join((topic + " " + label).split()), topic, label)) if q]
-        clip = None
-        for q in queries:
-            clip = _br.fetch_broll(q, os.path.join(wd, "broll_dl"),
-                                   orientation="portrait")
-            if clip:
-                break
-        if not clip:
+        queries = [q for q in (sc.get("queries") or []) if str(q).strip()]
+        if not queries:
+            topic = str(p.get("topic") or "").strip()
+            label = str(sc.get("label") or "").strip()
+            queries = [q for q in dict.fromkeys(
+                (" ".join((topic + " " + label).split()), topic, label)) if q]
+        dur_s = float(sc.get("d") or 6)
+        blur = bool(_comp.widget_kind(sc)) and bool(cfg.get("kind") == "long" or cfg.get("footage_only"))
+        rec = pool.assign(i + 1, queries, dur_s, dl,
+                          orientation=orientation, line=str(sc.get("vo") or ""))
+        if not rec:
             continue
         fdir = os.path.join(wd, "broll_frames", f"sc{i}")
-        nframes = _extract_broll_frames(clip["path"], fdir,
-                                        float(sc.get("d") or 6))
+        # v79 (FIX 2): "no zoom" in the prompt switches the push-in
+        # OFF too — the requirement wins over the footage default.
+        _push = bool(rec.get("static")) and "zoom" not in (cfg.get("excludes") or [])
+        nframes = _extract_broll_frames(rec["path"], fdir, dur_s,
+                                        start_s=rec.get("start", 1.0),
+                                        static=_push,
+                                        blur=blur)
         if nframes <= 0:
             continue
-        attached[i] = {"dir": fdir, "frames": nframes}
-        sources.append({"scene": i + 1, "provider": clip["provider"],
-                        "source_url": clip["source_url"],
-                        "query": clip["query"]})
+        entry = {"dir": fdir, "frames": nframes}
+        if dur_s > 4.0:
+            rec2 = pool.assign(i + 1, queries, dur_s / 2, dl,
+                               orientation=orientation, line=str(sc.get("vo") or ""))
+            if rec2:
+                fdir2 = os.path.join(wd, "broll_frames", f"sc{i}b")
+                _push2 = bool(rec2.get("static")) and "zoom" not in (cfg.get("excludes") or [])
+                nf2 = _extract_broll_frames(rec2["path"], fdir2, dur_s / 2,
+                                            start_s=rec2.get("start", 1.0),
+                                            static=_push2,
+                                            blur=blur)
+                if nf2 > 0:
+                    entry.update({"dir2": fdir2, "frames2": nf2,
+                                  "split": round(dur_s / 2, 2)})
+                    sources.append({"scene": i + 1, "provider": rec2["provider"],
+                                    "source_url": rec2["source_url"],
+                                    "query": rec2["query"]})
+        attached[i] = entry
+        sc["has_footage"] = True
+        sources.append({"scene": i + 1, "provider": rec["provider"],
+                        "source_url": rec["source_url"],
+                        "query": rec["query"]})
     if attached:
         p["broll"] = attached
         p["broll_sources"] = sources
         print(f"broll: footage on {len(attached)}/{n} scenes "
               f"({', '.join(s['provider'] for s in sources)})")
+    p["footage"] = pool.footage_json()
 
 
 def scene_frame(p, idx, t, return_layers=False):
@@ -1737,16 +1958,35 @@ def write_ass(p, path):
     # (frame), captions ONLY. MarginV 200 puts the caption bottom at 1720.
     # Min caption font 72 px (A4): English 96, Telugu 72 (was 70).
     # MarginL/R 80 keeps the 40 px side margin with room.
+    # v79 (R-P5 + R7 + mail 1 Part 3): the caption spec is a RENDERER
+    # PARAMETER from prompt_spec — chunk bounds (short 2-4 words, long
+    # 4-7), size and colour come from p["render_config"], and chunks
+    # break on PHRASE BOUNDARIES (compliance.chunk_caption_words),
+    # never mid-phrase on a fixed word count. PlayRes follows the
+    # actual frame size. Long videos get the dark band behind the
+    # captions (R7: BorderStyle 3 box).
+    import compliance as _comp
+    cfg = p.get("render_config") or {}
+    cspec = cfg.get("caption_spec") or {}
+    wmin, wmax = cspec.get("words") or ((4, 7) if cfg.get("kind") == "long" else (2, 4))
     size = 72 if p["lang"] == "te" else 96
+    size = max(40, int(round(size * (H / 1920.0) * float(cspec.get("size_scale") or 1.0))))
+    _col = cspec.get("colour")
+    primary = "&H0040D8FF"
+    if _col:
+        r, g, b = (int(_col[0]), int(_col[1]), int(_col[2]))
+        primary = f"&H00{b:02X}{g:02X}{r:02X}"
+    border_style = 3 if cfg.get("kind") == "long" else 1
+    margin_v = int(round(200 * (H / 1920.0))) or 60
     head = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
+PlayResX: {W}
+PlayResY: {H}
 WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: K,{fn},{size},&H0040D8FF,&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,1,0,1,6,3,2,80,80,200,1
+Style: K,{fn},{size},{primary},&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,1,0,{border_style},6,3,2,80,80,{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -1758,8 +1998,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             toks = s["vo"].split(); tot = sum(len(x) for x in toks) or 1; acc = 0.0; ws = []
             for x in toks:
                 d = (s["adur"]) * len(x) / tot; ws.append((acc, d, x)); acc += d
-        chunk = 3 if p["lang"] != "te" else 2
-        groups = [ws[i:i + chunk] for i in range(0, len(ws), chunk)]
+        groups = _comp.chunk_caption_words(ws, wmin, wmax)
         for gi, g in enumerate(groups):
             a = st + g[0][0]; b = st + (groups[gi + 1][0][0] if gi + 1 < len(groups) else g[-1][0] + g[-1][1] + 0.25)
             parts = []
@@ -2389,8 +2628,8 @@ def _amend_checkpoint(box, p, stage, chat=None):
     return flags
 
 
-async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False, ref_voice=None, amendments=None):
-    global _P
+async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False, ref_voice=None, amendments=None, spec=None, cfg=None, footage_pool=None):
+    global _P, W, H
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
     # v75: a caller-supplied workdir is NOT created for us (the default
     # mkdtemp is). long_video's chapter dirs never existed on disk, so
@@ -2399,7 +2638,20 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     os.makedirs(wd, exist_ok=True)
     abox = _AmendBox(amendments) if amendments is not None else None
     aflags = {}
-    p = plan(brief, chat, recent, recent_styles, recent_families)
+    # v79 (FIX 1/2 + R-P4/R-P5): the render config comes from
+    # prompt_spec — spec wins over every engine default. Resolving it
+    # can raise SpecImpossible BEFORE anything renders (mail 2b point
+    # 5: fail the job loudly, never fall back silently). The frame
+    # size is set from the config: the runner process serves one job
+    # and every make_video call sets it before drawing, so no stale
+    # size is ever used.
+    if cfg is None and spec is not None:
+        import spec_engine as _se
+        cfg = _se.resolve_render_config(spec, "short")
+    cfg = cfg or {}
+    if cfg.get("width") and cfg.get("height"):
+        W, H = int(cfg["width"]), int(cfg["height"])
+    p = plan(brief, chat, recent, recent_styles, recent_families, spec=spec, cfg=cfg)
     # v32 (Blind codegen): ONE engine writes tr_/fx_/vis_ in a single call
     # (codegen.run: PLAN -> CODE -> sandbox -> fix x2 -> library fallback),
     # while the QC scores the plan in parallel. A failed custom function
@@ -2433,16 +2685,26 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # v72 checkpoint 1 (script): content points + style notes fold into
     # the plan BEFORE any voice is synthesised.
     aflags.update(_amend_checkpoint(abox, p, "script", chat))
-    voice = VOICES.get((p["lang"], p.get("voice", "male")), VOICES[(p["lang"], "male")])
-    # v32 (M12, Mark): ChristopherNeural (-8%, -4Hz, "calm, deep") for
-    # calm/motivational English videos — majority-calm moods, or a brief
-    # about motivation/discipline/calm. tts() applies the -8%/-4Hz override.
-    _moods = [s.get("mood") for s in p["scenes"]]
-    _br = str(brief).lower()
-    if (p["lang"] == "en" and p.get("voice", "male") == "male" and
-            (_moods.count("calm") >= len(_moods) / 2 or
-             any(w in _br for w in ("motivat", "discipline", "calm", "focus", "habit")))):
-        voice = VOICES[("en", "male_calm")]
+    # v79 (R-P5): the voice is a renderer PARAMETER from the spec —
+    # a named voice or gender in the prompt is used exactly, never
+    # re-chosen. The v32 calm swap below is an engine DEFAULT: it
+    # applies only when the spec says nothing about the voice.
+    if cfg.get("voice_id"):
+        voice = cfg["voice_id"]
+    elif cfg.get("voice_gender"):
+        voice = VOICES.get((p["lang"], cfg["voice_gender"]), VOICES[(p["lang"], "male")])
+    else:
+        voice = VOICES.get((p["lang"], p.get("voice", "male")), VOICES[(p["lang"], "male")])
+        # v32 (M12, Mark): ChristopherNeural (-8%, -4Hz, "calm, deep") for
+        # calm/motivational English videos — majority-calm moods, or a brief
+        # about motivation/discipline/calm. tts() applies the -8%/-4Hz override.
+        _moods = [s.get("mood") for s in p["scenes"]]
+        _br = str(brief).lower()
+        if (p["lang"] == "en" and p.get("voice", "male") == "male" and
+                (_moods.count("calm") >= len(_moods) / 2 or
+                 any(w in _br for w in ("motivat", "discipline", "calm", "focus", "habit")))):
+            voice = VOICES[("en", "male_calm")]
+    p["_voice_used"] = voice
     if notify: await notify(f"Script ready: {p['title']} ({len(p['scenes'])} scenes, {p['lang']}). Voice, animation, music chestunna.")
     gap = 0.45  # v32 (M13, Mark 1a1c1028211d08d1 §1 step 6): 0.45 s breathing room per scene
     # v71: with a saved reference voice, every scene goes through
@@ -2515,7 +2777,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         print("amendments: B-roll OFF — attach skipped")
     else:
         try:
-            _attach_broll(p, wd, all_scenes=(aflags.get("broll") == "on"))
+            _attach_broll(p, wd, all_scenes=(aflags.get("broll") == "on"),
+                          cfg=cfg, pool=footage_pool)
         except Exception as e:
             print("broll attach failed:", str(e)[:150])
     if p.get("broll_sources") and notify:
@@ -2577,9 +2840,12 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # mix graph (and the loudness design) stays exactly as built.
     aflags.update(_amend_checkpoint(abox, p, "audio"))
     music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff)
-    if aflags.get("music") == "off":
+    # v79 (FIX 2): a spec switch ("no music" / "no SFX" in the prompt)
+    # outranks the engine default AND a mid-flight amendment — the
+    # requirement wins, the default is switched off.
+    if aflags.get("music") == "off" or cfg.get("music") is False:
         _silence_wav(f"{wd}/music.wav", total)
-    if aflags.get("sfx") == "off":
+    if aflags.get("sfx") == "off" or cfg.get("sfx") is False:
         _silence_wav(f"{wd}/music_sfx.wav", total)
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/voice.wav", "-i", f"{wd}/music.wav", "-i", f"{wd}/music_sfx.wav", "-filter_complex",
                     # v36 (Blind E1): the music is ducked -12 dB under the voice
@@ -2587,7 +2853,9 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                     "[0:a]asplit[v1][v2];[1:a]volume=0.45[m];[m][v2]sidechaincompress=threshold=0.015:ratio=10:attack=15:release=350[md];"
                     "[v1]highpass=f=70,acompressor=threshold=0.1:ratio=3,volume=1.5[vv];[2:a]volume=0.55[sx];"
                     # v32 (M6, Mark): final loudnorm -14 LUFS (was alimiter)
-                    "[vv][md][sx]amix=inputs=3:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[o]", "-map", "[o]", "-ar", str(SR), f"{wd}/mix.wav"], check=True)
+                    # v79 (R11): true peak -1 dB (was -1.5; the compromise
+                    # video peaked at 0.0 and clipped).
+                    "[vv][md][sx]amix=inputs=3:normalize=0,loudnorm=I=-14:TP=-1.0:LRA=11[o]", "-map", "[o]", "-ar", str(SR), f"{wd}/mix.wav"], check=True)
     # v72 checkpoint 4 (assembly): transitions + captions land before
     # the frame render and the caption burn — the last point where
     # they can still change THIS video.
@@ -2601,7 +2869,7 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     open(f"{wd}/parts.txt", "w").write("".join(f"file '{x}'\n" for x in parts))
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", f"{wd}/parts.txt", "-c", "copy", f"{wd}/raw.mp4"], check=True)
     ass = f"{wd}/subs.ass"
-    _cap_off = aflags.get("captions") == "off"
+    _cap_off = aflags.get("captions") == "off" or cfg.get("captions") is False
     if not _cap_off:
         write_ass(p, ass)
     out = f"{wd}/divya_doc.mp4"
@@ -2642,6 +2910,66 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # False) — never silently shipped as if it passed.
     _fq = frame_qc(p, out, wd)
     print(f"frame_qc: {'PASS' if _fq['passed'] else 'FAIL'} — " + ("; ".join(_fq["flaws"][:6]) if _fq["flaws"] else "all scenes clean") + ((" | warnings: " + "; ".join(_fq["warnings"][:4])) if _fq.get("warnings") else ""))
+    # v79 (FIX 5 + Part 4 + R12): the compliance run — plan checks
+    # (with timing, after the real durations exist), footage ratio,
+    # media checks (ffprobe / -14 LUFS / -1 dBTP / silence), and a
+    # per-requirement verdict for every line of prompt_spec. The
+    # artifacts (prompt_spec.json, footage.json,
+    # compliance_report.json) are written next to the video, and the
+    # PROJECT is saved (FIX 4: script, scenes, footage, audio, voice,
+    # look, render settings) so a later edit loads THIS state instead
+    # of regenerating.
+    _report = None
+    try:
+        import compliance as _comp
+        _checks = _comp.audit_plan(p["scenes"], cfg or {"kind": "short"},
+                                   topic_text=str(p.get("topic") or "") + " " + str(brief or ""),
+                                   measure=lambda txt, size: _label_width(ImageDraw.Draw(Image.new("RGB", (8, 8))), txt) if txt else 0,
+                                   have_timing=True)
+        _checks += _comp.audit_footage(p["scenes"], cfg or {"kind": "short"})
+        _mchecks, _minfo = _comp.audit_media(out, cfg or {"kind": "short"}, spec or [])
+        _checks += _mchecks
+        _plan_info = {
+            "lang": p.get("lang"), "topic": p.get("topic", brief),
+            "voice_used": p.get("_voice_used", voice),
+            "voice_gender": cfg.get("voice_gender") or p.get("voice"),
+            "music_applied": not (cfg.get("music") is False or aflags.get("music") == "off"),
+            "sfx_applied": not (cfg.get("sfx") is False or aflags.get("sfx") == "off"),
+            "captions_applied": not _cap_off,
+            "camera_moves": False,  # v33: the engine's camera is static
+            "footage_coverage": (sum(1 for s in p["scenes"] if s.get("has_footage")) / max(1, len(p["scenes"]))),
+            "end_card_text": p.get("end_question", ""),
+            "chapters_done": None,
+        }
+        _verdicts = _comp.requirement_verdicts(spec or [], cfg or {}, _plan_info, _minfo)
+        _report = _comp.build_report(spec or [], cfg or {}, _checks, _verdicts,
+                                     rounds=0, fixes=p.get("plan_fixes") or [])
+        p["compliance"] = _report
+        for _name, _data in (("prompt_spec.json", spec or []),
+                             ("footage.json", p.get("footage") or {}),
+                             ("compliance_report.json", _report)):
+            try:
+                with open(os.path.join(wd, _name), "w", encoding="utf-8") as _f:
+                    json.dump(_data, _f, indent=1)
+            except OSError:
+                pass
+        try:
+            _proj = {"version": "v79", "brief": brief, "spec": spec or [],
+                     "render_config": cfg or {},
+                     "plan": {k: v for k, v in p.items()
+                              if k not in ("broll", "_footage_pool", "words")},
+                     "footage": p.get("footage") or {},
+                     "voice_used": p.get("_voice_used", voice),
+                     "workdir_files": {"video": os.path.basename(out)}}
+            with open(os.path.join(wd, "project.json"), "w", encoding="utf-8") as _f:
+                json.dump(_proj, _f, indent=1, default=str)
+        except Exception as _e:
+            print("project save failed:", str(_e)[:120])
+        _nf = [c for c in _checks if c["status"] == "FAIL"]
+        print(f"compliance: {'PASS' if not _nf else f'{len(_nf)} FAIL'} — "
+              + ("; ".join(f"{c['rule']}: {c['detail'][:60]}" for c in _nf[:4]) if _nf else "all checks clean"))
+    except Exception as _e:
+        print("compliance run failed:", str(_e)[:200])
     # v36 (Blind D): record this video's look so the next video never repeats it.
     record_look(p.get("look"))
     # v72: close the amendment book — everything the engine applied is
@@ -2660,4 +2988,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             # stage + what was done) and which missed this video.
             "amendments_applied": abox.applied if abox else [],
             "amendments_missed": abox.missed() if abox else [],
+            # v79: the contract artifacts (FIX 1/5) + the saved project
+            # (FIX 4) + the compliance report for the delivery line.
+            "spec": spec or [], "render_config": cfg or {},
+            "compliance": _report, "workdir": wd,
             "frame_qc": _fq, "qc_passed": _fq["passed"]}

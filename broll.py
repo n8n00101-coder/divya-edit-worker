@@ -22,6 +22,7 @@ create engine behaves exactly as before (code-drawn backgrounds only).
 import hashlib
 import json
 import os
+import re
 import urllib.parse
 import urllib.request
 
@@ -95,51 +96,89 @@ def _download(url, dest):
             pass
 
 
-def _pexels_search(query, key, orientation):
-    """Best Pexels video file for query -> {url, page} or None."""
+def _best_file(files, orientation):
+    """Prefer a file near 1080 wide (enough for the crop, small to
+    download); never a giant 4K original."""
+    files = list(files)
+    if orientation == "portrait":
+        files = [f for f in files if f["height"] >= f["width"]] or files
+    files.sort(key=lambda f: (abs(f["width"] - 1080), f["width"]))
+    return files[0] if files else None
+
+
+def _pexels_candidates(query, key, orientation, per_page=15):
+    """Mail 1 Part 2: search Pexels with per_page=15, size=medium.
+    Returns candidate dicts (id/provider/url/page/width/height/
+    duration/uploader/slug) — filtering + scoring happen in the pool."""
     data = _get_json("https://api.pexels.com/videos/search",
                      params={"query": query, "orientation": orientation,
-                             "per_page": 5},
+                             "size": "medium", "per_page": per_page},
                      headers={"Authorization": key})
     if not data:
-        return None
-    videos = data.get("videos") or []
-    for v in videos:
+        return []
+    out = []
+    for v in data.get("videos") or []:
         files = [f for f in (v.get("video_files") or [])
                  if f.get("link") and f.get("width") and f.get("height")
                  and (not f.get("file_type") or f["file_type"] == "video/mp4")]
         if not files:
             continue
-        if orientation == "portrait":
-            files = [f for f in files if f["height"] >= f["width"]] or files
-        # Prefer a file near 1080 wide (enough for the 1080x1920 crop,
-        # small to download); never a giant 4K original.
-        files.sort(key=lambda f: (abs(f["width"] - 1080), f["width"]))
-        best = files[0]
-        return {"url": best["link"], "page": v.get("url") or ""}
-    return None
+        best = _best_file(files, orientation)
+        if not best:
+            continue
+        out.append({"id": f"pexels:{v.get('id')}", "provider": "pexels",
+                    "url": best["link"], "page": v.get("url") or "",
+                    "width": best["width"], "height": best["height"],
+                    "duration": float(v.get("duration") or 0),
+                    "uploader": str((v.get("user") or {}).get("name") or ""),
+                    "slug": str(v.get("url") or "")})
+    return out
 
 
-def _pixabay_search(query, key, orientation):
-    """Best Pixabay video file for query -> {url, page} or None."""
-    data = _get_json("https://pixabay.com/api/videos/",
-                     params={"key": key, "q": query, "per_page": 5})
-    if not data:
+def _pexels_search(query, key, orientation):
+    """Best Pexels video file for query -> {url, page} or None.
+    (Legacy single-hit shape — fetch_broll and its tests use this.)"""
+    cands = _pexels_candidates(query, key, orientation, per_page=5)
+    if not cands:
         return None
-    hits = data.get("hits") or []
-    for h in hits:
+    c = cands[0]
+    return {"url": c["url"], "page": c["page"]}
+
+
+def _pixabay_candidates(query, key, orientation, per_page=20):
+    """Mail 1 Part 2: Pixabay search, per_page=20. Candidate dicts,
+    same shape as _pexels_candidates (tags come from the hit)."""
+    data = _get_json("https://pixabay.com/api/videos/",
+                     params={"key": key, "q": query, "per_page": per_page})
+    if not data:
+        return []
+    out = []
+    for h in data.get("hits") or []:
         variants = [v for v in (h.get("videos") or {}).values()
                     if isinstance(v, dict) and v.get("url")
                     and v.get("width") and v.get("height")]
         if not variants:
             continue
-        if orientation == "portrait":
-            variants = [v for v in variants if v["height"] >= v["width"]] \
-                or variants
-        variants.sort(key=lambda v: (abs(v["width"] - 1080), v["width"]))
-        best = variants[0]
-        return {"url": best["url"], "page": h.get("pageURL") or ""}
-    return None
+        best = _best_file(variants, orientation)
+        if not best:
+            continue
+        out.append({"id": f"pixabay:{h.get('id')}", "provider": "pixabay",
+                    "url": best["url"], "page": h.get("pageURL") or "",
+                    "width": best["width"], "height": best["height"],
+                    "duration": float(h.get("duration") or 0),
+                    "uploader": str(h.get("user") or ""),
+                    "slug": str(h.get("tags") or "")})
+    return out
+
+
+def _pixabay_search(query, key, orientation):
+    """Best Pixabay video file for query -> {url, page} or None.
+    (Legacy single-hit shape — fetch_broll and its tests use this.)"""
+    cands = _pixabay_candidates(query, key, orientation, per_page=5)
+    if not cands:
+        return None
+    c = cands[0]
+    return {"url": c["url"], "page": c["page"]}
 
 
 def fetch_broll(query, workdir, orientation="portrait"):
@@ -188,3 +227,194 @@ def fetch_broll(query, workdir, orientation="portrait"):
                 "source_url": hit["page"], "query": query}
     except Exception:
         return None
+
+
+# ==================================================================
+# v79 — the footage METHOD (Blind/Hark mail 1 Part 2 + mail 3 R10).
+# The LLM writes a shot list first: per scene, 2 search queries that
+# show the MEANING of the line, not the topic word. Both APIs are
+# searched (10-15 results per query), filtered (duration >= scene
+# length + 1 s, height >= 1080, croppable), scored (query match from
+# tags/slug + duration fit), and assigned under the NO-REPEAT rule: a
+# used_ids set for the WHOLE video (shared across chapters of a long
+# video through the state file), and never two clips from the same
+# uploader back-to-back. Every assignment + rejection is recorded for
+# footage.json. The trim picks the most ACTIVE window of the clip
+# (frame-difference score), not always the first seconds.
+# ==================================================================
+
+def _tokens(text):
+    return {t for t in re.findall(r"[a-z0-9]+", str(text or "").lower())
+            if len(t) > 2}
+
+
+def score_candidate(cand, query):
+    """Query match (from tags/slug) dominates; a clip that comfortably
+    covers the needed length beats a barely-long-enough one."""
+    qt = _tokens(query)
+    ct = _tokens(cand.get("slug", "")) | _tokens(cand.get("page", ""))
+    match = len(qt & ct) / max(1, len(qt)) if qt else 0.0
+    return match * 10.0 + min(2.0, (cand.get("duration") or 0) / 30.0)
+
+
+def filter_candidates(cands, needed_s, used_ids, last_uploader):
+    """Mail 1 Part 2 filters + the NO-REPEAT rule. Returns
+    (kept, rejected) — every rejection carries its reason for
+    footage.json."""
+    kept, rejected = [], []
+    for c in cands:
+        if c["id"] in used_ids:
+            rejected.append({**c, "reason": "already used in this video (NO-REPEAT)"})
+        elif (c.get("duration") or 0) < needed_s + 1:
+            rejected.append({**c, "reason": f"too short: {c.get('duration')}s < needed {needed_s + 1}s"})
+        elif (c.get("height") or 0) < 1080:
+            rejected.append({**c, "reason": f"height {c.get('height')} < 1080"})
+        elif last_uploader and c.get("uploader") and c["uploader"] == last_uploader:
+            rejected.append({**c, "reason": "same uploader as the previous clip"})
+        else:
+            kept.append(c)
+    return kept, rejected
+
+
+def active_window(clip_path, needed_s, fps=2):
+    """The most active window of the clip: sample gray frames at
+    `fps`, score consecutive frame differences, return
+    (start_s, mean_motion). mean_motion under ~1.2 reads as a frozen
+    clip to a viewer — the caller marks it static (slow push-in)."""
+    import subprocess
+    import tempfile
+    import numpy as np
+    from PIL import Image
+    try:
+        with tempfile.TemporaryDirectory(prefix="v79act_") as td:
+            subprocess.run(["ffmpeg", "-v", "error", "-i", str(clip_path),
+                            "-vf", f"fps={fps},scale=128:-2,format=gray",
+                            os.path.join(td, "f%04d.png")],
+                           check=True, timeout=120)
+            files = sorted(f for f in os.listdir(td) if f.endswith(".png"))
+            if len(files) < 2:
+                return 0.0, 0.0
+            frames = [np.asarray(Image.open(os.path.join(td, f)),
+                                 dtype=np.float32) for f in files]
+            diffs = [float(np.mean(np.abs(frames[i + 1] - frames[i])))
+                     for i in range(len(frames) - 1)]
+            win = max(1, int(round(needed_s * fps)))
+            if len(diffs) <= win:
+                return 0.0, (sum(diffs) / len(diffs) if diffs else 0.0)
+            best_i, best_v = 0, -1.0
+            for i in range(len(diffs) - win + 1):
+                v = sum(diffs[i:i + win])
+                if v > best_v:
+                    best_i, best_v = i, v
+            return best_i / fps, best_v / win
+    except Exception:
+        return 0.0, 0.0
+
+
+class FootagePool:
+    """One pool per VIDEO (a long video shares one pool across all
+    chapters via state_path). assign() returns the scene's clip
+    record for footage.json, or None with the rejections logged."""
+
+    def __init__(self, state_path=None):
+        self.state_path = state_path
+        self.used_ids = []
+        self.last_uploader = ""
+        self.assignments = []
+        self.rejected = []
+        if state_path and os.path.exists(state_path):
+            try:
+                st = json.loads(open(state_path, encoding="utf-8").read())
+                self.used_ids = list(st.get("used_ids") or [])
+                self.last_uploader = st.get("last_uploader") or ""
+                self.assignments = list(st.get("assignments") or [])
+                self.rejected = list(st.get("rejected") or [])
+            except Exception:
+                pass
+
+    def _save(self):
+        if not self.state_path:
+            return
+        try:
+            with open(self.state_path, "w", encoding="utf-8") as f:
+                json.dump({"used_ids": self.used_ids,
+                           "last_uploader": self.last_uploader,
+                           "assignments": self.assignments,
+                           "rejected": self.rejected}, f)
+        except OSError:
+            pass
+
+    def available(self):
+        return bool((os.environ.get("PEXELS_KEY") or "").strip()
+                    or (os.environ.get("PIXABAY_KEY") or "").strip())
+
+    def assign(self, scene_no, queries, needed_s, workdir,
+               orientation="portrait", line=""):
+        """queries: the scene's shot-list queries (meaning, not the
+        topic word). Returns {path, clip_id, provider, source_url,
+        query, keyword, start, static} or None."""
+        if not self.available():
+            self.rejected.append({"scene": scene_no,
+                                  "reason": "no stock-footage key configured"})
+            return None
+        os.makedirs(workdir, exist_ok=True)
+        used = set(self.used_ids)
+        for query in [q for q in (queries or []) if str(q).strip()]:
+            cands = []
+            pk = (os.environ.get("PEXELS_KEY") or "").strip()
+            xk = (os.environ.get("PIXABAY_KEY") or "").strip()
+            if pk:
+                cands += _pexels_candidates(query, pk, orientation)
+            if xk:
+                cands += _pixabay_candidates(query, xk, orientation)
+            kept, rejected = filter_candidates(cands, needed_s, used,
+                                               self.last_uploader)
+            self.rejected.extend({**r, "scene": scene_no, "query": query}
+                                 for r in rejected)
+            kept.sort(key=lambda c: -score_candidate(c, query))
+            for cand in kept:
+                dest = os.path.join(
+                    workdir, f"pool_{cand['provider']}_{str(cand['id']).split(':')[-1]}.mp4")
+                if not (os.path.exists(dest) and os.path.getsize(dest) > 50_000):
+                    if not _download(cand["url"], dest):
+                        self.rejected.append({**cand, "scene": scene_no,
+                                              "query": query,
+                                              "reason": "download failed"})
+                        continue
+                start, motion = active_window(dest, needed_s)
+                keyword = ""
+                line_toks = _tokens(line)
+                for tok in _tokens(query):
+                    if tok in line_toks:
+                        keyword = tok
+                        break
+                rec = {"scene": scene_no, "clip_id": cand["id"],
+                       "provider": cand["provider"],
+                       "source_url": cand["page"], "query": query,
+                       "keyword": keyword, "start": round(start, 2),
+                       "path": dest, "static": motion < 1.2,
+                       "uploader": cand.get("uploader", "")}
+                self.used_ids.append(cand["id"])
+                self.last_uploader = cand.get("uploader", "")
+                self.assignments.append(rec)
+                self._save()
+                return rec
+        self.rejected.append({"scene": scene_no,
+                              "reason": "no unused clip matched any query"})
+        self._save()
+        return None
+
+    def footage_json(self):
+        """footage.json: scene -> clip id, source, url, query, the
+        keyword that matched the line (R10), start time — plus the
+        rejected clips with their reasons (mail 1 Part 2 point 6)."""
+        return {
+            "clips": [{k: r[k] for k in ("scene", "clip_id", "provider",
+                                         "source_url", "query", "keyword",
+                                         "start", "static")
+                       } for r in self.assignments],
+            "rejected": [{k: r.get(k) for k in ("scene", "clip_id",
+                                                "provider", "query",
+                                                "reason") if k in r}
+                         for r in self.rejected],
+        }
