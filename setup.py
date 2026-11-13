@@ -266,16 +266,27 @@ def report_result(provider, status, key=None, error=None, extra=None):
         payload["error"] = error
     if extra:
         payload.update(extra)
-    try:
-        # v42: 180s, not 20 — this POST is the authoritative outcome
-        # record; the 20s read timeout fired live (2026-11-12) when the
-        # Worker was slow answering, nearly losing a provider outcome.
-        httpx.post(f"{WORKER}/api/setup/runner/result", params={"job": JOB},
-                   json=payload, headers=H, timeout=180)
-        return True
-    except Exception as e:
-        print("result report failed:", e)
-        return False
+    # v42: 180s, not 20 — this POST is the authoritative outcome
+    # record; the 20s read timeout fired live (2026-11-12) when the
+    # Worker was slow answering, nearly losing a provider outcome.
+    # v74: one attempt was still a single point of loss — a lost POST
+    # loses a freshly created key AND stalls the chain (the Worker
+    # never learns the outcome). Retry transient failures with
+    # backoff; a non-200 answer counts as failure (httpx alone
+    # would have called it success).
+    for attempt in range(4):
+        try:
+            r = httpx.post(f"{WORKER}/api/setup/runner/result", params={"job": JOB},
+                           json=payload, headers=H, timeout=180)
+            if r.status_code == 200:
+                return True
+            print(f"result report HTTP {r.status_code} (attempt {attempt + 1}/4)", flush=True)
+        except Exception as e:
+            print("result report failed:", e, f"(attempt {attempt + 1}/4)", flush=True)
+        if attempt < 3:
+            time.sleep((5, 15, 30)[attempt])
+    print("result report LOST after 4 attempts — provider outcome not recorded", flush=True)
+    return False
 
 
 def get_job():

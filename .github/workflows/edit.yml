@@ -10,7 +10,12 @@ concurrency:
 jobs:
   edit:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # v74: was 60 — the long pipeline's internal budget alone is 50 min,
+    # plus runner setup and result upload, so the Actions ceiling could
+    # SIGKILL a nearly-finished job during assembly/upload with no
+    # report reaching the Worker. 350 (GitHub max 360) removes the
+    # hard-kill class; the internal budget still governs partial delivery.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - name: Tools
