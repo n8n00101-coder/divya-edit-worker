@@ -491,17 +491,25 @@ async def make_long_video(brief, chat, workdir, target_minutes,
         pool = _broll.FootagePool(
             state_path=str(Path(workdir) / "footage_state.json"))
     results = []
+    # spec/cfg/pool are passed ONLY when a spec exists — the same
+    # conditional-kwargs contract the rest of the codebase keeps
+    # (engine-shaped callers/stubs without those parameters stay
+    # compatible; cf. v78test's render_chapters stub).
     paths = await render_chapters(out, chat, workdir, notify=notify,
                                   deadline=deadline, results_out=results,
                                   ref_voice=ref_voice,
                                   amendments=amendments,
-                                  spec=spec, cfg=cfg, pool=pool)
+                                  **({"spec": spec, "cfg": cfg, "pool": pool}
+                                     if spec is not None else {}))
     if not paths:
         raise RuntimeError("long video: no chapters rendered")
     titles = [ch["title"] for ch in out["chapters"]][:len(paths)]
-    _size = (int(cfg["width"]), int(cfg["height"])) if cfg else (1080, 1920)
-    final = assemble(paths, str(Path(workdir) / "long_final.mp4"), titles,
-                     size=_size, card_bg_from=list(paths))
+    if spec is not None and cfg:
+        _size = (int(cfg["width"]), int(cfg["height"]))
+        final = assemble(paths, str(Path(workdir) / "long_final.mp4"), titles,
+                         size=_size, card_bg_from=list(paths))
+    else:
+        final = assemble(paths, str(Path(workdir) / "long_final.mp4"), titles)
     duration = _probe_duration(final)
     broll_sources = []
     for r in results:
