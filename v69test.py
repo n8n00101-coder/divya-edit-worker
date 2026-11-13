@@ -185,8 +185,14 @@ def test_make_long_video():
                         "-f", "lavfi", "-i", "sine=frequency=330:d=1",
                         "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p",
                         "-c:a", "aac", "-ar", "44100", out], check=True)
+        # v78: the stub stands in for a FULL 1-min chapter, so it must
+        # report the duration the real doc.make_video always returns —
+        # without it, render_chapters (correctly) probes the 1s file,
+        # finds the chapter materially short of its 60s budget and
+        # tops it up, which is v78 behaviour, not a v69 regression.
         return {"path": out, "title": "Stub long", "lang": "en",
                 "caption": "cap", "topic": "stub", "plan": {},
+                "duration": 60.0,
                 "broll": [{"scene": 1, "provider": "pexels",
                            "source_url": "https://www.pexels.com/video/1/",
                            "query": "stub"}]}

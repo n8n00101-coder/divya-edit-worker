@@ -42,6 +42,8 @@ async def main():
     try:
         return await _run_job(j)
     except BaseException as e:
+        # v78: app_state itself stays silent when the result was already
+        # delivered (delivered is terminal — see _RESULT_DELIVERED).
         if not _FAILED_POSTED:
             app_state("failed", f"Job fail ayyindi: {str(e)[:250]}")
         raise
@@ -70,9 +72,17 @@ async def _run_job(j):
             up = fit_size(res["path"], 23)
             rr = httpx.post(f"{WORKER}/api/runner/result", params={"job": JOB, "note": f"{res.get('summary', '')[:200]}"[:290]}, content=open(up, "rb").read(), headers={"x-runner-key": KEY, "content-type": "video/mp4"}, timeout=300)
             print("result upload", rr.status_code)
+            if rr.status_code == 200:
+                mark_result_delivered()  # v78: delivered is terminal
         except Exception as e:
             print("result upload failed", str(e)[:200])
-        await wa.send_media(to, res["path"], "video", caption=f"✨ Edit ready! {res['summary'][:300]}\n{qa}")
+        # v78: the WhatsApp copy is best-effort once the result is in —
+        # a WA failure (e.g. 413 on a long video) must never fail a
+        # delivered job.
+        try:
+            await wa.send_media(to, res["path"], "video", caption=f"✨ Edit ready! {res['summary'][:300]}\n{qa}")
+        except Exception as e:
+            print("wa send_media failed (post-result, non-fatal):", str(e)[:200])
     except Exception as e:
         await wa.send_text(to, f"⚠️ Edit fail ayyindi: {str(e)[:300]}. Instruction konchem marchi malli try cheyyandi.")
         raise
@@ -90,10 +100,27 @@ def _pct_for(state, note):
     return None
 
 _FAILED_POSTED = False  # v75: main()'s reporting guarantee fires at most once
+# v78: set the moment a result post lands (HTTP 200 from /api/runner/result).
+# A delivered video is TERMINAL: job 7aee5d2a (2026-11-13) rendered all 7
+# chapters and its result uploaded fine, then the WhatsApp send_media of
+# the 108 MB file threw HTTP 413, create_job's except posted
+# state=failed, and the Worker flipped the delivered History entry to
+# failed AND refunded the full 1.4M charge for a downloadable video.
+# After delivery, failures are local log lines — never state posts.
+_RESULT_DELIVERED = False
+
+
+def mark_result_delivered():
+    global _RESULT_DELIVERED
+    _RESULT_DELIVERED = True
 
 
 def app_state(state, note=""):
     global _FAILED_POSTED
+    if state == "failed" and _RESULT_DELIVERED:
+        print("app_state: failure AFTER result delivery — job stays done, "
+              f"not reporting failed ({note[:150]})")
+        return
     if state == "failed":
         _FAILED_POSTED = True
     try:
@@ -737,10 +764,12 @@ async def create_job(j, wa, note):
             res["duration"] = _target
             size = os.path.getsize(res["path"]) / 1e6
             print("trimmed to", _target, "s")
-        if size > 15.5:
-            out = res["path"].replace(".mp4", "_wa2.mp4")
-            subprocess_run(["ffmpeg", "-y", "-loglevel", "error", "-i", res["path"], "-b:v", "1900k", "-maxrate", "2000k", "-bufsize", "4000k", "-c:a", "aac", "-b:a", "128k", out])
-            res["path"] = out
+        # v78: no pre-emptive WhatsApp re-encode here any more. The old
+        # fixed-1900k _wa2 swap produced ~109 MB for a 460 s video (the
+        # bitrate never accounted for duration), so the WA send was
+        # guaranteed to 413 — and it silently became the result-upload
+        # source too. The result below uploads from the ORIGINAL file;
+        # the WA copy is duration-fitted (fit_size) after delivery.
         qc = res.get("qc") or {}
         qcline = "" if not qc else ("\nQC ✅" if qc.get("pass") else "\nQC weak: " + "; ".join(qc.get("weak", [])[:3])[:250])
         gate_ok, gate_flaws, dropped = analysis_gate(res["path"], res.get("facts"))
@@ -792,14 +821,32 @@ async def create_job(j, wa, note):
                             "look": str(_pl.get("look", "")), "motion": str(_pl.get("motion_personality", "")),
                             "transition": str(_pl.get("transition_family", ""))}, content=open(up, "rb").read(), headers={"x-runner-key": KEY, "content-type": "video/mp4"}, timeout=300)
             print("result upload", rr.status_code)
+            if rr.status_code == 200:
+                mark_result_delivered()  # v78: delivered is terminal
         except Exception as e:
             print("result upload failed", str(e)[:200])
-        await wa.send_media(to, res["path"], "video", caption=f"🎬 {res['title']} ({int(res['duration'])}s, {res['lang']})\n\n{caption}{qcline}")
+        # v78: WhatsApp delivery is best-effort AFTER the app result —
+        # job 7aee5d2a died exactly here (send_media HTTP 413 on the
+        # 108 MB file) and took the delivered job down with it. Fit a
+        # ≤15 MB copy for WA (duration-aware bitrate) and never raise.
+        try:
+            wa_path = fit_size(res["path"], 15) if size > 15.5 else res["path"]
+            await wa.send_media(to, wa_path, "video", caption=f"🎬 {res['title']} ({int(res['duration'])}s, {res['lang']})\n\n{caption}{qcline}")
+        except Exception as e:
+            print("wa send_media failed (post-result, non-fatal):", str(e)[:200])
         try:
             httpx.post(f"{WORKER}/done", json={"to": to, "topic": res["topic"], "job": JOB}, headers={"x-runner-key": KEY}, timeout=20)
         except Exception:
             pass
     except Exception as e:
+        # v78: an error AFTER the result was delivered changes nothing —
+        # the video is in the app, the charge stands, the job is done.
+        # Log locally and finish cleanly (no failed post, no alarming
+        # WA text, no non-zero exit for a delivered job).
+        if _RESULT_DELIVERED:
+            print("create_job: error after result delivery (ignored):",
+                  str(e)[:250])
+            return
         # v75: report the failure to the Worker (refund + honest job
         # state), not only to WhatsApp — this except used to be the
         # silent-death path: WA got a text, the Worker heard nothing.
