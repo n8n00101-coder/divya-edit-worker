@@ -255,7 +255,8 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None, words=None)
         k = pop((t - 0.3) / 0.4)
         if k > 0:
             rrect(d, (cx - 260, cy - 330, cx + 260, cy + 330), 24, fill=(60, 20, 22))
-            d.text((cx, cy - 60), "TOBACCO", font=font(60), fill=(120, 90, 90), anchor="mm")
+            _pk = (value or "")[:12].upper()  # v79.2: the pack carries the scene's own word, never a canned TOBACCO
+            if _pk: d.text((cx, cy - 60), _pk, font=font(60), fill=(120, 90, 90), anchor="mm")
             sh = math.sin(t * 14) * 6 if t > 0.9 else 0
             d.text((cx + 60 + sh, cy + 40), "?", font=font(int(520 * (0.6 + 0.4 * k))), fill=YEL, anchor="mm")
     elif kind == "card":  # contact/helpline card, number typed out + yellow marker (Hark `card`)
@@ -263,7 +264,7 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None, words=None)
         rrect(d, (x0, y0, x1, y1), 20, fill=(232, 226, 210))
         d.text((x0 + 40, y0 + 30), "CALL FOR HELP", font=font(48), fill=(30, 30, 30))
         d.line([(x0 + 40, y0 + 110), (x1 - 40, y0 + 110)], fill=(120, 120, 120), width=3)
-        num = (value or "1800-11-2356").strip()
+        num = (value or "").strip()  # v79.2: the number is the scene's own value — the old default was a past project's quitline number
         _dig = [o for (o, _dd, w) in (words or []) if any(c.isdigit() for c in str(w))]
         _ts = _dig[0] if _dig else 0.5
         n = int(len(num) * clamp((t - _ts) / 1.8))

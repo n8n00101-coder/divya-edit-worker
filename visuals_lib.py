@@ -205,7 +205,9 @@ def vis_world_dots(t, st=0, d=1.5, hot=((77, 22), (-100, 40), (10, 50)), accent=
 def _doc_obj(title, lines, stamp, accent, w=520, h=680, highlight=1, seal=True):
     o = Image.new("RGBA", (w, h), PAPER+(255,)); dr = ImageDraw.Draw(o)
     dr.rectangle((0, 0, w-1, h-1), outline=(200, 190, 170, 255), width=2)
-    if seal: dr.ellipse((w/2-34, 30, w/2+34, 98), outline=INK+(255,), width=3); dr.text((w/2, 64), "GOI", font=_font(30, "serif"), fill=INK+(255,), anchor="mm")
+    if seal:  # v79.2: a plain seal ring — the old "GOI" letters put a
+        # government attribution on every topic's document.
+        dr.ellipse((w/2-34, 30, w/2+34, 98), outline=INK+(255,), width=3); dr.ellipse((w/2-5, 59, w/2+5, 69), fill=INK+(255,))
     dr.text((w/2, 130), title, font=_font(30, "serif"), fill=INK+(255,), anchor="mm")
     dr.line((40, 160, w-40, 160), fill=INK+(255,), width=2)
     f = _font(30, "serif_r"); y = 185
@@ -219,9 +221,15 @@ def _doc_obj(title, lines, stamp, accent, w=520, h=680, highlight=1, seal=True):
     return texture(o, 8)
 
 @reg("document", ["law", "rule", "ban", "government", "report", "study", "paper", "official"])
-def vis_document(t, st=0, d=1.0, title="NOTIFICATION", lines=("Sale of gutka and pan masala is prohibited.", "Ban applies to all states from 2012.", "Violators face fines and jail."),
-                 stamp="BANNED", accent=Y, highlight=0, cx=W/2, cy=640, words=None):
-    """Official paper slides up, the key line gets highlighted, a red stamp slams down."""
+def vis_document(t, st=0, d=1.0, title="REPORT", lines=(), stamp="", accent=Y, highlight=0, cx=W/2, cy=640, words=None):
+    """Official paper slides up, the key line gets highlighted, a red stamp slams down.
+    v79.2 (defect 1): NO canned body — the old defaults were a past
+    project's gutka-ban notification and rendered verbatim into
+    unrelated videos (a
+    sleep video's brain-cleaning scene). Title / lines / stamp are
+    composed from the CURRENT scene by compliance.compose_visual;
+    the bare defaults draw a blank ruled report, never another
+    project's text."""
     q = _p(t, st, d*.5); doc = _doc_obj(title, lines, stamp, accent, highlight=highlight)
     L = place(shadow(doc), cx, cy+(1-_oe(q))*500, rot=-2*(1-_oe(q)))
     # v34 (Hark word_t): the stamp slams on the verdict word ("banned"/"ban"/
@@ -240,11 +248,14 @@ def vis_document(t, st=0, d=1.0, title="NOTIFICATION", lines=("Sale of gutka and
     return L
 
 @reg("newspaper", ["news", "media", "headline", "story", "report", "history"])
-def vis_newspaper(t, st=0, d=1.0, paper="THE DAILY TIMES", headline="Study finds men look first", photo=None, date="NOV 11, 2026", accent=Y, cx=W/2, cy=640):
+def vis_newspaper(t, st=0, d=1.0, paper="THE DAILY TIMES", headline="", photo=None, date="", accent=Y, cx=W/2, cy=640):
+    # v79.2: headline/date come from the scene (compose_visual) — the
+    # old defaults were a past project's study headline + a fake date.
     """Newspaper spins in (classic film move), with masthead, headline, photo and columns."""
     w, h = 560, 760; o = Image.new("RGBA", (w, h), NEWS+(255,)); dr = ImageDraw.Draw(o)
     dr.text((w/2, 50), paper, font=_font(44, "serif"), fill=INK+(255,), anchor="mm")
-    dr.line((24, 86, w-24, 86), fill=INK+(255,), width=3); dr.text((30, 96), date, font=_font(30, "serif_r"), fill=INK+(255,))
+    dr.line((24, 86, w-24, 86), fill=INK+(255,), width=3)
+    if date: dr.text((30, 96), date, font=_font(30, "serif_r"), fill=INK+(255,))
     dr.line((24, 120, w-24, 120), fill=INK+(255,), width=1)
     fy = 132
     for ln in wrap(headline.upper(), _font(46), w-48, dr): dr.text((w/2, fy), ln, font=_font(46), fill=INK+(255,), anchor="ma"); fy += 54
@@ -276,12 +287,14 @@ def typewriter_shown(text, elapsed, cps=18):
 
 
 @reg("typewriter_page", ["history", "old", "letter", "secret", "file", "quote"])
-def vis_typewriter(t, st=0, d=None, text="CLASSIFIED: subjects did not notice the swap.", cps=18, accent=Y, cx=W/2, cy=640):
+def vis_typewriter(t, st=0, d=None, text="", cps=18, accent=Y, cx=W/2, cy=640):
     """Old paper, mono text typed with a blinking caret. v36 (Blind A2):
     WHOLE WORDS ONLY — the old char-by-char cut rendered a trailing partial
     word ("CLASSIFIED: s"). Each word appears complete (it pops in whole
     when its last character's time arrives); once the full string is shown
     it HOLDS for 400 ms (no caret, no change) before the scene moves on."""
+    if not str(text or "").strip():
+        return _L()  # v79.2: nothing composed for this scene -> no page (never a canned classified text)
     w, h = 560, 420; o = Image.new("RGBA", (w, h), (236, 226, 200, 255)); dr = ImageDraw.Draw(o)
     f = _font(30, "mono")
     # Word boundaries: word i is revealed whole when its last char's time arrives.
@@ -296,20 +309,24 @@ def vis_typewriter(t, st=0, d=None, text="CLASSIFIED: subjects did not notice th
     return place(shadow(texture(o, 14)), cx, cy)
 
 @reg("receipt", ["money", "bill", "price", "shopping", "cost"])
-def vis_receipt(t, st=0, d=1.0, items=(("Gutka x30", "Rs 300"), ("Doctor", "Rs 4,000"), ("Tests", "Rs 9,500")), total="Rs 13,800", accent=Y, cx=W/2, cy=640):
+def vis_receipt(t, st=0, d=1.0, items=(), total="", accent=Y, cx=W/2, cy=640):
+    # v79.2: items/total are composed from the scene — the old defaults
+    # were a past project's gutka bill, items and total alike.
     """Receipt prints out from the top, line by line, total highlighted."""
     w = 420; h = 160+len(items)*56+120; o = Image.new("RGBA", (w, h), (250, 250, 248, 255)); dr = ImageDraw.Draw(o)
     for x in range(0, w, 20): dr.polygon([(x, h), (x+10, h-12), (x+20, h)], fill=(0, 0, 0, 0))
     dr.text((w/2, 50), "RECEIPT", font=_font(40, "mono"), fill=INK+(255,), anchor="mm")
     f = _font(30, "mono"); y = 120
     for a, b in items: dr.text((30, y), a, font=f, fill=INK+(255,)); dr.text((w-30, y), b, font=f, fill=INK+(255,), anchor="ra"); y += 56
-    dr.line((30, y, w-30, y), fill=INK+(255,), width=2); dr.rectangle((24, y+20, w-24, y+80), fill=accent+(255,))
-    dr.text((30, y+50), "TOTAL", font=f, fill=INK+(255,), anchor="lm"); dr.text((w-30, y+50), total, font=f, fill=INK+(255,), anchor="rm")
+    dr.line((30, y, w-30, y), fill=INK+(255,), width=2)
+    if total:
+        dr.rectangle((24, y+20, w-24, y+80), fill=accent+(255,))
+        dr.text((30, y+50), "TOTAL", font=f, fill=INK+(255,), anchor="lm"); dr.text((w-30, y+50), total, font=f, fill=INK+(255,), anchor="rm")
     q = _oe(_p(t, st, d)); shown = o.crop((0, 0, w, max(1, int(h*q))))
     L = _L(); L.alpha_composite(shadow(texture(shown, 6)), (int(cx-w/2), int(cy-h/2))); return L
 
 # ============================ PRODUCTS / OBJECTS ============================
-def _packet(brand, sub, col, w=230, h=330, seed=1):
+def _packet(brand, sub, col, w=230, h=330, seed=1, warning=""):
     """v36 (Blind C2 — real objects with depth): fold lines (two vertical
     side folds + a horizontal crease under the crimp), a highlight streak,
     and a rich drop shadow (blur 18, offset 0/12, 35% black — see shadow())."""
@@ -323,9 +340,10 @@ def _packet(brand, sub, col, w=230, h=330, seed=1):
     dr.line((w*.78, 26, w*.78, h-26), fill=_fold, width=2)
     dr.line((0, 44, w, 44), fill=tuple(int(c*.85) for c in col)+(255,), width=2)
     dr.ellipse((w/2-80, h/2-90, w/2+80, h/2+20), fill=(255, 240, 200, 255))
-    dr.text((w/2, h/2-35), brand, font=_font(46), fill=col+(255,), anchor="mm")
-    dr.text((w/2, h/2+60), sub, font=_font(30, "small"), fill=WHITE+(255,), anchor="mm")
-    dr.rectangle((14, h-90, w-14, h-44), fill=(0, 0, 0, 255)); dr.text((w/2, h-67), "WARNING: TOBACCO KILLS", font=_font(30, "small"), fill=WHITE+(255,), anchor="mm")
+    if brand: dr.text((w/2, h/2-35), brand, font=_font(46), fill=col+(255,), anchor="mm")
+    if sub: dr.text((w/2, h/2+60), sub, font=_font(30, "small"), fill=WHITE+(255,), anchor="mm")
+    if warning:  # v79.2: a warning strip only when THIS scene carries one — never a canned tobacco warning on every packet.
+        dr.rectangle((14, h-90, w-14, h-44), fill=(0, 0, 0, 255)); dr.text((w/2, h-67), warning, font=_font(30, "small"), fill=WHITE+(255,), anchor="mm")
     hl = Image.new("RGBA", (w, h), (0, 0, 0, 0)); ImageDraw.Draw(hl).polygon([(w*.15, 18), (w*.35, 18), (w*.05, h-18), (0, h-18), (0, h*.5)], fill=(255, 255, 255, 45))
     o.alpha_composite(hl); return texture(o, 7, seed)
 
@@ -341,12 +359,14 @@ def _light_sweep(img, q):
     out = img.copy(); out.alpha_composite(sw); return out
 
 @reg("product_packet", ["product", "packet", "gutka", "snack", "brand", "tobacco", "food"])
-def vis_packet(t, st=0, d=.6, brand="RAJ", sub="PAN MASALA", col=(200, 40, 40), twin=None, accent=Y, cx=W/2, cy=640):
+def vis_packet(t, st=0, d=.6, brand="", sub="", col=(200, 40, 40), twin=None, accent=Y, cx=W/2, cy=640, warning=""):
+    # v79.2: brand/sub come from the scene — the old defaults were a
+    # past project's RAJ pan-masala packet.
     """A sealed packet pops in with a wobble; twin=(brand2, sub2, col2) adds the twin-pack beside it.
     v36 (Blind C5): a light sweep crosses the packet once per scene."""
     q = _p(t, st, d); wob = math.sin(q*math.pi*3)*(1-q)*10
-    if not twin: return place(shadow(_light_sweep(_packet(brand, sub, col), q)), cx, cy, scale=_ob(q), rot=wob)
-    L = place(shadow(_packet(brand, sub, col)), cx-125, cy, scale=_ob(q), rot=6+wob)
+    if not twin: return place(shadow(_light_sweep(_packet(brand, sub, col, warning=warning), q)), cx, cy, scale=_ob(q), rot=wob)
+    L = place(shadow(_packet(brand, sub, col, warning=warning)), cx-125, cy, scale=_ob(q), rot=6+wob)
     q2 = _p(t, st+.2, d); L.alpha_composite(place(shadow(_packet(*twin, seed=2)), cx+125, cy+20, scale=_ob(q2), rot=-6-wob)); return L
 
 @reg("polaroid", ["photo", "memory", "face", "person", "choice", "experiment", "people"])
@@ -378,7 +398,9 @@ def vis_filmstrip(t, st=0, d=2.0, frames=4, accent=Y, y=640, speed=120, colors=(
     return L
 
 @reg("balance_scale", ["compare", "justice", "law", "weigh", "choice", "versus", "fair"])
-def vis_scale(t, st=0, d=1.2, left="COST", right="HEALTH", tilt=-14, accent=Y, cx=W/2, cy=700, words=None):
+def vis_scale(t, st=0, d=1.2, left="", right="", tilt=-14, accent=Y, cx=W/2, cy=700, words=None):
+    # v79.2: the pan labels come from the scene — the old COST/HEALTH
+    # defaults were a past project's scales and leaked into other topics.
     """Scale builds upright, then tips toward the heavier side ON the
     comparative word (B2, Blind): "more"/"less"/"than" — or the side's own
     word ("cost"/"health") — starts the tip. Before that word the scale is
@@ -425,13 +447,17 @@ def vis_scale(t, st=0, d=1.2, left="COST", right="HEALTH", tilt=-14, accent=Y, c
     return L
 
 @reg("bracket_bars", ["data", "compare", "study", "percent", "result", "chart"])
-def vis_bracket_bars(t, st=0, d=1.2, values=(23, 67), labels=("BEFORE", "AFTER"), note="+44%", accent=Y, base=960, hmax=520, words=None):
+def vis_bracket_bars(t, st=0, d=1.2, values=(), labels=(), note="", accent=Y, base=960, hmax=520, words=None):
+    # v79.2: values/labels/note are composed from the scene's spoken
+    # numbers — the old defaults were fabricated stats (23/67/+44%).
     """Bar chart where a bracket draws between two bars and the difference label pops."""
-    L = _L(); dr = ImageDraw.Draw(L); n = len(values); bw = 140; gap = (W-160-n*bw)/max(1, n-1); mx = max(values)
+    L = _L(); dr = ImageDraw.Draw(L); n = len(values)
+    if not n: return L  # no composed numbers -> no chart
+    bw = 140; gap = (W-160-n*bw)/max(1, n-1); mx = max(values)
     tops = []
     for i, v in enumerate(values):
         q = _oe(_p(t, st+i*.15, d*.6)); x = 80+i*(bw+gap); hh = hmax*v/mx*q; c = accent if i == n-1 else (110, 120, 140)
-        dr.rectangle((x, base-hh, x+bw, base), fill=c+(255,)); dr.text((x+bw/2, base+40), labels[i], font=_font(32, "small"), fill=WHITE+(255,), anchor="mm")
+        dr.rectangle((x, base-hh, x+bw, base), fill=c+(255,)); dr.text((x+bw/2, base+40), labels[i] if i < len(labels) else "", font=_font(32, "small"), fill=WHITE+(255,), anchor="mm")
         dr.text((x+bw/2, base-hh-30), f"{int(v*q)}%", font=_font(44), fill=WHITE+(255,), anchor="mm"); tops.append((x+bw/2, base-hmax*v/mx))
     # v34 (Hark word_t): the bracket + difference note pop on the number word.
     _ni = _num_word_idx(words)
@@ -481,9 +507,13 @@ def vis_camera(t, st=0, d=.6, body=(40, 40, 46), accent=Y, cx=W/2, cy=640, flash
     return L
 
 @reg("timeline_cards", ["history", "timeline", "years", "steps", "story", "events"])
-def vis_timeline_cards(t, st=0, d=.5, events=(("1962", "Started"), ("2012", "Ban"), ("2026", "Today")), accent=Y, gap=.6):
+def vis_timeline_cards(t, st=0, d=.5, events=(), accent=Y, gap=.6):
+    # v79.2: events come from the scene — the old defaults were a past
+    # project's timeline (1962 / 2012 Ban / 2026).
     """Vertical timeline: line grows down, each event card slides in from alternating sides with a year chip."""
-    L = _L(); dr = ImageDraw.Draw(L); n = len(events); top, bot = 260, 1040; x = W/2
+    L = _L(); dr = ImageDraw.Draw(L); n = len(events)
+    if not n: return L  # no composed events -> no timeline
+    top, bot = 260, 1040; x = W/2
     gq = _oe(_p(t, st, gap*n+d)); dr.line((x, top, x, top+(bot-top)*gq), fill=(200, 200, 210, 255), width=6)
     for i, (yr, txt) in enumerate(events):
         q = _p(t, st+i*gap, d)
@@ -496,8 +526,9 @@ def vis_timeline_cards(t, st=0, d=.5, events=(("1962", "Started"), ("2012", "Ban
     return L
 
 @reg("speech_bubble", ["talk", "quote", "say", "people", "chat", "opinion"])
-def vis_bubble(t, st=0, d=.4, text="Did you notice?", cx=W/2, cy=520, tail="left", col=WHITE, ink=INK, accent=Y):
+def vis_bubble(t, st=0, d=.4, text="", cx=W/2, cy=520, tail="left", col=WHITE, ink=INK, accent=Y):
     """Comic speech bubble pops with overshoot, text wrapped inside."""
+    if not str(text or "").strip(): return _L()  # v79.2: no composed text -> no bubble
     dr0 = ImageDraw.Draw(_L()); f = _font(44, "small"); lines = wrap(text, f, 460, dr0); h = 70+len(lines)*56; w = 540
     o = Image.new("RGBA", (w, h+60), (0, 0, 0, 0)); dr = ImageDraw.Draw(o); dr.rounded_rectangle((0, 0, w, h), 40, fill=col+(255,))
     tx = 90 if tail == "left" else w-90; dr.polygon([(tx-30, h-5), (tx+30, h-5), (tx-40 if tail == "left" else tx+40, h+55)], fill=col+(255,))
@@ -514,7 +545,9 @@ def vis_warning(t, st=0, d=.5, text="!", col=(255, 200, 0), cx=W/2, cy=620, puls
     return place(shadow(o), cx, cy, scale=sc)
 
 @reg("source_line", ["source", "study", "credit", "fact"])
-def vis_source(t, st=0, d=.4, text="Source: WHO, 2023", y=1110, accent=Y):
+def vis_source(t, st=0, d=.4, text="", y=1110, accent=Y):
+    # v79.2: no default credit — the old default fabricated a WHO
+    # attribution on any scene that forgot to pass its real source.
     """Source credit that fades up at the bottom of the safe box.
     v79 (Ajju A3, 2026-11-13): LEGIBLE OR NOTHING — Ajju circled the
     old faint dark-grey microtext ('Source: ICMR 2021') yellow: he
@@ -556,7 +589,9 @@ def vis_four(t, st=0, d=1.0, n=4, accent=Y, cx=W/2, cy=640, words=None):
     return L
 
 @reg("question", ["question", "safe", "hook", "doubt", "risk", "wonder"])
-def vis_question(t, st=0, d=1.0, pack_text="TOBACCO", accent=Y, cx=W/2, cy=640, words=None):
+def vis_question(t, st=0, d=1.0, pack_text="", accent=Y, cx=W/2, cy=640, words=None):
+    # v79.2: the pack carries the scene's own word — the old default
+    # printed TOBACCO on every topic's question scene.
     """A giant '?' over a blurred pack, wobbling (Hark `question`)."""
     L = _L()
     # the pack, blurred (drawn on its own layer, Gaussian-blurred, pasted)
@@ -577,8 +612,10 @@ def vis_question(t, st=0, d=1.0, pack_text="TOBACCO", accent=Y, cx=W/2, cy=640, 
     return L
 
 @reg("card", ["helpline", "quitline"])
-def vis_card(t, st=0, d=1.0, title="NATIONAL TOBACCO QUITLINE", subtitle="Ministry of Health & Family Welfare \u00b7 Toll free",
-             number="1800-11-2356", footer="Free counselling in 16 languages", accent=Y, cx=W/2, cy=640, words=None):
+def vis_card(t, st=0, d=1.0, title="", subtitle="", number="", footer="", accent=Y, cx=W/2, cy=640, words=None):
+    # v79.2: title/number/footer are composed from the scene — the old
+    # defaults were a past project's tobacco quitline card, number and
+    # all, rendered into any topic that picked a card.
     """A contact/helpline card: cream card, title, divider, the phone number
     typed out character by character + a yellow marker sweep (Hark `card`).
     620 wide so it fits the 720-wide layer with margin (860 overflowed and
@@ -631,7 +668,9 @@ def vis_watch(t, st=0, d=1.0, seconds=25, stamp="25 SECONDS", accent=Y, cx=W/2, 
     return L
 
 @reg("stamp_cta", ["cta", "quit", "stop", "today", "follow", "action", "stamp"])
-def vis_stamp_cta(t, st=0, d=1.0, word="QUIT", stamp="TODAY", strike="NOT TOMORROW", accent=Y, cx=W/2, cy=640, words=None):
+def vis_stamp_cta(t, st=0, d=1.0, word="", stamp="", strike="", accent=Y, cx=W/2, cy=640, words=None):
+    # v79.2: word/stamp/strike come from the scene — the old defaults
+    # were a past project's quit-smoking CTA wording.
     """The last scene is a stamp CTA (Hark `stamp`): a huge word, a rotated
     stamp slamming in, and a strikethrough animating across the dismissive phrase."""
     L = _L()
@@ -641,7 +680,7 @@ def vis_stamp_cta(t, st=0, d=1.0, word="QUIT", stamp="TODAY", strike="NOT TOMORR
         dr.text((cx, 620), word, font=_font(280), fill=WHITE+(255,), anchor="mm")
     _ni = _num_word_idx(words)
     _tl = _word_t(words, 1) if words and len(words) > 1 else d*.4
-    if (t-st) > _tl:
+    if stamp and (t-st) > _tl:
         q = _oe(_p(t, st+_tl, .12))
         s = Image.new("RGBA", (900, 300), (0, 0, 0, 0)); ds = ImageDraw.Draw(s)
         ds.rounded_rectangle([10, 10, 890, 290], 20, outline=Y+(255,), width=16)
@@ -649,7 +688,7 @@ def vis_stamp_cta(t, st=0, d=1.0, word="QUIT", stamp="TODAY", strike="NOT TOMORR
         s = s.rotate(-6, expand=True, resample=Image.BICUBIC)
         L.alpha_composite(place(s, cx, 960, scale=2.4-1.4*q, alpha=q))
     _tn = _word_t(words, 3) if words and len(words) > 3 else d*.7
-    if (t-st) > _tn:
+    if strike and (t-st) > _tn:
         q = _oe(_p(t, st+_tn, .3))
         dr = ImageDraw.Draw(L)
         f = _font(120)

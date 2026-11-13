@@ -82,7 +82,7 @@ SPEC_TYPES = ["duration", "language", "voice", "topic", "script",
               "scene_order", "scene_content", "text_on_screen", "colour",
               "font", "footage", "effects", "transitions", "music", "sfx",
               "captions", "speed", "aspect_ratio", "end_card", "chapters",
-              "structure", "exclude"]
+              "structure", "exclude", "sources"]
 
 
 class SpecImpossible(Exception):
@@ -249,6 +249,25 @@ def extract_deterministic(text):
     if m:
         grab("captions", "big white captions", m)
 
+    # caption SCRIPT ask (v79.2, Ajju's caption rule): native Indic
+    # script captions ONLY when explicitly asked ("Telugu script
+    # captions", "in Telugu script", "telugu lipi") — otherwise
+    # Telugu/Hindi narration captions default to ROMANIZED.
+    m = re.search(r"\b(?:telugu|hindi|native)\s+(?:script|lipi)\b"
+                  r"|\bin\s+(?:telugu|hindi)\s+script\b", low)
+    if m:
+        grab("captions", "native script captions", m)
+
+    # sources ON SCREEN ask (v79.2, Ajju item 7): source/citation
+    # lines are drawn into frames ONLY when explicitly asked —
+    # otherwise sources live in plan/artifact metadata only.
+    m = re.search(r"\b(?:show|add|include|display)\s+(?:the\s+)?"
+                  r"(?:sources?|citations?)\b"
+                  r"|\bsources?\s+on\s*screen\b"
+                  r"|\bcite\s+(?:your\s+)?sources?\b", low)
+    if m:
+        grab("sources", "show sources", m)
+
     # FIX 1: the quote is the user's EXACT words — the matches above
     # ran over the lowercased text, so restore each quote's original
     # casing from the prompt itself.
@@ -269,6 +288,59 @@ _EXTRACT_SYSTEM = (
     "with the user's EXACT words in \"quote\". Do not invent "
     "requirements that are not in the prompt."
 )
+
+
+# v79.2 (defect 3): an "exclude" whose object is a checkable switch
+# (music / sfx / captions) is the SAME ask as that switch's OFF
+# requirement. Before this merge, "no music" produced a music
+# requirement (PASS) AND an exclude requirement (UNVERIFIED, "no
+# automatic check") in the same report — one ask, two verdicts, one
+# of them a shrug. The exclude folds into the typed requirement and
+# the typed check governs. Excludes with their own real check (zoom,
+# graphics — see compliance.requirement_verdicts) and genuinely
+# uncheckable excludes stay excludes and stay UNVERIFIED.
+_EXCLUDE_MERGE = (("music", "music", "music OFF"),
+                  ("sound effect", "sfx", "sfx OFF"),
+                  ("sfx", "sfx", "sfx OFF"),
+                  ("caption", "captions", "captions OFF"),
+                  ("subtitle", "captions", "captions OFF"))
+
+
+def _merge_excludes(items):
+    out, typed = [], {}
+    for it in items:
+        if it.get("type") != "exclude":
+            out.append(it)
+            typed.setdefault(it.get("type"), it)
+            continue
+        v = str(it.get("value") or "").lower()
+        target = next(((t, off) for pat, t, off in _EXCLUDE_MERGE
+                       if pat in v), None)
+        if target is None:
+            out.append(it)  # zoom / graphics / uncheckable: stays
+            continue
+        t, off = target
+        existing = typed.get(t)
+        if existing is not None:
+            if "off" not in str(existing.get("value") or "").lower():
+                # the negation is the user's explicit ask — it wins
+                existing["value"] = off
+            # else the OFF requirement already exists: the exclude
+            # was a duplicate of the same ask.
+        else:
+            merged = {"type": t, "value": off,
+                      "quote": it.get("quote", "")}
+            out.append(merged)
+            typed[t] = merged
+    # safety net: no exact (type, value) duplicates survive the merge
+    seen, deduped = set(), []
+    for it in out:
+        key = (it.get("type"), str(it.get("value") or "").lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(it)
+    return deduped
 
 
 def extract_spec(prompt_text, chat=None):
@@ -328,6 +400,10 @@ def extract_spec_full(prompt_text, chat=None):
                 items.append(item)
         except Exception:
             pass  # the deterministic pass stands on its own
+
+    # v79.2 (defect 3): fold exclude-of-a-switch items into the
+    # switch's own requirement before ids are assigned.
+    items = _merge_excludes(items)
 
     # Order by where the quote first appears in the prompt (the FIX 1
     # example is in prompt order); unknown positions go last, stable.
@@ -488,6 +564,7 @@ def resolve_render_config(spec, kind="short"):
         if "off" in str(r["value"]).lower():
             cfg["sfx"] = False
             cfg["spec_ids"]["sfx"] = r["id"]
+    _script_asked = False
     for r in _find(spec, "captions"):
         v = str(r["value"]).lower()
         if "off" in v:
@@ -498,10 +575,37 @@ def resolve_render_config(spec, kind="short"):
                 cfg["caption_spec"]["size_scale"] = 1.35
             if "white" in v:
                 cfg["caption_spec"]["colour"] = (240, 240, 240)
+            if "script" in v or "lipi" in v:
+                _script_asked = True
             cfg["spec_ids"]["captions"] = r["id"]
     # caption chunk bounds: long R7 = 4-7 words; short mail 1 = 2-4.
     cfg["caption_spec"].setdefault(
         "words", (4, 7) if kind == "long" else (2, 4))
+
+    # --- caption script (v79.2, Ajju's standing rule, 2026-11-13):
+    # "Telugu captions ivvalsina avasaram ledhu — Romanized Telugu
+    # lo ichina ok, English lo kuda ok." Burned-in Telugu-script
+    # captions render broken glyphs/conjuncts in the caption
+    # renderer, so Telugu/Hindi narration captions default to
+    # ROMANIZED transliteration of the spoken line; native script
+    # ONLY on an explicit script ask (above). English narration is
+    # already Latin-script.
+    if _script_asked:
+        cfg["caption_script"] = "native"
+    elif cfg.get("lang") in ("te", "hi"):
+        cfg["caption_script"] = "roman"
+    else:
+        cfg["caption_script"] = "latin"
+    cfg["caption_script_explicit"] = _script_asked
+
+    # --- sources on screen (v79.2, Ajju item 7): the renderer NEVER
+    # draws a source/citation line into a frame unless the prompt
+    # explicitly asked for sources; sources otherwise live in plan
+    # + artifact metadata only.
+    cfg["show_sources"] = False
+    for r in _find(spec, "sources"):
+        cfg["show_sources"] = True
+        cfg["spec_ids"]["sources"] = r["id"]
 
     # --- excludes (no zoom / no graphics ...) ---
     excludes = set()

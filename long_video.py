@@ -597,6 +597,12 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                 "music_applied": cfg.get("music") is not False,
                 "sfx_applied": cfg.get("sfx") is not False,
                 "captions_applied": cfg.get("captions") is not False,
+                # v79.2 parity with doc: caption script used +
+                # whether source lines were drawn (items 5 + 7).
+                "caption_script": cfg.get("caption_script"),
+                "sources_shown": bool(cfg.get("show_sources")) and any(
+                    s.get("source") for r in results
+                    for s in ((r.get("plan") or {}).get("scenes") or [])),
                 "camera_moves": False,
                 "footage_coverage": (_cov_scenes / _tot_scenes) if _tot_scenes else 0.0,
                 "end_card_text": (results[-1].get("plan") or {}).get("end_question", "") if results else "",
