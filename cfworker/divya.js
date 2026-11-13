@@ -279,9 +279,13 @@ async function startEdit(env, user, mediaId, instruction) {
     method: "POST",
     headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" },
     body: JSON.stringify({ ref: "main", inputs: { job } }),
-  });
-  if (r.status === 204) return say(env, user, `🎬 Edit start chesa (job ${job}). Ready ayyaka ikkade pampistha.`);
-  return say(env, user, `Edit machine start avvaledu (GitHub ${r.status}). Owner ki report chesa.`);
+  }).catch(() => null);
+  // v73: a failed or throwing dispatch refunds the edit spend — the
+  // user never pays for a job that never queued (this path used to
+  // keep the tokens and only "report to the owner").
+  if (r && r.status === 204) { await recordSpend(env, job, user, tk, TOK.COST.video_edit); return say(env, user, `🎬 Edit start chesa (job ${job}). Ready ayyaka ikkade pampistha.`); }
+  await tokRefund(env, user, tk, TOK.COST.video_edit);
+  return say(env, user, `Edit machine start avvaledu (GitHub ${r ? r.status : "network"}). Tokens venakki ichesa — malli try cheyyi.`);
 }
 
 // v23: deterministic topic extraction. The brain sometimes emits topic AUTO
@@ -342,15 +346,27 @@ async function startCreate(env, user, brief) {
   // v37 (fix F): a failed dispatch returns null and clears the busy flag —
   // the caller reports the failure in its own channel (app chat / WhatsApp),
   // so no false "started" is ever sent and a retry is not blocked for 20 min.
-  if (!r || r.status !== 204) { await env.KV.delete(`busy:${user}`); return null; }
+  // v72: kind follows the REQUESTED length too (a "5 minutes" brief is a
+  // long video even when the brain forgot to write the word "long").
+  const kind = (/long|documentary|16:9/i.test(brief) || (durM && parseInt(durM, 10) >= 2)) ? "long" : "short";
+  if (!r || r.status !== 204) {
+    await env.KV.delete(`busy:${user}`);
+    // v73: the failed start leaves a FAILED History entry, never silence —
+    // the spend and the start are one transaction in the user's view:
+    // video_started stays false, the tokens go back (the caller refunds),
+    // and History shows the failed video with the reason. An unrecorded
+    // start is how a dead job hides (cf. job 2252f9cd, 2026-11-13).
+    try {
+      const num = await histNext(env, user);
+      await histPut(env, user, { n: num, job, title: String(brief).slice(0, 80), topic: String(brief).slice(0, 200), kind, lang: "auto", length: kind === "long" ? "long" : "short", at: Date.now(), state: "failed", failedAt: Date.now(), name: "video", src: "create", template: null, notes: String(brief).slice(0, 300), has_result: false, yt: null, ig: null, note: "Video machine start avvaledu (dispatch fail). Tokens refund chesa." });
+    } catch {}
+    return null;
+  }
   // v72: the running job's id for this user — mid-flight amendments
   // (and only they) resolve their target job through this record.
   await env.KV.put(`curjob:${user}`, job, { expirationTtl: 86400 * 2 });
   // R42: creates get a History entry (video N, editing) so the finished video
   // can be delivered in chat + History, like edits already do.
-  // v72: kind follows the REQUESTED length too (a "5 minutes" brief is a
-  // long video even when the brain forgot to write the word "long").
-  const kind = (/long|documentary|16:9/i.test(brief) || (durM && parseInt(durM, 10) >= 2)) ? "long" : "short";
   const num = await histNext(env, user);
   await histPut(env, user, { n: num, job, title: String(brief).slice(0, 80), topic: String(brief).slice(0, 200), kind, lang: "auto", length: kind === "long" ? "long" : "short", at: Date.now(), state: "editing", name: "video", src: "create", template: null, notes: String(brief).slice(0, 300), has_result: false, yt: null, ig: null });
   // R43: the runner can only report state / store result bytes for this job
@@ -532,7 +548,7 @@ async function handle(env, m) {
     // v37 (fix F): enqueue FIRST, then tell the user — "start chesa" is only
     // sent when the job really queued; a failed dispatch gets an honest
     // failure message and the tokens back.
-    if (go) { const sc = await startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO"); if (!sc) { await tokRefund(env, user, tk, cost); ans = "Video machine start avvaledu (GitHub dispatch fail ayyindhi). Nee tokens venakki ichesa — konchem sepu tarvatha malli adugu."; } }
+    if (go) { const sc = await startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO"); if (!sc) { await tokRefund(env, user, tk, cost); ans = "Video machine start avvaledu (GitHub dispatch fail ayyindhi). Nee tokens venakki ichesa — konchem sepu tarvatha malli adugu."; } else await recordSpend(env, sc.job, user, tk, cost); }
     h.push({ role: "assistant", content: ans }); await remember(env, user, h);
     if (ans) await say(env, user, ans);
     return;
@@ -868,6 +884,9 @@ async function appTalk(env, u, text, lang, voiceId) {
   const busyNow = await env.KV.get(`busy:${u.n}`);
   const appjob = JSON.parse((await env.KV.get(`appjob:${u.n}`)) || "null");
   const isStatusQ = /(ayindha|ayyindha|ready|status|progress|ekkada\s*varaku|inka\s*(entha|emi)|ayipoyindha|vachindha|complete|done\s*ah|entha\s*dooram)/i.test(cleanText) && !isCreateOrder(cleanText);
+  // v73: a status question first rescues any stuck job, so the answer
+  // below can never call a dead job "still being made".
+  if (isStatusQ) await rescueStuckJobs(env, u.n);
   const lastHist = isStatusQ ? (await histList(env, u.n, 1))[0] : null;
   if (isStatusQ && (busyNow || appjob || lastHist)) {
     let a2;
@@ -954,7 +973,7 @@ async function appTalk(env, u, text, lang, voiceId) {
     const bpRaw = await env.KV.get(`bp:${u.n}`);
     if (bpRaw) { try { brief += " Style blueprint: " + blueprintLine(JSON.parse(bpRaw)) + "."; await env.KV.delete(`bp:${u.n}`); } catch {} }
     sc = await startCreate(env, u.n, brief); started = !!sc;
-    if (started) { await vidCount(env, u.n); await env.KV.put(`appjob:${u.n}`, JSON.stringify({ at: Date.now(), brief: brief.slice(0, 200), job: sc.job, num: sc.num }), { expirationTtl: 86400 * 2 }); }
+    if (started) { await vidCount(env, u.n); await recordSpend(env, sc.job, u.n, tk, cost); await env.KV.put(`appjob:${u.n}`, JSON.stringify({ at: Date.now(), brief: brief.slice(0, 200), job: sc.job, num: sc.num }), { expirationTtl: 86400 * 2 }); }
     // v37 (fix F): the "started" reply is only true once the job is queued.
     // A failed dispatch replaces it with an honest failure + token refund.
     else { await tokRefund(env, u.n, tk, cost); ans = lang === "en" ? "The video machine didn't start — try again in a few minutes. Your tokens were returned." : "Video machine start avvaledu — konchem sepu tarvatha malli try cheyyi. Nee tokens venakki ichesa."; }
@@ -1237,6 +1256,7 @@ async function appApi(req, env, url, ctx) {
   if (p === "edit" && req.method === "POST") return appEdit(req, env, u, lang, body);
   if (p === "result") return appResult(req, env, u, url);
   if (p === "videos") {
+    await rescueStuckJobs(env, u.n);
     const list = await histList(env, u.n, 20);
     // v39 (D2): backfill — a real per-user edit record (appedit) with no
     // History entry (created before History writes existed, or a missed
@@ -1248,6 +1268,7 @@ async function appApi(req, env, url, ctx) {
     return appJson(req, { ok: true, videos: list.map(e => ({ n: e.n, job: e.job, title: e.title, topic: e.topic, kind: e.kind, lang: e.lang, length: e.length, at: e.at, state: e.state, name: e.name, template: e.template, has_result: !!e.has_result, yt: e.yt, ig: e.ig, doneAt: e.doneAt || null, failedAt: e.failedAt || null, pct: e.pct || 0, note: e.note || "" })) });
   }
   if (p.startsWith("videos/")) {
+    await rescueStuckJobs(env, u.n);
     const num = parseInt(p.slice(7), 10);
     const e = Number.isFinite(num) ? await histGet(env, u.n, num) : null;
     if (!e) return appJson(req, { ok: false, error: "not found" }, 404);
@@ -1262,11 +1283,13 @@ async function appApi(req, env, url, ctx) {
     const brief = parts.join(", ").slice(0, 600);
     const sc = await startCreate(env, u.n, brief);
     if (!sc) { await tokRefund(env, u.n, tk, videoCost(parseMins(body.length))); return appJson(req, { ok: false, error: "Video machine start avvaledu. Konchem sepu tarvatha try cheyyi." }, 502); }
+    await recordSpend(env, sc.job, u.n, tk, videoCost(parseMins(body.length)));
     await env.KV.put(`appjob:${u.n}`, JSON.stringify({ at: Date.now(), brief, job: sc.job, num: sc.num }), { expirationTtl: 86400 * 2 });
     const h = await history(env, u.n); h.push({ role: "user", content: `[app] video create: ${brief}` }, { role: "assistant", content: "Sare, start chesa. Ready ayyaka WhatsApp lo pampistha." }); await remember(env, u.n, h);
     return appJson(req, { ok: true, started: true, job: sc.job, num: sc.num });
   }
   if (p === "status") {
+    await rescueStuckJobs(env, u.n);
     const busy = !!(await env.KV.get(`busy:${u.n}`));
     const last = JSON.parse((await env.KV.get(`appjob:${u.n}`)) || "null");
     let runs = [];
@@ -2326,6 +2349,85 @@ async function tokRefund(env, n, r, cost) {
     else if (r.via === "plan") await env.KV.put(`tokplan:${n}:${istMonth()}`, String((await tokNum(env, `tokplan:${n}:${istMonth()}`)) + cost), { expirationTtl: 86400 * 40 });
   } catch {}
 }
+// v73: every successful video spend is recorded against its job
+// (spend:<job>). The in-memory tk handle dies with the start request;
+// without a durable record a job whose runner dies mid-flight can never
+// be refunded exactly — job 2252f9cd (2026-11-13) sat at "editing" for
+// hours with its 1.4M split spend unrecoverable for exactly this reason.
+async function recordSpend(env, job, n, tk, cost) {
+  if (!job || !tk || !tk.ok || tk.via === "unlimited" || tk.via === "error") return;
+  await env.KV.put(`spend:${job}`, JSON.stringify({ n, via: tk.via, split: tk.split || null, cost, at: Date.now(), refunded: false }), { expirationTtl: 86400 * 3 }).catch(() => {});
+}
+// v73: refund a job's spend from its durable record (idempotent — the
+// record's refunded flag is set in the same pass, so a second caller
+// never pays out twice). Falls back to LEGACY_JOB_SPENDS for the one
+// verified pre-v73 job whose split was never recorded (see below).
+async function refundJobSpend(env, job, n) {
+  try {
+    const rec = JSON.parse((await env.KV.get(`spend:${job}`)) || "null");
+    if (rec && !rec.refunded && rec.n === n) {
+      await tokRefund(env, n, { ok: true, via: rec.via, split: rec.split }, rec.cost);
+      rec.refunded = true;
+      await env.KV.put(`spend:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 3 });
+      return true;
+    }
+    if (!rec && LEGACY_JOB_SPENDS[job]) {
+      const lg = LEGACY_JOB_SPENDS[job];
+      await tokRefund(env, n, { ok: true, via: lg.via, split: lg.split }, lg.cost);
+      await env.KV.put(`spend:${job}`, JSON.stringify({ n, via: lg.via, split: lg.split, cost: lg.cost, at: Date.now(), refunded: true, legacy: true }), { expirationTtl: 86400 * 3 });
+      return true;
+    }
+  } catch {}
+  return false;
+}
+// v73: ONE-TIME legacy record. Job 2252f9cd (test account, 2026-11-13):
+// the dispatch DID land (GitHub run 43355930702) but the runner died at
+// 03:00:33Z on a Groq 429 in the plan call, before any state/result
+// report — so the job hung at "editing" and the spend was never
+// refunded. Its exact split is proven from the bucket state verified
+// that morning: weekly spent 500,000 of which 35,000 was chat charges
+// (7 x 5K), i.e. 465,000 weekly; pool 65,000 left of the 1,000,000
+// referral grant, i.e. 935,000 pool. Every job started under v73
+// records its own split via recordSpend — this table never grows.
+const LEGACY_JOB_SPENDS = {
+  "2252f9cd": { via: "split", split: { weekly: 465000, pool: 935000, plan: 0 }, cost: 1400000 },
+};
+const STUCK_JOB_MS = 30 * 60 * 1000;
+// v73: stuck-job rescue (lazy — mirrors the setup chain's stalled
+// derivation: no cron, the state is corrected on read). A create/edit
+// job still at "editing" with pct 0, no result and no runner contact
+// for over 30 minutes is dead: mark it failed with the reason, refund
+// its recorded spend exactly, and clear the pointers at it — it must
+// never present as "editing" forever. Jobs that reported "running" or
+// any pct > 0 are the runner's living jobs and are never touched.
+// Runs on the read surfaces: /api/videos, /api/status, the app status
+// intent, and the runner polls (/job + /api/runner/*, excluding the
+// job being polled about).
+async function rescueStuckJobs(env, n, exceptJob = "") {
+  try {
+    const now = Date.now();
+    const list = await histList(env, n, 20);
+    for (const e of list) {
+      if (!e || !e.job || e.job === exceptJob) continue;
+      if (e.state !== "editing" || e.has_result || (e.pct || 0) > 0) continue;
+      if (!e.at || now - e.at < STUCK_JOB_MS) continue;
+      // Re-read before acting: another surface may have rescued or
+      // finished this entry since the list was built.
+      const cur = await histGet(env, n, e.n);
+      if (!cur || cur.state !== "editing" || cur.has_result || (cur.pct || 0) > 0) continue;
+      if (!cur.at || now - cur.at < STUCK_JOB_MS) continue;
+      const refunded = await refundJobSpend(env, e.job, n);
+      cur.state = "failed"; cur.failedAt = now; cur.rescued = true;
+      cur.note = refunded
+        ? "Video machine start ayyi madhyalo aagipoyindhi — response raledhu. Tokens refund chesa. Malli order cheyyi."
+        : "Video machine start ayyi madhyalo aagipoyindhi — response raledhu. Malli order cheyyi.";
+      await histPut(env, n, cur);
+      const aj = JSON.parse((await env.KV.get(`appjob:${n}`)) || "null");
+      if (aj && aj.job === e.job) await env.KV.delete(`appjob:${n}`);
+      if ((await env.KV.get(`curjob:${n}`)) === e.job) await env.KV.delete(`curjob:${n}`);
+    }
+  } catch {}
+}
 const tokMsg = (lang, r) => lang === "en" ? `Not enough tokens: this needs ${(r.need || 0).toLocaleString("en-IN")} tokens, you have ${(r.have || 0).toLocaleString("en-IN")}. Free tokens reset every Monday.` : `Tokens saripovu: deeniki ${(r.need || 0).toLocaleString("en-IN")} tokens kavali, neeku ${(r.have || 0).toLocaleString("en-IN")} unnayi. Free tokens prathi Monday reset avthayi.`;
 async function tokPlanId(env, n) { const p = await env.KV.get(`plan:${n}`).catch(() => null); return PLANS[p] ? p : "free"; }
 // ---- Referral (Muse-style): unique code, redeem within 48h of joining, both get 1M pool tokens (never expires) ----
@@ -2716,7 +2818,8 @@ async function startStagedEdit(env, u, stagedJob, kind, lang, notes, tpl, voiceI
   await env.KV.put(`jobown:${stagedJob}`, u.n, { expirationTtl: 86400 * 3 });
   await env.KV.put(`busy:${u.n}`, "1", { expirationTtl: 5400 });
   const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/edit.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs: { job: stagedJob } }) }).catch(() => null);
-  if (!r || r.status !== 204) { await Promise.all([`upl:${stagedJob}`, `job:${stagedJob}`, `busy:${u.n}`].map(k => env.KV.delete(k))); return { ok: false, error: en ? "The edit machine didn't start. Try again in a few minutes." : "Edit machine start avvaledu. Konchem sepu tarvatha try cheyyi." }; }
+  if (!r || r.status !== 204) { await tokRefund(env, u.n, tk, videoCost(lenToMins(len))); await Promise.all([`upl:${stagedJob}`, `job:${stagedJob}`, `busy:${u.n}`].map(k => env.KV.delete(k))); return { ok: false, error: en ? "The edit machine didn't start. Your tokens were returned — try again in a few minutes." : "Edit machine start avvaledu. Tokens venakki ichesa — konchem sepu tarvatha try cheyyi." }; }
+  await recordSpend(env, stagedJob, u.n, tk, videoCost(lenToMins(len)));
   const num = await histNext(env, u.n);
   const title = (cleanNotes ? cleanNotes.split(/[.!?\n]/)[0] : "") || `${EDIT_KINDS[kind].en} — ${lng}`;
   await histPut(env, u.n, { n: num, job: stagedJob, title: title.slice(0, 80), topic: (cleanNotes || EDIT_KINDS[kind].en).slice(0, 200), kind, lang: lng, length: len, at: Date.now(), state: "editing", name: "video", src: "upload", template: tplUse, notes: cleanNotes.slice(0, 300), has_result: false, yt: null, ig: null });
@@ -2765,7 +2868,8 @@ async function appEdit(req, env, u, lang, body) {
   await env.KV.put(`jobown:${job}`, u.n, { expirationTtl: 86400 * 3 });
   await env.KV.put(`busy:${u.n}`, "1", { expirationTtl: 5400 });
   const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/edit.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs: { job } }) }).catch(() => null);
-  if (!r || r.status !== 204) { await Promise.all([`upl:${job}`, `job:${job}`, `busy:${u.n}`].map(k => env.KV.delete(k))); return appJson(req, { ok: false, error: en ? "The edit machine didn't start. Try again in a few minutes." : "Edit machine start avvaledu. Konchem sepu tarvatha try cheyyi." }, 502); }
+  if (!r || r.status !== 204) { await tokRefund(env, u.n, tk, videoCost(lenToMins(len))); await Promise.all([`upl:${job}`, `job:${job}`, `busy:${u.n}`].map(k => env.KV.delete(k))); return appJson(req, { ok: false, error: en ? "The edit machine didn't start. Your tokens were returned — try again in a few minutes." : "Edit machine start avvaledu. Tokens venakki ichesa — konchem sepu tarvatha try cheyyi." }, 502); }
+  await recordSpend(env, job, u.n, tk, videoCost(lenToMins(len)));
   // R22: the edit takes the next video number in History (video 1, 2, 3...).
   const num = await histNext(env, u.n);
   const title = (notes ? notes.split(/[.!?\n]/)[0] : "") || `${EDIT_KINDS[kind].en} — ${lng}`;
@@ -2789,6 +2893,9 @@ async function appRunner(req, env, p, url, body) {
   if (!n) return new Response("missing", { status: 404 });
   const k = `appedit:${n}`, st = JSON.parse((await env.KV.get(k)) || "null");
   const save = async patch => { if (st && st.job === job) await env.KV.put(k, JSON.stringify({ ...st, ...patch, upd: Date.now() }), { expirationTtl: 86400 * 7 }); };
+  // v73: every runner poll also rescues the owner's OTHER stuck jobs
+  // (this job is alive by definition — it is excluded).
+  await rescueStuckJobs(env, n, job);
   if (p === "runner/src") { const b = await env.KV.get(`upl:${job}`, "arrayBuffer"); return b ? new Response(b, { headers: { "content-type": "application/octet-stream" } }) : new Response("gone", { status: 404 }); }
   // v71: the job owner's saved reference-voice bytes (job-scoped, same
   // x-runner-key + jobown gate as runner/src). 404 when none is saved.
@@ -2817,6 +2924,11 @@ async function appRunner(req, env, p, url, body) {
     if (state !== "running") { await env.KV.delete(`busy:${n}`); await env.KV.delete(`upl:${job}`); }
     if (state === "failed" && st && st.job === job && !st.refunded) { const qk = `vmon:${n}:${istMonth()}`; const c = parseInt((await env.KV.get(qk)) || "0", 10); if (c > 0) await env.KV.put(qk, String(c - 1), { expirationTtl: 86400 * 40 }); await save({ state, note: String(body.note || "").slice(0, 300), refunded: true }); } // a failed edit doesn't use up a free edit
     if (state === "failed") { const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job); if (ref) { const e2 = await histGet(env, ref.n, ref.num); if (e2) { e2.state = "failed"; e2.failedAt = Date.now(); /* v39 (D8): label the age honestly */ await histPut(env, ref.n, e2); } } }
+    // v73: a runner-REPORTED failure refunds the recorded spend too —
+    // before v73 only dispatch failures were refunded, so a create
+    // whose runner died mid-flight kept the user's tokens even when
+    // the failure was reported cleanly.
+    if (state === "failed") await refundJobSpend(env, job, n);
     return Response.json({ ok: true });
   }
   if (p === "runner/result" && req.method === "POST") {
@@ -4094,6 +4206,9 @@ export default {
       const j = await env.KV.get(`job:${job}`);
       if (!j) return new Response("missing", { status: 404 });
       const jrec = JSON.parse(j);
+      // v73: a runner fetching its job also rescues the owner's other
+      // stuck jobs (this one is alive — it is excluded).
+      if (jrec.to) await rescueStuckJobs(env, jrec.to, job);
       // v70: the job owner's OWN Pexels key (created by Julie in their
       // setup, sealed as ukey:<owner>:pexels) beats the central env key —
       // the same owner-first pattern the brain keys use (openKey ||
