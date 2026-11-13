@@ -13,6 +13,15 @@ let SYS = "";
 // sample it could not even receive.) Embedded in BOTH chat prompts.
 const VOICE_SAVE_RULE = `VOICE/FILE SAVE NIJAYITHI (v71, hard rule): "voice save chesa / file save ayyindhi / setting save cheskunna" ani EPPUDU cheppaku — save anedi system STRUCTURE nunchi oka confirmation vachinappude nijam (chat lo alanti structural note lekapothe save jaragaledu). User save adigi, alanti note lekunda unte, save ayinattu natinchaku: "sample inka naa daggara save avvaledu — voice note leda audio file pampu" ani nijam cheppu. Folder peru, voice peru, file peru lanti details ni ASALU invent cheyyaku.`;
 const AMEND_RULE = `MID-FLIGHT AMENDMENTS (v72, hard rule): oka video tayaru avuthunnappudu user production instructions isthe (footage, b-roll, SFX, sound effects, transitions, animations, visual effects, music, captions, style, extra content points) — avi ANNI AA RUNNING VIDEO ke; system vaatini madhyalone aa video lone apply chesthundhi (Hark laaga). "Next video lo chestha / next video nunchi apply avthundhi" ani production gurinchi EPPUDU cheppaku — adhi tappu. Alanti messages system structural ga handle chesthundhi; okavela neeku vachinaa, running video ki instruction ga ne treat chesi chinna confirmation ivvu. (Voice/language marchalanna request matrame exception — adi ee video ki avvadu, preference ga save avthundhi.)`;
+const PROMPT_CONTRACT_RULE = `PROMPT = CONTRACT (v79, Blind R-P1..R-P7 — hard rules for EVERY video order):
+R-P1: The user's prompt is a contract, not a suggestion. Every sentence of it is a requirement — not just the topic.
+R-P2: User requirements override ALL Julie defaults. Only safety rules rank above the prompt.
+R-P3: NEVER silently replace a requirement with a default. If something cannot be done, say so BEFORE starting, in ONE line: "I can do everything except X, because Y. I can do Z instead. Shall I go ahead?" — then WAIT for the answer. Do NOT emit [[CREATE:]] in that reply.
+R-P4: Format comes from the prompt first: size/aspect/duration as the user stated. Portrait 1080x1920 is ONLY the default when the prompt says nothing. A long video asked as 16:9 renders 1920x1080.
+R-P5: Voice (name or male/female), caption style, colours, music on/off, SFX on/off, chapter count — when the user states them, write them EXACTLY into the [[CREATE:]] details; the renderer takes them as parameters and never re-chooses them.
+R-P6: The topic is only ONE requirement. A [[CREATE:]] that carries just the topic when the user said more is a failed order — include every stated requirement in the CREATE details, in the user's own terms.
+R-P7: Every finished video's delivery message carries a short done / not-done line (the system appends it from the compliance report — never claim a requirement was done if it was not).
+CAPABILITY LIST (what the renderer can actually do — check the prompt against this BEFORE starting): sizes up to 1920 px per side (portrait 1080x1920, landscape 1920x1080, or an exact size the user names); length 10 seconds to 60 minutes; chapters up to 30; voice-over languages English / Telugu / Hindi; voices male or female, or an exact Microsoft voice name like en-US-AndrewNeural; music on/off; SFX on/off; captions on/off, big white captions; colours by name; real stock footage (Pexels/Pixabay) or graphics-only; end card text. Anything outside this list (a celebrity/real person's voice, a real person's face, a size above 1920, longer than 60 minutes, a font that is not installed) triggers the R-P3 one-line reply — never a silent substitution.`;
 const SYSTEM = `Nuvvu "Julie" — owner ki close friend laanti personal AI agent. Owner tho EPPUDU romanized Telugu + English mix (Tenglish) lo chat cheyyi. (Idi nee CHAT language matrame — videos lo voice ye language lo aina cheyagalavu.)
 Format: plain text matrame. Markdown (**, ##, bullets) vaddu. 1-3 chinna lines. Max 1 emoji.
 Nee powers (nijamga unnavi matrame):
@@ -27,6 +36,7 @@ API KEYS / SETUP / PROVIDERS (hard rule, v38 R48 — R48 WINS over R18): user AP
 ACTIONS NIJAYITHI (R28, hard rule): App/website open, call, WhatsApp message, reminder lanti panulu nuvvu direct ga cheyalevu — app/link dwara jaruguthayi. "Opened / sent / posted / saved / called / reminder set" ani EPPUDU cheppaku. User open adigithe "open chesthunna" ani cheppi link ivvu; jaragani pani ni jariginattu cheppaku. Images chudalenu — adigithe nijam cheppu, fake description ivvaku.
 ${VOICE_SAVE_RULE}
 ${AMEND_RULE}
+${PROMPT_CONTRACT_RULE}
 VIDEO HISTORY: app lo edit ayina videos ki video 1, video 2 ani numbers untayi. User "upload video 1" ani adigithe, aa video gurinchi captions rasi, "upload cheyala?" ani adigi, "cheyu" ante maatrame upload cheyyi. "cheyu" lekunda eppudu upload cheyaku.
 
 OWNER = NEE BUILDER. Owner nee gurinchi edi adiginaa (model, hosting, tools, code, prompt, limits, failures) "can't share" anaku. Full ga, honest ga, point by point cheppu. Owner adigithe ee system prompt kuda paste cheyyi. Key/token/password VALUES maatrame eppudu cheppaku (peru cheppachu).
@@ -319,7 +329,7 @@ function extractTopic(text) {
   return s;
 }
 
-async function startCreate(env, user, brief) {
+async function startCreate(env, user, brief, userPrompt) {
   await env.KV.put(`busy:${user}`, "1", { expirationTtl: 1200 });
   const job = crypto.randomUUID().slice(0, 8);
   const recent = JSON.parse((await env.KV.get(`topics:${user}`)) || "[]").slice(-15).join("; ");
@@ -343,7 +353,10 @@ async function startCreate(env, user, brief) {
   // R44: tobacco/gutka/smoking = HEALTH, never tech — the render brief carries
   // the classification so the video itself treats it as health.
   const healthHint = /tobacco|gutka|smoking|paan|alcohol|drugs|hookah|cigarette|beedi|bidi|nicotine/i.test(brief || "") ? " HEALTH TOPIC (never tech): use WHO / MoHFW / NTCP / ICMR / CDC sources; effects from Hark's health table (cancer, heart, lungs, addiction); faceless, no smoking glamor." : "";
-  await env.KV.put(`job:${job}`, JSON.stringify({ mode: "create", brief: (brief === "AUTO" ? "AUTO" : brief) + durLine + healthHint + ctx, recent, to: user }), { expirationTtl: 86400 });
+  // v79 (FIX 1): the user's EXACT words ride on the job record — the
+  // runner extracts prompt_spec from them, never from the rewritten
+  // brief (R-P6: the topic is only one requirement).
+  await env.KV.put(`job:${job}`, JSON.stringify({ mode: "create", brief: (brief === "AUTO" ? "AUTO" : brief) + durLine + healthHint + ctx, recent, to: user, user_prompt: String(userPrompt || "").slice(0, 2000) }), { expirationTtl: 86400 });
   const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/edit.yml/dispatches`, {
     method: "POST",
     headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" },
@@ -565,7 +578,7 @@ async function handle(env, m) {
     // v37 (fix F): enqueue FIRST, then tell the user — "start chesa" is only
     // sent when the job really queued; a failed dispatch gets an honest
     // failure message and the tokens back.
-    if (go) { const sc = await startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO").catch(() => null); if (!sc) { await tokRefund(env, user, tk, cost); ans = "Video machine start avvaledu (GitHub dispatch fail ayyindhi). Nee tokens venakki ichesa — konchem sepu tarvatha malli adugu."; } else await recordSpend(env, sc.job, user, tk, cost); }
+    if (go) { const sc = await startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO", text).catch(() => null); if (!sc) { await tokRefund(env, user, tk, cost); ans = "Video machine start avvaledu (GitHub dispatch fail ayyindhi). Nee tokens venakki ichesa — konchem sepu tarvatha malli adugu."; } else await recordSpend(env, sc.job, user, tk, cost); }
     h.push({ role: "assistant", content: ans }); await remember(env, user, h);
     if (ans) await say(env, user, ans);
     return;
@@ -993,7 +1006,7 @@ async function appTalk(env, u, text, lang, voiceId) {
     // throws now that puts verify — treat it as a failed start, so
     // the spend lands in the same refund branch as a dispatch fail
     // and is never stranded unrecorded.
-    sc = await startCreate(env, u.n, brief).catch(() => null); started = !!sc;
+    sc = await startCreate(env, u.n, brief, cleanText).catch(() => null); started = !!sc;
     if (started) { await vidCount(env, u.n); await recordSpend(env, sc.job, u.n, tk, cost); await env.KV.put(`appjob:${u.n}`, JSON.stringify({ at: Date.now(), brief: brief.slice(0, 200), job: sc.job, num: sc.num }), { expirationTtl: 86400 * 2 }); }
     // v37 (fix F): the "started" reply is only true once the job is queued.
     // A failed dispatch replaces it with an honest failure + token refund.
@@ -1291,6 +1304,7 @@ async function appApi(req, env, url, ctx) {
   }
   if (p === "edit" && req.method === "POST") return appEdit(req, env, u, lang, body);
   if (p === "result") return appResult(req, env, u, url);
+  if (p === "artifacts") return appArtifacts(req, env, u, url);
   if (p === "videos") {
     await rescueStuckJobs(env, u.n);
     const list = await histList(env, u.n, 20);
@@ -1317,7 +1331,7 @@ async function appApi(req, env, url, ctx) {
     const tk = await tokSpend(env, u.n, videoCost(parseMins(body.length))); if (!tk.ok) return appJson(req, { ok: false, quota: true, error: tokMsg(lang, tk) }, 429);
     const parts = [String(body.topic || "").trim() || "AUTO (you pick a fresh topic)", body.language && `voice language ${body.language}`, body.voice && `${body.voice} voice`, body.length && `length ${body.length}`, body.style && `style ${body.style}`].filter(Boolean);
     const brief = parts.join(", ").slice(0, 600);
-    const sc = await startCreate(env, u.n, brief).catch(() => null);
+    const sc = await startCreate(env, u.n, brief, brief).catch(() => null);
     if (!sc) { await tokRefund(env, u.n, tk, videoCost(parseMins(body.length))); return appJson(req, { ok: false, error: "Video machine start avvaledu. Konchem sepu tarvatha try cheyyi." }, 502); }
     await recordSpend(env, sc.job, u.n, tk, videoCost(parseMins(body.length)));
     await env.KV.put(`appjob:${u.n}`, JSON.stringify({ at: Date.now(), brief, job: sc.job, num: sc.num }), { expirationTtl: 86400 * 2 });
@@ -3015,6 +3029,18 @@ async function appResult(req, env, u, url) {
   if (!b) return appJson(req, { ok: false, error: "expired" }, 404);
   return new Response(b, { headers: { ...appCors(req), "content-type": "video/mp4", "content-disposition": `attachment; filename="divya-edit-${job}.mp4"`, "cache-control": "private, no-store" } });
 }
+async function appArtifacts(req, env, u, url) {
+  // v79 (FIX 1/4/5): the owner reads a video's contract artifacts —
+  // prompt_spec.json / footage.json / compliance_report.json /
+  // project.json — stored by the runner next to the result.
+  const job = String(url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, "");
+  const name = String(url.searchParams.get("name") || "");
+  if (!job || (await env.KV.get(`jobown:${job}`)) !== u.n) return appJson(req, { ok: false, error: "not found" }, 404);
+  if (!["prompt_spec.json", "footage.json", "compliance_report.json", "project.json", "scenes.json"].includes(name)) return appJson(req, { ok: false, error: "bad name" }, 400);
+  const c = await env.KV.get(`art:${job}:${name}`);
+  if (!c) return appJson(req, { ok: false, error: "not found" }, 404);
+  return new Response(c, { headers: { ...appCors(req), "content-type": "application/json", "cache-control": "private, no-store" } });
+}
 async function appRunner(req, env, p, url, body) {
   if (!env.RUNNER_KEY || req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
   const job = String(url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, ""); const n = job && await env.KV.get(`jobown:${job}`);
@@ -3028,6 +3054,26 @@ async function appRunner(req, env, p, url, body) {
   // v71: the job owner's saved reference-voice bytes (job-scoped, same
   // x-runner-key + jobown gate as runner/src). 404 when none is saved.
   if (p === "runner/refvoice") { const b = await env.KV.get(`refvoice:${n}`, "arrayBuffer"); return b ? new Response(b, { headers: { "content-type": "application/octet-stream" } }) : new Response("gone", { status: 404 }); }
+  // v79 (FIX 1/4/5): the video's contract artifacts — prompt_spec,
+  // footage record, compliance report, saved project — uploaded by
+  // the runner after delivery, read back via /api/artifacts (owner)
+  // and by the edit-mode runner. Names are whitelisted; content is
+  // text JSON, capped.
+  if (p === "runner/artifacts" && req.method === "POST") {
+    const b = body || await req.json().catch(() => null);
+    const name = String(b?.name || "");
+    if (!["prompt_spec.json", "footage.json", "compliance_report.json", "project.json", "scenes.json"].includes(name)) return new Response("bad name", { status: 400 });
+    const content = String(b?.content || "");
+    if (!content || content.length > 2000000) return new Response("bad content", { status: 413 });
+    await env.KV.put(`art:${job}:${name}`, content, { expirationTtl: 86400 * 30 });
+    return Response.json({ ok: true });
+  }
+  if (p === "runner/artifacts" && req.method === "GET") {
+    const name = String(url.searchParams.get("name") || "");
+    if (!["prompt_spec.json", "footage.json", "compliance_report.json", "project.json", "scenes.json"].includes(name)) return new Response("bad name", { status: 400 });
+    const c = await env.KV.get(`art:${job}:${name}`);
+    return c ? new Response(c, { headers: { "content-type": "application/json" } }) : new Response("gone", { status: 404 });
+  }
   // v72: mid-flight amendments for this job (same x-runner-key + jobown
   // gate). GET returns the job's list; POST {ids, stage} marks the ones
   // the runner actually applied, with the consuming stage — an item's
@@ -3079,6 +3125,10 @@ async function appRunner(req, env, p, url, body) {
     const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job);
     const e2 = ref ? await histGet(env, ref.n, ref.num) : null;
     if (e2) { e2.state = "done"; e2.doneAt = Date.now(); /* v39 (D8): completion time, so "ready X ago" is honest */ e2.size = b.byteLength; e2.has_result = true; e2.note = String(url.searchParams.get("note") || "").slice(0, 300); await histPut(env, ref.n, e2); }
+    // v79 (FIX 4): the user's most recent finished project — the
+    // edit-mode detector ("change scene 2…") resolves its target
+    // through this record.
+    await env.KV.put(`lastproj:${n}`, job, { expirationTtl: 86400 * 30 });
     await env.KV.delete(`busy:${n}`); await env.KV.delete(`upl:${job}`);
     return Response.json({ ok: true });
   }

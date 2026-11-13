@@ -58,16 +58,21 @@ its own and must make sense without the others.
 Owner request: """
 
 
-def _outline_prompt(target_minutes):
+def _outline_prompt(target_minutes, chapters_wanted=None):
     """The outline prompt. target_minutes=None keeps the original 5-10 min
     shape; an explicit target (v69, up to 60) sizes the chapter count to
     it and demands terse chapter briefs so a 60-chapter outline still fits
-    one LLM reply."""
+    one LLM reply. v79 (R-P5): a chapter count stated in the prompt is
+    a renderer parameter — the outline must produce exactly that many
+    chapters."""
     if not target_minutes:
         return OUTLINE_PROMPT
     target = int(target_minutes)
-    lo = 2 if target <= 4 else 3
-    hi = target  # every chapter at 1 minute
+    if chapters_wanted:
+        lo = hi = int(chapters_wanted)
+    else:
+        lo = 2 if target <= 4 else 3
+        hi = target  # every chapter at 1 minute
     return (
         "You are a top YouTube documentary writer and director. Plan ONE "
         f"faceless long-form video of exactly {target} minutes from the "
@@ -90,7 +95,7 @@ def _outline_prompt(target_minutes):
     )
 
 
-def outline(brief, chat, target_minutes=None):
+def outline(brief, chat, target_minutes=None, chapters_wanted=None):
     """Ask the LLM (same [{"role": ...}] message format as doc.plan) for a
     long-video outline. Returns {"title": ..., "chapters": [...]}.
     Without target_minutes: 3-6 chapters totalling 5-10 minutes (the
@@ -99,7 +104,7 @@ def outline(brief, chat, target_minutes=None):
     or on an outline that breaks the chapter/total rules.
     """
     raw = chat([{"role": "system", "content": OUTLINE_SYSTEM},
-                {"role": "user", "content": _outline_prompt(target_minutes)
+                {"role": "user", "content": _outline_prompt(target_minutes, chapters_wanted)
                  + (brief or "AUTO")}])
     try:
         data = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
@@ -109,8 +114,11 @@ def outline(brief, chat, target_minutes=None):
     chapters = data.get("chapters", [])
     if target_minutes:
         target = int(target_minutes)
-        lo = 2 if target <= 4 else 3
-        hi = target
+        if chapters_wanted:
+            lo = hi = int(chapters_wanted)
+        else:
+            lo = 2 if target <= 4 else 3
+            hi = target
     else:
         target, lo, hi = None, 3, 6
     if not title or not isinstance(chapters, list) \
@@ -118,6 +126,10 @@ def outline(brief, chat, target_minutes=None):
         raise ValueError(
             f"outline: need a title + {lo}-{hi} chapters, got: {data!r}"[:300])
     total = 0
+    max_mins = 2
+    if chapters_wanted and target_minutes:
+        import math as _math
+        max_mins = max(2, _math.ceil(int(target_minutes) / int(chapters_wanted)) + 1)
     for ch in chapters:
         if not isinstance(ch, dict) or not str(ch.get("title", "")).strip() \
                 or not str(ch.get("brief", "")).strip():
@@ -126,8 +138,8 @@ def outline(brief, chat, target_minutes=None):
             mins = int(round(float(ch["minutes"])))
         except (KeyError, TypeError, ValueError):
             raise ValueError(f"outline: chapter needs whole minutes: {ch!r}"[:300])
-        if mins not in (1, 2):
-            raise ValueError(f"outline: chapter minutes must be 1 or 2, got {mins}")
+        if not 1 <= mins <= max_mins:
+            raise ValueError(f"outline: chapter minutes must be 1-{max_mins}, got {mins}")
         ch["minutes"] = mins
         total += mins
     if target is not None:
@@ -161,15 +173,16 @@ def chapter_budget(ch):
             "chars": mins * CHARS_PER_MIN}
 
 
-def chapter_brief(outline_data, idx):
+def chapter_brief(outline_data, idx, spec=None):
     """Brief for one chapter's doc.make_video call: chapter title + brief,
     plus the exact-length line so the chapter fits its allotted minutes
-    and the v78 narration budget (words/chars) that actually fills them."""
+    and the v78 narration budget (words/chars) that actually fills them.
+    v79 (FIX 3): the prompt spec rides in EVERY chapter brief too."""
     ch = outline_data["chapters"][idx]
     n = len(outline_data["chapters"])
     seconds = ch["minutes"] * 60
     b = chapter_budget(ch)
-    return (
+    out = (
         f"Long video '{outline_data['title']}', chapter {idx + 1} of {n}: "
         f"{ch['title']}.\n{ch['brief']}\n"
         f"This chapter must stand alone and end with a hook into the next chapter.\n"
@@ -180,6 +193,10 @@ def chapter_brief(outline_data, idx):
         f"{ch['minutes']} minute(s) — a shorter script renders a "
         f"shorter chapter."
     )
+    if spec:
+        import doc as _doc
+        out += "\n" + _doc._spec_block(spec)
+    return out
 
 
 def _fold_chapter_amendments(provider, brief, chapter_no):
@@ -228,7 +245,7 @@ def _join_clips(paths, out_path):
 
 async def render_chapters(outline_data, chat, workdir, notify=None,
                           deadline=None, results_out=None, ref_voice=None,
-                          amendments=None):
+                          amendments=None, spec=None, cfg=None, pool=None):
     """Render each chapter with doc.make_video (async), one chapter per
     sub-directory of workdir, sequentially — make_video already uses a
     process pool, so parallel chapters would oversubscribe the CPU.
@@ -259,9 +276,20 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
         # it. Nothing created it — codegen's plan.json write and the
         # vo0.mp3 write both died with ENOENT (run 43373013930).
         ch_dir.mkdir(parents=True, exist_ok=True)
-        ch_brief = chapter_brief(outline_data, i)
+        ch_brief = chapter_brief(outline_data, i, spec=spec)
         if amendments is not None:
             ch_brief = _fold_chapter_amendments(amendments, ch_brief, i + 1)
+        # v79: footage-pool mark at this chapter's start — a compliance
+        # retry that REPLACES the chapter also replaces its footage.json
+        # segment, so the delivered record lists the final cut only.
+        _pool_mark0 = len(pool.assignments) if pool is not None else 0
+        # v79 (R8): only the FINAL chapter may carry the closing CTA —
+        # every earlier chapter ending in NEXT/STAY TUNED/CTA was one
+        # of the compromise video's structural mistakes.
+        ch_cfg = None
+        if cfg is not None:
+            ch_cfg = dict(cfg)
+            ch_cfg["allow_cta"] = (i == len(outline_data["chapters"]) - 1)
         # v75: ONE retry per chapter — a transient sub-step failure
         # (LLM blip, TTS error) must not kill the chapter outright.
         # After the retry the old semantics hold: with finished
@@ -278,7 +306,10 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                                            **({"ref_voice": ref_voice}
                                               if ref_voice is not None else {}),
                                            **({"amendments": amendments}
-                                              if amendments is not None else {}))
+                                              if amendments is not None else {}),
+                                           **({"spec": spec, "cfg": ch_cfg,
+                                               "footage_pool": pool}
+                                              if spec is not None else {}))
                 break
             except Exception as e:
                 last_err = e
@@ -332,7 +363,9 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                     **({"ref_voice": ref_voice}
                        if ref_voice is not None else {}),
                     **({"amendments": amendments}
-                       if amendments is not None else {}))
+                       if amendments is not None else {}),
+                    **({"spec": spec, "cfg": ch_cfg, "footage_pool": pool}
+                       if spec is not None else {}))
                 joined = _join_clips([res["path"], ext["path"]],
                                      str(ch_dir / f"ch{i + 1:02d}_full.mp4"))
                 try:
@@ -349,6 +382,56 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
         except Exception as e:
             print(f"render_chapters: chapter {i + 1} top-up failed "
                   f"({str(e)[:150]}) — keeping the rendered chapter")
+        # v79 (R12 + FIX 5): a chapter whose compliance report still
+        # FAILs is re-rendered with the failures named in its brief —
+        # fix only that chapter, max 2 rounds, keep the best attempt.
+        # A passed deadline skips retries (partial semantics win).
+        if spec is not None:
+            for _round in range(2):
+                rep = res.get("compliance") or {}
+                failed = [c for c in (rep.get("checks") or [])
+                          if c.get("status") == "FAIL"]
+                if not failed:
+                    break
+                if deadline is not None and time.monotonic() > deadline:
+                    break
+                fix_lines = "; ".join(
+                    f"{c.get('rule')} scene {c.get('scene')}: {c.get('detail', '')[:90]}"
+                    for c in failed[:8])
+                fix_dir = ch_dir / f"fix{_round + 1}"
+                fix_dir.mkdir(parents=True, exist_ok=True)
+                _pool_mark = len(pool.assignments) if pool is not None else 0
+                try:
+                    res2 = await doc.make_video(
+                        ch_brief + ("\nCOMPLIANCE FIXES REQUIRED — the "
+                                    "previous render of this chapter "
+                                    "failed these checks; fix exactly "
+                                    "these, change nothing else: "
+                                    + fix_lines),
+                        chat, notify=notify, workdir=str(fix_dir),
+                        **({"ref_voice": ref_voice}
+                           if ref_voice is not None else {}),
+                        **({"amendments": amendments}
+                           if amendments is not None else {}),
+                        spec=spec, cfg=ch_cfg, footage_pool=pool)
+                except Exception as e:
+                    print(f"render_chapters: chapter {i + 1} compliance "
+                          f"retry {_round + 1} failed ({str(e)[:120]})")
+                    break
+                rep2 = res2.get("compliance") or {}
+                failed2 = [c for c in (rep2.get("checks") or [])
+                           if c.get("status") == "FAIL"]
+                print(f"render_chapters: chapter {i + 1} compliance "
+                      f"retry {_round + 1}: {len(failed)} -> "
+                      f"{len(failed2)} failed checks")
+                if len(failed2) <= len(failed):
+                    res = res2
+                    if pool is not None:
+                        pool.assignments = (pool.assignments[:_pool_mark0]
+                                            + pool.assignments[_pool_mark:])
+                        pool._save()
+                if not failed2:
+                    break
         paths.append(res["path"])
         if results_out is not None:
             results_out.append(res)
@@ -360,7 +443,7 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
 
 async def make_long_video(brief, chat, workdir, target_minutes,
                           notify=None, deadline=None, ref_voice=None,
-                          amendments=None):
+                          amendments=None, spec=None, cfg=None):
     """Runner entry point (v69): outline -> chaptered render -> assemble
     for a requested length of target_minutes (2-60). Returns a result
     dict shaped like doc.make_video's (path/title/duration/lang/caption/
@@ -370,6 +453,18 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     completed assembly — it never silently shortens a finished plan:
     `partial` says exactly how many chapters are missing.
     """
+    # v79 (R-P5 / mail 2b point 5): with a prompt spec, the render
+    # parameters come FROM the spec — target length, chapter count,
+    # size — never re-chosen here. A spec that cannot resolve raises
+    # SpecImpossible and the job fails loudly BEFORE any render.
+    chapters_wanted = None
+    if spec is not None:
+        import spec_engine as _se
+        if cfg is None:
+            cfg = _se.resolve_render_config(spec, "long")
+        if cfg.get("duration_s"):
+            target_minutes = max(2, min(60, int(round(cfg["duration_s"] / 60))))
+        chapters_wanted = cfg.get("chapters")
     out, last_err = None, None
     for attempt in range(2):
         try:
@@ -377,7 +472,8 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                 (brief or "") +
                 f"\n(The outline MUST total exactly {target_minutes} "
                 f"minutes — count the chapter minutes.)")
-            out = outline(b, chat, target_minutes)
+            out = outline(b, chat, target_minutes,
+                          chapters_wanted=chapters_wanted)
             break
         except ValueError as e:
             last_err = e
@@ -387,15 +483,25 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     if notify:
         await notify(f"Long video: {out['title']} — {total_ch} chapters, "
                      f"~{target_minutes} min. Chapters render chestunna.")
+    # v79 (mail 1 Part 2): ONE footage pool for the whole video — the
+    # NO-REPEAT used_ids rule spans chapters, not just scenes.
+    pool = None
+    if spec is not None:
+        import broll as _broll
+        pool = _broll.FootagePool(
+            state_path=str(Path(workdir) / "footage_state.json"))
     results = []
     paths = await render_chapters(out, chat, workdir, notify=notify,
                                   deadline=deadline, results_out=results,
                                   ref_voice=ref_voice,
-                                  amendments=amendments)
+                                  amendments=amendments,
+                                  spec=spec, cfg=cfg, pool=pool)
     if not paths:
         raise RuntimeError("long video: no chapters rendered")
     titles = [ch["title"] for ch in out["chapters"]][:len(paths)]
-    final = assemble(paths, str(Path(workdir) / "long_final.mp4"), titles)
+    _size = (int(cfg["width"]), int(cfg["height"])) if cfg else (1080, 1920)
+    final = assemble(paths, str(Path(workdir) / "long_final.mp4"), titles,
+                     size=_size, card_bg_from=list(paths))
     duration = _probe_duration(final)
     broll_sources = []
     for r in results:
@@ -433,6 +539,79 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     if amend_applied:
         summary += (f"; Changes add chesina: {len(amend_applied)} "
                     f"mid-flight amendment(s) ee video lone apply ayyayi")
+    # v79 (R12): the long video's own self-check — every chapter's
+    # plan checks, the footage record, and a media audit of the
+    # ASSEMBLED file (size from spec, duration within 10%, -14 LUFS /
+    # -1 dBTP, no silence >0.8 s outside chapter breaks), sampled at
+    # 1 frame / 4 s. The three artifacts land at the workdir root.
+    report = None
+    if spec is not None and cfg is not None:
+        try:
+            import compliance as _comp
+            checks = []
+            for ci, r in enumerate(results):
+                for c in ((r.get("compliance") or {}).get("checks") or []):
+                    checks.append({**c, "chapter": ci + 1})
+            _durs = []
+            for pth in paths:
+                try:
+                    _durs.append(_probe_duration(pth))
+                except Exception:
+                    _durs.append(0.0)
+            _starts, _t = [], 0.0
+            for _d in _durs:
+                _starts.append(_t)
+                _t += _d + CARD_SECONDS
+            mchecks, minfo = _comp.audit_media(
+                final, cfg, spec, chapter_breaks=_starts[1:])
+            checks += mchecks
+            diffs = _comp.sample_frame_diffs(final)
+            frozen = 0
+            run = 0
+            for d in diffs:
+                run = run + 1 if d < 0.5 else 0
+                frozen = max(frozen, run)
+            if frozen >= 4:
+                checks.append({"rule": "R12", "status": "WARN",
+                               "detail": f"frames nearly identical for ~{frozen * 4}s "
+                                         f"(sampled 1 frame / 4 s) — a held/still stretch",
+                               "scene": None})
+            _tot_scenes = sum(len((r.get("plan") or {}).get("scenes") or [])
+                              for r in results)
+            _cov_scenes = sum(1 for r in results
+                              for s in ((r.get("plan") or {}).get("scenes") or [])
+                              if s.get("has_footage"))
+            plan_info = {
+                "lang": first.get("lang"), "topic": first.get("topic", brief),
+                "voice_used": next((r.get("_voice_used") or (r.get("plan") or {}).get("_voice_used")
+                                    for r in results if r), None) or first.get("voice_used"),
+                "voice_gender": cfg.get("voice_gender"),
+                "music_applied": cfg.get("music") is not False,
+                "sfx_applied": cfg.get("sfx") is not False,
+                "captions_applied": cfg.get("captions") is not False,
+                "camera_moves": False,
+                "footage_coverage": (_cov_scenes / _tot_scenes) if _tot_scenes else 0.0,
+                "end_card_text": (results[-1].get("plan") or {}).get("end_question", "") if results else "",
+                "chapters_done": len(paths),
+            }
+            verdicts = _comp.requirement_verdicts(spec, cfg, plan_info, minfo)
+            _rounds = sum(1 for r in results if (r.get("workdir") or "").find("fix") >= 0)
+            report = _comp.build_report(spec, cfg, checks, verdicts,
+                                        rounds=0,
+                                        fixes=[f for r in results
+                                               for f in ((r.get("compliance") or {}).get("fixes_applied") or [])])
+            for _name, _data in (("prompt_spec.json", spec),
+                                 ("footage.json", pool.footage_json() if pool else {}),
+                                 ("compliance_report.json", report)):
+                try:
+                    with open(Path(workdir) / _name, "w", encoding="utf-8") as _f:
+                        json.dump(_data, _f, indent=1)
+                except OSError:
+                    pass
+            _nf = [c for c in checks if c["status"] == "FAIL"]
+            print(f"long compliance: {'PASS' if not _nf else f'{len(_nf)} FAIL'}")
+        except Exception as e:
+            print("long compliance run failed:", str(e)[:200])
     return {"path": final, "title": out["title"], "duration": duration,
             "lang": first.get("lang", "te"),
             "caption": first.get("caption", ""),
@@ -441,6 +620,10 @@ async def make_long_video(brief, chat, workdir, target_minutes,
             "broll": broll_sources, "summary": summary,
             "voice_note": voice_note,
             "amendments_applied": amend_applied,
+            # v79: contract artifacts (FIX 1/5) for the runner upload.
+            "spec": spec or [], "render_config": cfg or {},
+            "compliance": report, "workdir": str(workdir),
+            "footage": pool.footage_json() if pool else {},
             "partial": partial, "chapters_done": len(paths),
             "chapters_total": total_ch, "long": True}
 
@@ -480,42 +663,81 @@ def _load_font(size, bold=True):
         ImageFont, "load_default") else ImageFont.load_default()
 
 
-def _title_card_image(number, title, out_png):
-    """1.5 s chapter title card: solid navy 1080x1920, 'CHAPTER N' + title.
-    Falls back to a plain black card only if PIL text rendering fails."""
+def _title_card_image(number, title, out_png, size=(1080, 1920), bg_png=None):
+    """Chapter title card at the video's own size. v79 (R8): plain
+    navy cards were one of the compromise mistakes — the card now
+    sits ON the chapter's own footage (a frame of the chapter,
+    darkened) whenever one is available; solid navy is the fallback
+    only. 'CHAPTER N' + the chapter title, sized to the frame."""
     from PIL import Image, ImageDraw
-    img = Image.new("RGB", (1080, 1920), CARD_BG)
+    W, H = size
+    img = None
+    if bg_png:
+        try:
+            src = Image.open(bg_png).convert("RGB")
+            sc = max(W / src.width, H / src.height)
+            src = src.resize((int(src.width * sc + 0.5), int(src.height * sc + 0.5)))
+            x = (src.width - W) // 2
+            y = (src.height - H) // 2
+            img = src.crop((x, y, x + W, y + H))
+            img = Image.blend(img, Image.new("RGB", (W, H), (4, 8, 18)), 0.55)
+        except Exception:
+            img = None
+    if img is None:
+        img = Image.new("RGB", (W, H), CARD_BG)
     d = ImageDraw.Draw(img)
     try:
-        small = _load_font(54)
-        big = _load_font(110)
-        d.rectangle([90, 880, 990, 890], fill=CARD_ACCENT)
+        small = _load_font(max(24, int(H * 0.028)))
+        big = _load_font(max(36, int(H * 0.057)))
+        cx = W // 2
+        d.rectangle([int(W * 0.083), int(H * 0.458), int(W * 0.917), int(H * 0.463)],
+                    fill=CARD_ACCENT)
         label = f"CHAPTER {number}"
-        d.text((540, 800), label, font=small, fill=CARD_ACCENT, anchor="mm")
+        d.text((cx, int(H * 0.417)), label, font=small, fill=CARD_ACCENT, anchor="mm")
+        wrap_w = max(10, int(W / (big.size * 0.62)))
         lines = []
         for raw_line in str(title).split("\n"):
-            lines.extend(textwrap.wrap(raw_line, width=14) or [""])
+            lines.extend(textwrap.wrap(raw_line, width=wrap_w) or [""])
         lines = lines[:4]
-        y = 960
+        y = int(H * 0.5)
         for line in lines:
-            d.text((540, y), line, font=big, fill=(255, 255, 255), anchor="mm")
-            y += 130
+            d.text((cx, y), line, font=big, fill=(255, 255, 255), anchor="mm")
+            y += int(H * 0.068)
     except Exception:
-        img = Image.new("RGB", (1080, 1920), (0, 0, 0))
+        img = Image.new("RGB", (W, H), (0, 0, 0))
     img.save(out_png)
     return out_png
 
 
-def _make_card_clip(number, title, tmpdir):
-    """Render one title card as a 1.5 s mp4 with silent audio, matching the
-    chapters (1080x1920, 30 fps, 44100 Hz stereo) so the concat is clean."""
-    png = _title_card_image(number, title, str(Path(tmpdir) / f"card{number}.png"))
+def _make_card_clip(number, title, tmpdir, size=(1080, 1920), bg_from=None):
+    """Render one title card as a 1.5 s mp4 with silent audio, matching
+    the chapters' size (30 fps, 44100 Hz stereo) so the concat is
+    clean. v79 (R8): with a chapter video to take a frame from, the
+    card carries that footage WITH a slow push-in (motion), not a
+    frozen still."""
+    W, H = size
+    bg_png = None
+    if bg_from:
+        cand = str(Path(tmpdir) / f"cardbg{number}.jpg")
+        r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
+                            "-ss", "2", "-i", str(bg_from),
+                            "-frames:v", "1", cand],
+                           capture_output=True)
+        if r.returncode == 0 and os.path.exists(cand):
+            bg_png = cand
+    png = _title_card_image(number, title, str(Path(tmpdir) / f"card{number}.png"),
+                            size=size, bg_png=bg_png)
     mp4 = str(Path(tmpdir) / f"card{number}.mp4")
+    if bg_png:
+        vf = (f"scale={W * 2}:{H * 2},zoompan=z='1+0.05*on/45':x='iw/2-(iw/zoom/2)'"
+              f":y='ih/2-(ih/zoom/2)':d=45:s={W}x{H}:fps=30,format=yuv420p")
+    else:
+        vf = "format=yuv420p"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
                     "-loop", "1", "-t", str(CARD_SECONDS), "-i", png,
                     "-f", "lavfi", "-t", str(CARD_SECONDS),
                     "-i", "anullsrc=r=44100:cl=stereo",
-                    "-vf", "scale=1080:1920,format=yuv420p",
+                    "-vf", vf,
                     "-r", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p",
                     "-c:a", "aac", "-shortest", mp4], check=True)
     return mp4
@@ -537,7 +759,7 @@ def _measure_loudness(path):
     """First loudnorm pass (audio-only): return the measured_* JSON dict,
     or None if the measurement fails."""
     r = subprocess.run(["ffmpeg", "-i", str(path), "-vn",
-                        "-af", "loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json",
+                        "-af", "loudnorm=I=-14:TP=-1.0:LRA=11:print_format=json",
                         "-f", "null", "-"],
                        capture_output=True, text=True)
     m = re.search(r"\{[^{}]*\"input_i\"[^{}]*\}", r.stderr or "")
@@ -549,13 +771,21 @@ def _measure_loudness(path):
         return None
 
 
-def assemble(parts, out_path, chapter_titles):
+def assemble(parts, out_path, chapter_titles, size=None, card_bg_from=None):
     """Concatenate chapter mp4s with ffmpeg, inserting a 1.5 s title card
     before every chapter after the first, loudness-normalising the final
-    audio (loudnorm I=-14, TP=-1.5, LRA=11 — dual-pass, so the target is
+    audio (loudnorm I=-14, TP=-1.0, LRA=11 — dual-pass, so the target is
     actually hit), and writing chapters.txt ('MM:SS Chapter title' per
     chapter start) next to the output. Returns the output path (str).
+
+    v79: `size` is the video's own frame size (from prompt_spec via
+    the render config — 1920x1080 for long by R9); the old signature
+    without it keeps the historical 1080x1920. `card_bg_from` =
+    the chapter mp4 paths, for footage-backed chapter cards (R8).
     """
+    if size is None:
+        size = (1080, 1920)
+    W, H = int(size[0]), int(size[1])
     parts = [str(p) for p in parts]
     titles = [str(t) for t in chapter_titles]
     if not parts:
@@ -577,12 +807,16 @@ def assemble(parts, out_path, chapter_titles):
         # Sequence: part1, card2, part2, card3, part3, ...
         segs = [parts[0]]
         for i in range(1, len(parts)):
-            segs.append(_make_card_clip(i + 1, titles[i], td))
+            bg = None
+            if card_bg_from and i < len(card_bg_from):
+                bg = card_bg_from[i]
+            segs.append(_make_card_clip(i + 1, titles[i], td, size=(W, H),
+                                        bg_from=bg))
             segs.append(parts[i])
         inputs, filt = [], []
         for j, seg in enumerate(segs):
             inputs += ["-i", seg]
-            filt.append(f"[{j}:v]fps=30,scale=1080:1920,format=yuv420p[v{j}];")
+            filt.append(f"[{j}:v]fps=30,scale={W}:{H},format=yuv420p[v{j}];")
             filt.append(f"[{j}:a]aresample=44100,aformat=channel_layouts=stereo[a{j}];")
         filt.append("".join(f"[v{j}][a{j}]" for j in range(len(segs))))
         filt.append(f"concat=n={len(segs)}:v=1:a=1[vout][aout]")
@@ -601,13 +835,13 @@ def assemble(parts, out_path, chapter_titles):
         measured = _measure_loudness(concat_mp4)
         if measured is not None:
             p = _loudnorm_params(measured)
-            af = ("loudnorm=I=-14:TP=-1.5:LRA=11"
+            af = ("loudnorm=I=-14:TP=-1.0:LRA=11"
                   f":measured_I={p['measured_I']}:measured_TP={p['measured_TP']}"
                   f":measured_LRA={p['measured_LRA']}"
                   f":measured_thresh={p['measured_thresh']}"
                   f":offset={p['offset']}:linear={p['linear']}")
         else:  # measurement failed: fall back to single-pass loudnorm
-            af = "loudnorm=I=-14:TP=-1.5:LRA=11"
+            af = "loudnorm=I=-14:TP=-1.0:LRA=11"
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
                         "-i", concat_mp4, "-af", af,
                         "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
