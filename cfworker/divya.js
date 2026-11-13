@@ -368,17 +368,28 @@ async function startCreate(env, user, brief) {
     } catch {}
     return null;
   }
-  // v72: the running job's id for this user — mid-flight amendments
-  // (and only they) resolve their target job through this record.
-  await env.KV.put(`curjob:${user}`, job, { expirationTtl: 86400 * 2 });
-  // R42: creates get a History entry (video N, editing) so the finished video
-  // can be delivered in chat + History, like edits already do.
-  const num = await histNext(env, user);
-  await histPut(env, user, { n: num, job, title: String(brief).slice(0, 80), topic: String(brief).slice(0, 200), kind, lang: "auto", length: kind === "long" ? "long" : "short", at: Date.now(), state: "editing", name: "video", src: "create", template: null, notes: String(brief).slice(0, 300), has_result: false, yt: null, ig: null });
-  // R43: the runner can only report state / store result bytes for this job
-  // when jobown exists (appRunner 404s without it) — edits already write it.
-  await env.KV.put(`jobown:${job}`, user, { expirationTtl: 86400 * 3 });
-  return { job, num };
+  // v77: registration (curjob / History / jobown) runs in a guard: a
+  // store failure here throws now that puts verify, and the busy flag
+  // must still be cleared — the dispatch-fail path clears it so a
+  // retry is not blocked for 20 minutes, and a registration failure
+  // is a failed start in the caller's hands (refund + honest reply),
+  // never a silently half-registered job.
+  try {
+    // v72: the running job's id for this user — mid-flight amendments
+    // (and only they) resolve their target job through this record.
+    await env.KV.put(`curjob:${user}`, job, { expirationTtl: 86400 * 2 });
+    // R42: creates get a History entry (video N, editing) so the finished video
+    // can be delivered in chat + History, like edits already do.
+    const num = await histNext(env, user);
+    await histPut(env, user, { n: num, job, title: String(brief).slice(0, 80), topic: String(brief).slice(0, 200), kind, lang: "auto", length: kind === "long" ? "long" : "short", at: Date.now(), state: "editing", name: "video", src: "create", template: null, notes: String(brief).slice(0, 300), has_result: false, yt: null, ig: null });
+    // R43: the runner can only report state / store result bytes for this job
+    // when jobown exists (appRunner 404s without it) — edits already write it.
+    await env.KV.put(`jobown:${job}`, user, { expirationTtl: 86400 * 3 });
+    return { job, num };
+  } catch (e) {
+    await env.KV.delete(`busy:${user}`).catch(() => {});
+    throw e;
+  }
 }
 
 async function handle(env, m) {
@@ -554,7 +565,7 @@ async function handle(env, m) {
     // v37 (fix F): enqueue FIRST, then tell the user — "start chesa" is only
     // sent when the job really queued; a failed dispatch gets an honest
     // failure message and the tokens back.
-    if (go) { const sc = await startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO"); if (!sc) { await tokRefund(env, user, tk, cost); ans = "Video machine start avvaledu (GitHub dispatch fail ayyindhi). Nee tokens venakki ichesa — konchem sepu tarvatha malli adugu."; } else await recordSpend(env, sc.job, user, tk, cost); }
+    if (go) { const sc = await startCreate(env, user, (mm[1] || "AUTO").trim() || "AUTO").catch(() => null); if (!sc) { await tokRefund(env, user, tk, cost); ans = "Video machine start avvaledu (GitHub dispatch fail ayyindhi). Nee tokens venakki ichesa — konchem sepu tarvatha malli adugu."; } else await recordSpend(env, sc.job, user, tk, cost); }
     h.push({ role: "assistant", content: ans }); await remember(env, user, h);
     if (ans) await say(env, user, ans);
     return;
@@ -978,7 +989,11 @@ async function appTalk(env, u, text, lang, voiceId) {
     if (vg) brief += ` Voice-over gender: ${vg}.`;
     const bpRaw = await env.KV.get(`bp:${u.n}`);
     if (bpRaw) { try { brief += " Style blueprint: " + blueprintLine(JSON.parse(bpRaw)) + "."; await env.KV.delete(`bp:${u.n}`); } catch {} }
-    sc = await startCreate(env, u.n, brief); started = !!sc;
+    // v77: a store failure inside the start (e.g. the History write)
+    // throws now that puts verify — treat it as a failed start, so
+    // the spend lands in the same refund branch as a dispatch fail
+    // and is never stranded unrecorded.
+    sc = await startCreate(env, u.n, brief).catch(() => null); started = !!sc;
     if (started) { await vidCount(env, u.n); await recordSpend(env, sc.job, u.n, tk, cost); await env.KV.put(`appjob:${u.n}`, JSON.stringify({ at: Date.now(), brief: brief.slice(0, 200), job: sc.job, num: sc.num }), { expirationTtl: 86400 * 2 }); }
     // v37 (fix F): the "started" reply is only true once the job is queued.
     // A failed dispatch replaces it with an honest failure + token refund.
@@ -1012,14 +1027,29 @@ const tplMeta = id => TEMPLATES_META.find(t => t.id === id) || TEMPLATES_META[0]
 // R22: video history — histcount:<n> = next number; hist:<n>:<num> = entry;
 // histjob:<job> = "<n>:<num>". Numbers are per-user and shared by app edits and
 // WhatsApp creates, so "video 1" always means the same video everywhere.
-async function histNext(env, n) { const k = `histcount:${n}`; const c = parseInt((await env.KV.get(k)) || "0", 10) + 1; await env.KV.put(k, String(c)); return c; }
+// v77: the counter is a single write at create time; if it is ever
+// lost, every entry above it is invisible to histList — and to the
+// stuck-job rescue — forever, while a direct histGet still shows it
+// (live: job a6421c3f sat "editing" for hours under a counter stuck
+// at 1; its companion #1 rescued on the first read). Probe upward
+// while entries exist and repair the counter, so a lost increment
+// can never orphan an entry again. Costs one extra get (the miss
+// above the top) when the counter is already correct.
+async function histTop(env, n) {
+  const c = parseInt((await env.KV.get(`histcount:${n}`)) || "0", 10) || 0;
+  let top = c;
+  for (let i = c + 1; i <= c + 100; i++) { if (!(await histGet(env, n, i))) break; top = i; }
+  if (top > c) { try { await env.KV.put(`histcount:${n}`, String(top)); } catch {} }
+  return top;
+}
+async function histNext(env, n) { const c = (await histTop(env, n)) + 1; await env.KV.put(`histcount:${n}`, String(c)); return c; }
 async function histGet(env, n, num) { return JSON.parse((await env.KV.get(`hist:${n}:${num}`)) || "null"); }
 async function histPut(env, n, e) {
   await env.KV.put(`hist:${n}:${e.n}`, JSON.stringify(e), { expirationTtl: 86400 * 90 });
   if (e.job) await env.KV.put(`histjob:${e.job}`, `${n}:${e.n}`, { expirationTtl: 86400 * 90 });
 }
 async function histList(env, n, limit = 20) {
-  const c = parseInt((await env.KV.get(`histcount:${n}`)) || "0", 10);
+  const c = await histTop(env, n);
   const out = [];
   for (let i = c; i >= 1 && out.length < limit; i--) { const e = await histGet(env, n, i); if (e) out.push(e); }
   return out;
@@ -1287,7 +1317,7 @@ async function appApi(req, env, url, ctx) {
     const tk = await tokSpend(env, u.n, videoCost(parseMins(body.length))); if (!tk.ok) return appJson(req, { ok: false, quota: true, error: tokMsg(lang, tk) }, 429);
     const parts = [String(body.topic || "").trim() || "AUTO (you pick a fresh topic)", body.language && `voice language ${body.language}`, body.voice && `${body.voice} voice`, body.length && `length ${body.length}`, body.style && `style ${body.style}`].filter(Boolean);
     const brief = parts.join(", ").slice(0, 600);
-    const sc = await startCreate(env, u.n, brief);
+    const sc = await startCreate(env, u.n, brief).catch(() => null);
     if (!sc) { await tokRefund(env, u.n, tk, videoCost(parseMins(body.length))); return appJson(req, { ok: false, error: "Video machine start avvaledu. Konchem sepu tarvatha try cheyyi." }, 502); }
     await recordSpend(env, sc.job, u.n, tk, videoCost(parseMins(body.length)));
     await env.KV.put(`appjob:${u.n}`, JSON.stringify({ at: Date.now(), brief, job: sc.job, num: sc.num }), { expirationTtl: 86400 * 2 });
@@ -4202,6 +4232,17 @@ export class JulieState {
       sql.exec("INSERT INTO kv (k, v, exp) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v, exp = excluded.exp", b.key, String(b.value), b.exp || 0);
       return Response.json({ ok: true });
     }
+    if (b.op === "putnx") {
+      // v77: insert-if-absent (an expired row counts as absent). The
+      // migration backfill uses this: it fills a gap, it must NEVER
+      // overwrite a value a real write already landed — a stale
+      // backfill arriving late used to resurrect old state (e.g. an
+      // "editing" History entry over the rescue's "failed").
+      const row = [...sql.exec("SELECT exp FROM kv WHERE k = ?", b.key)][0];
+      if (row && !(row.exp && row.exp < now)) return Response.json({ ok: true, skipped: true });
+      sql.exec("INSERT INTO kv (k, v, exp) VALUES (?, ?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v, exp = excluded.exp", b.key, String(b.value), b.exp || 0);
+      return Response.json({ ok: true });
+    }
     if (b.op === "del") { sql.exec("DELETE FROM kv WHERE k = ?", b.key); return Response.json({ ok: true }); }
     if (b.op === "list") {
       const like = String(b.prefix || "").replace(/[%_\\]/g, "\\$&") + "%";
@@ -4239,14 +4280,39 @@ function wrapEnv(env) {
       if (kv != null) {
         const s = type === "json" ? JSON.stringify(kv) : String(kv);
         const short = ["otp:", "otpcool:", "oauth:", "pcool:"].some(pfx => String(key).startsWith(pfx));
-        call({ op: "put", key, value: s, exp: Date.now() + (short ? 600000 : 86400e3 * 30) }).catch(() => {});
+        // v77: putnx, not put — this backfill is un-awaited and carries
+        // the value as of THIS read; if a newer write lands first (or
+        // already has), the backfill must not overwrite it.
+        call({ op: "putnx", key, value: s, exp: Date.now() + (short ? 600000 : 86400e3 * 30) }).catch(() => {});
       }
       return kv;
     },
     async put(key, value, opts) {
       if (!toState(key)) return real.put(key, value, opts);
       const exp = opts && opts.expirationTtl ? Date.now() + opts.expirationTtl * 1000 : (opts && opts.expiration ? opts.expiration * 1000 : 0);
-      await call({ op: "put", key, value: typeof value === "string" ? value : new TextDecoder().decode(value), exp });
+      const body = { op: "put", key, value: typeof value === "string" ? value : new TextDecoder().decode(value), exp };
+      // v77: VERIFY the write landed, retrying transient failures, and
+      // resolve ONLY when it verifiably did. The pre-v77 put never
+      // looked at the response, so a store error in a deploy window
+      // silently ate the write — that is how job a6421c3f's histcount
+      // increment vanished (2026-11-13), orphaning its History entry
+      // from histList and the stuck-job rescue. The throw contract is
+      // load-bearing, not new: tokRefund has always relied on a put
+      // throw to know a refund did NOT land (a swallowed failure
+      // there would claim refunds that never happened), and callers
+      // that cannot tolerate a throw already catch (recordSpend,
+      // refundJobSpend, the rescue, histTop's repair).
+      let lastErr = null;
+      for (let i = 0; i < 3; i++) {
+        try {
+          const r = await call(body);
+          const d = await r.json().catch(() => null);
+          if (r.ok && d && d.ok) return;
+          lastErr = new Error("state put not ok (status " + r.status + ")");
+        } catch (e) { lastErr = e; }
+        if (i < 2) await new Promise(res => setTimeout(res, 40 * (i + 1)));
+      }
+      throw lastErr || new Error("state put failed: " + key);
     },
     async delete(key) {
       if (!toState(key)) return real.delete(key);
