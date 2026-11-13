@@ -27,6 +27,11 @@ import httpx
 
 _SEARCH_TIMEOUT = 20
 _DOWNLOAD_TIMEOUT = 120
+# Pexels 403s the default httpx/python user agents (verified live
+# 2026-11-13: same key, browser UA -> 200, default UA -> 403). Always
+# send a browser UA on API + download requests.
+_UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+       "(KHTML, like Gecko) Chrome/126 Safari/537.36"}
 _MAX_BYTES = 60 * 1024 * 1024  # a B-roll clip never needs to be huge
 
 
@@ -40,7 +45,7 @@ def _download(url, dest):
     """Stream url -> dest (via a .part file). True on success."""
     tmp = dest + ".part"
     try:
-        with httpx.stream("GET", url, follow_redirects=True,
+        with httpx.stream("GET", url, follow_redirects=True, headers=_UA,
                           timeout=_DOWNLOAD_TIMEOUT) as r:
             if r.status_code != 200:
                 return False
@@ -71,7 +76,7 @@ def _pexels_search(query, key, orientation):
         r = httpx.get("https://api.pexels.com/videos/search",
                       params={"query": query, "orientation": orientation,
                               "per_page": 5},
-                      headers={"Authorization": key},
+                      headers={"Authorization": key, **_UA},
                       timeout=_SEARCH_TIMEOUT)
         if r.status_code != 200:
             return None
@@ -99,6 +104,7 @@ def _pixabay_search(query, key, orientation):
     try:
         r = httpx.get("https://pixabay.com/api/videos/",
                       params={"key": key, "q": query, "per_page": 5},
+                      headers=_UA,
                       timeout=_SEARCH_TIMEOUT)
         if r.status_code != 200:
             return None
