@@ -1302,15 +1302,17 @@ def _extract_broll_frames(clip_path, outdir, dur_s):
         return 0
 
 
-def _attach_broll(p, wd):
+def _attach_broll(p, wd, all_scenes=False):
     """Attach stock footage to ~half the scenes of plan p (even indices,
-    never the final CTA scene). Sets p["broll"] = {idx: {"dir", "frames"}}
-    and p["broll_sources"] = [{scene, provider, source_url, query}] (the
-    licence trail Hark's method requires). No-op when nothing is found."""
+    never the final CTA scene; all_scenes=True — a v72 mid-flight
+    amendment asking for more footage — targets every non-final scene).
+    Sets p["broll"] = {idx: {"dir", "frames"}} and p["broll_sources"] =
+    [{scene, provider, source_url, query}] (the licence trail Hark's
+    method requires). No-op when nothing is found."""
     import broll as _br
     scenes = p["scenes"]
     n = len(scenes)
-    targets = [i for i in range(n) if i % 2 == 0 and i != n - 1]
+    targets = [i for i in range(n) if i != n - 1] if all_scenes else [i for i in range(n) if i % 2 == 0 and i != n - 1]
     topic = str(p.get("topic") or "").strip()
     attached, sources = {}, []
     for i in targets:
@@ -2153,9 +2155,232 @@ def frame_qc(p, video_path, wd=None):
     return result
 
 
-async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False, ref_voice=None):
+# ---------------- v72: mid-flight amendments ----------------
+# While a video renders, the user can send production instructions
+# ("real footage kuda include cheyu, sfx use cheyu, transitions
+# marchu"). The Worker stores them on the job record; the runner hands
+# make_video a provider (pending() / mark(ids, stage)); the checkpoints
+# below consume what each stage can still honour. An amendment that
+# arrives after the last checkpoint it could use is reported MISSED —
+# never silently retargeted to a future video, never faked as applied.
+AMENDMENTS = True  # runner capability flag (mirrors the synth_voice gate)
+
+_AMEND_NEG = r"(?:vaddu|off|aapu|stop|remove|teesi|ledhu|ledu|no|without|don'?t)"
+
+
+def _amend_negated(t, kw):
+    return bool(re.search(_AMEND_NEG + r"[^.]{0,24}\b(?:" + kw + r")\b", t)
+                or re.search(r"\b(?:" + kw + r")\b[^.]{0,12}" + _AMEND_NEG, t))
+
+
+def classify_amendment(text):
+    """Map one amendment message to the concrete engine effects it asks
+    for (PURE — the test suite pins this mapping). Keys: sfx / music /
+    captions ("on"|"off"), broll ("on"|"off"), transitions
+    ("change"|"off"), style_note (free text the remaining stages keep
+    as a production note), content (a point to fold into the narration
+    — set only when nothing else matched)."""
+    raw = str(text or "").strip()
+    t = " " + re.sub(r"\s+", " ", raw.lower()) + " "
+    fx = {}
+    if re.search(r"\bsfx\b|sound\s*effects?", t):
+        fx["sfx"] = "off" if _amend_negated(t, r"sfx|sound\s*effects?") else "on"
+    if re.search(r"\bmusic\b|\bbgm\b|background\s*score", t):
+        fx["music"] = "off" if _amend_negated(t, r"music|bgm") else "on"
+    if re.search(r"captions?|subtitles?", t):
+        fx["captions"] = "off" if _amend_negated(t, r"captions?|subtitles?") else "on"
+    if re.search(r"footage|b[-\s]?roll|broll|stock\s*(?:video|footage|clips?)", t):
+        fx["broll"] = "off" if _amend_negated(t, r"footage|b-?roll|broll|stock") else "on"
+    if re.search(r"transitions?", t):
+        fx["transitions"] = "off" if _amend_negated(t, r"transitions?") else "change"
+    if re.search(r"animations?|visual\s*effects?|\beffects?\b|\bzoom\b|\bstyle\b|\blook\b|graphics?", t):
+        fx["style_note"] = raw[:200]
+    if not fx:
+        fx["content"] = raw[:300]
+    return fx
+
+
+class _AmendBox:
+    """Per-render amendment tracker: pulls new items from the provider,
+    applies effects stage by stage, and remembers exactly what was
+    applied (with the stage) vs what was never consumed (missed)."""
+
+    def __init__(self, provider):
+        self.pv = provider
+        self.fx = {}            # id -> remaining effects dict
+        self.texts = {}         # id -> original text
+        self.applied = []       # [{id, text, stage, desc}]
+        self._applied_ids = set()
+
+    def _pull(self):
+        if not self.pv:
+            return
+        try:
+            items = self.pv.pending()
+        except Exception as e:
+            print("amendments poll failed:", str(e)[:120])
+            return
+        for it in items or []:
+            i = it.get("id")
+            if i is not None and i not in self.fx and i not in self._applied_ids:
+                self.fx[i] = classify_amendment(it.get("text", ""))
+                self.texts[i] = it.get("text", "")
+
+    def pending_items(self):
+        self._pull()
+        return [(i, self.texts[i], self.fx[i]) for i in sorted(self.fx)]
+
+    def apply(self, i, stage, desc, keys):
+        fx = self.fx.get(i)
+        if fx is None:
+            return
+        for k in keys:
+            fx.pop(k, None)
+        rec = next((a for a in self.applied if a["id"] == i), None)
+        if rec is None:
+            self.applied.append({"id": i, "text": self.texts.get(i, ""),
+                                 "stage": stage, "desc": desc})
+            self._applied_ids.add(i)
+        else:
+            rec["stage"] = stage
+            rec["desc"] = (rec["desc"] + "; " + desc) if rec["desc"] else desc
+        if not fx:
+            del self.fx[i]
+            if self.pv:
+                try:
+                    self.pv.mark([i], stage)
+                except Exception:
+                    pass
+
+    def finish(self):
+        """Mark every item that got at least one real application (a
+        multi-effect item may still hold effects whose stage never came
+        due — it WAS partially applied; its desc says with what)."""
+        if self.pv:
+            for a in self.applied:
+                try:
+                    self.pv.mark([a["id"]], a["stage"])
+                except Exception:
+                    pass
+
+    def missed(self):
+        self._pull()
+        return [self.texts[i] for i in sorted(self.fx)
+                if i not in self._applied_ids]
+
+
+def _repick_transitions(p):
+    """A fresh transition set for every boundary (the assembly-stage
+    answer to "transitions marchu"): the current names sit in the
+    used-set, so every boundary really changes."""
+    tag = LOOKS[p.get("look", "A")].get("fx_tag", "calm")
+    used = set(p.get("transitions") or [])
+    out = []
+    for j in range(max(0, len(p["scenes"]) - 1)):
+        name = TL.pick_transition(tags={tag}, used=used,
+                                  seed=(p.get("seed", 0) + 5000 + j))["name"]
+        used.add(name)
+        out.append(name)
+    p["transitions"] = out
+    p["transition_families"] = [TL.family(n) for n in out]
+    for i, s in enumerate(p["scenes"]):
+        s["transition"] = out[i - 1] if 0 < i <= len(out) else ""
+
+
+def _transitions_off(p):
+    """Simple cuts everywhere: the renderer falls back to a plain
+    crossfade for the "crossfade" name — no library transition runs."""
+    n = max(0, len(p["scenes"]) - 1)
+    p["transitions"] = ["crossfade"] * n
+    p["transition_families"] = [TL.family("crossfade")] * n
+    for i, s in enumerate(p["scenes"]):
+        s["transition"] = "crossfade" if i > 0 else ""
+
+
+def _silence_wav(path, seconds):
+    w = wave.open(path, "w")
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(SR)
+    w.writeframes(b"\x00\x00" * int(SR * max(0.0, seconds)))
+    w.close()
+
+
+def _amend_checkpoint(box, p, stage, chat=None):
+    """Consume the pending amendments THIS stage can honour; return the
+    flags this stage decided ({broll, sfx, music, captions}). Stages:
+    script (after plan, before voice) -> footage (before the B-roll
+    attach) -> audio (before the music/SFX mix) -> assembly (before
+    the frame render + caption burn — the last checkpoint)."""
+    flags = {}
+    if box is None:
+        return flags
+    for (i, text, fx) in box.pending_items():
+        if stage == "script":
+            if "content" in fx:
+                line = None
+                if chat is not None:
+                    try:
+                        line = str(chat([
+                            {"role": "system", "content": "You write narration for a documentary-style video. Reply with ONLY one short sentence (max 15 words), in the video's language, no quotes, no preamble."},
+                            {"role": "user", "content": f"Video title: {p.get('title', '')}. Weave this viewer-requested point into the narration as one sentence: {text}"},
+                        ]) or "").strip().strip('"')
+                    except Exception as e:
+                        print("amendment content line failed:", str(e)[:120])
+                tgt = next((s for s in reversed(p["scenes"])
+                            if s.get("visual") != "stamp_cta"), p["scenes"][-1])
+                if line and len(line) <= 200 and "[[" not in line:
+                    tgt["vo"] = (str(tgt.get("vo", "")) + " " + line).strip()
+                    box.apply(i, "script", "content point narration loki add chesa", ["content"])
+                else:
+                    p.setdefault("amend_notes", []).append(text)
+                    box.apply(i, "script", "note ga add chesa", ["content"])
+            if "style_note" in fx:
+                p.setdefault("amend_notes", []).append(text)
+                box.apply(i, "script", "style note add chesa", ["style_note"])
+        elif stage == "footage":
+            if "broll" in fx:
+                flags["broll"] = fx["broll"]
+                box.apply(i, "footage",
+                          "B-roll off chesa" if fx["broll"] == "off"
+                          else "B-roll on — footage anni scenes ki try chesa", ["broll"])
+            if "style_note" in fx:
+                p.setdefault("amend_notes", []).append(text)
+                box.apply(i, "footage", "style note add chesa", ["style_note"])
+        elif stage == "audio":
+            if "sfx" in fx:
+                flags["sfx"] = fx["sfx"]
+                box.apply(i, "audio", "SFX " + fx["sfx"], ["sfx"])
+            if "music" in fx:
+                flags["music"] = fx["music"]
+                box.apply(i, "audio", "Music " + fx["music"], ["music"])
+            if "style_note" in fx:
+                p.setdefault("amend_notes", []).append(text)
+                box.apply(i, "audio", "style note add chesa", ["style_note"])
+        elif stage == "assembly":
+            if "transitions" in fx:
+                if fx["transitions"] == "off":
+                    _transitions_off(p)
+                    box.apply(i, "assembly", "transitions off (simple cuts)", ["transitions"])
+                else:
+                    _repick_transitions(p)
+                    box.apply(i, "assembly", "transitions marchesa (fresh set)", ["transitions"])
+            if "captions" in fx:
+                flags["captions"] = fx["captions"]
+                box.apply(i, "assembly", "Captions " + fx["captions"], ["captions"])
+            if "style_note" in fx:
+                p.setdefault("amend_notes", []).append(text)
+                box.apply(i, "assembly", "style note add chesa", ["style_note"])
+            # "content" at assembly is too late for a short — it stays
+            # unconsumed and is reported missed. Never faked as applied.
+    return flags
+
+
+async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False, ref_voice=None, amendments=None):
     global _P
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
+    abox = _AmendBox(amendments) if amendments is not None else None
+    aflags = {}
     p = plan(brief, chat, recent, recent_styles, recent_families)
     # v32 (Blind codegen): ONE engine writes tr_/fx_/vis_ in a single call
     # (codegen.run: PLAN -> CODE -> sandbox -> fix x2 -> library fallback),
@@ -2187,6 +2412,9 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         return {"path": _prev, "preview": True, "topic": p.get("topic", brief),
                 "title": p["title"], "lang": p["lang"], "plan": p,
                 "duration": sum(s["d"] for s in p["scenes"])}
+    # v72 checkpoint 1 (script): content points + style notes fold into
+    # the plan BEFORE any voice is synthesised.
+    aflags.update(_amend_checkpoint(abox, p, "script", chat))
     voice = VOICES.get((p["lang"], p.get("voice", "male")), VOICES[(p["lang"], "male")])
     # v32 (M12, Mark): ChristopherNeural (-8%, -4Hz, "calm, deep") for
     # calm/motivational English videos — majority-calm moods, or a brief
@@ -2261,10 +2489,17 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # v69: stock B-roll for ~half the scenes (see _attach_broll). Runs
     # BEFORE the pre-render geometry QC so the QC renders the real
     # footage-backed frames. Any failure leaves the plan untouched.
-    try:
-        _attach_broll(p, wd)
-    except Exception as e:
-        print("broll attach failed:", str(e)[:150])
+    # v72 checkpoint 2 (footage): a mid-flight B-roll instruction lands
+    # here — "off" skips the attach entirely; "on" tries footage on
+    # EVERY scene instead of the default ~half.
+    aflags.update(_amend_checkpoint(abox, p, "footage"))
+    if aflags.get("broll") == "off":
+        print("amendments: B-roll OFF — attach skipped")
+    else:
+        try:
+            _attach_broll(p, wd, all_scenes=(aflags.get("broll") == "on"))
+        except Exception as e:
+            print("broll attach failed:", str(e)[:150])
     if p.get("broll_sources") and notify:
         await notify(f"B-roll: {len(p['broll_sources'])} stock footage clips "
                      f"({', '.join(sorted({s['provider'] for s in p['broll_sources']}))}).")
@@ -2319,7 +2554,15 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", fc, "-map", "[o]", "-ar", str(SR), "-ac", "1", f"{wd}/voice.wav"], check=True)
     _payoff = starts[_payoff_idx(p)] if starts else None
     if notify: await notify("Rendering: final video assemble chestunna.")
+    # v72 checkpoint 3 (audio): SFX / music instructions land BEFORE
+    # the mix. "off" silences the finished track afterwards, so the
+    # mix graph (and the loudness design) stays exactly as built.
+    aflags.update(_amend_checkpoint(abox, p, "audio"))
     music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff)
+    if aflags.get("music") == "off":
+        _silence_wav(f"{wd}/music.wav", total)
+    if aflags.get("sfx") == "off":
+        _silence_wav(f"{wd}/music_sfx.wav", total)
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/voice.wav", "-i", f"{wd}/music.wav", "-i", f"{wd}/music_sfx.wav", "-filter_complex",
                     # v36 (Blind E1): the music is ducked -12 dB under the voice
                     # (volume 0.55 -> 0.45, sidechain threshold 0.02 -> 0.015).
@@ -2327,6 +2570,10 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                     "[v1]highpass=f=70,acompressor=threshold=0.1:ratio=3,volume=1.5[vv];[2:a]volume=0.55[sx];"
                     # v32 (M6, Mark): final loudnorm -14 LUFS (was alimiter)
                     "[vv][md][sx]amix=inputs=3:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[o]", "-map", "[o]", "-ar", str(SR), f"{wd}/mix.wav"], check=True)
+    # v72 checkpoint 4 (assembly): transitions + captions land before
+    # the frame render and the caption burn — the last point where
+    # they can still change THIS video.
+    aflags.update(_amend_checkpoint(abox, p, "assembly"))
     # video, parallel chunks
     _P = p; nf = int(total * FPS); k = workers or max(1, min(4, os.cpu_count() or 1))
     cuts = [nf * i // k for i in range(k + 1)]
@@ -2335,9 +2582,12 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         parts = pool.map(_render_chunk, jobs)
     open(f"{wd}/parts.txt", "w").write("".join(f"file '{x}'\n" for x in parts))
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", f"{wd}/parts.txt", "-c", "copy", f"{wd}/raw.mp4"], check=True)
-    ass = f"{wd}/subs.ass"; write_ass(p, ass)
+    ass = f"{wd}/subs.ass"
+    _cap_off = aflags.get("captions") == "off"
+    if not _cap_off:
+        write_ass(p, ass)
     out = f"{wd}/divya_doc.mp4"
-    vf = f"vignette=PI/4.5,eq=contrast=1.06:saturation=1.08,ass={ass}:fontsdir={FONTS}"
+    vf = f"vignette=PI/4.5,eq=contrast=1.06:saturation=1.08" + ("" if _cap_off else f",ass={ass}:fontsdir={FONTS}")
     # v36 (Blind E5/C4): NO temporal noise filter in the vf chain. The old
     # chain had noise=alls=7:allf=t (new random noise every frame) on top of
     # the baked-in 3% film grain + dust + vignette. At CRF 18 the encoder
@@ -2376,6 +2626,11 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     print(f"frame_qc: {'PASS' if _fq['passed'] else 'FAIL'} — " + ("; ".join(_fq["flaws"][:6]) if _fq["flaws"] else "all scenes clean") + ((" | warnings: " + "; ".join(_fq["warnings"][:4])) if _fq.get("warnings") else ""))
     # v36 (Blind D): record this video's look so the next video never repeats it.
     record_look(p.get("look"))
+    # v72: close the amendment book — everything the engine applied is
+    # marked on the job record; the runner re-reads the record for the
+    # delivery report (its list also catches post-checkpoint arrivals).
+    if abox:
+        abox.finish()
     return {"path": out, "delivery_path": delivery, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
             "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total,
             "broll": p.get("broll_sources", []),
@@ -2383,4 +2638,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             # when a reference sample drove the synth (pace + closest
             # voice). Never worded as a clone.
             "voice_note": VOICE_NOTE_REF if ref_voice else None,
+            # v72: which mid-flight instructions were applied (with the
+            # stage + what was done) and which missed this video.
+            "amendments_applied": abox.applied if abox else [],
+            "amendments_missed": abox.missed() if abox else [],
             "frame_qc": _fq, "qc_passed": _fq["passed"]}
