@@ -124,15 +124,15 @@ def test_broll():
             print("broll no keys: PASS (None, fast — engine unchanged)")
 
             os.environ["PEXELS_KEY"] = "test-key-not-real"
-            real_get = broll.httpx.get
+            real_get = broll._get_json
 
             def boom(*a, **k):
                 raise RuntimeError("network down")
-            broll.httpx.get = boom
+            broll._get_json = boom
             try:
                 assert broll.fetch_broll("ocean waves", td) is None
             finally:
-                broll.httpx.get = real_get
+                broll._get_json = real_get
             print("broll provider down: PASS (None, no raise)")
 
             real_search, real_dl = broll._pexels_search, broll._download
