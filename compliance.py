@@ -84,6 +84,32 @@ def widget_kind(scene):
     return None
 
 
+# A4 (Ajju, 2026-11-13): the graphics that must NEVER be pasted over
+# a footage subject — number widgets and icon widgets (the ASSAULTS
+# warning triangle on the hand/bottle is the canonical failure).
+# When one of these goes over footage, the footage is blurred +
+# darkened so the graphic owns a treated frame (Blind mail 1 Part
+# 2). Composed scene types (document, photo frame, timeline,
+# versus...) are NOT in this set: they are full composed scenes,
+# not pasted-on graphics.
+BLUR_TREATMENT_VISUALS = {
+    "counter", "donut", "gauge", "clock", "watch", "bar",
+    "bar_compare", "graph", "curve", "dot_grid", "heart", "icon_row",
+    "four", "warning", "warning_sign", "check", "battery", "calendar",
+    "toggle", "phone_buzz", "stick_figure", "question",
+    "arrows_steps", "stamp", "strike",
+}
+
+
+def needs_blur_treatment(scene):
+    """True when the scene's graphic is a pasted-on widget/icon (A4)."""
+    v = str(scene.get("visual") or "")
+    if v in BLUR_TREATMENT_VISUALS:
+        return True
+    lv = str(scene.get("lib_visual") or "")
+    return lv in BLUR_TREATMENT_VISUALS
+
+
 # ------------------------------------------------------------------
 # Numbers (R4 + mail 1 stat rules)
 # ------------------------------------------------------------------
@@ -336,6 +362,24 @@ def audit_plan(scenes, cfg, topic_text="", measure=None, have_timing=False):
     distinct = {widget_kind(s) for s in scenes} - {None}
     if not long and len(scenes) >= 6 and len(distinct) < 6:
         add("PART3-TYPES", "FAIL", f"only {len(distinct)} different visual types (need 6+)", None)
+    # A5 (Ajju, 2026-11-13 — "own creativity"): the number-widget
+    # pool is a FALLBACK for real numbers, not the menu. When more
+    # than half the scenes are number widgets (donut / counter /
+    # bars / graph / gauge...), Julie is rotating her pool instead
+    # of picturing the lines — FAIL, and the repair swaps the
+    # value-less widget scenes to composed scene types.
+    _num_widgets = {"donut", "counter", "bar", "bar_compare", "graph",
+                    "gauge", "battery", "dot_grid", "four", "watch",
+                    "clock"}
+    _graphic_scenes = [s for s in scenes if not s.get("has_footage")]
+    _widget_scenes = [s for s in _graphic_scenes
+                      if (s.get("visual") or "") in _num_widgets
+                      or (s.get("lib_visual") or "") in _num_widgets]
+    if len(_graphic_scenes) >= 4 and len(_widget_scenes) * 2 > len(_graphic_scenes):
+        add("A5", "FAIL", f"{len(_widget_scenes)}/{len(_graphic_scenes)} scenes are "
+                          f"number widgets — the widget pool is a fallback for real "
+                          f"numbers, not the menu (A5); picture the lines with "
+                          f"composed scenes (photo, document, map, timeline...)", None)
     # pattern break at 40-60% (Part 3, shorts)
     if not long and len(scenes) >= 5:
         mid = scenes[len(scenes) // 2]
@@ -617,12 +661,101 @@ def repair_plan(scenes, cfg, pools, checks):
             if changed:
                 fixes.append(f"scene {idx}: 3-of-6 repair changed {', '.join(changed)}")
     # pattern break insertion (shorts)
+    # A5 repair: swap value-less number-widget scenes to composed
+    # scene types until widgets are at most half the graphic scenes.
+    # Scenes carrying a real spoken number keep their widget (the
+    # number-kind table governs those).
+    if any(c["rule"] == "A5" for c in checks):
+        _composed = ["photo_frame", "document", "newspaper",
+                     "timeline_cards", "filmstrip", "speech_bubble",
+                     "magnifier", "receipt"]
+        _num_widgets = {"donut", "counter", "bar", "bar_compare",
+                        "graph", "gauge", "battery", "dot_grid",
+                        "four", "watch", "clock"}
+        _ci = 0
+        for s in scenes:
+            _graphic = [x for x in scenes if not x.get("has_footage")]
+            _widgets = [x for x in _graphic
+                        if (x.get("visual") or "") in _num_widgets
+                        or (x.get("lib_visual") or "") in _num_widgets]
+            if len(_widgets) * 2 <= len(_graphic):
+                break
+            if (s.get("visual") or "") in _num_widgets and not s.get("value"):
+                s["visual"] = _composed[_ci % len(_composed)]
+                if s.get("lib_visual"):
+                    s["lib_visual"] = s["visual"]
+                _ci += 1
+                fixes.append(f"A5: a value-less widget scene became a "
+                             f"composed '{s['visual']}' scene")
     if not long and len(scenes) >= 5 and any(c["rule"] == "PART3-PACING" for c in checks):
         mid = scenes[len(scenes) // 2]
         mid["pattern_break"] = True
         mid["bg_kind"] = pools.get("pattern_bg", mid.get("bg_kind"))
         fixes.append(f"scene {len(scenes) // 2 + 1}: pattern break marked (full-screen card)")
     return fixes
+
+
+# ------------------------------------------------------------------
+# Frame fill (Ajju A1, 2026-11-13) — the measurable gate
+# ------------------------------------------------------------------
+# Ajju's red marks on the ALCOHOL TRUTH frames: whole scenes were an
+# empty brown/black gradient with ONE small centred element (a lone
+# "0", a donut, a heart). HARD RULE: no scene may be mostly empty
+# background — every frame is FILLED with meaningful content
+# (full-frame footage, or a composed graphic scene). The gate:
+# downscale the scene's mid frame to 96x170, take the border median
+# as the background colour, and measure (a) content share = pixels
+# farther than 0.16 (of max RGB distance) from that background, and
+# (b) edge density = mean absolute gradient. A graphic scene FAILS
+# when content share < 0.18 AND edge density < 0.03 — the signature
+# of a lone element floating on a plain gradient. (Calibration: the
+# lone-"0" frame measures ~0.09 share; the lone-heart frame ~0.15
+# with near-zero edges; a composed document/map scene > 0.30 share
+# with dense edges; footage scenes are exempt — full-frame by
+# construction.)
+FRAME_FILL_MIN_SHARE = 0.18
+FRAME_FILL_MIN_EDGE = 0.03
+
+
+def frame_fill_metrics(img):
+    """(content_share, edge_density) for a PIL image (any size)."""
+    import numpy as np
+    a = np.asarray(img.convert("RGB").resize((96, 170)),
+                   dtype=np.float32)
+    border = np.concatenate([a[0].reshape(-1, 3), a[-1].reshape(-1, 3),
+                             a[:, 0].reshape(-1, 3), a[:, -1].reshape(-1, 3)])
+    bg = np.median(border, axis=0)
+    dist = np.sqrt(((a - bg) ** 2).sum(axis=2)) / 441.673
+    share = float((dist > 0.16).mean())
+    gray = a.mean(axis=2)
+    edge = float((np.abs(np.diff(gray, axis=0)).mean()
+                  + np.abs(np.diff(gray, axis=1)).mean()) / 2 / 255.0)
+    return share, edge
+
+
+def audit_frame_fill(frames):
+    """frames: iterable of (scene_no, PIL image, has_footage).
+    Returns A1 checks — FAIL for a graphic scene that is mostly
+    empty background."""
+    out = []
+    for no, img, has_footage in frames:
+        if has_footage or img is None:
+            continue
+        try:
+            share, edge = frame_fill_metrics(img)
+        except Exception:
+            continue
+        if share < FRAME_FILL_MIN_SHARE and edge < FRAME_FILL_MIN_EDGE:
+            out.append({"rule": "A1", "status": "FAIL",
+                        "detail": f"scene is mostly empty background "
+                                  f"(content share {share:.2f} < "
+                                  f"{FRAME_FILL_MIN_SHARE}, edge density "
+                                  f"{edge:.3f} < {FRAME_FILL_MIN_EDGE}) — "
+                                  f"a lone element on a plain gradient "
+                                  f"is banned; fill the frame (footage "
+                                  f"or a composed scene)",
+                        "scene": no})
+    return out
 
 
 # ------------------------------------------------------------------

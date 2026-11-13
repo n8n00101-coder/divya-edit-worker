@@ -865,7 +865,11 @@ async def create_job(j, wa, note):
                 target_minutes=_target_min, notify=note,
                 deadline=_time.monotonic() + _budget,
                 ref_voice=_ref, amendments=amend,
-                spec=_spec or None, cfg=_cfg)
+                # spec/cfg ride only when a real contract exists —
+                # the codebase's conditional-kwargs pattern (cf.
+                # ref_voice/amendments): an empty spec is no contract,
+                # and engine-shaped callers keep their old signature.
+                **({"spec": _spec, "cfg": _cfg} if _spec else {}))
             print("long video", res["path"], res.get("duration"),
                   "partial" if res.get("partial") else "complete")
         else:
@@ -882,7 +886,9 @@ async def create_job(j, wa, note):
                         kw["amendments"] = amend
                     # v79: the contract (spec + resolved config) rides
                     # into the engine — every step renders FROM it.
-                    if _cfg is not None:
+                    # Only when the spec is non-empty (see the long
+                    # call): an empty spec is no contract.
+                    if _cfg is not None and _spec:
                         kw["spec"] = _spec
                         kw["cfg"] = _cfg
                     res = await create.make_video(j.get("brief", ""), groq_chat, notify=note, **kw)
