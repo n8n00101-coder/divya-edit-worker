@@ -153,8 +153,37 @@ def chapter_brief(outline_data, idx):
     )
 
 
+def _fold_chapter_amendments(provider, brief, chapter_no):
+    """v72: before a chapter renders, fold the amendments that can
+    still land in it. Content points + style notes go INTO the chapter
+    brief — the chapter's own plan weaves them in (a real script-level
+    fold for this chapter onward) — and are marked applied at this
+    chapter. Pure toggles (B-roll / SFX / music / transitions /
+    captions) are left pending: the chapter's doc.make_video consumes
+    them at its own checkpoints."""
+    try:
+        items = provider.pending()
+    except Exception as e:
+        print("amendments poll failed:", str(e)[:120])
+        return brief
+    extra = []
+    for it in items or []:
+        fx = doc.classify_amendment(it.get("text", ""))
+        if "content" in fx or "style_note" in fx:
+            extra.append(str(it.get("text", ""))[:200])
+            try:
+                provider.mark([it["id"]], f"chapter {chapter_no}")
+            except Exception:
+                pass
+    if extra:
+        brief += ("\nViewer-requested additions — include them from "
+                  "THIS chapter: " + " | ".join(extra))
+    return brief
+
+
 async def render_chapters(outline_data, chat, workdir, notify=None,
-                          deadline=None, results_out=None, ref_voice=None):
+                          deadline=None, results_out=None, ref_voice=None,
+                          amendments=None):
     """Render each chapter with doc.make_video (async), one chapter per
     sub-directory of workdir, sequentially — make_video already uses a
     process pool, so parallel chapters would oversubscribe the CPU.
@@ -166,6 +195,11 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
     midway likewise stops the loop when at least one chapter is done;
     with zero chapters done the error propagates. Chapter result dicts
     are appended to `results_out` when given.
+
+    v72: with an amendments provider, each chapter first folds the
+    content amendments that arrived since the last chapter into its
+    brief (see _fold_chapter_amendments), and the provider itself is
+    forwarded to doc.make_video for its per-chapter checkpoints.
     """
     wd = Path(workdir)
     wd.mkdir(parents=True, exist_ok=True)
@@ -176,13 +210,19 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                   f"after {len(paths)}/{len(outline_data['chapters'])} chapters")
             break
         ch_dir = wd / f"ch{i + 1:02d}"
+        ch_brief = chapter_brief(outline_data, i)
+        if amendments is not None:
+            ch_brief = _fold_chapter_amendments(amendments, ch_brief, i + 1)
         try:
-            # ref_voice is passed only when set, so engine-shaped
-            # callers/stubs without the v71 parameter stay compatible.
-            res = await doc.make_video(chapter_brief(outline_data, i), chat,
+            # ref_voice / amendments are passed only when set, so
+            # engine-shaped callers/stubs without those parameters stay
+            # compatible.
+            res = await doc.make_video(ch_brief, chat,
                                        notify=notify, workdir=str(ch_dir),
                                        **({"ref_voice": ref_voice}
-                                          if ref_voice is not None else {}))
+                                          if ref_voice is not None else {}),
+                                       **({"amendments": amendments}
+                                          if amendments is not None else {}))
         except Exception as e:
             if not paths:
                 raise
@@ -200,7 +240,8 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
 
 
 async def make_long_video(brief, chat, workdir, target_minutes,
-                          notify=None, deadline=None, ref_voice=None):
+                          notify=None, deadline=None, ref_voice=None,
+                          amendments=None):
     """Runner entry point (v69): outline -> chaptered render -> assemble
     for a requested length of target_minutes (2-60). Returns a result
     dict shaped like doc.make_video's (path/title/duration/lang/caption/
@@ -230,7 +271,8 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     results = []
     paths = await render_chapters(out, chat, workdir, notify=notify,
                                   deadline=deadline, results_out=results,
-                                  ref_voice=ref_voice)
+                                  ref_voice=ref_voice,
+                                  amendments=amendments)
     if not paths:
         raise RuntimeError("long video: no chapters rendered")
     titles = [ch["title"] for ch in out["chapters"]][:len(paths)]
@@ -254,6 +296,15 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                        if r.get("voice_note")), None)
     if voice_note:
         summary += f"; Voice: {voice_note}"
+    # v72: mid-flight amendments applied inside the chapters (the
+    # runner re-reads the job record for the authoritative delivery
+    # list — this aggregation is for the summary line only).
+    amend_applied = []
+    for r in results:
+        amend_applied += (r.get("amendments_applied") or [])
+    if amend_applied:
+        summary += (f"; Changes add chesina: {len(amend_applied)} "
+                    f"mid-flight amendment(s) ee video lone apply ayyayi")
     return {"path": final, "title": out["title"], "duration": duration,
             "lang": first.get("lang", "te"),
             "caption": first.get("caption", ""),
@@ -261,6 +312,7 @@ async def make_long_video(brief, chat, workdir, target_minutes,
             "plan": first.get("plan", {}),
             "broll": broll_sources, "summary": summary,
             "voice_note": voice_note,
+            "amendments_applied": amend_applied,
             "partial": partial, "chapters_done": len(paths),
             "chapters_total": total_ch, "long": True}
 

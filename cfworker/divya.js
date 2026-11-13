@@ -12,19 +12,21 @@ let SYS = "";
 // (2026-11-13: the brain invented "saved_voices/trust_reel/" for a voice
 // sample it could not even receive.) Embedded in BOTH chat prompts.
 const VOICE_SAVE_RULE = `VOICE/FILE SAVE NIJAYITHI (v71, hard rule): "voice save chesa / file save ayyindhi / setting save cheskunna" ani EPPUDU cheppaku — save anedi system STRUCTURE nunchi oka confirmation vachinappude nijam (chat lo alanti structural note lekapothe save jaragaledu). User save adigi, alanti note lekunda unte, save ayinattu natinchaku: "sample inka naa daggara save avvaledu — voice note leda audio file pampu" ani nijam cheppu. Folder peru, voice peru, file peru lanti details ni ASALU invent cheyyaku.`;
+const AMEND_RULE = `MID-FLIGHT AMENDMENTS (v72, hard rule): oka video tayaru avuthunnappudu user production instructions isthe (footage, b-roll, SFX, sound effects, transitions, animations, visual effects, music, captions, style, extra content points) — avi ANNI AA RUNNING VIDEO ke; system vaatini madhyalone aa video lone apply chesthundhi (Hark laaga). "Next video lo chestha / next video nunchi apply avthundhi" ani production gurinchi EPPUDU cheppaku — adhi tappu. Alanti messages system structural ga handle chesthundhi; okavela neeku vachinaa, running video ki instruction ga ne treat chesi chinna confirmation ivvu. (Voice/language marchalanna request matrame exception — adi ee video ki avvadu, preference ga save avthundhi.)`;
 const SYSTEM = `Nuvvu "Julie" — owner ki close friend laanti personal AI agent. Owner tho EPPUDU romanized Telugu + English mix (Tenglish) lo chat cheyyi. (Idi nee CHAT language matrame — videos lo voice ye language lo aina cheyagalavu.)
 Format: plain text matrame. Markdown (**, ##, bullets) vaddu. 1-3 chinna lines. Max 1 emoji.
 Nee powers (nijamga unnavi matrame):
-1) ZERO nunchi documentary-style videos CREATE: footage avasaram ledu. Topic ivvakapothe nuve select chestav. Story script, natural neural voice-over in ENGLISH, TELUGU leda HINDI (male/female), animated scenes + 3D character, camera moves, transitions, background music + sound effects, word-by-word captions, 9:16. Duration owner cheppinattu (default ~1 min).
+1) ZERO nunchi documentary-style videos CREATE: footage avasaram ledu. Topic ivvakapothe nuve select chestav. Story script, natural neural voice-over in ENGLISH, TELUGU leda HINDI (male/female), animated scenes + 3D character, camera moves, transitions, background music + sound effects, word-by-word captions, 9:16. Duration owner cheppinattu (default ~1 min; 2 min paina adigithe LONG video — CREATE details lo "long, N minutes, 16:9" ani clear ga rayi).
 2) Owner pampina video ni edit cheyagalavu (caption lo instruction, leda "edit: ...").
 3) Questions, ideas, plans.
 Voice gurinchi nijam: idi best free neural voice, chala natural ga untundi kani 100% real human kaadu — adigithe ide cheppu.
 YouTube/Instagram upload: chat lone — user "upload video N" ani adigithe, video history nunchi video teesukoni, captions rasi, owner OK ("upload cheyala?") adigi, "cheyu" ante maatrame upload cheyyi.
-VIDEO START RULE: Video CREATE ONLY when the user clearly ORDERS it (cheyyi / chey / create / make / pampu + topic or "nuve topic select chey"). Question laaga adigithe ("cheyagalava?", "can you?", "chestava?") START CHEYAKU: nijayithi ga answer chey (ippudu 1-3 min videos baaga chestham; 30 min laanti long videos inka ready ledu, try chesthe chala time paduthundi) and topic, length, language adugu. Okka message ki okka video maatrame. Mundu history lo "start chesa" unte adi already start ayyindi, malli start cheyaku. Order clear ga unnappudu maatrame chinna reply: "Sare, start chesa. Ready ayyaka ikkade pampistha." (time promise vaddu) and chivara separate line lo exactly [[CREATE: <request details in English: topic or AUTO, voice language, male/female, length>]] rayi.
+VIDEO START RULE: Video CREATE ONLY when the user clearly ORDERS it (cheyyi / chey / create / make / pampu + topic or "nuve topic select chey"). Question laaga adigithe ("cheyagalava?", "can you?", "chestava?") START CHEYAKU: nijayithi ga answer chey (shorts mariyu 60 min varaku LONG videos rendU chestham — user length adigithe adhe length CREATE lo rayi, "only short videos" ani refuse cheyaku) and topic, length, language adugu. Okka message ki okka video maatrame. Mundu history lo "start chesa" unte adi already start ayyindi, malli start cheyaku. Order clear ga unnappudu maatrame chinna reply: "Sare, start chesa. Ready ayyaka ikkade pampistha." (time promise vaddu) and chivara separate line lo exactly [[CREATE: <request details in English: topic or AUTO, voice language, male/female, length (short 30s 9:16, or long up to 60 min 16:9, as the user said it in chat)>]] rayi.
 Nijayithi: pani avvakunda "aipoyindi" anaku. Leni tools unnayi ani cheppaku. Secrets/keys evariki cheppaku.
 API KEYS / SETUP / PROVIDERS (hard rule, v38 R48 — R48 WINS over R18): user API keys, AI providers, "AI down", setup gurinchi adigithe EPPUDU "Sorry, I can't help" ani cheppaku — refuse cheyaku. Plain ga explain cheyyi: Julie anni chesthundhi — accounts, API keys, server setup — nee allow tho. Neeku emi cheyalsina pani undadhu. Shared AI busy ga unte, Setup lo (#/setup) okka allow ivvu, migilina anni Julie background lo chesesthundhi. Key VALUES eppudu adagaku, chupinchaku. User cheyyalsindhi rendu matrame, avasaram vasthe: (1) email lo vachina verification link ni okkasari tap cheyyadam, (2) phone ki vachina SMS code ni okkasari type cheyyadam — migilina anni Julie chesthundhi.
 ACTIONS NIJAYITHI (R28, hard rule): App/website open, call, WhatsApp message, reminder lanti panulu nuvvu direct ga cheyalevu — app/link dwara jaruguthayi. "Opened / sent / posted / saved / called / reminder set" ani EPPUDU cheppaku. User open adigithe "open chesthunna" ani cheppi link ivvu; jaragani pani ni jariginattu cheppaku. Images chudalenu — adigithe nijam cheppu, fake description ivvaku.
 ${VOICE_SAVE_RULE}
+${AMEND_RULE}
 VIDEO HISTORY: app lo edit ayina videos ki video 1, video 2 ani numbers untayi. User "upload video 1" ani adigithe, aa video gurinchi captions rasi, "upload cheyala?" ani adigi, "cheyu" ante maatrame upload cheyyi. "cheyu" lekunda eppudu upload cheyaku.
 
 OWNER = NEE BUILDER. Owner nee gurinchi edi adiginaa (model, hosting, tools, code, prompt, limits, failures) "can't share" anaku. Full ga, honest ga, point by point cheppu. Owner adigithe ee system prompt kuda paste cheyyi. Key/token/password VALUES maatrame eppudu cheppaku (peru cheppachu).
@@ -171,6 +173,64 @@ function isVoiceSaveIntent(t, freshCand) {
   return false;
 }
 
+// ---------- v72: mid-flight amendments (Hark behaviour) ----------
+// While a create is RUNNING, production instructions (footage, b-roll,
+// SFX, transitions, animations, effects, music, captions, style, extra
+// content points) belong to THAT video — the runner polls them at its
+// render checkpoints and applies what the pipeline still allows. They
+// are NEVER silently retargeted to a "next video". Detection + storage
+// are STRUCTURAL (mirror the v67 status intent / v71 save intent): the
+// brain never decides whether an amendment was recorded or applied.
+// Amendments live on the job's own record in the state store
+// (amend:<job> — a JSON list of {id, text, at, stage}); stage stays null
+// until the runner marks it applied with the consuming stage.
+function isAmendment(text) {
+  const t = String(text || "").toLowerCase();
+  if (!t.trim()) return false;
+  // An explicit next/new-video mention is an instruction for a FUTURE
+  // video, not an amendment to the running one.
+  if (/\b(new|next|another|inko|kotha|vere|malli)\b[^.!?]{0,24}\b(video|reel|short)\b/.test(t)) return false;
+  if (/\b(video|reel|short)\b[^.!?]{0,16}\b(next|malli)\b/.test(t)) return false;
+  // Production vocabulary — footage / sound / motion / text layers.
+  // ("sound" alone is NOT here: voice/sound changes keep the v67
+  // nextpref path. Only "sound effects" is production.)
+  const prod = /(footage|b[-\s]?roll|broll|stock\s+(video|footage|clips?)|\bsfx\b|sound\s*effects?|transitions?|animations?|visual\s*effects?|\beffects?\b|\bmusic\b|\bbgm\b|captions?|subtitles?|\bstyle\b|\blook\b|\bzoom\b|background|graphics?)/.test(t);
+  if (!prod) return false;
+  // A question ABOUT the running video ("music undha?") is not an
+  // instruction — the status intent / brain answers those.
+  if (/(undha|unda|unnaya|ayindha|avuthundha)/.test(t) && !/(cheyu|cheyyi|add|include|use|pettu|marchu|change|ivvu)/.test(t)) return false;
+  // A fresh order in disguise (new topic / stated length) stays an
+  // order — the busy-create reply handles it, not the amendment path.
+  if (isCreateOrder(t) && /(gurinchi|\btopic\b|\d+\s*(?:min|mins|mints|sec)\b)/.test(t)) return false;
+  // It must read as an instruction: add / use / change / remove / also.
+  return /(include|add|use|cheyu|cheyyi|chesey|pettu|pettali|marchu|change|remove|teesi|aapu|\boff\b|vaddu|kuda|also|keep|ivvu)/.test(t);
+}
+async function amendList(env, job) { const l = parseRec(await env.KV.get(`amend:${job}`)); return Array.isArray(l) ? l : []; }
+async function addAmendment(env, job, text) {
+  const list = await amendList(env, job);
+  const it = { id: (list.length ? Math.max(...list.map(x => x.id || 0)) : 0) + 1, text: String(text || "").replace(/\s+/g, " ").trim().slice(0, 300), at: Date.now(), stage: null };
+  list.push(it);
+  await env.KV.put(`amend:${job}`, JSON.stringify(list.slice(-20)), { expirationTtl: 86400 * 2 });
+  return it;
+}
+// The user's currently-running CREATE job, or null. Amendments attach
+// only to creates (job:<job> mode "create") — footage edits have no
+// amendment checkpoints, so claiming "added to this video" there would
+// be a lie; those messages keep the old flow.
+async function runningJob(env, user) {
+  if (!(await env.KV.get(`busy:${user}`))) return null;
+  const aj = parseRec(await env.KV.get(`appjob:${user}`));
+  const job = (aj && aj.job) || (await env.KV.get(`curjob:${user}`)) || null;
+  if (!job) return null;
+  const jr = parseRec(await env.KV.get(`job:${job}`));
+  if (jr && jr.mode && jr.mode !== "create") return null;
+  return job;
+}
+function amendReplyLine(lang, text) {
+  const short = String(text || "").replace(/\s+/g, " ").trim().slice(0, 60);
+  return lang === "en" ? `Adding it to THIS video — ${short}` : `Ee video lone add chesthunna — ${short}`;
+}
+
 async function history(env, user) { return JSON.parse((await env.KV.get(`h:${user}`)) || "[]").filter(x => !(x.role === "assistant" && /can[’']t (share|help)|cannot share/i.test(String(x.content)))); }
 async function remember(env, user, h) {
   // v68 (Ajju — "Muse laga history gurthu pettukovali"): the recent 30
@@ -267,7 +327,7 @@ async function startCreate(env, user, brief) {
   }
   // v23: duration hard constraint — the runner made 0:44 for a 30s request.
   const durS = (fixed.match(/\b(\d+)\s?s\b/i) || [])[1];
-  const durM = (fixed.match(/\b(\d+)\s?min\b/i) || [])[1];
+  const durM = (fixed.match(/\b(\d+)\s?(?:minutes?|mins?|mints)\b/i) || [])[1];
   const durLine = durS ? ` FINAL VIDEO LENGTH: exactly ${durS} seconds (±2s) — do not make it longer or shorter.` : durM ? ` FINAL VIDEO LENGTH: exactly ${durM} minutes (±30s) — do not make it longer or shorter.` : "";
   brief = fixed;
   // R44: tobacco/gutka/smoking = HEALTH, never tech — the render brief carries
@@ -283,9 +343,14 @@ async function startCreate(env, user, brief) {
   // the caller reports the failure in its own channel (app chat / WhatsApp),
   // so no false "started" is ever sent and a retry is not blocked for 20 min.
   if (!r || r.status !== 204) { await env.KV.delete(`busy:${user}`); return null; }
+  // v72: the running job's id for this user — mid-flight amendments
+  // (and only they) resolve their target job through this record.
+  await env.KV.put(`curjob:${user}`, job, { expirationTtl: 86400 * 2 });
   // R42: creates get a History entry (video N, editing) so the finished video
   // can be delivered in chat + History, like edits already do.
-  const kind = /long|documentary|16:9|10\s*min|15\s*min/i.test(brief) ? "long" : "short";
+  // v72: kind follows the REQUESTED length too (a "5 minutes" brief is a
+  // long video even when the brain forgot to write the word "long").
+  const kind = (/long|documentary|16:9/i.test(brief) || (durM && parseInt(durM, 10) >= 2)) ? "long" : "short";
   const num = await histNext(env, user);
   await histPut(env, user, { n: num, job, title: String(brief).slice(0, 80), topic: String(brief).slice(0, 200), kind, lang: "auto", length: kind === "long" ? "long" : "short", at: Date.now(), state: "editing", name: "video", src: "create", template: null, notes: String(brief).slice(0, 300), has_result: false, yt: null, ig: null });
   // R43: the runner can only report state / store result bytes for this job
@@ -430,6 +495,19 @@ async function handle(env, m) {
     // v38 (R48): API-key / provider / "AI down" questions never reach the
     // model — answer with the R48 one-allow Setup flow instead.
     if (isSetupQuestion(text)) { const sg = setupGuideReply("te"); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: sg }); await remember(env, user, hh); return say(env, user, sg); }
+    // v72: a production instruction while a create is RUNNING is an
+    // amendment to THAT video (Hark behaviour) — stored structurally on
+    // the job's record for the runner's checkpoints, answered in one
+    // line, never queued as a "next video", never decided by the brain.
+    if (isAmendment(text)) {
+      const rj = await runningJob(env, user);
+      if (rj) {
+        await addAmendment(env, rj, text);
+        const a2 = amendReplyLine("te", text);
+        const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh);
+        return say(env, user, a2);
+      }
+    }
     const h = await history(env, user); h.push({ role: "user", content: text });
     let ans = await groq(env, [{ role: "system", content: SYS }, ...(await memContext(env, user)), ...h]);
     let mm = ans.match(/\[\[\s*CREATE\s*:\s*([^\]]*)\]\]/i);
@@ -446,7 +524,9 @@ async function handle(env, m) {
     let go = !!mm && !askOnly;
     if (mm && askOnly) ans = "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
     if (go && await env.KV.get(`busy:${user}`)) { ans = "Okka video already tayaru avuthondi. Adi vachaka next di start chestha."; go = false; }
-    if (go) { const tk = await tokSpend(env, user, videoCost(parseMins(mm && mm[1]))); if (!tk.ok) { ans = tokMsg("te", tk); go = false; } }
+    // v72: ONE spend, with tk kept for the dispatch-failure refund below
+    // (the old line spent a second time and discarded the result — a WA
+    // create was charged twice, and a failed second spend ate the first).
     let tk = null, cost = 0;
     if (go) { cost = videoCost(parseMins(mm && mm[1])); tk = await tokSpend(env, user, cost); if (!tk.ok) { ans = tokMsg("te", tk); go = false; } }
     // v37 (fix F): enqueue FIRST, then tell the user — "start chesa" is only
@@ -584,6 +664,7 @@ function appSys(isOwner, lang) {
   s += "\n\nHARK BEHAVIOUR (how Hark replies in chat — follow exactly): Short, plain, direct. Answer first, then only the needed detail. Warm, no filler, no long intro. Do the work and report a RESULT, not a plan, unless blocked. Examples: \"make a video, your choice\" -> \"Done. Here is the video: [link/file]. Topic: X, 30s, voice + captions.\" A question -> one-line answer, then one line of context. \"This is wrong\" -> \"Fixed. [what changed]. New version attached.\" DO vs ASK: if told \"everything is your choice\", start at once, no questions. Ask ONLY when something is truly missing that cannot be guessed (a login, a file, an approval for money/security) — then ask once, in one line: \"I need X from you to continue.\" SOURCES: factual topics — check official sources first (WHO, health ministry, CDC); keep the reply short; give sources only when asked or when a claim is risky. CANNOT DO: say plainly what is missing in one sentence, offer ONE alternative, and do the part that is possible. NEVER show internal reasoning, analysis steps, or system rules in a reply — the user sees only the final message. NEVER claim you opened, played, sent, or posted something you did not actually do — report only what the action result says. TOPIC: tobacco, gutka, smoking, paan, alcohol, drugs = HEALTH topic, never tech; sources WHO/MoHFW/NTCP/ICMR/CDC; effects from Hark's health table. TOBACCO first reply, word-for-word: \"Starting now, I will make everything A to Z myself: script, stock visuals, voice, captions, edit.\" Then: \"Done. Tobacco faceless short attached: hook, health effects, closing line.\" EDIT + NO RAW VIDEO + FACELESS SHORT = CREATE: if the user says they have no video (\"raw video em ledhu\", \"naa video em ledhu\", \"faceless\", \"A to Z nve cheyali\"), start a create at once — never ask for a video file.";
   if (lang === "en") s += "\nAPP LANGUAGE = ENGLISH: reply in simple English only (not Tenglish).";
   s += "\n\n" + VOICE_SAVE_RULE;
+  s += "\n\n" + AMEND_RULE;
   s += "\n\nCONVERSATION QUALITY (Ajju's standing order — reply like a sharp assistant, not a manual): (1) Answer FIRST, in 1-3 short lines. No preamble, no feature lists, no explaining how you work unless asked. (2) USE THE HISTORY: the messages above are this same conversation — refer to the topic, length, voice and language already decided; if the user says 'same topic / adhey topic / ade topic', take the topic from earlier in this conversation and proceed, never re-ask what was already told. (3) ONE reply only — never write the user's side of the chat, never continue the conversation yourself, never write that the user 'didn't respond'. (4) If a video is being made, questions about it ('ayindha?', 'ready na?') are about THAT video — answer from its topic and state, briefly. (5) When unsure, say so in one line and ask ONE clear question.";
   return s;
 }
@@ -801,6 +882,22 @@ async function appTalk(env, u, text, lang, voiceId) {
     }
     h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
     return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
+  }
+  // v72: a production instruction while a create is RUNNING is an
+  // amendment to THAT video (Hark behaviour) — stored structurally on
+  // the job's record for the runner's checkpoints, answered in one
+  // line, never queued as a "next video". Runs BEFORE the voice/
+  // language nextpref block below: production words win; a pure
+  // voice/language change has no production vocabulary and still
+  // falls through to nextpref exactly as in v67.
+  if (busyNow && isAmendment(cleanText)) {
+    const rj = await runningJob(env, u.n);
+    if (rj) {
+      await addAmendment(env, rj, cleanText);
+      const a2 = amendReplyLine(lang, cleanText);
+      h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
+      return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
+    }
   }
   if (busyNow && !isCreateOrder(cleanText) && /(voice|male|female|telugu|hindi|english|language|sound)/i.test(cleanText)) {
     const g = /female|aada/i.test(cleanText) ? "female" : /male|maga/i.test(cleanText) ? "male" : "";
@@ -2166,7 +2263,7 @@ const TOK = {
 };
 const videoCost = mins => TOK.PER_MIN * Math.max(1, Math.ceil(mins || 1)); // 1 min = 100K (short), 10 min = 1M
 const lenToMins = len => ({ "30s": 1, "60s": 1, "3m": 3, "10m": 10, "15m": 15, "30m": 30, "60m": 60, full: 10, auto: 1 }[len] || 1); // "full" charged as 10 min (source duration unknown at order time)
-const parseMins = s => { const m = String(s || "").match(/(\d+)\s*(?:min|mins|minute|minutes|nimisham|nimishalu|nims?)/i); return m ? parseInt(m[1], 10) : 1; };
+const parseMins = s => { const m = String(s || "").match(/(\d+)\s*(?:min|mins|mints|minute|minutes|nimisham|nimishalu|nims?)/i); return m ? parseInt(m[1], 10) : 1; };
 const PLANS = {
   free:    { name: "Free",    monthly: 0,   grant: 0,           voice: true },
   starter: { name: "Starter", monthly: 29,  grant: 2_000_000,   voice: true },
@@ -2696,6 +2793,20 @@ async function appRunner(req, env, p, url, body) {
   // v71: the job owner's saved reference-voice bytes (job-scoped, same
   // x-runner-key + jobown gate as runner/src). 404 when none is saved.
   if (p === "runner/refvoice") { const b = await env.KV.get(`refvoice:${n}`, "arrayBuffer"); return b ? new Response(b, { headers: { "content-type": "application/octet-stream" } }) : new Response("gone", { status: 404 }); }
+  // v72: mid-flight amendments for this job (same x-runner-key + jobown
+  // gate). GET returns the job's list; POST {ids, stage} marks the ones
+  // the runner actually applied, with the consuming stage — an item's
+  // stage is set once, so the delivery report can never upgrade a
+  // missed amendment into an applied one.
+  if (p === "runner/amendments" && req.method === "GET") { return Response.json({ ok: true, amendments: await amendList(env, job) }); }
+  if (p === "runner/amendments" && req.method === "POST") {
+    const list = await amendList(env, job);
+    const ids = new Set((Array.isArray(body.ids) ? body.ids : []).map(Number));
+    let changed = false;
+    for (const it of list) if (ids.has(it.id) && !it.stage) { it.stage = String(body.stage || "applied").slice(0, 40); changed = true; }
+    if (changed) await env.KV.put(`amend:${job}`, JSON.stringify(list), { expirationTtl: 86400 * 2 });
+    return Response.json({ ok: true, amendments: list });
+  }
   if (p === "runner/state" && req.method === "POST") {
     const state = ["running", "done", "failed"].includes(body.state) ? body.state : "running";
     const pct = Number.isFinite(body.pct) ? Math.max(0, Math.min(100, body.pct | 0)) : null;

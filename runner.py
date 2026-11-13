@@ -534,7 +534,7 @@ def parse_requested_seconds(brief):
     m = re.search(r"(?<!up to )\b(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b", b, re.I)
     if m:
         return min(int(float(m.group(1)) * 3600), 3600)
-    m = re.search(r"(?<!up to )\b(\d+)\s*(?:minutes?|mins?)\b", b, re.I)
+    m = re.search(r"(?<!up to )\b(\d+)\s*(?:minutes?|mins?|mints?)\b", b, re.I)
     if m:
         return min(int(m.group(1)) * 60, 3600)
     m = re.search(r"\b(\d+)\s*seconds\b", b, re.I)
@@ -545,10 +545,57 @@ def parse_requested_seconds(brief):
     return None
 
 
+class Amendments:
+    """v72: mid-flight production amendments for THIS job. The Worker
+    stores them on the job record (amend:<job>) when the user sends a
+    production instruction while the video renders; the engines poll
+    at their checkpoints (doc: script/footage/audio/assembly; long:
+    before each chapter) and mark what they applied, with the stage.
+    fetch() always re-reads the record, so the delivery report below
+    also catches amendments that arrived after the last checkpoint —
+    those are reported as missed, never silently moved to a "next
+    video" the user did not order."""
+
+    def __init__(self):
+        self.seen = {}
+
+    def fetch(self):
+        try:
+            r = httpx.get(f"{WORKER}/api/runner/amendments", params={"job": JOB},
+                          headers={"x-runner-key": KEY}, timeout=20)
+            if r.status_code == 200:
+                for it in (r.json().get("amendments") or []):
+                    self.seen[it["id"]] = it
+            else:
+                print("amendments fetch:", r.status_code)
+        except Exception as e:
+            print("amendments fetch failed", str(e)[:120])
+        return [self.seen[k] for k in sorted(self.seen)]
+
+    def pending(self):
+        return [it for it in self.fetch() if not it.get("stage")]
+
+    def mark(self, ids, stage):
+        ids = [int(i) for i in ids]
+        if not ids:
+            return
+        for i in ids:
+            if i in self.seen:
+                self.seen[i]["stage"] = stage
+        try:
+            httpx.post(f"{WORKER}/api/runner/amendments", params={"job": JOB},
+                       json={"ids": ids, "stage": stage},
+                       headers={"x-runner-key": KEY}, timeout=20)
+        except Exception as e:
+            print("amendments mark failed", str(e)[:120])
+
+
 async def create_job(j, wa, note):
     import create as _engines
     create = _engines.engine_module()  # DIVYA_ENGINE=v3 -> doc3, default doc (v2)
     to = j["to"]
+    # v72: mid-flight amendments provider for this job (see Amendments).
+    amend = Amendments()
     # v71: the owner's saved reference voice (flagged in the job by the
     # Worker). Bytes come from the job-scoped runner route; the dict is
     # passed ONLY to engines that take it (doc.py, via synth_voice) —
@@ -592,7 +639,7 @@ async def create_job(j, wa, note):
                                      f"long_{JOB}"),
                 target_minutes=_target_min, notify=note,
                 deadline=_time.monotonic() + _budget,
-                ref_voice=_ref)
+                ref_voice=_ref, amendments=amend)
             print("long video", res["path"], res.get("duration"),
                   "partial" if res.get("partial") else "complete")
         else:
@@ -605,6 +652,8 @@ async def create_job(j, wa, note):
                         kw["recent_styles"] = j.get("recent_styles") or []
                     if _ref is not None and hasattr(create, "synth_voice"):
                         kw["ref_voice"] = _ref
+                    if getattr(create, "AMENDMENTS", False):
+                        kw["amendments"] = amend
                     res = await create.make_video(j.get("brief", ""), groq_chat, notify=note, **kw)
                     print("look", res.get("plan", {}).get("look"), res.get("plan", {}).get("accent"))
                     break
@@ -652,6 +701,21 @@ async def create_job(j, wa, note):
         # v71: honest voice line — what was actually used (never "clone").
         if res.get("voice_note"):
             qcline += f"\n🎙️ Voice: {res['voice_note']}"
+        # v72: the amendment book, read back from the job record —
+        # applied (with the stage that consumed each) vs missed (they
+        # arrived after the last checkpoint that could use them). A
+        # missed amendment is said plainly + a redo is offered; it is
+        # NEVER quietly promised into a "next video".
+        _am_all = amend.fetch()
+        _am_applied = [it for it in _am_all if it.get("stage")]
+        _am_missed = [it for it in _am_all if not it.get("stage")]
+        _am_note = ""
+        if _am_applied:
+            _am_note = "Amendments applied: " + "; ".join(f"{it['text'][:40]} [{it['stage']}]" for it in _am_applied[:4])
+            qcline += "\n✅ Add chesina changes: " + "; ".join(f"{it['text'][:50]} ({it['stage']})" for it in _am_applied[:4])
+        if _am_missed:
+            _am_note = (_am_note + " Amendments missed: " + "; ".join(it["text"][:40] for it in _am_missed[:3])).strip()
+            qcline += "\n⚠️ Ee changes ee video ki time ki andaledhu: " + "; ".join(it["text"][:50] for it in _am_missed[:3]) + " — ivvi kavali ante \"cancel chesi malli chey\" ani cheppu; nene ee video ni aa changes tho malli chestha."
         try:
             up = fit_size(res["path"], 23)
             # v28: report the chosen style (look + motion + transition) so the
@@ -662,6 +726,8 @@ async def create_job(j, wa, note):
             _note = (res.get("summary") or "")[:200]
             if _broll_used and "B-roll" not in _note:
                 _note = (_note + " B-roll sources: " + ", ".join(s.get("source_url", "") for s in _broll_used[:3]))[:290]
+            if _am_note:
+                _note = (_note + " " + _am_note)[:290]
             rr = httpx.post(f"{WORKER}/api/runner/result", params={"job": JOB, "note": _note,
                             "look": str(_pl.get("look", "")), "motion": str(_pl.get("motion_personality", "")),
                             "transition": str(_pl.get("transition_family", ""))}, content=open(up, "rb").read(), headers={"x-runner-key": KEY, "content-type": "video/mp4"}, timeout=300)
