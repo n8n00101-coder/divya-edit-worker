@@ -42,11 +42,17 @@ NEVER ASK FOR A VIDEO (hard rule, R46): never ask the user to attach, upload, se
 - Cannot / fails: real visuals levu (anni videos okate laaga), Telugu captions shaping broken, facts check ledu, vision dead, YouTube/Instagram posting chat nunchi owner OK tho, 24 h WhatsApp window handle ledu.`;
 
 async function wa(env, to, payload) {
-  return fetch(`${G}/${env.PHONE_ID}/messages`, {
+  const p = fetch(`${G}/${env.PHONE_ID}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${env.WA_TOKEN}`, "content-type": "application/json" },
     body: JSON.stringify({ messaging_product: "whatsapp", to, ...payload }),
   });
+  // v74: a failed WhatsApp send (dead token, closed 24h window) used to
+  // vanish with zero trace — every Julie reply is fire-and-forget on this
+  // path. Record non-OK sends in one place so the failure class is at
+  // least observable instead of silent.
+  p.then(r => { if (!r.ok) env.KV.put("dbg:wafail", `${new Date().toISOString()} ${r.status} to …${String(to).slice(-4)}`, { expirationTtl: 86400 * 2 }).catch(() => {}); }).catch(() => {});
+  return p;
 }
 const say = (env, to, text) => wa(env, to, { type: "text", text: { body: text.slice(0, 4000) } });
 
@@ -1416,6 +1422,13 @@ async function doPostInstagram(env, n, o, en = false) {
     if (t.expires_in && t.at && Date.now() - t.at > (t.expires_in - 300) * 1000 && t.refresh_token) {
       const nt = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) })).json().catch(() => ({}));
       if (nt.access_token) { const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in }; await env.KV.put(`tok:${n}:youtube`, JSON.stringify(merged)); return merged; }
+      // v74: the refresh grant failed — including the GCP Testing-mode
+      // rule that refresh tokens expire after 7 days. Returning the
+      // stale token made uploads fail with Google's raw error and the
+      // user was never told the actual fix. Null routes callers to the
+      // "not connected — connect first" message (a reconnect re-issues
+      // the refresh token). The Gmail reader already behaves this way.
+      return null;
     }
     return t;
   }
@@ -2328,7 +2341,15 @@ async function tokSpend(env, n, cost) {
     if (split.pool) await env.KV.put(`tokp:${n}`, String(bal.pool - split.pool));
     if (split.plan) await env.KV.put(`tokplan:${n}:${istMonth()}`, String(bal.planLeft - split.plan), { expirationTtl: 86400 * 40 });
     return { ok: true, via: "split", split, left: total - cost };
-  } catch (e) { try { await env.KV.put("dbg:tok", new Date().toISOString() + " " + String(e).slice(0, 200), { expirationTtl: 86400 }); } catch {} return { ok: true, via: "error" }; }
+  } catch (e) { try { await env.KV.put("dbg:tok", new Date().toISOString() + " " + String(e).slice(0, 200), { expirationTtl: 86400 }); } catch {}
+    // v74: a storage error must never silently grant PAID work — video-
+    // sized spends fail CLOSED (no charge was recorded, honest busy
+    // message via tokMsg's outage branch). Micro spends (chat / assist /
+    // voice / image, all < PER_MIN) keep failing open deliberately: a
+    // free chat during a storage blip beats a dead assistant, and the
+    // leak is bounded + visible in dbg:tok.
+    if (cost >= TOK.PER_MIN) return { ok: false, outage: true, need: cost, have: 0 };
+    return { ok: true, via: "error" }; }
 }
 // v37 (fix F): refund a token spend when the video machine failed to start —
 // the user must never pay for a job that never queued. Reverses the exact
@@ -2393,6 +2414,10 @@ const LEGACY_JOB_SPENDS = {
   "2252f9cd": { via: "split", split: { weekly: 465000, pool: 935000, plan: 0 }, cost: 1400000 },
 };
 const STUCK_JOB_MS = 30 * 60 * 1000;
+// v74: a job that DID start reporting and then went silent — 45 min
+// without a state post means the runner is dead (Actions hard cap is
+// 60 min and every live stage posts), however far it had progressed.
+const STALE_PROGRESS_MS = 45 * 60 * 1000;
 // v73: stuck-job rescue (lazy — mirrors the setup chain's stalled
 // derivation: no cron, the state is corrected on read). A create/edit
 // job still at "editing" with pct 0, no result and no runner contact
@@ -2406,29 +2431,41 @@ const STUCK_JOB_MS = 30 * 60 * 1000;
 async function rescueStuckJobs(env, n, exceptJob = "") {
   try {
     const now = Date.now();
+    const deadEntry = x => {
+      if (!x || x.has_result) return false;
+      if (x.state !== "editing" && x.state !== "running") return false;
+      // v73: never started — still "editing", no progress, old enough.
+      if (x.state === "editing" && (x.pct || 0) === 0 && x.at && now - x.at >= STUCK_JOB_MS) return true;
+      // v74: started, then the runner died mid-job (the pre-v74 rescue
+      // only covered pct-0, so a progressed-then-killed job sat at
+      // "running" forever with its tokens spent).
+      const ev = x.upd || x.at;
+      return !!ev && now - ev >= STALE_PROGRESS_MS;
+    };
     const list = await histList(env, n, 20);
     for (const e of list) {
       if (!e || !e.job || e.job === exceptJob) continue;
-      if (e.state !== "editing" || e.has_result || (e.pct || 0) > 0) continue;
-      if (!e.at || now - e.at < STUCK_JOB_MS) continue;
+      if (!deadEntry(e)) continue;
       // Re-read before acting: another surface may have rescued or
       // finished this entry since the list was built.
       const cur = await histGet(env, n, e.n);
-      if (!cur || cur.state !== "editing" || cur.has_result || (cur.pct || 0) > 0) continue;
-      if (!cur.at || now - cur.at < STUCK_JOB_MS) continue;
+      if (!cur || !deadEntry(cur)) continue;
       const refunded = await refundJobSpend(env, e.job, n);
       cur.state = "failed"; cur.failedAt = now; cur.rescued = true;
       cur.note = refunded
         ? "Video machine start ayyi madhyalo aagipoyindhi — response raledhu. Tokens refund chesa. Malli order cheyyi."
         : "Video machine start ayyi madhyalo aagipoyindhi — response raledhu. Malli order cheyyi.";
       await histPut(env, n, cur);
+      // v74: keep the app's live edit record consistent with the rescue.
+      const ae = JSON.parse((await env.KV.get(`appedit:${n}`)) || "null");
+      if (ae && ae.job === e.job && ae.state !== "done" && ae.state !== "failed") { ae.state = "failed"; ae.note = cur.note; ae.upd = now; await env.KV.put(`appedit:${n}`, JSON.stringify(ae), { expirationTtl: 86400 * 7 }); }
       const aj = JSON.parse((await env.KV.get(`appjob:${n}`)) || "null");
       if (aj && aj.job === e.job) await env.KV.delete(`appjob:${n}`);
       if ((await env.KV.get(`curjob:${n}`)) === e.job) await env.KV.delete(`curjob:${n}`);
     }
   } catch {}
 }
-const tokMsg = (lang, r) => lang === "en" ? `Not enough tokens: this needs ${(r.need || 0).toLocaleString("en-IN")} tokens, you have ${(r.have || 0).toLocaleString("en-IN")}. Free tokens reset every Monday.` : `Tokens saripovu: deeniki ${(r.need || 0).toLocaleString("en-IN")} tokens kavali, neeku ${(r.have || 0).toLocaleString("en-IN")} unnayi. Free tokens prathi Monday reset avthayi.`;
+const tokMsg = (lang, r) => (r && r.outage) ? (lang === "en" ? "Server busy right now — no tokens were cut. Try again in a minute." : "Server busy ga undhi — tokens emi cut avvaledu. Konchem sepu tarvatha malli try cheyyi.") : lang === "en" ? `Not enough tokens: this needs ${(r.need || 0).toLocaleString("en-IN")} tokens, you have ${(r.have || 0).toLocaleString("en-IN")}. Free tokens reset every Monday.` : `Tokens saripovu: deeniki ${(r.need || 0).toLocaleString("en-IN")} tokens kavali, neeku ${(r.have || 0).toLocaleString("en-IN")} unnayi. Free tokens prathi Monday reset avthayi.`;
 async function tokPlanId(env, n) { const p = await env.KV.get(`plan:${n}`).catch(() => null); return PLANS[p] ? p : "free"; }
 // ---- Referral (Muse-style): unique code, redeem within 48h of joining, both get 1M pool tokens (never expires) ----
 const refCodeFor = n => { let h = 7; for (const c of String(n)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return "DV" + h.toString(36).toUpperCase().padStart(4, "0").slice(-4); };
@@ -2920,7 +2957,7 @@ async function appRunner(req, env, p, url, body) {
     await save({ state, note: String(body.note || "").slice(0, 300), ...(pct != null ? { pct } : {}) });
     // v67: mirror live progress into the History entry so the app's chat
     // poller can show a real % bar (monotonic — never goes backwards).
-    if (state === "running") { const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job); if (ref) { const e2 = await histGet(env, ref.n, ref.num); if (e2 && e2.state !== "done" && e2.state !== "failed") { e2.state = "running"; e2.note = String(body.note || "").slice(0, 300); if (pct != null && pct >= (e2.pct || 0)) e2.pct = pct; await histPut(env, ref.n, e2); } } }
+    if (state === "running") { const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job); if (ref) { const e2 = await histGet(env, ref.n, ref.num); if (e2 && e2.state !== "done" && e2.state !== "failed") { e2.state = "running"; e2.note = String(body.note || "").slice(0, 300); e2.upd = Date.now(); /* v74: last-evidence stamp the stuck rescue reads */ if (pct != null && pct >= (e2.pct || 0)) e2.pct = pct; await histPut(env, ref.n, e2); } } }
     if (state !== "running") { await env.KV.delete(`busy:${n}`); await env.KV.delete(`upl:${job}`); }
     if (state === "failed" && st && st.job === job && !st.refunded) { const qk = `vmon:${n}:${istMonth()}`; const c = parseInt((await env.KV.get(qk)) || "0", 10); if (c > 0) await env.KV.put(qk, String(c - 1), { expirationTtl: 86400 * 40 }); await save({ state, note: String(body.note || "").slice(0, 300), refunded: true }); } // a failed edit doesn't use up a free edit
     if (state === "failed") { const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job); if (ref) { const e2 = await histGet(env, ref.n, ref.num); if (e2) { e2.state = "failed"; e2.failedAt = Date.now(); /* v39 (D8): label the age honestly */ await histPut(env, ref.n, e2); } } }
@@ -3905,7 +3942,22 @@ async function setupStartNext(env, n) {
     return setupStartNext(env, n); // advance to the next provider
   }
   const ok = await setupDispatch(env, job, nextId, rec.browser);
-  if (!ok) { await env.KV.delete(`setupjob:${job}`); return { ok: false, error: "dispatch failed" }; }
+  if (!ok) {
+    // v74: a failed dispatch must not strand the chain — chain.current
+    // already points at this (now deleted) job, and the provider was
+    // neither done nor failed, so only the 30-min stall watchdog ever
+    // noticed, as a full-chain "stalled". Mirror the Gemini failure
+    // path instead: mark the provider failed with the reason, clear
+    // current, and advance — one provider's dispatch failure never
+    // kills the whole setup.
+    await env.KV.delete(`setupjob:${job}`);
+    if (!chain.failed.includes(nextId)) chain.failed.push(nextId);
+    chain.failReason = chain.failReason || {};
+    chain.failReason[nextId] = "dispatch failed";
+    chain.current = null;
+    await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+    return setupStartNext(env, n);
+  }
   return { ok: true, job, provider: nextId };
 }
 async function appSetupRunner(req, env, p, url, body, ctx) {
