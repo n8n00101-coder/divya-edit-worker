@@ -210,24 +210,42 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                   f"after {len(paths)}/{len(outline_data['chapters'])} chapters")
             break
         ch_dir = wd / f"ch{i + 1:02d}"
+        # v75: the chapter dir must EXIST before make_video writes into
+        # it. Nothing created it — codegen's plan.json write and the
+        # vo0.mp3 write both died with ENOENT (run 43373013930).
+        ch_dir.mkdir(parents=True, exist_ok=True)
         ch_brief = chapter_brief(outline_data, i)
         if amendments is not None:
             ch_brief = _fold_chapter_amendments(amendments, ch_brief, i + 1)
-        try:
-            # ref_voice / amendments are passed only when set, so
-            # engine-shaped callers/stubs without those parameters stay
-            # compatible.
-            res = await doc.make_video(ch_brief, chat,
-                                       notify=notify, workdir=str(ch_dir),
-                                       **({"ref_voice": ref_voice}
-                                          if ref_voice is not None else {}),
-                                       **({"amendments": amendments}
-                                          if amendments is not None else {}))
-        except Exception as e:
+        # v75: ONE retry per chapter — a transient sub-step failure
+        # (LLM blip, TTS error) must not kill the chapter outright.
+        # After the retry the old semantics hold: with finished
+        # chapters we assemble them as a partial; with none, the error
+        # propagates and the runner reports the job failed.
+        res, last_err = None, None
+        for _attempt in range(2):
+            try:
+                # ref_voice / amendments are passed only when set, so
+                # engine-shaped callers/stubs without those parameters
+                # stay compatible.
+                res = await doc.make_video(ch_brief, chat,
+                                           notify=notify, workdir=str(ch_dir),
+                                           **({"ref_voice": ref_voice}
+                                              if ref_voice is not None else {}),
+                                           **({"amendments": amendments}
+                                              if amendments is not None else {}))
+                break
+            except Exception as e:
+                last_err = e
+                if _attempt == 0:
+                    print(f"render_chapters: chapter {i + 1} attempt 1 "
+                          f"failed ({str(e)[:150]}) — retrying once")
+                    await asyncio.sleep(5)
+        if res is None:
             if not paths:
-                raise
+                raise last_err
             print(f"render_chapters: chapter {i + 1} failed "
-                  f"({str(e)[:150]}) — assembling the {len(paths)} "
+                  f"({str(last_err)[:150]}) — assembling the {len(paths)} "
                   f"finished chapters")
             break
         paths.append(res["path"])
@@ -502,21 +520,40 @@ def _groq_chat(messages):
         raise RuntimeError("GROQ_KEY is not set — set it to run long_video.py")
     models = ["openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905",
               "openai/gpt-oss-20b"]
+    # v75: same transient-retry contract as runner.groq_chat — a 429 /
+    # 5xx / network blip retries the sweep with 5s/15s/45s backoff
+    # instead of killing the call (and with it, the whole long video).
     last = ""
-    for k in keys:
-        for m in models:
-            body = {"model": m, "messages": messages, "temperature": 0.8,
-                    "max_tokens": 2500}
-            if m.startswith("openai/gpt-oss"):
-                body["reasoning_effort"] = "low"
-            r = httpx.post("https://api.groq.com/openai/v1/chat/completions",
-                           json=body, headers={"Authorization": f"Bearer {k}"},
-                           timeout=90)
-            if r.status_code == 200:
-                out = r.json()["choices"][0]["message"]["content"] or ""
-                if out.strip():
-                    return out
-            last = f"{m} {r.status_code}"
+    for attempt in range(4):
+        transient = False
+        for k in keys:
+            for m in models:
+                body = {"model": m, "messages": messages, "temperature": 0.8,
+                        "max_tokens": 2500}
+                if m.startswith("openai/gpt-oss"):
+                    body["reasoning_effort"] = "low"
+                try:
+                    r = httpx.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        json=body, headers={"Authorization": f"Bearer {k}"},
+                        timeout=90)
+                except httpx.HTTPError as e:
+                    last = f"{m} network {type(e).__name__}"
+                    transient = True
+                    continue
+                if r.status_code == 200:
+                    out = r.json()["choices"][0]["message"]["content"] or ""
+                    if out.strip():
+                        return out
+                    last = f"{m} empty"
+                    transient = True
+                    continue
+                last = f"{m} {r.status_code}"
+                if r.status_code == 429 or r.status_code >= 500:
+                    transient = True
+        if not transient or attempt == 3:
+            break
+        time.sleep((5, 15, 45)[attempt])
     raise RuntimeError("LLM failed: " + last)
 
 

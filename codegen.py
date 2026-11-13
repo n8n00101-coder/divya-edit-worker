@@ -83,6 +83,11 @@ def run(p, chat, wd, recent_families=()):
             for s in p["scenes"]
         ],
     }
+    # v75: plan.json is written BEFORE DC.main() runs — and DC.main is
+    # what used to create wd (out.mkdir). A caller-supplied wd that
+    # does not exist yet (long_video chapter dirs) made this write die
+    # with ENOENT, so create the dir at the write site itself.
+    os.makedirs(wd, exist_ok=True)
     plan_path = os.path.join(wd, "plan.json")
     with open(plan_path, "w") as f:
         json.dump(plan, f, indent=1)
