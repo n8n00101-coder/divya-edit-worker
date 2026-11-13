@@ -139,17 +139,46 @@ def outline(brief, chat, target_minutes=None):
     return {"title": title, "chapters": chapters}
 
 
+# v78: per-chapter narration budget. doc.py's plan prompt sizes voice-over
+# at "English ~2.5 words/s" (150 words/min); at ~5.7 chars/word that is
+# ~850 chars/min of speech. The outline's chapter minutes were never
+# translated into a script size before, so chapters under-filled badly:
+# job 7aee5d2a's 7 chapters "totalled" 14 planned minutes on the outline
+# but the assembled video was 7.7 min — nothing checked the words
+# against the minutes. Budgets turn the minutes into a words/chars
+# target for the planner, and render_chapters verifies each chapter's
+# rendered duration against them (one top-up per short chapter).
+CHARS_PER_MIN = 850
+WORDS_PER_MIN = 150  # doc.py plan rate: English ~2.5 words/s
+TOPUP_MIN_FRACTION = 0.8  # a chapter under 80% of budget is topped up once
+
+
+def chapter_budget(ch):
+    """The narration budget for one outline chapter: its allotted
+    seconds plus the words/chars of voice-over needed to fill them."""
+    mins = int(ch["minutes"])
+    return {"seconds": mins * 60, "words": mins * WORDS_PER_MIN,
+            "chars": mins * CHARS_PER_MIN}
+
+
 def chapter_brief(outline_data, idx):
     """Brief for one chapter's doc.make_video call: chapter title + brief,
-    plus the exact-length line so the chapter fits its allotted minutes."""
+    plus the exact-length line so the chapter fits its allotted minutes
+    and the v78 narration budget (words/chars) that actually fills them."""
     ch = outline_data["chapters"][idx]
     n = len(outline_data["chapters"])
     seconds = ch["minutes"] * 60
+    b = chapter_budget(ch)
     return (
         f"Long video '{outline_data['title']}', chapter {idx + 1} of {n}: "
         f"{ch['title']}.\n{ch['brief']}\n"
         f"This chapter must stand alone and end with a hook into the next chapter.\n"
-        f"FINAL VIDEO LENGTH: exactly {seconds} seconds"
+        f"FINAL VIDEO LENGTH: exactly {seconds} seconds\n"
+        f"NARRATION BUDGET: the voice-over across all scenes must total "
+        f"about {b['words']} words (~{b['chars']} characters). At normal "
+        f"English speech (~150 words/min) that is what actually fills "
+        f"{ch['minutes']} minute(s) — a shorter script renders a "
+        f"shorter chapter."
     )
 
 
@@ -179,6 +208,22 @@ def _fold_chapter_amendments(provider, brief, chapter_no):
         brief += ("\nViewer-requested additions — include them from "
                   "THIS chapter: " + " | ".join(extra))
     return brief
+
+
+def _join_clips(paths, out_path):
+    """Concatenate same-engine mp4s into one file (the v78 top-up join).
+    Re-encodes through the concat demuxer so the join is robust to
+    timestamp/container quirks between the two renders."""
+    out_path = str(out_path)
+    lst = out_path + ".txt"
+    with open(lst, "w") as f:
+        for p in paths:
+            f.write(f"file '{os.path.abspath(p)}'\n")
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat",
+                    "-safe", "0", "-i", lst, "-c:v", "libx264", "-preset",
+                    "veryfast", "-crf", "20", "-c:a", "aac", "-b:a", "128k",
+                    out_path], check=True)
+    return out_path
 
 
 async def render_chapters(outline_data, chat, workdir, notify=None,
@@ -248,6 +293,62 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                   f"({str(last_err)[:150]}) — assembling the {len(paths)} "
                   f"finished chapters")
             break
+        # v78: verify the chapter against its narration budget. A
+        # chapter that rendered materially short (<80% of its allotted
+        # seconds) is topped up ONCE — an extension render of NEW
+        # scenes for the missing seconds, joined onto the chapter —
+        # instead of silently assembling a short video (job 7aee5d2a:
+        # 14 min asked, 7.7 min delivered, every chapter "completed").
+        # A passed deadline skips the top-up: partial-budget semantics
+        # stay exactly as they were.
+        try:
+            budget = chapter_budget(outline_data["chapters"][i])
+            dur = res.get("duration")
+            if not (isinstance(dur, (int, float)) and dur > 0):
+                dur = _probe_duration(res["path"])
+            if dur < TOPUP_MIN_FRACTION * budget["seconds"] and not (
+                    deadline is not None and time.monotonic() > deadline):
+                missing_s = max(10, int(round(budget["seconds"] - dur)))
+                missing_w = max(20, int(round(missing_s / 60 * WORDS_PER_MIN)))
+                missing_c = max(100, int(round(missing_s / 60 * CHARS_PER_MIN)))
+                ch = outline_data["chapters"][i]
+                ext_brief = (
+                    f"Long video '{outline_data['title']}', chapter "
+                    f"{i + 1} of {len(outline_data['chapters'])} "
+                    f"EXTENSION: {ch['title']}.\n{ch['brief']}\n"
+                    f"The main part of this chapter rendered only "
+                    f"{int(dur)}s of its {budget['seconds']}s. Continue "
+                    f"the SAME chapter with NEW scenes — do not repeat "
+                    f"the earlier content.\n"
+                    f"FINAL VIDEO LENGTH: exactly {missing_s} seconds\n"
+                    f"NARRATION BUDGET: the voice-over across all scenes "
+                    f"must total about {missing_w} words "
+                    f"(~{missing_c} characters)."
+                )
+                ext_dir = ch_dir / "ext"
+                ext_dir.mkdir(parents=True, exist_ok=True)
+                ext = await doc.make_video(
+                    ext_brief, chat, notify=notify, workdir=str(ext_dir),
+                    **({"ref_voice": ref_voice}
+                       if ref_voice is not None else {}),
+                    **({"amendments": amendments}
+                       if amendments is not None else {}))
+                joined = _join_clips([res["path"], ext["path"]],
+                                     str(ch_dir / f"ch{i + 1:02d}_full.mp4"))
+                try:
+                    new_dur = _probe_duration(joined)
+                except Exception:
+                    new_dur = dur + float(ext.get("duration") or 0)
+                res = {**res, "path": joined, "duration": new_dur,
+                       "topped_up": True, "topup_seconds": missing_s,
+                       "broll": (res.get("broll") or [])
+                                + (ext.get("broll") or [])}
+                print(f"render_chapters: chapter {i + 1} topped up "
+                      f"({int(dur)}s -> {int(new_dur)}s of "
+                      f"{budget['seconds']}s budget)")
+        except Exception as e:
+            print(f"render_chapters: chapter {i + 1} top-up failed "
+                  f"({str(e)[:150]}) — keeping the rendered chapter")
         paths.append(res["path"])
         if results_out is not None:
             results_out.append(res)
@@ -306,6 +407,15 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     if partial:
         summary += (" (PARTIAL — job time budget reached; longest "
                     "completed assembly delivered)")
+    # v78: honest actual-vs-target reporting. Topped-up chapters are
+    # named, and a complete-but-short assembly says so against the
+    # target instead of letting the minutes line pass silently.
+    topped = sum(1 for r in results if r.get("topped_up"))
+    if topped:
+        summary += f"; {topped} chapter(s) topped up to reach their length"
+    if not partial and duration < target_minutes * 60 - 30:
+        summary += (f" (target {target_minutes} min — chapters "
+                    f"under-filled)")
     if broll_sources:
         summary += (f"; B-roll: {len(broll_sources)} stock clips "
                     f"({', '.join(sorted({s.get('provider', '') for s in broll_sources}))})")

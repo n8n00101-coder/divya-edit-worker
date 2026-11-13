@@ -2431,6 +2431,12 @@ async function refundJobSpend(env, job, n) {
   // the job's verified legacy split when one exists.
   let rec = null, bad = false;
   try { rec = JSON.parse((await env.KV.get(`spend:${job}`)) || "null"); } catch { bad = true; }
+  // v78: delivered is terminal at the money layer too — a job whose
+  // History entry already carries a result (has_result / doneAt /
+  // state done) is NEVER refunded, whichever failure path asks. The
+  // rescue marks its entries failed BEFORE calling here (no result on
+  // them), so v73/v76 refunds are unaffected.
+  try { const refR = await histNumForJob(env, job); const eR = refR ? await histGet(env, refR.n, refR.num) : null; if (eR && (eR.has_result || eR.doneAt || eR.state === "done")) return false; } catch {}
   try {
     if (rec && rec.refunded) return false; // already paid out — never twice
     const usable = !!rec && !bad && rec.n === n && (rec.via === "weekly" || rec.via === "pool" || rec.via === "plan" || (rec.via === "split" && !!rec.split && !!(rec.split.weekly || rec.split.pool || rec.split.plan)));
@@ -3039,18 +3045,31 @@ async function appRunner(req, env, p, url, body) {
   if (p === "runner/state" && req.method === "POST") {
     const state = ["running", "done", "failed"].includes(body.state) ? body.state : "running";
     const pct = Number.isFinite(body.pct) ? Math.max(0, Math.min(100, body.pct | 0)) : null;
-    await save({ state, note: String(body.note || "").slice(0, 300), ...(pct != null ? { pct } : {}) });
+    // v78: DELIVERED IS TERMINAL. Job 7aee5d2a (2026-11-13): the result
+    // posted, the History entry got doneAt + has_result + the success
+    // note — then a post-result WhatsApp 413 made the runner post
+    // state=failed ~2s later, and this handler flipped the delivered
+    // entry to failed and refunded the full 1.4M charge for a video
+    // the user can download. A failed post for a job whose result is
+    // already stored changes NOTHING: no flip, no refund, no free-edit
+    // credit — the job record is re-saved as done.
+    let delivered = false;
+    if (state === "failed") {
+      if (st && st.job === job && st.has_result) delivered = true;
+      else { const refD = st?.num ? { n, num: st.num } : await histNumForJob(env, job); const eD = refD ? await histGet(env, refD.n, refD.num) : null; if (eD && (eD.has_result || eD.doneAt || eD.state === "done")) delivered = true; }
+    }
+    await save(delivered ? { state: "done", has_result: true } : { state, note: String(body.note || "").slice(0, 300), ...(pct != null ? { pct } : {}) });
     // v67: mirror live progress into the History entry so the app's chat
     // poller can show a real % bar (monotonic — never goes backwards).
     if (state === "running") { const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job); if (ref) { const e2 = await histGet(env, ref.n, ref.num); if (e2 && e2.state !== "done" && e2.state !== "failed") { e2.state = "running"; e2.note = String(body.note || "").slice(0, 300); e2.upd = Date.now(); /* v74: last-evidence stamp the stuck rescue reads */ if (pct != null && pct >= (e2.pct || 0)) e2.pct = pct; await histPut(env, ref.n, e2); } } }
     if (state !== "running") { await env.KV.delete(`busy:${n}`); await env.KV.delete(`upl:${job}`); }
-    if (state === "failed" && st && st.job === job && !st.refunded) { const qk = `vmon:${n}:${istMonth()}`; const c = parseInt((await env.KV.get(qk)) || "0", 10); if (c > 0) await env.KV.put(qk, String(c - 1), { expirationTtl: 86400 * 40 }); await save({ state, note: String(body.note || "").slice(0, 300), refunded: true }); } // a failed edit doesn't use up a free edit
-    if (state === "failed") { const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job); if (ref) { const e2 = await histGet(env, ref.n, ref.num); if (e2) { e2.state = "failed"; e2.failedAt = Date.now(); /* v39 (D8): label the age honestly */ await histPut(env, ref.n, e2); } } }
+    if (state === "failed" && !delivered && st && st.job === job && !st.refunded) { const qk = `vmon:${n}:${istMonth()}`; const c = parseInt((await env.KV.get(qk)) || "0", 10); if (c > 0) await env.KV.put(qk, String(c - 1), { expirationTtl: 86400 * 40 }); await save({ state, note: String(body.note || "").slice(0, 300), refunded: true }); } // a failed edit doesn't use up a free edit
+    if (state === "failed" && !delivered) { const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job); if (ref) { const e2 = await histGet(env, ref.n, ref.num); if (e2 && !e2.has_result && !e2.doneAt) { e2.state = "failed"; e2.failedAt = Date.now(); /* v39 (D8): label the age honestly */ await histPut(env, ref.n, e2); } } }
     // v73: a runner-REPORTED failure refunds the recorded spend too —
     // before v73 only dispatch failures were refunded, so a create
     // whose runner died mid-flight kept the user's tokens even when
     // the failure was reported cleanly.
-    if (state === "failed") await refundJobSpend(env, job, n);
+    if (state === "failed" && !delivered) await refundJobSpend(env, job, n);
     return Response.json({ ok: true });
   }
   if (p === "runner/result" && req.method === "POST") {
