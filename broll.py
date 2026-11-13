@@ -22,17 +22,38 @@ create engine behaves exactly as before (code-drawn backgrounds only).
 import hashlib
 import json
 import os
-
-import httpx
+import urllib.parse
+import urllib.request
 
 _SEARCH_TIMEOUT = 20
 _DOWNLOAD_TIMEOUT = 120
-# Pexels 403s the default httpx/python user agents (verified live
-# 2026-11-13: same key, browser UA -> 200, default UA -> 403). Always
-# send a browser UA on API + download requests.
+# Transport = stdlib urllib (v69c, 2026-11-13): httpx broke in the agent's
+# sandbox — it chokes parsing this machine's proxy env (InvalidURL) and a
+# proxy-free direct connect is TLS-intercepted here — while urllib (which
+# honours the same proxy env in its own lenient parser) reaches the APIs
+# fine, and on the GitHub runner (no proxy env) both behave the same.
+# Pexels also 403s default python user agents (verified live 2026-11-13:
+# same key, browser UA -> 200, default UA -> 403), so always send a
+# browser UA on API + download requests.
 _UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/126 Safari/537.36"}
 _MAX_BYTES = 60 * 1024 * 1024  # a B-roll clip never needs to be huge
+
+
+def _get_json(url, params=None, headers=None):
+    """GET url -> parsed JSON dict, or None on ANY failure. Never raises.
+    This is the module's single network seam (tests stub this)."""
+    try:
+        if params:
+            url = url + "?" + urllib.parse.urlencode(params)
+        req = urllib.request.Request(url, headers={**_UA, **(headers or {})})
+        with urllib.request.build_opener().open(req,
+                                                timeout=_SEARCH_TIMEOUT) as r:
+            if r.status != 200:
+                return None
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return None
 
 
 def _cache_paths(workdir, query, orientation):
@@ -45,13 +66,17 @@ def _download(url, dest):
     """Stream url -> dest (via a .part file). True on success."""
     tmp = dest + ".part"
     try:
-        with httpx.stream("GET", url, follow_redirects=True, headers=_UA,
-                          timeout=_DOWNLOAD_TIMEOUT) as r:
-            if r.status_code != 200:
+        req = urllib.request.Request(url, headers=dict(_UA))
+        with urllib.request.build_opener().open(req,
+                                                timeout=_DOWNLOAD_TIMEOUT) as r:
+            if r.status != 200:
                 return False
             n = 0
             with open(tmp, "wb") as f:
-                for chunk in r.iter_bytes(1 << 16):
+                while True:
+                    chunk = r.read(1 << 16)
+                    if not chunk:
+                        break
                     n += len(chunk)
                     if n > _MAX_BYTES:
                         return False
@@ -72,17 +97,13 @@ def _download(url, dest):
 
 def _pexels_search(query, key, orientation):
     """Best Pexels video file for query -> {url, page} or None."""
-    try:
-        r = httpx.get("https://api.pexels.com/videos/search",
-                      params={"query": query, "orientation": orientation,
-                              "per_page": 5},
-                      headers={"Authorization": key, **_UA},
-                      timeout=_SEARCH_TIMEOUT)
-        if r.status_code != 200:
-            return None
-        videos = r.json().get("videos") or []
-    except Exception:
+    data = _get_json("https://api.pexels.com/videos/search",
+                     params={"query": query, "orientation": orientation,
+                             "per_page": 5},
+                     headers={"Authorization": key})
+    if not data:
         return None
+    videos = data.get("videos") or []
     for v in videos:
         files = [f for f in (v.get("video_files") or [])
                  if f.get("link") and f.get("width") and f.get("height")
@@ -101,16 +122,11 @@ def _pexels_search(query, key, orientation):
 
 def _pixabay_search(query, key, orientation):
     """Best Pixabay video file for query -> {url, page} or None."""
-    try:
-        r = httpx.get("https://pixabay.com/api/videos/",
-                      params={"key": key, "q": query, "per_page": 5},
-                      headers=_UA,
-                      timeout=_SEARCH_TIMEOUT)
-        if r.status_code != 200:
-            return None
-        hits = r.json().get("hits") or []
-    except Exception:
+    data = _get_json("https://pixabay.com/api/videos/",
+                     params={"key": key, "q": query, "per_page": 5})
+    if not data:
         return None
+    hits = data.get("hits") or []
     for h in hits:
         variants = [v for v in (h.get("videos") or {}).values()
                     if isinstance(v, dict) and v.get("url")
