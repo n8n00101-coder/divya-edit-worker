@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v44";
+const APP_V = "julie-v45";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -895,11 +895,14 @@ async function startOneTapSetup() {
     let email = "";
     try { const me = await api("me"); email = (me.account && me.account.email) || ""; } catch {}
     if (!email) { toast(t("setupNeedEmail"), true); return; }
-    const d = await api("setup/start", { method: "POST", json: { email, providers: ["groq", "openrouter", "gemini"] } });
+    const d = await api("setup/start", { method: "POST", json: { email, providers: ["groq", "openrouter", "gemini", "pexels"] } });
     // R48 note: Cloudflare stays out of this list until setup.py has a
     // Cloudflare flow (FLOWS has only email/google flows today) — starting it
     // now would stall the chain. The mini-box still renders a Cloudflare step
     // when setup/status reports one.
+    // v70: Pexels runs LAST — Julie creates the user's own stock-footage
+    // key (an enhancement key: its failure never blocks the brain keys,
+    // and the Worker skips the step entirely when a key is already saved).
     if (!d.ok) { toast(d.error || t("netErr"), true); return; }
     location.hash = "#/chat";
     bubble("bot", t("setupRunning"));
@@ -1545,7 +1548,7 @@ $("#loginGoogleBtn") && ($("#loginGoogleBtn").onclick = async () => { const r = 
    hardcoded providers, each with its own page link, key format and
    buttons) and the voice guide are GONE. PNAMES is only a display-name
    map for the automate run's own step labels / auto-log lines. */
-const PNAMES = { groq: "Groq", openrouter: "OpenRouter", gemini: "Gemini", cloudflare: "Cloudflare" };
+const PNAMES = { groq: "Groq", openrouter: "OpenRouter", gemini: "Gemini", cloudflare: "Cloudflare", pexels: "Pexels" };
 let modelState = null;
 async function loadModel() {
   try { const d = await api("model"); modelState = d && d.ok ? d.model : null; } catch { modelState = null; }
