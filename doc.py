@@ -974,7 +974,7 @@ def _label_width(d, text):
     return sum(d.textlength(w, font=anton(size)) + 2 for w in words) - 2
 
 
-def label(d, text, t, acc, idx, look=None, keyword=None):
+def label(d, text, t, acc, idx, look=None, keyword=None, scale=1.0):
     # v36 (Blind A1/A4/C6 — fixed zones): the scene label ("title") lives in
     # the TITLE zone y 120-450 (frame), NOT at the bottom — it used to sit at
     # y 1190, inside the visual band, which is why "THE BILL" sat on the
@@ -986,7 +986,11 @@ def label(d, text, t, acc, idx, look=None, keyword=None):
     # it wraps to TWO lines (both inside the title zone) — never overflows
     # the frame, never shrinks below 96.
     words = text.split()
-    size = 132
+    # v79 (FIX 4): an edit's "make the title bigger" scales the start
+    # size; the fit-to-width shrink and the 96 px floor are unchanged,
+    # so a scaled title grows where the safe frame allows and never
+    # overflows. scale=1.0 (every non-edit render) is the old path.
+    size = max(96, int(132 * (scale or 1.0)))
     f = anton(size)
     # Fit to width (x 86..994 safe frame); shrink to the 96 px minimum, never below.
     while size > 96 and sum(d.textlength(w + " ", font=anton(size)) for w in words) > 908:
@@ -1534,8 +1538,33 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None):
                 (" ".join((topic + " " + label).split()), topic, label)) if q]
         dur_s = float(sc.get("d") or 6)
         blur = bool(_comp.widget_kind(sc)) and bool(cfg.get("kind") == "long" or cfg.get("footage_only"))
-        rec = pool.assign(i + 1, queries, dur_s, dl,
-                          orientation=orientation, line=str(sc.get("vo") or ""))
+        rec = None
+        # v79 (FIX 4): an edit render re-fetches the SAVED clip for a
+        # scene the edit did not touch — same clip id, same start,
+        # same push-in — so untouched scenes stay exactly the same.
+        _saved_map = p.get("_saved_footage") or {}
+        _saved = _saved_map.get(i + 1) or _saved_map.get(str(i + 1))
+        if _saved and (i + 1) not in (p.get("_edit_changed") or set()):
+            _got = pool.fetch_by_id(_saved.get("clip_id", ""), dl)
+            if _got:
+                _st, _mo = _br.active_window(_got["path"], dur_s)
+                rec = {**_got, "query": _saved.get("query", ""),
+                       "keyword": _saved.get("keyword", ""),
+                       "start": _saved.get("start", _st),
+                       "static": _saved.get("static", _mo < 1.2)}
+                pool.used_ids.append(rec["clip_id"])
+                pool.assignments.append(
+                    {"scene": i + 1, "clip_id": rec["clip_id"],
+                     "provider": rec["provider"],
+                     "source_url": rec["source_url"],
+                     "query": rec["query"], "keyword": rec["keyword"],
+                     "start": rec["start"], "static": rec["static"]})
+                pool.last_uploader = rec.get("uploader") or pool.last_uploader
+                pool._save()
+                print(f"broll scene {i + 1}: saved clip reused ({rec['clip_id']})")
+        if rec is None:
+            rec = pool.assign(i + 1, queries, dur_s, dl,
+                              orientation=orientation, line=str(sc.get("vo") or ""))
         if not rec:
             continue
         fdir = os.path.join(wd, "broll_frames", f"sc{i}")
@@ -1685,13 +1714,13 @@ def scene_frame(p, idx, t, return_layers=False):
         if not nolabel:
             _lw = _label_width(ld, sc["label"])
             ld.rectangle([(W - _lw) / 2 - 24, 205, (W + _lw) / 2 + 24, 365], fill=(255, 210, 0, 90))
-        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw) if not nolabel else None
+        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw, scale=float(p.get("title_scale") or 1.0)) if not nolabel else None
     elif layout == 2:  # compact: visual lower/smaller
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 1050, acc)
-        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw) if not nolabel else None
+        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw, scale=float(p.get("title_scale") or 1.0)) if not nolabel else None
     else:  # standard
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 945, acc)
-        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw) if not nolabel else None
+        label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw, scale=float(p.get("title_scale") or 1.0)) if not nolabel else None
     # v35: ONE motion effect on the visual layer — the choice made above by
     # pick_one_effect(). "build_in" means the visual animates itself (word-
     # timed / draw-on) and NO layer transform is applied on top of it; that
@@ -2628,7 +2657,7 @@ def _amend_checkpoint(box, p, stage, chat=None):
     return flags
 
 
-async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False, ref_voice=None, amendments=None, spec=None, cfg=None, footage_pool=None):
+async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False, ref_voice=None, amendments=None, spec=None, cfg=None, footage_pool=None, plan_override=None):
     global _P, W, H
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
     # v75: a caller-supplied workdir is NOT created for us (the default
@@ -2651,7 +2680,21 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     cfg = cfg or {}
     if cfg.get("width") and cfg.get("height"):
         W, H = int(cfg["width"]), int(cfg["height"])
-    p = plan(brief, chat, recent, recent_styles, recent_families, spec=spec, cfg=cfg)
+    if plan_override is not None:
+        # v79 (FIX 4): an EDIT render — the saved project plan is used
+        # AS SAVED (the edit already changed exactly what was asked;
+        # no re-plan, no compliance repair touching other scenes).
+        import copy as _copy
+        p = _copy.deepcopy(plan_override)
+        if spec:
+            p["spec"] = spec
+        if cfg:
+            p["render_config"] = cfg
+        for _s in p.get("scenes") or []:
+            _s.pop("has_footage", None)  # re-attached fresh below
+        print(f"edit render: saved plan, {len(p.get('scenes') or [])} scenes")
+    else:
+        p = plan(brief, chat, recent, recent_styles, recent_families, spec=spec, cfg=cfg)
     # v32 (Blind codegen): ONE engine writes tr_/fx_/vis_ in a single call
     # (codegen.run: PLAN -> CODE -> sandbox -> fix x2 -> library fallback),
     # while the QC scores the plan in parallel. A failed custom function
@@ -2714,6 +2757,12 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         a = f"{wd}/vo{i}.mp3"
         if ref_voice:
             s["words"], voice = await synth_voice(s["vo"], voice, s["mood"], a, ref_voice)
+        elif p.get("voice_rate_add"):
+            # v79 (FIX 4): an edit's "slow the voice a little" — a rate
+            # offset on every line (the whole voice is the setting the
+            # user named). Absent = the exact old call.
+            s["words"] = await tts(s["vo"], voice, s["mood"], a,
+                                   rate_add=int(p["voice_rate_add"]))
         else:
             s["words"] = await tts(s["vo"], voice, s["mood"], a)
         s["audio"] = a; s["adur"] = dur(a); s["d"] = s["adur"] + gap
@@ -2957,7 +3006,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             _proj = {"version": "v79", "brief": brief, "spec": spec or [],
                      "render_config": cfg or {},
                      "plan": {k: v for k, v in p.items()
-                              if k not in ("broll", "_footage_pool", "words")},
+                              if k not in ("broll", "_footage_pool", "words",
+                                           "_saved_footage", "_edit_changed")},
                      "footage": p.get("footage") or {},
                      "voice_used": p.get("_voice_used", voice),
                      "workdir_files": {"video": os.path.basename(out)}}
@@ -2993,3 +3043,138 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             "spec": spec or [], "render_config": cfg or {},
             "compliance": _report, "workdir": wd,
             "frame_qc": _fq, "qc_passed": _fq["passed"]}
+
+
+# ---------------- v79: edit mode (FIX 4) ----------------
+# Blind FIX 4, verbatim intent: "When the user asks to CHANGE
+# something in the video just made ('make the title bigger', 'change
+# scene 2 to a clock', 'remove the music'), do NOT regenerate the
+# whole video. Save each video as a PROJECT (script, scenes,
+# footage, audio, voice settings, look, settings). On an edit
+# request: load the project, change ONLY what was asked, re-render
+# only the changed scenes. Untouched scenes remain exactly the
+# same." The engine renders a video as one frame stream, so the
+# re-render runs from the SAVED plan with only the named
+# scenes/settings changed (plan_override) — untouched scenes'
+# plan entries are byte-identical, their footage is re-fetched by
+# exact clip id, and the frame test in v79test proves their frames
+# come out byte-identical. Full regeneration happens only when the
+# user says "make a new one" (a fresh CREATE — handled by the
+# brain, never reaching here).
+
+EDIT_VISUAL_WORDS = {"clock": "clock", "watch": "clock",
+                     "map": "world_dots", "chart": "graph",
+                     "graph": "graph", "donut": "donut",
+                     "counter": "counter", "list": "list",
+                     "heart": "heart", "scales": "versus",
+                     "scale": "versus", "balance": "versus"}
+
+
+def merge_specs(orig, edit):
+    """An edit's requirements replace the original's per TYPE (the
+    latest word wins); the rest of the contract still stands.
+    Renumbered R1..Rn."""
+    etypes = {r.get("type") for r in edit}
+    merged = [r for r in orig if r.get("type") not in etypes] + list(edit)
+    return [dict(r, id=f"R{i + 1}") for i, r in enumerate(merged)]
+
+
+def plan_project_edit(project, edit_spec, edit_text):
+    """Pure edit planning (FIX 4): returns (plan, cfg, changed, notes)
+    — the saved plan/cfg with ONLY the asked changes applied.
+    changed = the set of scene numbers whose content changed;
+    settings-only edits (music off, title bigger, voice slower)
+    change no scene's content."""
+    import copy as _copy
+    import spec_engine as _se
+    plan = _copy.deepcopy(project.get("plan") or {})
+    cfg = _copy.deepcopy(project.get("render_config") or {})
+    low = str(edit_text or "").lower()
+    changed, notes = set(), []
+    kind = cfg.get("kind", "short")
+    try:
+        ecfg = _se.resolve_render_config(edit_spec, kind)
+    except Exception:
+        ecfg = {}
+    etypes = {r.get("type") for r in edit_spec}
+    if "music" in etypes:
+        cfg["music"] = ecfg.get("music", cfg.get("music"))
+        notes.append(f"music {'OFF' if cfg['music'] is False else 'ON'}")
+    if "sfx" in etypes:
+        cfg["sfx"] = ecfg.get("sfx", cfg.get("sfx"))
+        notes.append(f"sfx {'OFF' if cfg['sfx'] is False else 'ON'}")
+    if "captions" in etypes:
+        cfg["captions"] = ecfg.get("captions", cfg.get("captions"))
+        cfg["caption_spec"] = ecfg.get("caption_spec", cfg.get("caption_spec"))
+        notes.append("captions updated")
+    if "colour" in etypes and ecfg.get("accent"):
+        cfg["accent"] = ecfg["accent"]
+        plan["accent"] = ecfg["accent"]
+        notes.append("colour updated")
+    if "aspect_ratio" in etypes:
+        cfg["width"], cfg["height"] = ecfg["width"], ecfg["height"]
+        notes.append(f"size -> {cfg['width']}x{cfg['height']}")
+    if "end_card" in etypes:
+        cfg["end_card"] = ecfg.get("end_card")
+        if ecfg.get("end_card"):
+            plan["end_question"] = ecfg["end_card"]
+        notes.append("end card updated")
+    if "language" in etypes and ecfg.get("lang"):
+        cfg["lang"] = ecfg["lang"]
+        plan["lang"] = ecfg["lang"]
+        notes.append(f"language -> {ecfg['lang']}")
+    if "voice" in etypes:
+        if ecfg.get("voice_id"):
+            cfg["voice_id"] = ecfg["voice_id"]
+        if ecfg.get("voice_gender"):
+            cfg["voice_gender"] = ecfg["voice_gender"]
+        notes.append("voice updated")
+    scenes = plan.get("scenes") or []
+    for m in re.finditer(
+            r"scene\s*(\d+)\s*(?:to|as|with|into)\s+(?:a\s+|an\s+)?([a-z]+)",
+            low):
+        n, word = int(m.group(1)), m.group(2)
+        vis = EDIT_VISUAL_WORDS.get(word)
+        if vis and 1 <= n <= len(scenes) and vis in C.VISUALS:
+            scenes[n - 1]["visual"] = vis
+            scenes[n - 1]["why"] = f"changed to a {word} by the owner's edit"
+            changed.add(n)
+            notes.append(f"scene {n} visual -> {word}")
+        else:
+            notes.append(f"scene {n}: could not change to '{word}' "
+                         f"(unknown visual or no such scene)")
+    if re.search(r"title\s+(bigger|larger|big)\b|bigger\s+title|"
+                 r"make\s+the\s+title\s+bigger", low):
+        plan["title_scale"] = round(float(plan.get("title_scale") or 1.0) * 1.3, 3)
+        notes.append(f"title scale -> {plan['title_scale']}")
+    if re.search(r"slow\s+(?:down\s+)?(?:the\s+)?voice|voice\s+"
+                 r"(?:a\s+bit\s+|a\s+little\s+)?slow", low):
+        plan["voice_rate_add"] = int(plan.get("voice_rate_add") or 0) - 10
+        notes.append("voice slowed by 10%")
+    saved = {}
+    for c in (project.get("footage") or {}).get("clips") or []:
+        if isinstance(c, dict) and c.get("scene") is not None:
+            saved.setdefault(c["scene"], c)
+    if saved:
+        plan["_saved_footage"] = saved
+    plan["_edit_changed"] = changed
+    return plan, cfg, changed, notes
+
+
+async def apply_project_edit(project, edit_text, chat, workdir=None,
+                             notify=None):
+    """FIX 4 entry point: extract the edit's own spec, plan the edit
+    against the saved project, and re-render from the saved plan.
+    Returns make_video's result dict plus res['edit'] = {changed
+    scenes, notes, the edit's spec}."""
+    import spec_engine as _se
+    edit_spec = _se.extract_spec(edit_text, chat=chat)
+    plan2, cfg2, changed, notes = plan_project_edit(project, edit_spec,
+                                                    edit_text)
+    merged = merge_specs(project.get("spec") or [], edit_spec)
+    res = await make_video(project.get("brief") or "", chat,
+                           notify=notify, workdir=workdir, spec=merged,
+                           cfg=cfg2, plan_override=plan2)
+    res["edit"] = {"changed_scenes": sorted(changed), "notes": notes,
+                   "edit_spec": edit_spec}
+    return res

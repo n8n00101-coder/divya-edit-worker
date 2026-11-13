@@ -49,10 +49,77 @@ async def main():
         raise
 
 
+async def edit_create_job(j, wa, note):
+    """v79 (FIX 4): an EDIT of the user's last video — load its saved
+    project (runner/artifacts), change ONLY what was asked, re-render
+    from the saved plan, deliver like a create. The original video's
+    History entry is untouched; this job gets its own."""
+    import doc as _doc
+    to = j["to"]
+    proj_job = str(j.get("project_job") or "")
+    pr = httpx.get(f"{WORKER}/api/runner/artifacts",
+                   params={"job": proj_job, "name": "project.json"},
+                   headers={"x-runner-key": KEY}, timeout=60)
+    if pr.status_code != 200:
+        msg = ("Edit cheyalenu — original video project dorakaledu "
+               "(project save avvaledu leda expire ayyindi).")
+        app_state("failed", msg)
+        try:
+            await wa.send_text(to, "⚠️ " + msg)
+        except Exception:
+            pass
+        return
+    try:
+        project = json.loads(pr.text)
+    except Exception:
+        app_state("failed", "Edit cheyalenu — project file corrupt.")
+        return
+    wd = os.path.join(os.environ.get("DATA_DIR", "/tmp/divya"), f"edit_{JOB}")
+    res = await _doc.apply_project_edit(
+        project, str(j.get("user_prompt") or j.get("brief") or ""),
+        groq_chat, workdir=wd, notify=note)
+    print("edit video", res["path"], res.get("duration"),
+          "changed scenes:", (res.get("edit") or {}).get("changed_scenes"))
+    caption = str(res.get("caption", ""))[:300]
+    _ed = res.get("edit") or {}
+    qcline = ""
+    if _ed.get("notes"):
+        qcline += "\n✏️ Changes: " + "; ".join(_ed["notes"][:4])
+    if res.get("compliance"):
+        try:
+            import compliance as _comp_mod
+            qcline += "\n" + _comp_mod.done_not_done_line(res["compliance"])
+        except Exception:
+            pass
+    try:
+        up = fit_size(res["path"], 23)
+        _note = (res.get("summary") or "Edit of video " + proj_job)[:290]
+        rr = httpx.post(f"{WORKER}/api/runner/result",
+                        params={"job": JOB, "note": _note},
+                        content=open(up, "rb").read(),
+                        headers={"x-runner-key": KEY,
+                                 "content-type": "video/mp4"}, timeout=300)
+        print("edit result upload", rr.status_code)
+        if rr.status_code == 200:
+            mark_result_delivered()  # v78: delivered is terminal
+            upload_artifacts(res.get("workdir"))
+    except Exception as e:
+        print("edit result upload failed", str(e)[:200])
+    try:
+        size = os.path.getsize(res["path"]) / 1e6
+        wa_path = fit_size(res["path"], 15) if size > 15.5 else res["path"]
+        await wa.send_media(to, wa_path, "video",
+                            caption=f"🎬 {res['title']} (edited)\n\n{caption}{qcline}")
+    except Exception as e:
+        print("wa send_media failed (post-result, non-fatal):", str(e)[:200])
+
+
 async def _run_job(j):
     import whatsapp as wa, autoedit  # import after env is set (config reads env)
     to = j["to"]
     note = lambda t: wa.send_text(to, t)
+    if j.get("mode") == "edit_create":
+        return await edit_create_job(j, wa, note)
     if j.get("mode") == "create":
         return await create_job(j, wa, note)
     if j.get("app"):

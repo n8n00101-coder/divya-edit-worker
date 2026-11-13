@@ -348,6 +348,50 @@ class FootagePool:
         return bool((os.environ.get("PEXELS_KEY") or "").strip()
                     or (os.environ.get("PIXABAY_KEY") or "").strip())
 
+    def fetch_by_id(self, clip_id, workdir):
+        """v79 (FIX 4): re-download the EXACT clip a saved project
+        used — Pexels' by-id endpoint, Pixabay's id search — so an
+        edit-mode render keeps untouched scenes' footage identical
+        instead of picking a fresh clip. Returns a rec dict or None
+        (the caller then falls back to a normal assign and the edit
+        notes say the scene was re-footaged)."""
+        try:
+            prov, pid = str(clip_id).split(":", 1)
+        except ValueError:
+            return None
+        meta = None
+        try:
+            if prov == "pexels" and os.environ.get("PEXELS_KEY"):
+                d = _get_json(f"https://api.pexels.com/videos/videos/{pid}",
+                              {"Authorization": os.environ["PEXELS_KEY"]})
+                if d and d.get("video_files"):
+                    f = _best_file(d["video_files"])
+                    if f:
+                        meta = {"url": f["link"], "page": d.get("url") or "",
+                                "uploader": (d.get("user") or {}).get("name", "")}
+            elif prov == "pixabay" and os.environ.get("PIXABAY_KEY"):
+                q = urllib.parse.urlencode({"key": os.environ["PIXABAY_KEY"], "id": pid})
+                d = _get_json("https://pixabay.com/api/videos/?" + q, {})
+                hits = (d or {}).get("hits") or []
+                if hits:
+                    h = hits[0]
+                    vids = h.get("videos") or {}
+                    f = vids.get("large") or vids.get("medium") or vids.get("small") or {}
+                    if f.get("url"):
+                        meta = {"url": f["url"], "page": h.get("pageURL") or "",
+                                "uploader": h.get("user") or ""}
+        except Exception:
+            return None
+        if not meta:
+            return None
+        os.makedirs(workdir, exist_ok=True)
+        dest = os.path.join(workdir, f"pool_{prov}_{pid}.mp4")
+        if not _download(meta["url"], dest):
+            return None
+        return {"path": dest, "provider": prov,
+                "source_url": meta["page"], "uploader": meta["uploader"],
+                "clip_id": clip_id}
+
     def assign(self, scene_no, queries, needed_s, workdir,
                orientation="portrait", line=""):
         """queries: the scene's shot-list queries (meaning, not the

@@ -404,6 +404,114 @@ def test_media_checks():
         ok("media: a 5 s silent file reports >0.8 s gaps", len(gaps) >= 1)
 
 
+# ---------------------------------------------------------------- 7
+def test_edit_mode():
+    import copy
+    import io
+    import doc
+    import spec_engine as se
+
+    plan_json = {
+        "topic": "compromise in life", "title": "THE POWER OF COMPROMISE",
+        "lang": "en", "voice": "male", "caption": "x", "end_question": "Did you know?",
+        "scenes": [
+            {"vo": "About 30 percent of couples argue weekly.", "label": "WEEKLY FIGHTS",
+             "mood": "tense", "visual": "donut", "value": "30%", "source": "",
+             "why": "donut shows percent of couples", "queries": ["couple arguing"],
+             "fulfils": []},
+            {"vo": "Time heals most small wounds between people.", "label": "TIME HEALS",
+             "mood": "calm", "visual": "heart", "value": "", "source": "",
+             "why": "heart shows wounds healing", "queries": ["friends hug"],
+             "fulfils": []},
+            {"vo": "Give a little, take a little, that is the deal.", "label": "THE DEAL",
+             "mood": "hopeful", "visual": "versus", "value": "", "source": "",
+             "why": "versus shows give and take", "queries": ["handshake"],
+             "fulfils": []},
+            {"vo": "So meet in the middle and keep the peace.", "label": "MEET MIDDLE",
+             "mood": "calm", "visual": "heart", "value": "", "source": "",
+             "why": "heart shows the peace kept", "queries": ["friends laughing"],
+             "fulfils": []},
+        ],
+    }
+
+    def fake_chat(messages):
+        return json.dumps(plan_json)
+
+    spec = se.extract_spec("compromise video")
+    cfg = se.resolve_render_config(spec, "short")
+    base_plan = doc.plan("topic COMPROMISE", fake_chat, spec=spec, cfg=cfg)
+    project = {"brief": "topic COMPROMISE", "spec": spec,
+               "render_config": cfg, "plan": copy.deepcopy(base_plan),
+               "footage": {"clips": [{"scene": 1, "clip_id": "pexels:111",
+                                      "provider": "pexels", "source_url": "u",
+                                      "query": "couple arguing", "keyword": "couple",
+                                      "start": 2.0, "static": False}],
+                           "rejected": []}}
+
+    # Blind FIX 7 test 3 has two asks; test them separately — the
+    # title ask is a global setting, the scene ask is scene-local.
+    espec_t = se.extract_spec("make the title bigger")
+    plan_t, _, changed_t, _ = doc.plan_project_edit(
+        project, espec_t, "make the title bigger")
+    ok("FIX4: title ask grows the title scale, changes no scene",
+       float(plan_t.get("title_scale") or 1) > 1.2 and changed_t == set())
+
+    edit_text = "change scene 2 to a clock"
+    espec = se.extract_spec(edit_text)
+    plan2, cfg2, changed, notes = doc.plan_project_edit(project, espec, edit_text)
+    ok("FIX4: only scene 2 is marked changed", changed == {2})
+    ok("FIX4: scene 2 visual is now a clock", plan2["scenes"][1]["visual"] == "clock")
+    ok("FIX4: scenes 1 and 3 plan entries are byte-identical to the original",
+       plan2["scenes"][0] == project["plan"]["scenes"][0]
+       and plan2["scenes"][2] == project["plan"]["scenes"][2])
+    ok("FIX4: saved footage map rides along for untouched scenes",
+       (plan2.get("_saved_footage") or {}).get(1, {}).get("clip_id") == "pexels:111")
+
+    # frame identity: an untouched scene renders byte-identical
+    # frames from the original plan and from the edited plan.
+    for pl in (project["plan"], plan2):
+        for s in pl["scenes"]:
+            s.setdefault("d", 5.0)
+            s.setdefault("words", [(0.1, 0.3, w) for w in s["vo"].split()[:4]])
+    f1 = doc.scene_frame(project["plan"], 0, 0.5)
+    f2 = doc.scene_frame(plan2, 0, 0.5)
+    b1, b2 = io.BytesIO(), io.BytesIO()
+    f1.save(b1, format="PNG")
+    f2.save(b2, format="PNG")
+    ok("FIX4: untouched scene 1 frame is byte-identical after the edit",
+       b1.getvalue() == b2.getvalue())
+    f3 = doc.scene_frame(plan2, 1, 0.5)
+    b3 = io.BytesIO()
+    f3.save(b3, format="PNG")
+    f1b = doc.scene_frame(project["plan"], 1, 0.5)
+    b1b = io.BytesIO()
+    f1b.save(b1b, format="PNG")
+    ok("FIX4: the changed scene 2 frame actually differs",
+       b3.getvalue() != b1b.getvalue())
+
+    # Blind FIX 7 test 4: "remove the SFX and slow the voice a little"
+    edit2 = "remove the SFX and slow the voice a little"
+    espec2 = se.extract_spec(edit2)
+    ok("FIX4: 'remove the SFX' extracts as an sfx OFF requirement",
+       any(r["type"] == "sfx" and "OFF" in r["value"] for r in espec2))
+    plan3, cfg3, changed3, notes3 = doc.plan_project_edit(project, espec2, edit2)
+    ok("FIX4: sfx OFF lands in the render config", cfg3.get("sfx") is False)
+    ok("FIX4: voice slow-down lands as a rate offset",
+       int(plan3.get("voice_rate_add") or 0) < 0)
+    ok("FIX4: a settings-only edit changes no scene", changed3 == set())
+
+    # merge_specs: the edit's requirement replaces the original's
+    # per type; the rest of the contract stands.
+    merged = doc.merge_specs(
+        [{"id": "R1", "type": "music", "value": "music ON", "quote": "with music"},
+         {"id": "R2", "type": "topic", "value": "sleep", "quote": "sleep"}],
+        [{"id": "R1", "type": "music", "value": "music OFF", "quote": "no music"}])
+    ok("FIX4: merged spec keeps the topic, takes the edit's music",
+       [r["type"] for r in merged] == ["topic", "music"]
+       and merged[1]["value"] == "music OFF"
+       and [r["id"] for r in merged] == ["R1", "R2"])
+
+
 def main():
     test_spec_engine()
     test_captions()
@@ -411,6 +519,7 @@ def main():
     test_broll_pool()
     test_doc_integration()
     test_media_checks()
+    test_edit_mode()
     print()
     if _fails:
         print(f"v79 tests: {len(_fails)} FAILED: {_fails}")

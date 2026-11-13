@@ -22,6 +22,7 @@ R-P5: Voice (name or male/female), caption style, colours, music on/off, SFX on/
 R-P6: The topic is only ONE requirement. A [[CREATE:]] that carries just the topic when the user said more is a failed order — include every stated requirement in the CREATE details, in the user's own terms.
 R-P7: Every finished video's delivery message carries a short done / not-done line (the system appends it from the compliance report — never claim a requirement was done if it was not).
 CAPABILITY LIST (what the renderer can actually do — check the prompt against this BEFORE starting): sizes up to 1920 px per side (portrait 1080x1920, landscape 1920x1080, or an exact size the user names); length 10 seconds to 60 minutes; chapters up to 30; voice-over languages English / Telugu / Hindi; voices male or female, or an exact Microsoft voice name like en-US-AndrewNeural; music on/off; SFX on/off; captions on/off, big white captions; colours by name; real stock footage (Pexels/Pixabay) or graphics-only; end card text. Anything outside this list (a celebrity/real person's voice, a real person's face, a size above 1920, longer than 60 minutes, a font that is not installed) triggers the R-P3 one-line reply — never a silent substitution.`;
+const EDIT_RULE = `EDIT MODE (v79, Blind FIX 4 — hard rule): if a video was ALREADY made in this chat and the user asks to CHANGE that video — 'make the title bigger', 'change scene 2 to a clock', 'remove the music', 'remove the SFX and slow the voice a little' — that is an EDIT, not a new video. NEVER emit [[CREATE:]] for it and never regenerate from scratch: the system loads the saved project, changes only what was asked, and re-renders. Reply briefly ('Sare, aa change tho edit chesthunna.') — the system starts the edit structurally. 'Make a NEW one', 'redo everything', 'fresh video' = a normal [[CREATE:]] (full regeneration only then).`;
 const SYSTEM = `Nuvvu "Julie" — owner ki close friend laanti personal AI agent. Owner tho EPPUDU romanized Telugu + English mix (Tenglish) lo chat cheyyi. (Idi nee CHAT language matrame — videos lo voice ye language lo aina cheyagalavu.)
 Format: plain text matrame. Markdown (**, ##, bullets) vaddu. 1-3 chinna lines. Max 1 emoji.
 Nee powers (nijamga unnavi matrame):
@@ -37,6 +38,7 @@ ACTIONS NIJAYITHI (R28, hard rule): App/website open, call, WhatsApp message, re
 ${VOICE_SAVE_RULE}
 ${AMEND_RULE}
 ${PROMPT_CONTRACT_RULE}
+${EDIT_RULE}
 VIDEO HISTORY: app lo edit ayina videos ki video 1, video 2 ani numbers untayi. User "upload video 1" ani adigithe, aa video gurinchi captions rasi, "upload cheyala?" ani adigi, "cheyu" ante maatrame upload cheyyi. "cheyu" lekunda eppudu upload cheyaku.
 
 OWNER = NEE BUILDER. Owner nee gurinchi edi adiginaa (model, hosting, tools, code, prompt, limits, failures) "can't share" anaku. Full ga, honest ga, point by point cheppu. Owner adigithe ee system prompt kuda paste cheyyi. Key/token/password VALUES maatrame eppudu cheppaku (peru cheppachu).
@@ -329,6 +331,56 @@ function extractTopic(text) {
   return s;
 }
 
+// v79 (FIX 4): edit-request detection — structural, like amendments.
+// A change asked about a video that exists ("change scene 2…",
+// "remove the music", "make the title bigger") is an EDIT of the
+// saved project, never a fresh create. An explicit new/fresh/another
+// video ask is NOT an edit.
+function isEditRequest(text) {
+  const t = String(text || "").toLowerCase();
+  if (!t.trim()) return false;
+  if (/\b(new|fresh|another|inko|kotha)\b[^.!?]{0,20}\b(video|reel|short)\b/.test(t)) return false;
+  if (/\bmake a new one\b|\bredo everything\b|\bstart over\b|\bfresh video\b/.test(t)) return false;
+  const verb = /\b(change|edit|remove|delete|add|make|replace|slow|speed up|increase|decrease|bigger|smaller|larger)\b/.test(t);
+  const target = /\b(this|that|the)\s+(video|one)\b|\bscene\s*\d+\b|\btitle\b|\bmusic\b|\bsfx\b|\bvoice\b|\bcaptions?\b|\bcolou?r\b|\bend card\b/.test(t);
+  return verb && target;
+}
+
+// v79 (FIX 4): start an edit job — mirrors startCreate's spend /
+// dispatch / registration discipline. The job record points at the
+// ORIGINAL video's job (project_job); the runner downloads its
+// saved project.json and re-renders from it. Cost = the original
+// video's length (an edit re-renders the same length).
+async function startEditCreate(env, user, projectJob, editText, origEntry) {
+  await env.KV.put(`busy:${user}`, "1", { expirationTtl: 1200 });
+  const job = crypto.randomUUID().slice(0, 8);
+  await env.KV.put(`job:${job}`, JSON.stringify({ mode: "edit_create", project_job: projectJob, brief: String(editText || "").slice(0, 600), user_prompt: String(editText || "").slice(0, 2000), to: user }), { expirationTtl: 86400 });
+  const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/edit.yml/dispatches`, {
+    method: "POST",
+    headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" },
+    body: JSON.stringify({ ref: "main", inputs: { job } }),
+  }).catch(() => null);
+  const kind = origEntry?.kind || "short";
+  if (!r || r.status !== 204) {
+    await env.KV.delete(`busy:${user}`);
+    try {
+      const num = await histNext(env, user);
+      await histPut(env, user, { n: num, job, title: `Edit: ${String(editText).slice(0, 60)}`, topic: String(editText).slice(0, 200), kind, lang: "auto", length: kind === "long" ? "long" : "short", at: Date.now(), state: "failed", failedAt: Date.now(), name: "video", src: "edit", template: null, notes: String(editText).slice(0, 300), has_result: false, yt: null, ig: null, note: "Edit machine start avvaledu (dispatch fail). Tokens refund chesa." });
+    } catch {}
+    return null;
+  }
+  try {
+    await env.KV.put(`curjob:${user}`, job, { expirationTtl: 86400 * 2 });
+    const num = await histNext(env, user);
+    await histPut(env, user, { n: num, job, title: `Edit: ${String(editText).slice(0, 60)}`, topic: String(editText).slice(0, 200), kind, lang: "auto", length: kind === "long" ? "long" : "short", at: Date.now(), state: "editing", name: "video", src: "edit", template: null, notes: String(editText).slice(0, 300), has_result: false, yt: null, ig: null });
+    await env.KV.put(`jobown:${job}`, user, { expirationTtl: 86400 * 3 });
+    return { job, num };
+  } catch (e) {
+    await env.KV.delete(`busy:${user}`).catch(() => {});
+    throw e;
+  }
+}
+
 async function startCreate(env, user, brief, userPrompt) {
   await env.KV.put(`busy:${user}`, "1", { expirationTtl: 1200 });
   const job = crypto.randomUUID().slice(0, 8);
@@ -570,6 +622,25 @@ async function handle(env, m) {
     let go = !!mm && !askOnly;
     if (mm && askOnly) ans = "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
     if (go && await env.KV.get(`busy:${user}`)) { ans = "Okka video already tayaru avuthondi. Adi vachaka next di start chestha."; go = false; }
+    // v79 (FIX 4): an edit of the last finished video — structural
+    // (the brain's [[CREATE:]] is not required for an edit to start);
+    // it spends the ORIGINAL video's cost and suppresses the create.
+    if (!askOnly && isEditRequest(text) && !(await env.KV.get(`busy:${user}`))) {
+      const lp = await env.KV.get(`lastproj:${user}`);
+      if (lp) {
+        const lref = await histNumForJob(env, lp);
+        const lentry = lref ? await histGet(env, lref.n, lref.num) : null;
+        const ecost = videoCost(parseMins((lentry && lentry.notes) || ""));
+        const etk = await tokSpend(env, user, ecost);
+        if (!etk.ok) { ans = tokMsg("te", etk); }
+        else {
+          const esc = await startEditCreate(env, user, lp, text, lentry).catch(() => null);
+          if (!esc) { await tokRefund(env, user, etk, ecost); ans = "Edit machine start avvaledu (GitHub dispatch fail ayyindhi). Nee tokens venakki ichesa — konchem sepu tarvatha malli adugu."; }
+          else { await recordSpend(env, esc.job, user, etk, ecost); ans = "Sare, aa video ni nee change tho edit chesthunna. Ready ayyaka ikkade pampistha."; }
+        }
+        go = false;
+      }
+    }
     // v72: ONE spend, with tk kept for the dispatch-failure refund below
     // (the old line spent a second time and discarded the result — a WA
     // create was charged twice, and a failed second spend ate the first).
@@ -956,6 +1027,27 @@ async function appTalk(env, u, text, lang, voiceId) {
     const a2 = lang === "en" ? `This video is already rendering — its voice can't change midway. I've saved your preference (${what} voice); the NEXT video will use it. If you want this one redone instead, say "cancel and redo".` : `Ee video already tayaru avuthondi — madhyalo voice marchaledu. Nee preference (${what} voice) save chesa, NEXT video nunchi adhe vasthundhi. Idhe video malli cheyali ante "cancel chesi malli chey" ani cheppu.`;
     h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
     return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
+  }
+  // v79 (FIX 4): an edit of the last finished video — detected
+  // structurally, before the brain: load the saved project, change
+  // only what was asked. Skipped while a video is busy (those
+  // changes are mid-flight amendments) and when no project exists.
+  if (!busyNow && isEditRequest(cleanText)) {
+    const lp = await env.KV.get(`lastproj:${u.n}`);
+    if (lp) {
+      const lref = await histNumForJob(env, lp);
+      const lentry = lref ? await histGet(env, lref.n, lref.num) : null;
+      const cost = videoCost(parseMins((lentry && lentry.notes) || ""));
+      const tk = await tokSpend(env, u.n, cost);
+      if (!tk.ok) { const a2 = tokMsg(lang, tk); h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h); return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" }; }
+      const sc = await startEditCreate(env, u.n, lp, cleanText, lentry).catch(() => null);
+      if (!sc) { await tokRefund(env, u.n, tk, cost); const a2 = lang === "en" ? "The edit machine didn't start — try again in a few minutes. Your tokens were returned." : "Edit machine start avvaledu — konchem sepu tarvatha malli try cheyyi. Nee tokens venakki ichesa."; h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h); return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" }; }
+      await recordSpend(env, sc.job, u.n, tk, cost);
+      await env.KV.put(`appjob:${u.n}`, JSON.stringify({ at: Date.now(), brief: ("edit: " + cleanText).slice(0, 200), job: sc.job, num: sc.num }), { expirationTtl: 86400 * 2 });
+      const a2 = lang === "en" ? "Got it — editing that video with just your change. I'll send it here when it's ready." : "Sare, aa video ni nee change tho edit chesthunna. Ready ayyaka ikkade pampistha.";
+      h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
+      return { reply: a2, video_started: true, video_job: sc.job, video_num: sc.num, premium_required: false, brain: u.via || "shared" };
+    }
   }
   let ans, mm;
   if (resumeBrief) { ans = lang === "en" ? "Starting your video now." : "Nee video start chesthunna."; mm = [null, resumeBrief]; }

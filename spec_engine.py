@@ -123,11 +123,11 @@ def extract_deterministic(text):
     # negations -> exclude / off switches (FIX 1: "don't" items are
     # requirements too)
     for pat, rtype, value in (
-            (r"\bno\s+music\b|\bwithout\s+music\b|\bdon'?t\s+(?:add|use)\s+music\b", "music", "music OFF"),
-            (r"\bno\s+(?:sfx|sound\s+effects)\b|\bwithout\s+(?:sfx|sound\s+effects)\b", "sfx", "sfx OFF"),
+            (r"\bno\s+music\b|\bwithout\s+music\b|\bdon'?t\s+(?:add|use)\s+music\b|\bremove\s+(?:the\s+)?music\b", "music", "music OFF"),
+            (r"\bno\s+(?:sfx|sound\s+effects)\b|\bwithout\s+(?:sfx|sound\s+effects)\b|\bremove\s+(?:the\s+)?(?:sfx|sound\s+effects)\b", "sfx", "sfx OFF"),
             (r"\bno\s+zoom\b|\bwithout\s+zoom\b", "exclude", "no zoom"),
             (r"\bno\s+graphics\b|\bno\s+animations?\b", "exclude", "no graphics"),
-            (r"\bno\s+captions\b|\bwithout\s+captions\b|\bno\s+subtitles\b", "captions", "captions OFF")):
+            (r"\bno\s+captions\b|\bwithout\s+captions\b|\bno\s+subtitles\b|\bremove\s+(?:the\s+)?captions\b", "captions", "captions OFF")):
         m = re.search(pat, low)
         grab(rtype, value, m)
 
