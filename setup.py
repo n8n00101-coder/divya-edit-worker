@@ -85,7 +85,16 @@ JOB = os.environ["JOB"]
 PROVIDER = os.environ["PROVIDER"]
 H = {"x-runner-key": KEY}
 
-CHAIN_ORDER = ["groq", "openrouter", "gemini", "cloudflare", "pexels"]
+# v81 chain order: the original brain providers + server first (their
+# proven order), then more free chat/vision providers, then search
+# keys, then media keys; Pexels stays last (v70: an enhancement key —
+# its failure never blocks anything).
+CHAIN_ORDER = ["groq", "openrouter", "gemini", "cloudflare",
+               "cohere", "together", "sambanova", "fireworks", "cerebras",
+               "nvidia", "mistral", "ai21", "voyage",
+               "tavily", "serper", "exa",
+               "deepgram", "assemblyai", "elevenlabs", "stability", "jina",
+               "pexels"]
 MAX_TRIES = 2
 CURRENT_PROVIDER = None
 
@@ -831,6 +840,31 @@ def read_worker_script():
 
 # ---------- key testing + posting (single place; never logs a key) ----------
 
+def _bearer_models(url, key):
+    """v81: a provider models-list call with a Bearer key — the cheap
+    auth check for providers whose free tier is a real quota (the key
+    either authenticates or it does not)."""
+    try:
+        r = httpx.get(url, headers={"Authorization": f"Bearer {key}"}, timeout=20)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def _chat_probe(url, key, model):
+    """v81: ONE minimal chat completion (max_tokens 1). The honest
+    check for trial-credit providers (Together / SambaNova / Fireworks
+    / AI21): a models-list call can pass on an account whose balance
+    is zero or payment-held — a chat call cannot, so a key is only
+    ever reported working when it can actually answer."""
+    try:
+        r = httpx.post(url, json={"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 1},
+                       headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, timeout=30)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 def test_key(provider, key):
     """One cheap API call to verify a freshly created key. Never logs it."""
     try:
@@ -856,6 +890,87 @@ def test_key(provider, key):
             return r.status_code == 200
         if provider == "cloudflare":
             return cf_verify_token(key)
+        # ---- v81 providers -------------------------------------------
+        if provider == "cohere":
+            # Trial key, auto-issued at signup (free evaluation quota).
+            return _bearer_models("https://api.cohere.com/v1/models", key)
+        if provider == "together":
+            # Signup credit / free-model pool varies — prove a REAL chat
+            # on a free model, never just the auth-level models list.
+            r = httpx.get("https://api.together.xyz/v1/models", headers={"Authorization": f"Bearer {key}"}, timeout=20)
+            if r.status_code != 200:
+                return False
+            ids = [str(m.get("id") or "") for m in (r.json().get("data") or [])]
+            free = [i for i in ids if "free" in i.lower()]
+            for model in (free[:2] or ids[:1]):
+                if model and _chat_probe("https://api.together.xyz/v1/chat/completions", key, model):
+                    return True
+            return False
+        if provider == "sambanova":
+            # Free tier is rate-limited quota when no payment method is
+            # linked; a 1-token chat proves the quota is really live.
+            return _chat_probe("https://api.sambanova.ai/v1/chat/completions", key, "Meta-Llama-3.3-70B-Instruct")
+        if provider == "fireworks":
+            # $1 trial credit on signup — a 1-token chat on a small model.
+            return _chat_probe("https://api.fireworks.ai/inference/v1/chat/completions", key, "accounts/fireworks/models/llama-v3p1-8b-instruct")
+        if provider == "cerebras":
+            return _bearer_models("https://api.cerebras.ai/v1/models", key)
+        if provider == "nvidia":
+            return _bearer_models("https://integrate.api.nvidia.com/v1/models", key)
+        if provider == "mistral":
+            # A key can only be created after the Experiment plan's
+            # phone verification, so an authenticating key is verified.
+            return _bearer_models("https://api.mistral.ai/v1/models", key)
+        if provider == "ai21":
+            # $10 trial credit — prove it with a 1-token Jamba chat.
+            for model in ("jamba-1.5-mini", "jamba-mini"):
+                if _chat_probe("https://api.ai21.com/studio/v1/chat/completions", key, model):
+                    return True
+            return False
+        if provider == "voyage":
+            # 200M free tokens per current model, no card — one tiny
+            # embedding call (a few tokens) is the real proof.
+            for model in ("voyage-4-lite", "voyage-3.5-lite", "voyage-3-lite"):
+                r = httpx.post("https://api.voyageai.com/v1/embeddings", json={"input": "hi", "model": model},
+                               headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, timeout=30)
+                if r.status_code == 200:
+                    return True
+            return False
+        if provider == "tavily":
+            # Researcher plan: 1,000 credits/month, no card. One basic
+            # search (1 credit) proves the key end to end.
+            r = httpx.post("https://api.tavily.com/search", json={"query": "hello", "max_results": 1},
+                           headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, timeout=30)
+            return r.status_code == 200
+        if provider == "serper":
+            # Free account, 2,500 queries — one real search proves it.
+            r = httpx.post("https://api.serper.dev/search", json={"q": "hello"},
+                           headers={"X-API-KEY": key, "Content-Type": "application/json"}, timeout=30)
+            return r.status_code == 200
+        if provider == "exa":
+            # One real search: accounts whose free credits are held
+            # pending payment verification fail HERE, honestly, instead
+            # of being listed as working on an auth-only check.
+            r = httpx.post("https://api.exa.ai/search", json={"query": "hello", "numResults": 1},
+                           headers={"x-api-key": key, "Content-Type": "application/json"}, timeout=30)
+            return r.status_code == 200
+        if provider == "deepgram":
+            r = httpx.get("https://api.deepgram.com/v1/projects", headers={"Authorization": f"Token {key}"}, timeout=20)
+            return r.status_code == 200
+        if provider == "assemblyai":
+            r = httpx.get("https://api.assemblyai.com/v2/transcript?limit=1", headers={"Authorization": key}, timeout=20)
+            return r.status_code == 200
+        if provider == "elevenlabs":
+            r = httpx.get("https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": key}, timeout=20)
+            return r.status_code == 200
+        if provider == "stability":
+            r = httpx.get("https://api.stability.ai/v1/user/balance", headers={"Authorization": f"Bearer {key}"}, timeout=20)
+            return r.status_code == 200
+        if provider == "jina":
+            # 10M free tokens on the auto-issued key — one tiny embedding.
+            r = httpx.post("https://api.jina.ai/v1/embeddings", json={"model": "jina-embeddings-v3", "input": ["hi"]},
+                           headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, timeout=30)
+            return r.status_code == 200
     except Exception as e:
         print(f"key test failed for {provider}:", e)
     return False
@@ -1331,6 +1446,39 @@ def try_login(page, job, cfg):
     return False
 
 
+def _fill_identity_fields(page, job):
+    """v81 (proof-driven): many consoles (Cohere, Deepgram, …) require a
+    NAME field on the signup form — the generic flow filled only
+    email+password, so the submit silently failed validation and the
+    keys page later redirected to login. Fill still-empty visible
+    name/company fields (never overwrite): the app name for a person
+    name — the same convention flow_pexels already uses — and a
+    username derived from the account email."""
+    try:
+        user = re.sub(r"[^a-z0-9_]", "", (job.get("email") or "julie").split("@")[0].lower()) or "julie"
+        for sels, val in (
+            (["input[name*='fullname' i]", "input[name*='full_name' i]", "input[name='name']",
+              "input[placeholder*='full name' i]", "input[autocomplete='name']"], "Julie"),
+            (["input[name*='firstname' i]", "input[name*='first_name' i]",
+              "input[placeholder*='first name' i]", "input[autocomplete='given-name']"], "Julie"),
+            (["input[name*='lastname' i]", "input[name*='last_name' i]",
+              "input[placeholder*='last name' i]", "input[autocomplete='family-name']"], "Julie"),
+            (["input[name*='company' i]", "input[name*='organization' i]",
+              "input[placeholder*='company' i]"], "Julie"),
+            (["input[name*='username' i]", "input[placeholder*='username' i]"], user),
+        ):
+            for sel in sels:
+                loc = page.locator(sel)
+                try:
+                    if loc.count() and loc.first.is_visible() and not (loc.first.input_value() or "").strip():
+                        loc.first.fill(val)
+                        break
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+
 def flow_email_signup(page, job, cfg):
     """Email-signup flow, v39: detect the rendered auth page first.
 
@@ -1418,13 +1566,24 @@ def flow_email_signup(page, job, cfg):
             if check_stop():
                 return _stopped()
         elif mode2 in ("email-password", "email-first"):
-            if not fill(page, _AUTH_PASS, password):
-                return _fail(f"{name} signup form lo password field kanipinchaledu (step: signup form). Take Control tho try cheyyi.")
-            tick_consent(page)
-            click_submit(page)
-            page.wait_for_timeout(4000)
+            # v81 (proof-driven): Clerk-style consoles (Tavily, Exa)
+            # answer the email step with a verification-CODE form, not
+            # a password field. That code step is the existing SMS/code
+            # pause (the code arrives by email; the server feeds it the
+            # same way) — handle it before demanding a password.
+            code = maybe_sms(page, job)
+            if code is False:
+                return _stopped()
+            if code is None:
+                _fill_identity_fields(page, job)
+                if not fill(page, _AUTH_PASS, password):
+                    return _fail(f"{name} signup form lo password field kanipinchaledu (step: signup form). Take Control tho try cheyyi.")
+                tick_consent(page)
+                click_submit(page)
+                page.wait_for_timeout(4000)
         # mode2 == "unknown": no auth form any more — proceed to key creation.
     elif mode == "email-password":
+        _fill_identity_fields(page, job)
         ok = fill(page, _AUTH_EMAIL, email)
         ok = fill(page, _AUTH_PASS, password) and ok
         if not ok:
@@ -1480,10 +1639,31 @@ def flow_email_signup(page, job, cfg):
     progress("running", "api-key", "API key create chesthunna.", page.url)
     goto(page, cfg["keys_url"])
     page.wait_for_timeout(2500)
+    # v81 (proof-driven): some consoles (Deepgram) create the account
+    # without holding the session — the keys URL lands back on a login
+    # form. One explicit login with the job's own credentials, then
+    # re-open the keys page, instead of failing as a "layout" miss.
+    try:
+        if page.locator("input[type='password']").count() and _page_says(page, ["log in", "sign in"]):
+            if try_login(page, job, cfg):
+                goto(page, cfg["keys_url"])
+                page.wait_for_timeout(2500)
+    except Exception:
+        pass
     maybe_captcha(page)
-    click(page, ["button:has-text('Create')", "button:has-text('New key')", "button:has-text('Generate')", "button:has-text('Create API key')", "button:has-text('Create key')"])
-    page.wait_for_timeout(4000)
+    # v81: some consoles open on a dashboard — walk the optional nav
+    # hints to the API-keys view first (Cerebras, Voyage, Deepgram…).
+    for nav in cfg.get("keys_nav") or []:
+        click(page, [f"a:has-text('{nav}')", f"button:has-text('{nav}')", f"text={nav}"])
+        page.wait_for_timeout(1500)
+    # v81: several providers DISPLAY an existing/default key on the
+    # keys page (Tavily, AssemblyAI, AI21…) — read it before creating
+    # anything, so a displayed key is never duplicated or missed.
     key = extract_key(page, cfg["key_patterns"])
+    if not key:
+        click(page, ["button:has-text('Create')", "button:has-text('New key')", "button:has-text('Generate')", "button:has-text('Create API key')", "button:has-text('Create key')"])
+        page.wait_for_timeout(4000)
+        key = extract_key(page, cfg["key_patterns"])
     if not key:
         # The key may be in a modal/input — look for a long token-like value.
         try:
@@ -1930,6 +2110,113 @@ def flow_pexels(page, job, cfg):
     return _fail(f"{name} key kanipinchaledu — form tarvatha kuda key display avvaledu (step: API access form). Take Control tho try cheyyi.")
 
 
+_PHONE_GATE_NEEDLES = ("verify your phone", "phone verification", "verify phone",
+                       "enter your phone", "mobile number", "phone number")
+_PLAN_GATE_NEEDLES = ("choose your plan", "select a plan", "experiment plan", "choose a plan")
+
+
+def _mistral_gate_present(page):
+    """Is the Mistral console holding key creation behind the free
+    Experiment plan's phone-verification / plan gate? Pure page read."""
+    try:
+        txt = (page.inner_text("body") or "").lower()
+    except Exception:
+        return False
+    return any(n in txt for n in _PHONE_GATE_NEEDLES + _PLAN_GATE_NEEDLES)
+
+
+def flow_mistral(page, job, cfg):
+    """v81 Mistral: the account signup itself is the generic email
+    flow. The free Experiment plan then gates key creation behind
+    PHONE verification — a human step by design (an SMS code to the
+    user's own number; one number per account). The runner never
+    invents a number: if the generic pass stops at key creation and
+    the gate is on screen, hand that ONE step to the user (Take
+    Control in profile mode; the sign-in pause otherwise), then
+    finish the key creation. Only the free Experiment plan is ever
+    chosen — a paid plan is never selected."""
+    res = flow_email_signup(page, job, cfg)
+    if res.get("status") != "failed" or "Key kanipinchaledu" not in str(res.get("error") or ""):
+        return res
+    name = cfg["name"]
+    goto(page, cfg["keys_url"])
+    page.wait_for_timeout(3000)
+    if not _mistral_gate_present(page):
+        return res  # some other key-creation miss — keep the original failure
+    progress("paused", "phone", f"{name} free plan ki phone verification kavali — aa okka step nuvve cheyyi.", page.url)
+    # Choose the free plan first if a plan picker is what is shown.
+    click(page, ["button:has-text('Experiment')", "text=Experiment plan"])
+    page.wait_for_timeout(1500)
+    if _page_says(page, _PHONE_GATE_NEEDLES):
+        if PROFILE_MODE:
+            resumed = take_control(page, job, cfg)
+        else:
+            resumed = pause_for_signin(page, cfg, note=f"{name} free plan phone verification okkasari nuvve complete cheyyi — tarvatha Continue nokku, key nene create chestha.")
+        if not resumed:
+            return _fail(f"{name} phone verification complete avvaledu — free plan activate avvaledu, key create cheyalenu (step: phone verification).", extra={"no_retry": True})
+    if check_stop():
+        return _stopped()
+    goto(page, cfg["keys_url"])
+    page.wait_for_timeout(2500)
+    click(page, ["button:has-text('Create new key')", "button:has-text('Create API key')", "button:has-text('Create key')", "button:has-text('Create')", "button:has-text('Generate')"])
+    page.wait_for_timeout(4000)
+    key = extract_key(page, cfg["key_patterns"])
+    if key:
+        return _ok(key=key)
+    return _fail(f"{name} key kanipinchaledu — phone verification tarvatha kuda (step: key creation). Take Control tho try cheyyi.")
+
+
+def flow_jina(page, job, cfg):
+    """v81 Jina: there is no signup form to fill — a fresh API key with
+    10M free tokens is generated automatically on the product pages.
+    Read it off the page, and the standard submit path verifies it
+    with a real embedding call before it is ever listed as working.
+    If the page withholds the key behind a sign-in, that step is the
+    user's (Take Control / sign-in pause), never bypassed."""
+    name = cfg["name"]
+    progress("running", "api-key", f"{name} — free API key page open chesthunna.", cfg["url"])
+    if not goto(page, cfg["url"]):
+        return _fail(f"{name} page load avvaledu — site open avvaledu (step: API key page, {cfg['url']}). Take Control tho try cheyyi.")
+    page.wait_for_timeout(3000)
+    if check_stop():
+        return _stopped()
+    maybe_captcha(page)
+    key = extract_key(page, cfg["key_patterns"])
+    if not key:
+        # The key lives in the page's API KEY panel — open it first.
+        click(page, ["text=API KEY & BILLING", "text=API KEY", "button:has-text('Get API Key')", "button:has-text('API Key')"])
+        page.wait_for_timeout(3500)
+        key = extract_key(page, cfg["key_patterns"])
+    if not key:
+        try:
+            m = re.search(r"(jina_[A-Za-z0-9]{32,})", page.inner_text("body") or "")
+            if m:
+                key = m.group(1)
+        except Exception:
+            pass
+    if key:
+        return _ok(key=key)
+    # No key on display — the page may want a sign-in first.
+    if _visible(page, ["a:has-text('Log in')", "button:has-text('Log in')", "a:has-text('Sign in')", "button:has-text('Sign in')"]):
+        progress("paused", "signin", f"{name} — key chupinchataniki sign-in kavali, aa okka step nuvve cheyyi.", page.url)
+        click(page, ["a:has-text('Log in')", "button:has-text('Log in')", "a:has-text('Sign in')", "button:has-text('Sign in')"])
+        page.wait_for_timeout(2500)
+        if PROFILE_MODE:
+            resumed = take_control(page, job, cfg)
+        else:
+            resumed = pause_for_signin(page, cfg)
+        if not resumed:
+            return _fail(f"{name} sign-in complete avvaledu — key theesukoledu (step: sign-in).", extra={"no_retry": True})
+        if check_stop():
+            return _stopped()
+        goto(page, cfg["url"])
+        page.wait_for_timeout(3000)
+        key = extract_key(page, cfg["key_patterns"])
+        if key:
+            return _ok(key=key)
+    return _fail(f"{name} key kanipinchaledu — page meedha auto-generate aina key display avvaledu (step: API key page). Take Control tho try cheyyi.")
+
+
 FLOWS = {
     "groq": {"name": "Groq", "url": "https://console.groq.com/signup",
              "login_url": "https://console.groq.com/login",
@@ -1951,6 +2238,83 @@ FLOWS = {
                "login_url": "https://www.pexels.com/login/",
                "keys_url": "https://www.pexels.com/api/", "flow": "pexels",
                "key_patterns": [r"\b([A-Za-z0-9]{56})\b"]},
+    # ---- v81: more free providers (audit 2026-11-13) ------------------
+    # Chat/vision first. Every one of these is free-tier with no card;
+    # trial-credit ones are verified by test_key with a REAL minimal
+    # call, so a key that cannot actually answer is never saved.
+    "cohere": {"name": "Cohere", "url": "https://dashboard.cohere.com/welcome/register",
+               "login_url": "https://dashboard.cohere.com/welcome/login",
+               "keys_url": "https://dashboard.cohere.com/api-keys", "flow": "email",
+               "key_patterns": [r"\b([A-Za-z0-9]{40})\b"]},
+    "together": {"name": "Together AI", "url": "https://api.together.ai/signup",
+                 "login_url": "https://api.together.ai/signin",
+                 "keys_url": "https://api.together.ai/settings/api-keys", "flow": "email",
+                 "key_patterns": [r"\b([0-9a-f]{64})\b", r"\b([A-Za-z0-9_\-]{40,})\b"]},
+    "sambanova": {"name": "SambaNova", "url": "https://cloud.sambanova.ai/",
+                  "login_url": "https://cloud.sambanova.ai/",
+                  "keys_url": "https://cloud.sambanova.ai/apis", "flow": "email",
+                  "key_patterns": [r"\b([0-9a-fA-F]{8}-[0-9a-fA-F\-]{25,})\b", r"\b([A-Za-z0-9_\-]{40,})\b"]},
+    "fireworks": {"name": "Fireworks AI", "url": "https://fireworks.ai/login",
+                  "login_url": "https://fireworks.ai/login",
+                  "keys_url": "https://app.fireworks.ai/settings/users/api-keys", "flow": "email",
+                  "key_patterns": [r"\b([A-Za-z0-9]{40,})\b"]},
+    "cerebras": {"name": "Cerebras", "url": "https://cloud.cerebras.ai/",
+                 "login_url": "https://cloud.cerebras.ai/",
+                 "keys_url": "https://cloud.cerebras.ai/", "flow": "email",
+                 "keys_nav": ["API Keys"],
+                 "key_patterns": [r"(csk-[A-Za-z0-9_\-]{20,})"]},
+    "nvidia": {"name": "NVIDIA NIM", "url": "https://build.nvidia.com/",
+               "login_url": "https://build.nvidia.com/",
+               "keys_url": "https://build.nvidia.com/settings/api-keys", "flow": "email",
+               "key_patterns": [r"(nvapi-[A-Za-z0-9_\-]{20,})"]},
+    "mistral": {"name": "Mistral AI", "url": "https://console.mistral.ai/",
+                "login_url": "https://console.mistral.ai/",
+                "keys_url": "https://console.mistral.ai/api-keys", "flow": "mistral",
+                "key_patterns": [r"\b([A-Za-z0-9]{32})\b"]},
+    "ai21": {"name": "AI21", "url": "https://studio.ai21.com/",
+             "login_url": "https://studio.ai21.com/",
+             "keys_url": "https://studio.ai21.com/account/api-key", "flow": "email",
+             "key_patterns": [r"\b([A-Za-z0-9_\-]{40,64})\b"]},
+    "voyage": {"name": "Voyage AI", "url": "https://dash.voyageai.com/",
+               "login_url": "https://dash.voyageai.com/",
+               "keys_url": "https://dash.voyageai.com/", "flow": "email",
+               "keys_nav": ["API Keys"],
+               "key_patterns": [r"(pa-[A-Za-z0-9_\-]{20,})"]},
+    # Search keys.
+    "tavily": {"name": "Tavily", "url": "https://app.tavily.com/",
+               "login_url": "https://app.tavily.com/",
+               "keys_url": "https://app.tavily.com/home", "flow": "email",
+               "key_patterns": [r"(tvly-[A-Za-z0-9\-]{16,})"]},
+    "serper": {"name": "Serper", "url": "https://serper.dev/signup",
+               "login_url": "https://serper.dev/login",
+               "keys_url": "https://serper.dev/dashboard", "flow": "email",
+               "key_patterns": [r"\b([0-9a-f]{40})\b"]},
+    "exa": {"name": "Exa", "url": "https://dashboard.exa.ai/sign-up",
+            "login_url": "https://dashboard.exa.ai/login",
+            "keys_url": "https://dashboard.exa.ai/api-keys", "flow": "email",
+            "key_patterns": [r"\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b"]},
+    # Media keys.
+    "deepgram": {"name": "Deepgram", "url": "https://console.deepgram.com/signup",
+                 "login_url": "https://console.deepgram.com/login",
+                 "keys_url": "https://console.deepgram.com/", "flow": "email",
+                 "keys_nav": ["API Keys"],
+                 "key_patterns": [r"\b([0-9a-f]{40})\b"]},
+    "assemblyai": {"name": "AssemblyAI", "url": "https://www.assemblyai.com/dashboard/signup",
+                   "login_url": "https://www.assemblyai.com/dashboard/signin",
+                   "keys_url": "https://www.assemblyai.com/app", "flow": "email",
+                   "key_patterns": [r"\b([0-9a-f]{32})\b"]},
+    "elevenlabs": {"name": "ElevenLabs", "url": "https://elevenlabs.io/app/sign-up",
+                   "login_url": "https://elevenlabs.io/app/sign-in",
+                   "keys_url": "https://elevenlabs.io/app/settings/api-keys", "flow": "email",
+                   "key_patterns": [r"(sk_[A-Za-z0-9]{32,})", r"\b([0-9a-f]{32})\b"]},
+    "stability": {"name": "Stability AI", "url": "https://platform.stability.ai/",
+                  "login_url": "https://platform.stability.ai/",
+                  "keys_url": "https://platform.stability.ai/account", "flow": "email",
+                  "key_patterns": [r"(sk-[A-Za-z0-9]{32,})"]},
+    "jina": {"name": "Jina AI", "url": "https://jina.ai/embeddings",
+             "login_url": "https://jina.ai/",
+             "keys_url": "https://jina.ai/embeddings", "flow": "jina",
+             "key_patterns": [r"(jina_[A-Za-z0-9]{32,})"]},
 }
 
 
@@ -1987,7 +2351,7 @@ def run_flow(page, job, cfg):
         # and similar walls show on FIRST load. Give the page ~6s to
         # clear a managed challenge; if the wall persists, fail in
         # seconds (no_retry) instead of grinding through the whole flow.
-        if flow in ("cloudflare", "token", "email", "pexels"):
+        if flow in ("cloudflare", "token", "email", "pexels", "mistral", "jina"):
             try:
                 page.goto(cfg["url"], wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(2500)
@@ -2006,6 +2370,10 @@ def run_flow(page, job, cfg):
             return flow_google(page, job, cfg)
         if flow == "pexels":
             return flow_pexels(page, job, cfg)
+        if flow == "mistral":
+            return flow_mistral(page, job, cfg)
+        if flow == "jina":
+            return flow_jina(page, job, cfg)
         return flow_email_signup(page, job, cfg)
     except WallHit as w:
         return _fail(f"{cfg['name']} security wall ({w}) — Take Control tho nuvve okkasari sign in cheyyi, tarvatha Julie ne continue chesthundhi.", extra={"no_retry": True, "wall": str(w)})

@@ -2370,7 +2370,7 @@ async function chatWithFallback(env, u, messages) {
 // instead. R48 WINS over R18: Julie creates the accounts, API keys and
 // server setup itself on one allow — the user does NO work except, only
 // if needed, ONE email-link tap or ONE SMS code.
-const SETUP_Q_RX = /\bapi[- ]?keys?\b|\bais?\b.{0,25}\b(down|pani\s*cheyy|work\s*avva|providers?)\b|providers?\s+down\b|bring\s+(the\s+)?(api\s+)?keys?\b|keys?\s+(kavali|theesko|teeskoni|ivvu|create|ela|lu)\b|key\s+(setup|create|ela)\b|free\s+(ai|key|keys?)\b|setup\s+(keys?|api|ai|account|start|cheyu|cheyyi|ela|enti|status|progress|malli)\b|\bgroq\b|\bopenrouter\b|\bgemini\b|\bcloudflare\b/i;
+const SETUP_Q_RX = /\bapi[- ]?keys?\b|\bais?\b.{0,25}\b(down|pani\s*cheyy|work\s*avva|providers?)\b|providers?\s+down\b|bring\s+(the\s+)?(api\s+)?keys?\b|keys?\s+(kavali|theesko|teeskoni|ivvu|create|ela|lu)\b|key\s+(setup|create|ela)\b|free\s+(ai|key|keys?)\b|setup\s+(keys?|api|ai|account|start|cheyu|cheyyi|ela|enti|status|progress|malli)\b|\bgroq\b|\bopenrouter\b|\bgemini\b|\bcloudflare\b|\bcohere\b|\btogether\b|\bsambanova\b|\bfireworks\b|\bcerebras\b|\bnvidia\b|\bmistral\b|\bai21\b|\bvoyage\b|\btavily\b|\bserper\b|\bexa\b|\bdeepgram\b|\bassemblyai\b|\belevenlabs\b|\bstability\b|\bjina\b|\bpexels\b/i;
 function isSetupQuestion(text) {
   const t = String(text || "");
   if (isCreateOrder(t) || isNoVideoEditOrder(t)) return false; // a video order is still a video order
@@ -3258,6 +3258,28 @@ const SETUP_PROVIDERS = {
   gemini: { name: "Gemini (Google AI Studio)", site: "aistudio.google.com", url: "https://aistudio.google.com/", flow: "google" }, // v40: provisioned SERVER-SIDE by provisionGeminiKey() in setupStartNext — flow "google" stays as the runner fallback for manual runs only
   cloudflare: { name: "Cloudflare (server)", site: "dash.cloudflare.com", url: "https://dash.cloudflare.com/sign-up", flow: "token" },
   pexels: { name: "Pexels", site: "pexels.com", url: "https://www.pexels.com/api/", flow: "pexels" }, // v70: the user's OWN stock-footage key, created by the runner's flow_pexels — an enhancement key (B-roll), NOT a brain provider: never in AUTO_PROVIDERS, never counted by needsSetup
+  // v81: more free providers Julie creates herself (R59) — free tiers
+  // only, no card anywhere; the runner verifies each key with a REAL
+  // minimal API call before it is stored/listed. Like Pexels, these
+  // are capability keys: never in AUTO_PROVIDERS, never counted by
+  // needsSetup (the brain trio above stays the setup gate).
+  cohere: { name: "Cohere", site: "dashboard.cohere.com", url: "https://dashboard.cohere.com/welcome/register", flow: "email" },
+  together: { name: "Together AI", site: "api.together.ai", url: "https://api.together.ai/signup", flow: "email" },
+  sambanova: { name: "SambaNova", site: "cloud.sambanova.ai", url: "https://cloud.sambanova.ai/", flow: "email" },
+  fireworks: { name: "Fireworks AI", site: "fireworks.ai", url: "https://fireworks.ai/login", flow: "email" },
+  cerebras: { name: "Cerebras", site: "cloud.cerebras.ai", url: "https://cloud.cerebras.ai/", flow: "email" },
+  nvidia: { name: "NVIDIA NIM", site: "build.nvidia.com", url: "https://build.nvidia.com/", flow: "email" },
+  mistral: { name: "Mistral AI", site: "console.mistral.ai", url: "https://console.mistral.ai/", flow: "mistral" },
+  ai21: { name: "AI21", site: "studio.ai21.com", url: "https://studio.ai21.com/", flow: "email" },
+  voyage: { name: "Voyage AI", site: "dash.voyageai.com", url: "https://dash.voyageai.com/", flow: "email" },
+  tavily: { name: "Tavily", site: "app.tavily.com", url: "https://app.tavily.com/", flow: "email" },
+  serper: { name: "Serper", site: "serper.dev", url: "https://serper.dev/signup", flow: "email" },
+  exa: { name: "Exa", site: "dashboard.exa.ai", url: "https://dashboard.exa.ai/sign-up", flow: "email" },
+  deepgram: { name: "Deepgram", site: "console.deepgram.com", url: "https://console.deepgram.com/signup", flow: "email" },
+  assemblyai: { name: "AssemblyAI", site: "assemblyai.com", url: "https://www.assemblyai.com/dashboard/signup", flow: "email" },
+  elevenlabs: { name: "ElevenLabs", site: "elevenlabs.io", url: "https://elevenlabs.io/app/sign-up", flow: "email" },
+  stability: { name: "Stability AI", site: "platform.stability.ai", url: "https://platform.stability.ai/", flow: "email" },
+  jina: { name: "Jina AI", site: "jina.ai", url: "https://jina.ai/embeddings", flow: "jina" },
 };
 function setupJobId() { return [...crypto.getRandomValues(new Uint8Array(10))].map(b => b.toString(16).padStart(2, "0")).join(""); }
 function setupPass() { const c = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#"; const r = crypto.getRandomValues(new Uint8Array(16)); return [...r].map(b => c[b % c.length]).join(""); }
@@ -3770,7 +3792,11 @@ function stripChainSecrets(c) {
 // = Julie added, the custom model = Manual. READS ONLY — status comes
 // from each record's own ok/tested fields, never a live probe (the v50
 // KV-write lesson), and no key value or ciphertext ever leaves here.
-const KEYLIST_PROVIDERS = [["groq", "Groq"], ["openrouter", "OpenRouter"], ["gemini", "Gemini (Google AI Studio)"], ["cloudflare", "Cloudflare (server)"], ["pexels", "Pexels"], ["github", "GitHub"], ["huggingface", "Hugging Face"]];
+const KEYLIST_PROVIDERS = [["groq", "Groq"], ["openrouter", "OpenRouter"], ["gemini", "Gemini (Google AI Studio)"], ["cloudflare", "Cloudflare (server)"], ["pexels", "Pexels"], ["github", "GitHub"], ["huggingface", "Hugging Face"],
+  // v81: the widened automate chain — a row appears for each once the
+  // runner has created + verified the user's own key ("Divya added").
+  ["cohere", "Cohere"], ["together", "Together AI"], ["sambanova", "SambaNova"], ["fireworks", "Fireworks AI"], ["cerebras", "Cerebras"], ["nvidia", "NVIDIA NIM"], ["mistral", "Mistral AI"], ["ai21", "AI21"], ["voyage", "Voyage AI"],
+  ["tavily", "Tavily"], ["serper", "Serper"], ["exa", "Exa"], ["deepgram", "Deepgram"], ["assemblyai", "AssemblyAI"], ["elevenlabs", "ElevenLabs"], ["stability", "Stability AI"], ["jina", "Jina AI"]];
 async function setupKeyList(env, n) {
   const rows = [];
   for (const [id, name] of KEYLIST_PROVIDERS) {
@@ -3862,7 +3888,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
     const email = String(body.email || (u.acct && u.acct.email) || "").trim().slice(0, 120);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: en ? "Give an email for the new accounts." : "Kotha accounts kosam oka email ivvu." };
-    const ids = (Array.isArray(body.providers) ? body.providers : ["groq", "openrouter", "gemini", "cloudflare", "pexels"]).filter(id => SETUP_PROVIDERS[id]);
+    const ids = (Array.isArray(body.providers) ? body.providers : ["groq", "openrouter", "gemini", "cloudflare", "cohere", "together", "sambanova", "fireworks", "cerebras", "nvidia", "mistral", "ai21", "voyage", "tavily", "serper", "exa", "deepgram", "assemblyai", "elevenlabs", "stability", "jina", "pexels"]).filter(id => SETUP_PROVIDERS[id]);
     if (!ids.length) return { ok: false, error: "no provider" };
     // v39: never silently orphan a live run. A fresh active chain means a
     // runner is working right now — say so instead of starting a second

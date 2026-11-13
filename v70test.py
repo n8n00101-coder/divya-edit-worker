@@ -50,15 +50,22 @@ assert len(FAKE_KEY) == 56
 
 # ------------------------------------------------------------- 1. wiring
 def test_wiring():
-    assert setup.CHAIN_ORDER == ["groq", "openrouter", "gemini", "cloudflare", "pexels"], setup.CHAIN_ORDER
-    print("CHAIN_ORDER ends with pexels (after cloudflare): PASS")
+    # v81 widened the chain (R59) — the v70 invariants are: the original
+    # five keep their relative order and Pexels is still LAST.
+    assert setup.CHAIN_ORDER[:4] == ["groq", "openrouter", "gemini", "cloudflare"], setup.CHAIN_ORDER
+    assert setup.CHAIN_ORDER[-1] == "pexels", setup.CHAIN_ORDER
+    print("CHAIN_ORDER: original head order intact, pexels still last: PASS")
     cfg = setup.FLOWS["pexels"]
     assert cfg["name"] == "Pexels" and cfg["flow"] == "pexels"
     assert cfg["url"] == "https://www.pexels.com/api/" and cfg["keys_url"] == cfg["url"]
     assert cfg["key_patterns"], "pexels needs fallback key patterns"
     src = (HERE / "setup.py").read_text(encoding="utf-8")
     assert 'if flow == "pexels":' in src and "return flow_pexels(page, job, cfg)" in src
-    assert '"pexels")' in src  # entry wall check covers the pexels flow
+    # entry wall check covers the pexels flow (v81: the tuple grew —
+    # assert membership in the tuple, not its old closing literal)
+    import re as _re
+    _wall = _re.search(r'if flow in \(([^)]*)\)', src).group(1)
+    assert '"pexels"' in _wall
     print("FLOWS['pexels'] + run_flow dispatch + wall-check coverage: PASS")
 
 
