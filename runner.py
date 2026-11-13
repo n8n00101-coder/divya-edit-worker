@@ -908,12 +908,34 @@ async def create_job(j, wa, note):
         except Exception:
             _target = None
         if _target and float(res.get("duration") or 0) > _target + 2:
+            _pre_dur = float(res.get("duration") or 0)
             _trim = res["path"].replace(".mp4", "_trim.mp4")
             subprocess_run(["ffmpeg", "-y", "-loglevel", "error", "-i", res["path"], "-t", str(_target), "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-c:a", "aac", "-b:a", "128k", _trim])
             res["path"] = _trim
             res["duration"] = _target
             size = os.path.getsize(res["path"]) / 1e6
             print("trimmed to", _target, "s")
+            # v79.2 (defect 2): the compliance report was built inside
+            # make_video on the PRE-TRIM master (it recorded a 37.2 s
+            # duration FAIL for a video delivered at exactly 30.0 s).
+            # The report must describe the FINAL delivered file:
+            # re-measure the trimmed file, record the trim in
+            # fixes_applied, and rewrite the artifact next to it.
+            if res.get("compliance"):
+                try:
+                    import compliance as _comp_trim
+                    res["compliance"] = _comp_trim.refresh_report_for_final_file(
+                        res["compliance"], res.get("render_config") or {},
+                        res["path"],
+                        extra_fixes=[f"duration trimmed {_pre_dur:.1f}s → {_target:.1f}s to meet R1"])
+                    if res.get("plan") is not None:
+                        res["plan"]["compliance"] = res["compliance"]
+                    if res.get("workdir"):
+                        with open(os.path.join(res["workdir"], "compliance_report.json"),
+                                  "w", encoding="utf-8") as _cf:
+                            json.dump(res["compliance"], _cf, indent=1)
+                except Exception as _te:
+                    print("compliance refresh after trim failed:", str(_te)[:150])
         # v78: no pre-emptive WhatsApp re-encode here any more. The old
         # fixed-1900k _wa2 swap produced ~109 MB for a 460 s video (the
         # bitrate never accounted for duration), so the WA send was

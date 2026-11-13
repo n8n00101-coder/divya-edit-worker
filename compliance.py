@@ -206,13 +206,43 @@ def parse_value(raw):
     return None, ""
 
 
+_CYCLE_WORDS = ("cycle", "circle", "circular", "ring", "loop",
+                "wheel", "orbit", "rotation", "rotating", "round")
+
+
+def _cycle_line(txt):
+    """The line is literally about a cycle / a round thing turning
+    (a sleep cycle, a wheel, an orbit) — the ONLY lines a ring may
+    illustrate (v79.2 ring discipline)."""
+    return bool(re.search(r"\b(" + "|".join(_CYCLE_WORDS) + r")\b",
+                          str(txt or "").lower()))
+
+
+def _percent_of_whole(txt):
+    """'30 percent of drivers' — a share of a whole, the case Blind's
+    table gives to the donut / dot grid."""
+    txt = str(txt or "").lower()
+    return bool(re.search(r"percent\s+of\b", txt)
+                or re.search(r"%\s*of\b", txt))
+
+
 def widget_for_number_kind(vo, value):
     """Mail 1 Part 3 — choose the widget BY THE KIND OF NUMBER:
     percentage of a whole -> donut or 10x10 icon grid (dot_grid);
     'X times more' -> two bars side by side (bar_compare); count of
     people -> big counter + person icons (counter / four); change
     over years -> line chart (graph); ranking/compare -> horizontal
-    bars or filled map; '1 every N seconds' -> clock/timer (watch)."""
+    bars or filled map; '1 every N seconds' -> clock/timer (watch).
+
+    v79.2 (Ajju — ring discipline, 2026-11-13): the ring/donut is
+    DEMOTED to a rare special. It is the default for NO plain
+    percent: a percent that is not a share-of-a-whole and not a
+    cycle line defaults to the big number COUNTER (or a bar). The
+    test-1 heart scene (a 30% risk reduction) rendered the big
+    round ring over the sleeper's face — the exact effect Ajju has
+    repeatedly rejected. The ring survives for (a) a share of a
+    whole (Blind's table) and (b) a line literally about a cycle /
+    round thing."""
     txt = str(vo or "").lower()
     val, unit = parse_value(value)
     if re.search(r"\bevery\s+\d*\s*(second|minute|hour)s?\b", txt) or "per second" in txt or "per minute" in txt:
@@ -220,7 +250,9 @@ def widget_for_number_kind(vo, value):
     if re.search(r"\b(one|1|two|2|three|3)\s+in\s+(four|five|six|ten|4|5|6|10)\b", txt):
         return "four"
     if unit == "%" or "%" in str(value or "") or "percent" in txt:
-        return "donut"
+        if _cycle_line(txt) or _percent_of_whole(txt):
+            return "donut"
+        return "counter"
     if unit == "x" or re.search(r"\btimes\s+(more|higher|likely)\b", txt):
         return "bar_compare"
     if re.search(r"\b(since|from)\s+\d{4}\b|\bover\s+the\s+years\b|\beach\s+year\b", txt):
@@ -230,6 +262,248 @@ def widget_for_number_kind(vo, value):
     if val is not None:
         return "counter"
     return None
+
+
+def acceptable_widgets_for_number(vo, value):
+    """The widget kinds the audit accepts for this scene's number
+    (the PART3-WIDGET check fails a number widget OUTSIDE this
+    set). Mirrors widget_for_number_kind's branches; for a percent
+    the acceptable set follows the ring discipline: cycle/share ->
+    ring family (donut, dot_grid); a plain percent -> counter or
+    bar, never the ring."""
+    txt = str(vo or "").lower()
+    val, unit = parse_value(value)
+    if re.search(r"\bevery\s+\d*\s*(second|minute|hour)s?\b", txt) or "per second" in txt or "per minute" in txt:
+        return {"watch"}
+    if re.search(r"\b(one|1|two|2|three|3)\s+in\s+(four|five|six|ten|4|5|6|10)\b", txt):
+        return {"four"}
+    if unit == "%" or "%" in str(value or "") or "percent" in txt:
+        if _cycle_line(txt) or _percent_of_whole(txt):
+            return {"donut", "dot_grid"}
+        return {"counter", "bar"}
+    if unit == "x" or re.search(r"\btimes\s+(more|higher|likely)\b", txt):
+        return {"bar_compare"}
+    if re.search(r"\b(since|from)\s+\d{4}\b|\bover\s+the\s+years\b|\beach\s+year\b", txt):
+        return {"graph"}
+    if val is not None:
+        return {"counter", "four"}
+    return set()
+
+
+# ------------------------------------------------------------------
+# v79.2 — content composition + topic fidelity (defect 1 + the
+# topic-fidelity guard). A content-bearing visual (document, stat,
+# card, list...) may only render text composed from the CURRENT
+# scene's own fields — its line, value, source, queries, label.
+# The renderer used to fall back to visuals_lib's canned defaults:
+# a past project's gutka notification rendered verbatim into a
+# sleep video whose document scene was about the brain cleaning
+# itself. compose_visual is the single composition source — doc.py's
+# draw path passes its args to the visual, audit_plan checks the
+# composed text against the scene (keyword overlap, the footage-query
+# approach of broll._tokens / score_candidate) BEFORE render, and a
+# visual that cannot compose honest content from a scene fails the
+# audit for that scene (it must not be chosen for it).
+# ------------------------------------------------------------------
+CONTENT_TEXT_VISUALS = {"document", "receipt", "card", "newspaper",
+                        "typewriter_page", "bracket_bars",
+                        "balance_scale", "timeline_cards",
+                        "product_packet", "question", "speech_bubble",
+                        "stamp_cta"}
+# Plan visual kind -> the visuals_lib name doc.py maps it to (mirrors
+# doc._VIS_NAME_MAP; kept local so compliance stays importable
+# without the engine).
+_PLAN_TO_LIB = {"document": "document", "polaroid": "polaroid",
+                "warning": "warning_sign", "bar": "bracket_bars",
+                "bar_compare": "bracket_bars", "versus": "balance_scale"}
+_FIDELITY_STOP = WEAK_END_WORDS | {
+    "source", "report", "document", "value", "scene", "line", "video",
+    "shows", "show", "visual", "percent"}
+
+
+def effective_visual(scene):
+    """The visual that will actually draw this scene's content:
+    lib_visual wins, then the plan-kind map, then the plan kind."""
+    lv = str(scene.get("lib_visual") or "")
+    if lv:
+        return lv
+    v = str(scene.get("visual") or "")
+    return _PLAN_TO_LIB.get(v, v)
+
+
+def _fid_words(text):
+    return {w for w in re.findall(r"[a-z]{3,}", str(text or "").lower())} - _FIDELITY_STOP
+
+
+def _latin_line(text):
+    """The scene's line when it is written in Latin script (the
+    visuals' fonts carry no Telugu glyphs); '' otherwise — the
+    scene's English queries / label carry the meaning then."""
+    t = str(text or "").strip()
+    letters = [c for c in t if c.isalpha()]
+    if not letters:
+        return ""
+    latin = sum(1 for c in letters if c.isascii())
+    return t if latin >= 0.6 * len(letters) else ""
+
+
+def compose_visual(scene, name=None, topic=""):
+    """Compose a content-bearing visual's text args from THIS scene.
+    Returns (args, text): args is the kwargs dict for the visual, or
+    None when the scene carries nothing honest for it (the visual
+    must not be chosen for this scene); text is every composed word,
+    for the fidelity check. Non-content visuals return ({}, '')."""
+    name = name or effective_visual(scene)
+    if name not in CONTENT_TEXT_VISUALS:
+        return {}, ""
+    label = str(scene.get("label") or "").strip()
+    value = str(scene.get("value") or "").strip()
+    source = str(scene.get("source") or "").strip()
+    vo = str(scene.get("vo") or "")
+    vo_latin = _latin_line(vo)
+    queries = [str(q).strip() for q in (scene.get("queries") or [])
+               if str(q).strip()]
+
+    if name == "document":
+        lines = []
+        for q in queries[:3]:
+            lines.append(q[:1].upper() + q[1:].rstrip(".") + ".")
+        if not lines and vo_latin:
+            lines = [vo_latin]
+        if source:
+            lines.append(f"Source: {source}")
+        if not lines and label:
+            lines = [label.title()]
+        if not lines:
+            return None, ""
+        stamp = ""
+        if str(scene.get("fact_type") or "") == "ban" or \
+                re.search(r"\b(banned|ban|prohibited|illegal)\b", vo.lower()):
+            stamp = "BANNED"
+        args = {"title": label.title() if label else "Report",
+                "lines": tuple(lines), "stamp": stamp}
+        return args, " ".join([args["title"]] + list(lines))
+    if name == "receipt":
+        pairs = []
+        if isinstance(scene.get("items"), (list, tuple)):
+            for it in scene["items"]:
+                if isinstance(it, (list, tuple)) and len(it) == 2:
+                    pairs.append((str(it[0]), str(it[1])))
+        if not pairs:
+            return None, ""
+        total = str(scene.get("total") or value or "")
+        args = {"items": tuple(pairs), "total": total}
+        return args, " ".join(f"{a} {b}" for a, b in pairs) + " " + total
+    if name == "card":
+        m = re.search(r"\d[\d\s-]{6,}\d", value) or \
+            re.search(r"\d[\d\s-]{6,}\d", vo)
+        number = re.sub(r"\s+", " ", m.group(0)).strip() if m else ""
+        if not number or len(re.sub(r"\D", "", number)) < 7:
+            return None, ""
+        args = {"title": label.title() or "Call for help",
+                "subtitle": "", "number": number, "footer": ""}
+        return args, f"{args['title']} {number}"
+    if name == "newspaper":
+        headline = label.title() if label else \
+            (vo_latin.split(".")[0].strip() if vo_latin else "")
+        if not headline:
+            return None, ""
+        return {"headline": headline}, headline
+    if name == "typewriter_page":
+        text = vo_latin or " ".join(
+            x for x in [label.title(),
+                        queries[0] if queries else ""] if x).strip()
+        if not text:
+            return None, ""
+        return {"text": text}, text
+    if name == "bracket_bars":
+        nums = []
+        pv, _pu = parse_value(value)
+        if pv is not None:
+            nums.append(pv)
+        for v, _u in spoken_numbers(vo):
+            if v not in nums:
+                nums.append(v)
+            if len(nums) >= 2:
+                break
+        if not nums:
+            return None, ""
+        args = {"values": tuple(nums),
+                "labels": tuple("" for _ in nums), "note": value}
+        return args, " ".join([label, value] +
+                              [("%g" % n) for n in nums])
+    if name == "balance_scale":
+        left = str(scene.get("left") or "").strip()
+        right = str(scene.get("right") or "").strip()
+        if not (left and right):
+            m = re.search(r"(.{2,24}?)\s+vs\.?\s+(.{2,24})",
+                          label or vo_latin, re.I)
+            if m:
+                left, right = m.group(1).strip(), m.group(2).strip()
+        if not (left and right):
+            return None, ""
+        args = {"left": left.upper(), "right": right.upper()}
+        return args, f"{left} {right}"
+    if name == "timeline_cards":
+        pairs = []
+        if isinstance(scene.get("events"), (list, tuple)):
+            for ev in scene["events"]:
+                if isinstance(ev, (list, tuple)) and len(ev) == 2:
+                    pairs.append((str(ev[0]), str(ev[1])))
+        if len(pairs) < 2:
+            return None, ""
+        return {"events": tuple(pairs)}, \
+            " ".join(f"{a} {b}" for a, b in pairs)
+    if name == "product_packet":
+        brand = value if value and not any(c.isdigit() for c in value) \
+            else label
+        if not brand:
+            return None, ""
+        return {"brand": brand.upper()[:14], "sub": ""}, brand
+    if name == "question":
+        pack = (value or label)[:12].upper()
+        if not pack:
+            return None, ""
+        return {"pack_text": pack}, pack
+    if name == "speech_bubble":
+        text = label.title() if label else vo_latin[:60].strip()
+        if not text:
+            return None, ""
+        return {"text": text}, text
+    if name == "stamp_cta":
+        word = (value or label)[:12].upper()
+        if not word:
+            return None, ""
+        return {"word": word, "stamp": "", "strike": ""}, word
+    return {}, ""
+
+
+def topic_fidelity(scene, topic_text=""):
+    """(ok, detail) for the scene's content-bearing visual: the
+    composed text's keywords must overlap the scene's own anchor —
+    its line, its footage queries and the video topic (keyword
+    intersection, the footage-query overlap approach). A visual
+    that cannot compose from the scene at all is not ok. Scenes
+    without a content-bearing visual are trivially ok."""
+    name = effective_visual(scene)
+    if name not in CONTENT_TEXT_VISUALS:
+        return True, ""
+    args, text = compose_visual(scene, name, topic_text)
+    if args is None:
+        return False, (f"'{name}' cannot compose honest text from this "
+                       f"scene (nothing in its line / value / source / "
+                       f"queries for it) — a visual that cannot be "
+                       f"composed from the scene must not be chosen "
+                       f"for it")
+    words = _fid_words(text)
+    anchor = (_fid_words(scene.get("vo"))
+              | _fid_words(" ".join(str(q) for q in
+                                    (scene.get("queries") or [])))
+              | _fid_words(topic_text))
+    if words and not (words & anchor):
+        return False, (f"composed text for '{name}' shares no keyword "
+                       f"with the scene's line/topic: '{text[:60]}'")
+    return True, ""
 
 
 # ------------------------------------------------------------------
@@ -362,6 +636,21 @@ def audit_plan(scenes, cfg, topic_text="", measure=None, have_timing=False):
     distinct = {widget_kind(s) for s in scenes} - {None}
     if not long and len(scenes) >= 6 and len(distinct) < 6:
         add("PART3-TYPES", "FAIL", f"only {len(distinct)} different visual types (need 6+)", None)
+    # v79.2 (Ajju — ring discipline): the ring FAMILY (donut /
+    # clock / watch / gauge — ROUND_KINDS) has ONE budget in a
+    # short: a second ring-family visual fails, whatever its kind.
+    # The ring is a rare special, never a rotation. The repair
+    # swaps the extra ring scenes to non-ring visuals.
+    if not long:
+        _rings = 0
+        for i, s in enumerate(scenes):
+            if widget_kind(s) in ROUND_KINDS:
+                _rings += 1
+                if _rings > 1:
+                    add("PART3-RING", "FAIL",
+                        f"ring visual '{widget_kind(s)}' is ring-family "
+                        f"visual #{_rings} in one short (max 1) — the "
+                        f"ring is a rare special, not a rotation", i + 1)
     # A5 (Ajju, 2026-11-13 — "own creativity"): the number-widget
     # pool is a FALLBACK for real numbers, not the menu. When more
     # than half the scenes are number widgets (donut / counter /
@@ -417,6 +706,15 @@ def audit_plan(scenes, cfg, topic_text="", measure=None, have_timing=False):
             if hit and not leftover_ok:
                 add("R3", "FAIL", f"banned leftover '{label}' in a video whose topic is not {label.lower()}", i + 1)
                 break
+        # v79.2 — topic fidelity: a content-bearing visual's text is
+        # composed from THIS scene (compose_visual); it must overlap
+        # the scene's line/topic, and a visual that cannot compose
+        # from the scene must not be chosen for it. (The sleep video
+        # shipped a gutka notification as its "document" — the canned
+        # body this rule exists to make impossible.)
+        _fok, _fdetail = topic_fidelity(s, topic_low)
+        if not _fok:
+            add("FIDELITY", "FAIL", _fdetail, i + 1)
         # R6 / mail 1 — titles
         if not title:
             add("R6", "FAIL", "empty title (an empty title box must never be drawn)", i + 1)
@@ -452,10 +750,15 @@ def audit_plan(scenes, cfg, topic_text="", measure=None, have_timing=False):
                             for v, u in spoken)
                 if not match:
                     add("R4", "FAIL", f"on-screen number {s.get('value')} is not spoken in this scene's line", i + 1)
-                # the widget must be the one the number kind demands
+                # the widget must be one the number kind accepts
+                # (v79.2: a SET, not one kind — the ring discipline
+                # makes a plain percent accept counter/bar and
+                # reject the ring, while a share/cycle percent
+                # accepts the ring family).
                 want = widget_for_number_kind(vo, s.get("value"))
-                if want and kind_w and kind_w != want and kind_w in ("counter", "donut", "bar_compare", "graph", "watch", "four"):
-                    add("PART3-WIDGET", "FAIL", f"number kind wants '{want}', scene uses '{kind_w}'", i + 1)
+                _acc = acceptable_widgets_for_number(vo, s.get("value"))
+                if _acc and kind_w and kind_w not in _acc and kind_w in ("counter", "donut", "bar_compare", "graph", "watch", "four", "dot_grid", "bar"):
+                    add("PART3-WIDGET", "FAIL", f"number kind wants '{want}' (accepts {sorted(_acc)}), scene uses '{kind_w}'", i + 1)
             # the counter must land before the scene ends
             if have_timing and s.get("d"):
                 land = float(s.get("pop_t") or 0) + 1.0
@@ -592,6 +895,21 @@ def repair_plan(scenes, cfg, pools, checks):
                 fixes.append(f"scene {idx}: visual {s.get('visual')} -> {new} ({'/'.join(rules)})")
                 s["visual"] = new
                 s.pop("lib_visual", None)
+        if "PART3-RING" in rules:
+            # v79.2 ring discipline: swap the extra ring scene to a
+            # non-ring visual — but only if it is STILL a ring (an
+            # earlier branch this round may already have moved it,
+            # e.g. PART3-WIDGET taking a plain-percent donut to the
+            # counter the number kind wants).
+            if widget_kind(s) in ROUND_KINDS:
+                new = free_visual(
+                    exclude=tuple(ROUND_KINDS) + (widget_kind(s),))
+                if new:
+                    fixes.append(f"scene {idx}: ring-budget swap "
+                                 f"{s.get('visual')} -> {new} (ring "
+                                 f"family max 1 per short)")
+                    s["visual"] = new
+                    s.pop("lib_visual", None)
         if "R6" in rules or "PART1-TONE" in rules:
             title = _title_of(s)
             for harsh, calm in CALM_TITLES.items():
@@ -625,6 +943,20 @@ def repair_plan(scenes, cfg, pools, checks):
             if not str(s.get("label") or "").strip():
                 words = [w for w in re.findall(r"[A-Za-z]{3,}", str(s.get("vo") or ""))]
                 s["label"] = " ".join(words[:2]).upper()
+        if "FIDELITY" in rules:
+            # v79.2: one plan-level fix round — swap the scene's
+            # visual to an abstract, text-free visual (filmstrip:
+            # coloured frames, no composed text) via lib_visual,
+            # which the draw path honours first, and record the
+            # swap. If the re-audit still fails, the FAIL stands in
+            # the report — never a silent pass.
+            old = effective_visual(s)
+            if old != "filmstrip":
+                s["visual"] = "filmstrip"
+                s["lib_visual"] = "filmstrip"
+                fixes.append(f"scene {idx}: topic-fidelity swap "
+                             f"{old} -> filmstrip (abstract, no "
+                             f"composed text)")
         if "R4" in rules:
             val, _u = parse_value(s.get("value"))
             if val is None or val == 0:
@@ -666,9 +998,12 @@ def repair_plan(scenes, cfg, pools, checks):
     # Scenes carrying a real spoken number keep their widget (the
     # number-kind table governs those).
     if any(c["rule"] == "A5" for c in checks):
+        # v79.2: timeline_cards / receipt are NOT in this pool any
+        # more — a scene without events/items cannot compose them
+        # honestly, so an A5 swap to them would create a FIDELITY
+        # failure in the next round.
         _composed = ["photo_frame", "document", "newspaper",
-                     "timeline_cards", "filmstrip", "speech_bubble",
-                     "magnifier", "receipt"]
+                     "filmstrip", "speech_bubble", "magnifier"]
         _num_widgets = {"donut", "counter", "bar", "bar_compare",
                         "graph", "gauge", "battery", "dot_grid",
                         "four", "watch", "clock"}
@@ -756,6 +1091,90 @@ def audit_frame_fill(frames):
                                   f"or a composed scene)",
                         "scene": no})
     return out
+
+
+# ------------------------------------------------------------------
+# Full-screen compositions (Ajju item 8, 2026-11-13) — "screen
+# motham kuda effects use cheyamani chepu": a scene's main visual
+# must use the full frame as its canvas, not sit as a small island
+# in the centre of an empty gradient. Judged on the visual layer's
+# alpha bbox inside the visual band (frame coords, band y
+# 480-1410 of 1920 — doc._fit_above_label's zones): an island is a
+# bbox that is small in area AND narrow AND short AND has dead
+# margins on ALL four sides. A frame the check cannot judge (no
+# visual bbox at all) reports UNVERIFIED, never a silent PASS.
+# ------------------------------------------------------------------
+def island_metrics(vb, width=1080, height=1920, band=(480, 1410)):
+    """(is_island, detail) for a visual bbox (x0, y0, x1, y1), or
+    None when there is no bbox to judge."""
+    if not vb:
+        return None
+    x0, y0, x1, y1 = (float(v) for v in vb)
+    w, h = max(0.0, x1 - x0), max(0.0, y1 - y0)
+    if w <= 0 or h <= 0:
+        return None
+    band_h = float(band[1] - band[0])
+    area_share = (w * h) / (width * band_h)
+    left, right = x0 / width, (width - x1) / width
+    top_dead = max(0.0, y0 - band[0]) / band_h
+    bot_dead = max(0.0, band[1] - y1) / band_h
+    island = (area_share < 0.38 and w < 0.72 * width
+              and h < 0.72 * band_h and left > 0.13 and right > 0.13
+              and top_dead > 0.08 and bot_dead > 0.08)
+    detail = (f"visual {w:.0f}x{h:.0f} in a {width:.0f}x{band_h:.0f} "
+              f"band (area {area_share:.2f}), margins L{left:.2f} "
+              f"R{right:.2f} T{top_dead:.2f} B{bot_dead:.2f}")
+    return island, detail
+
+
+def audit_central_island(frames):
+    """frames: iterable of (scene_no, visual_bbox, has_footage).
+    FAIL for a graphic scene whose main visual is a small central
+    island with dead margins on all sides; UNVERIFIED when a frame
+    cannot be judged (no visual layer — the check says so instead
+    of passing silently). Footage scenes are full-frame by
+    construction and are skipped."""
+    out = []
+    for no, vb, has_footage in frames:
+        if has_footage:
+            continue
+        m = island_metrics(vb)
+        if m is None:
+            out.append({"rule": "A6", "status": "UNVERIFIED",
+                        "detail": "no visual layer on the sampled "
+                                  "frame — the full-screen check "
+                                  "cannot judge this scene",
+                        "scene": no})
+        elif m[0]:
+            out.append({"rule": "A6", "status": "FAIL",
+                        "detail": f"main visual is a small central "
+                                  f"island ({m[1]}) — the composition "
+                                  f"must use the full frame (background "
+                                  f"+ subject + foreground in "
+                                  f"relationship), not a lone centred "
+                                  f"widget on an empty gradient",
+                        "scene": no})
+    return out
+
+
+def audit_music_default(spec, cfg, plan_info):
+    """Item 9 (Ajju, 2026-11-13): "topic ki thagga background music
+    kuda undali" — music defaults ON, chosen for the topic's mood,
+    whenever the prompt is SILENT on music. A silent-prompt render
+    with no music track is a FAIL. An explicit ask (a music
+    requirement in the spec, on or off) governs instead and is
+    judged by its own verdict — 'no music' stays correct
+    (FIX-7 test 1)."""
+    if any(r.get("type") == "music" for r in (spec or [])):
+        return []
+    if (plan_info or {}).get("music_applied"):
+        return []
+    return [{"rule": "MUSIC-DEFAULT", "status": "FAIL",
+             "detail": "the prompt says nothing about music, but "
+                       "the render has no background track — music "
+                       "defaults ON, topic-matched to the scene "
+                       "moods (music_choice in the artifacts)",
+             "scene": None}]
 
 
 # ------------------------------------------------------------------
@@ -870,6 +1289,56 @@ def audit_media(path, cfg, spec, chapter_breaks=()):
     return checks, info
 
 
+# Rules whose checks are produced by audit_media — they describe the
+# measured file, so a re-measure replaces them wholesale.
+MEDIA_CHECK_RULES = {"MEDIA", "R-P4", "FIX5-DURATION", "R9", "R11"}
+
+
+def refresh_report_for_final_file(report, cfg, delivered_path,
+                                  extra_fixes=()):
+    """v79.2 (defect 2): the compliance report must describe the
+    FINAL delivered artifact. The engine audits the master it
+    rendered inside make_video, but the runner's duration backstop
+    may trim that master to the asked length afterwards — the
+    report then records a duration FAIL for a file the user never
+    received (the test-1 report measured 37.2 s; the delivered file
+    is exactly 30.000 s). Re-probe the delivered file, replace the
+    media-derived checks with the fresh measurement, refresh the
+    duration / aspect verdicts from the new probe, and record what
+    was done (extra_fixes — e.g. "duration trimmed 37.2s → 30.0s to
+    meet R1") in fixes_applied. Plan-derived verdicts (voice, music,
+    language...) do not depend on the file and carry over untouched."""
+    if not report:
+        return report
+    cfg = cfg or {}
+    mchecks, minfo = audit_media(delivered_path, cfg, [])
+    checks = [c for c in (report.get("checks") or [])
+              if c.get("rule") not in MEDIA_CHECK_RULES] + mchecks
+    verdicts = []
+    for v in report.get("requirements") or []:
+        v = dict(v)
+        if v.get("type") == "duration" and cfg.get("duration_s"):
+            d = minfo.get("duration") or 0
+            tol = max(2.0, 0.10 * cfg["duration_s"]) \
+                if cfg.get("kind") == "long" else 2.0
+            v["status"] = "PASS" if abs(d - cfg["duration_s"]) <= tol \
+                else "FAIL"
+            v["evidence"] = (f"ffprobe duration {d:.1f}s vs asked "
+                             f"{cfg['duration_s']:.0f}s "
+                             f"(final delivered file)")
+        elif v.get("type") == "aspect_ratio" and minfo.get("duration"):
+            ok = (minfo.get("width"), minfo.get("height")) == \
+                (cfg.get("width"), cfg.get("height"))
+            v["status"] = "PASS" if ok else "FAIL"
+            v["evidence"] = (f"rendered {minfo.get('width')}x"
+                             f"{minfo.get('height')} "
+                             f"(final delivered file)")
+        verdicts.append(v)
+    fixes = list(report.get("fixes_applied") or []) + list(extra_fixes)
+    return build_report([], cfg, checks, verdicts,
+                        report.get("fix_rounds", 0), fixes)
+
+
 # ------------------------------------------------------------------
 # FIX 5 — per-requirement verdicts + the report
 # ------------------------------------------------------------------
@@ -908,9 +1377,25 @@ def requirement_verdicts(spec, cfg, plan_info, media_info):
             if "off" in vl:
                 status = "PASS" if plan_info.get("captions_applied") is False else "FAIL"
                 evidence = "engine attests no captions were burned"
+            elif "script" in vl or "lipi" in vl:
+                # v79.2 (Ajju's caption rule): native script was
+                # explicitly asked — PASS only when the render
+                # actually used it. (Romanized captions are the
+                # DEFAULT for Telugu/Hindi and are never a language
+                # failure; they are not judged here at all.)
+                status = "PASS" if plan_info.get("caption_script") == "native" else "FAIL"
+                evidence = f"caption script used: {plan_info.get('caption_script') or 'unknown'} (native script was asked)"
             elif cfg.get("caption_spec"):
                 status = "PASS"
                 evidence = "caption spec from the prompt was passed to the renderer"
+        elif t == "sources":
+            # v79.2 (Ajju item 7): sources are drawn into frames
+            # ONLY on this explicit ask.
+            status = "PASS" if plan_info.get("sources_shown") else "FAIL"
+            evidence = ("source lines were drawn in the frames, as "
+                        "asked" if plan_info.get("sources_shown")
+                        else "sources were asked for but no source "
+                             "line was drawn")
         elif t == "voice":
             used = str(plan_info.get("voice_used") or "")
             if cfg.get("voice_id"):

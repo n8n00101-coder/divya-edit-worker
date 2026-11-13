@@ -339,6 +339,9 @@ call to follow at the end. Use commas, "..." and dashes for natural pauses. No e
 build an emotional arc. SOURCE RULE (v79, Blind R5 — replaces the v36 rule): put a source ONLY when you are actually citing
 that source for this scene's claim. If you do not know a real source for the claim, leave the source field EMPTY — a missing
 source is honest, a stamped one (the same famous name on every scene) destroys trust and fails the compliance check.
+v79.2 (Ajju item 7): NEVER invent an attribution. A stat with no real source you can name gets NO source label anywhere —
+prefer stats you can actually stand behind, or present the number plainly with no source at all. And source text is
+metadata only: it is never drawn into the video unless the user explicitly asked for sources on screen.
 SHOT LIST RULE (v79, Blind mail 1 Part 2 + R2/R10): choose every visual from the MEANING of the line — ask "what would a
 person actually picture?" — never from the scene's type. Every scene carries "why" (one sentence tied to a word in the
 line) and 2 footage "queries" that SHOW the meaning (for a liver line: "doctor holding liver scan", "hospital corridor
@@ -1129,10 +1132,13 @@ def _fit_above_label(lay, extra_scale=1.0):
     top, bot = bb[1], bb[3]
     lo, hi = 480, 1410
     # The pre-render QC's auto-fix scale (80% when the visual overlaps
-    # something); 1.0 normally. Applied on top of the band fit. A scaled
-    # layer must ALWAYS go through the centering path below (it is smaller
-    # than the frame) — never the early return.
-    if extra_scale < 1.0:
+    # something; 130% when the composition is a small central island —
+    # v79.2 item 8, the enlarge round); 1.0 normally. Applied on top
+    # of the band fit (which still caps the result to the band, so an
+    # enlarged composition can never overflow it). A scaled layer
+    # must ALWAYS go through the centering path below — never the
+    # early return.
+    if extra_scale != 1.0:
         nw, nh = int(lay.size[0] * extra_scale), int(lay.size[1] * extra_scale)
         lay = lay.resize((nw, nh), Image.BICUBIC)
         bb = lay.getbbox()
@@ -1159,12 +1165,15 @@ def _fit_above_label(lay, extra_scale=1.0):
     return out
 
 
-def _call_lib_vis(name, t, st, d, acc, words=None):
+def _call_lib_vis(name, t, st, d, acc, words=None, extra=None):
     # v32: call a visuals_lib VIS function. accent= is passed as a KEYWORD
     # only when the function accepts it (inspect.signature) — the 18
     # functions have VARYING signatures (vis_warning takes no accent).
     # v34: words= is passed the same way, when the function accepts it —
     # word-timed visuals (Hark word_t) animate to specific words.
+    # v79.2: extra= carries the scene-composed content args (document
+    # lines, card number, scale sides...) — passed the same way, only
+    # when the function accepts them.
     fn = VL.VIS[name]
     _sig = inspect.signature(fn).parameters
     kw = {}
@@ -1172,6 +1181,9 @@ def _call_lib_vis(name, t, st, d, acc, words=None):
         kw["accent"] = acc
     if words is not None and "words" in _sig:
         kw["words"] = words
+    for _k, _v in (extra or {}).items():
+        if _k in _sig:
+            kw[_k] = _v
     return fn(t, st, d, **kw)
 
 
@@ -1195,6 +1207,20 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
     # visual times its animation to specific words instead of sitting still
     # after popping in. Set in make_video() from the TTS WordBoundary events.
     words = sc.get("words")
+    # v79.2 (defect 1 + the topic-fidelity guard): a content-bearing
+    # library visual renders ONLY text composed from THIS scene — its
+    # line, value, source, queries, label — via compliance.
+    # compose_visual, the same composition audit_plan checks. When the
+    # scene carries nothing honest for the visual (args is None), the
+    # visual is skipped and the chain falls through — never to a
+    # canned default body. Composed once per scene, then cached.
+    def _lib_args(name):
+        cache = sc.setdefault("_vis_args_cache", {})
+        if name not in cache:
+            import compliance as _comp_v
+            cache[name] = _comp_v.compose_visual(
+                sc, name, str(p.get("topic") or ""))[0]
+        return cache[name]
     # 1) custom vis_ from video_fx.py (Blind interface: (t, st, d, accent),
     # v34: words= when the function accepts it).
     cv = sc.get("custom_vis")
@@ -1211,7 +1237,8 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
     lv = sc.get("lib_visual")
     if lv and lv in VL.VIS:
         try:
-            if _place720(_call_lib_vis(lv, pt, 0.0, sc["d"], acc, words=words)):
+            _args = _lib_args(lv)
+            if _args is not None and _place720(_call_lib_vis(lv, pt, 0.0, sc["d"], acc, words=words, extra=_args)):
                 return
         except Exception as e:
             print(f"library vis {lv} scene {idx} failed: {str(e)[:120]}")
@@ -1219,7 +1246,8 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
     mv = _VIS_NAME_MAP.get(sc["visual"])
     if mv and mv in VL.VIS:
         try:
-            if _place720(_call_lib_vis(mv, pt, 0.0, sc["d"], acc, words=words)):
+            _args = _lib_args(mv)
+            if _args is not None and _place720(_call_lib_vis(mv, pt, 0.0, sc["d"], acc, words=words, extra=_args)):
                 return
         except Exception as e:
             print(f"mapped vis {mv} scene {idx} failed: {str(e)[:120]}")
@@ -1760,9 +1788,15 @@ def scene_frame(p, idx, t, return_layers=False):
     # line on every fact/number).
     _src = sc.get("source")
     _src_bb = None
+    # v79.2 (Ajju item 7): NO source lines in the video unless the
+    # user asked for them — "user cheppaledhu kabatti alantivi videos
+    # lo chupinchakudadhu". The scene's source stays metadata (plan /
+    # artifacts); it is drawn into a frame ONLY when the prompt_spec
+    # carried an explicit sources requirement (cfg show_sources).
     # The pre-render QC drops the source line (the smaller item) when it
     # still collides after the visual is scaled to 80%.
-    if _src and not sc.get("_drop_source"):
+    if _src and not sc.get("_drop_source") \
+            and (p.get("render_config") or {}).get("show_sources"):
         try:
             _sl = VL.VIS["source_line"](pt, 0.0, sc["d"], text=f"Source: {_src}", y=1200, accent=acc)
             if _sl is not None and _sl.size == (720, 1280):
@@ -1989,7 +2023,19 @@ def ass_t(s):
     s = max(0, s); return f"{int(s // 3600)}:{int(s % 3600 // 60):02d}:{s % 60:05.2f}"
 
 def write_ass(p, path):
-    fn = "Noto Sans Telugu" if p["lang"] == "te" else "Anton"
+    # v79.2 (Ajju's caption rule): the caption SCRIPT comes from the
+    # render config — "roman" (the default for Telugu/Hindi
+    # narration: Romanized transliteration of the spoken line),
+    # "native" (ONLY on an explicit script ask in the prompt), or
+    # "latin" (the narration is already Latin-script). Native
+    # Telugu script renders broken conjuncts in the caption
+    # renderer and Ajju does not want it by default.
+    _early_cfg = p.get("render_config") or {}
+    _cscript = _early_cfg.get("caption_script")
+    if _cscript is None:
+        _cscript = "roman" if p["lang"] in ("te", "hi") else "latin"
+    _native = _cscript == "native"
+    fn = "Noto Sans Telugu" if (p["lang"] == "te" and _native) else "Anton"
     # v36 (Blind A1/A4 — fixed zones): the caption band is y 1440-1725
     # (frame), captions ONLY. MarginV 200 puts the caption bottom at 1720.
     # Min caption font 72 px (A4): English 96, Telugu 72 (was 70).
@@ -2005,7 +2051,7 @@ def write_ass(p, path):
     cfg = p.get("render_config") or {}
     cspec = cfg.get("caption_spec") or {}
     wmin, wmax = cspec.get("words") or ((4, 7) if cfg.get("kind") == "long" else (2, 4))
-    size = 72 if p["lang"] == "te" else 96
+    size = 72 if (p["lang"] == "te" and _native) else 96
     size = max(40, int(round(size * (H / 1920.0) * float(cspec.get("size_scale") or 1.0))))
     _col = cspec.get("colour")
     primary = "&H0040D8FF"
@@ -2034,6 +2080,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             toks = s["vo"].split(); tot = sum(len(x) for x in toks) or 1; acc = 0.0; ws = []
             for x in toks:
                 d = (s["adur"]) * len(x) / tot; ws.append((acc, d, x)); acc += d
+        if _cscript == "roman":
+            # v79.2: Romanized captions — transliterate each spoken
+            # word (timings untouched); Latin words/numbers pass
+            # through the transliterator unchanged.
+            import translit as _translit
+            ws = [(a, d, _translit.transliterate(w, p["lang"]))
+                  for (a, d, w) in ws]
         groups = _comp.chunk_caption_words(ws, wmin, wmax)
         for gi, g in enumerate(groups):
             a = st + g[0][0]; b = st + (groups[gi + 1][0][0] if gi + 1 < len(groups) else g[-1][0] + g[-1][1] + 0.25)
@@ -2377,7 +2430,7 @@ def frame_qc(p, video_path, wd=None):
             warnings += [f"scene {i + 1} @{_tt:.1f}s: {w}" for w in _gw]
         # (d) the typewriter invariant (whole words only, never a partial word).
         if sc.get("visual") == "typewriter_page":
-            _txt = "CLASSIFIED: subjects did not notice the swap."
+            _txt = "SAMPLE PAGE: the quick brown fox jumps over the lazy dog."
             for _el in (0.3, 0.8, 1.5, 2.5, 4.0):
                 _shown = VL.typewriter_shown(_txt, _el)
                 if _shown and not _txt.startswith(_shown):
@@ -2583,6 +2636,21 @@ def _transitions_off(p):
     p["transition_families"] = [TL.family("crossfade")] * n
     for i, s in enumerate(p["scenes"]):
         s["transition"] = "crossfade" if i > 0 else ""
+
+
+def _wav_rms(path):
+    """RMS level of a wav file (first 10 s) — 0.0 when unreadable.
+    v79.2 (item 9): the music-default fix round uses it to prove
+    the topic-matched track is actually audible, not just present."""
+    try:
+        w = wave.open(path)
+        n = min(w.getnframes(), SR * 10)
+        raw = w.readframes(n)
+        w.close()
+        a = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        return float(np.sqrt((a ** 2).mean())) if a.size else 0.0
+    except Exception:
+        return 0.0
 
 
 def _silence_wav(path, seconds):
@@ -2848,19 +2916,38 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # flag — never silently shipped.
     for _i, _sc in enumerate(p["scenes"]):
         for _try in range(2):
+            _island_fix = False
             try:
                 _img, _vb, _lb, _ch, _sb = scene_frame(p, _i, float(_sc.get("d", 1.0) or 1.0) / 2, return_layers=True)
                 _gf, _gw = _qc_geometry(_vb, _lb, bool(_sc.get("source")), expect_label=_sc.get("visual") != "stamp", src_bb=_sb)
+                # v79.2 (item 8 — full-screen effects): geometry is
+                # clean but the composition is a small central island
+                # on an empty frame -> ONE enlarge round (the
+                # composition grows to use the frame). The post-render
+                # A6 audit re-judges the result and reports honestly.
+                if not _gf and not _sc.get("has_footage"):
+                    import compliance as _comp8
+                    _isl = _comp8.island_metrics(_vb, width=W, height=H)
+                    if _isl and _isl[0] and float(_sc.get("_vis_scale", 1.0) or 1.0) <= 1.0:
+                        _gf = [f"central island: {_isl[1]}"]
+                        _island_fix = True
             except Exception as e:
                 _gf = [f"geometry check failed: {str(e)[:80]}"]
             if not _gf:
                 break
             if _try == 0:
-                _sc["_vis_scale"] = 0.8
-                print(f"pre-render QC scene {_i + 1}: overlap, scaling visual to 80% ({_gf[0][:80]})")
+                if _island_fix:
+                    _sc["_vis_scale"] = 1.3
+                    print(f"pre-render QC scene {_i + 1}: central island, enlarging the composition to fill the frame ({_gf[0][:80]})")
+                else:
+                    _sc["_vis_scale"] = 0.8
+                    print(f"pre-render QC scene {_i + 1}: overlap, scaling visual to 80% ({_gf[0][:80]})")
             else:
-                _sc["_drop_source"] = True
-                print(f"pre-render QC scene {_i + 1}: still overlapping, dropping the source line ({_gf[0][:80]})")
+                if not _island_fix:
+                    _sc["_drop_source"] = True
+                    print(f"pre-render QC scene {_i + 1}: still overlapping, dropping the source line ({_gf[0][:80]})")
+                # an island that survives the enlarge round is left
+                # as-is here; the post-render A6 audit reports it.
     # v34 (Hark SFX at word times, item 7): a hit on each scene's hit word
     # + ticks while a phone number is typed. v36 (Blind A6/E1): the SFX
     # lands ON the word — pop_t is the word time minus 0.08 (the visual
@@ -2903,6 +2990,27 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         _silence_wav(f"{wd}/music.wav", total)
     if aflags.get("sfx") == "off" or cfg.get("sfx") is False:
         _silence_wav(f"{wd}/music_sfx.wav", total)
+    # v79.2 (item 9 — music defaults ON, topic-matched): when nothing
+    # asked for silence, the background track must actually BE there.
+    # If the first pass produced a (near-)silent track, regenerate it
+    # once from the scene moods and record the fix; the choice itself
+    # (mood + track) is recorded on the plan -> project.json.
+    _music_on = not (aflags.get("music") == "off" or cfg.get("music") is False)
+    if _music_on and _wav_rms(f"{wd}/music.wav") < 0.005:
+        music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff)
+        if aflags.get("sfx") == "off" or cfg.get("sfx") is False:
+            _silence_wav(f"{wd}/music_sfx.wav", total)  # the regen rewrote it
+        p.setdefault("plan_fixes", []).append(
+            "music: topic-matched track regenerated — the first pass "
+            "produced a silent track (music defaults ON)")
+        print("music fix round: regenerated a silent music track")
+    from collections import Counter as _Counter
+    _mood_top = _Counter([s["mood"] for s in p["scenes"]]).most_common(1)[0][0] if p["scenes"] else "calm"
+    p["music_choice"] = {
+        "applied": _music_on, "mood": _mood_top,
+        "track": "music.wav" if _music_on else None,
+        "level": ("ducked under the voice (sidechain, -6..-8 dB class)"
+                  if _music_on else "off — explicit ask in the prompt/amendments")}
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/voice.wav", "-i", f"{wd}/music.wav", "-i", f"{wd}/music_sfx.wav", "-filter_complex",
                     # v36 (Blind E1): the music is ducked -12 dB under the voice
                     # (volume 0.55 -> 0.45, sidechain threshold 0.02 -> 0.015).
@@ -2988,14 +3096,20 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         # is mostly empty background FAILS (Ajju's red marks).
         try:
             _frames = []
+            _islands = []
             for _i, _s in enumerate(p["scenes"]):
                 # the closing CTA card is a deliberate card (like a
                 # chapter card), not a scene — exempt from the gate.
                 if _i == len(p["scenes"]) - 1 and _s.get("visual") == "stamp_cta":
                     continue
-                _img = scene_frame(p, _i, max(0.6, float(_s.get("d") or 4) / 2))
-                _frames.append((_i + 1, _img, bool(_s.get("has_footage"))))
+                _lay = scene_frame(p, _i, max(0.6, float(_s.get("d") or 4) / 2), return_layers=True)
+                _frames.append((_i + 1, _lay[0], bool(_s.get("has_footage"))))
+                _islands.append((_i + 1, _lay[1], bool(_s.get("has_footage"))))
             _checks += _comp.audit_frame_fill(_frames)
+            # v79.2 (item 8): full-screen compositions — a main
+            # visual that is a small central island FAILs (A6); a
+            # frame that cannot be judged reports UNVERIFIED.
+            _checks += _comp.audit_central_island(_islands)
         except Exception as _e:
             print("frame-fill audit failed:", str(_e)[:120])
         _mchecks, _minfo = _comp.audit_media(out, cfg or {"kind": "short"}, spec or [])
@@ -3007,11 +3121,20 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             "music_applied": not (cfg.get("music") is False or aflags.get("music") == "off"),
             "sfx_applied": not (cfg.get("sfx") is False or aflags.get("sfx") == "off"),
             "captions_applied": not _cap_off,
+            # v79.2: the caption script actually used (Ajju's rule)
+            # and whether source lines were drawn (item 7 gate) —
+            # both judged by the requirement verdicts.
+            "caption_script": cfg.get("caption_script"),
+            "sources_shown": bool(cfg.get("show_sources")) and any(_s.get("source") for _s in p["scenes"]),
             "camera_moves": False,  # v33: the engine's camera is static
             "footage_coverage": (sum(1 for s in p["scenes"] if s.get("has_footage")) / max(1, len(p["scenes"]))),
             "end_card_text": p.get("end_question", ""),
             "chapters_done": None,
         }
+        # v79.2 (item 9): music defaults ON — a silent-prompt render
+        # with no track FAILs here (an explicit music ask is judged
+        # by its own verdict instead).
+        _checks += _comp.audit_music_default(spec or [], cfg or {}, _plan_info)
         _verdicts = _comp.requirement_verdicts(spec or [], cfg or {}, _plan_info, _minfo)
         _report = _comp.build_report(spec or [], cfg or {}, _checks, _verdicts,
                                      rounds=0, fixes=p.get("plan_fixes") or [])
