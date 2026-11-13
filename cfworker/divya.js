@@ -2106,7 +2106,21 @@ async function tokSpend(env, n, cost) {
     if (bal.weekLeft >= cost) { await env.KV.put(`tokw:${n}:${istWeek()}`, String(bal.weekSpent + cost), { expirationTtl: 86400 * 8 }); return { ok: true, via: "weekly", left: bal.weekLeft - cost }; }
     if (bal.pool >= cost) { await env.KV.put(`tokp:${n}`, String(bal.pool - cost)); return { ok: true, via: "pool", left: bal.pool - cost }; }
     if (bal.planLeft >= cost) { await env.KV.put(`tokplan:${n}:${istMonth()}`, String(bal.planLeft - cost), { expirationTtl: 86400 * 40 }); return { ok: true, via: "plan", left: bal.planLeft - cost }; }
-    return { ok: false, need: cost, have: bal.weekLeft + bal.pool + bal.planLeft, bal };
+    // v71: no single bucket covers the cost, but the COMBINED balance may.
+    // (Live bug 2026-11-13: weekLeft 475K + pool 1M refused a 1.4M video
+    // while the refusal message itself quoted the combined 1,475,000.)
+    // Draw in the standing order — weekly first, then pool, then plan —
+    // and record the exact split so tokRefund restores the same buckets.
+    const total = bal.weekLeft + bal.pool + bal.planLeft;
+    if (total < cost) return { ok: false, need: cost, have: total, bal };
+    let rem = cost;
+    const split = { weekly: Math.min(bal.weekLeft, rem) }; rem -= split.weekly;
+    split.pool = Math.min(bal.pool, rem); rem -= split.pool;
+    split.plan = Math.min(bal.planLeft, rem); rem -= split.plan;
+    if (split.weekly) await env.KV.put(`tokw:${n}:${istWeek()}`, String(bal.weekSpent + split.weekly), { expirationTtl: 86400 * 8 });
+    if (split.pool) await env.KV.put(`tokp:${n}`, String(bal.pool - split.pool));
+    if (split.plan) await env.KV.put(`tokplan:${n}:${istMonth()}`, String(bal.planLeft - split.plan), { expirationTtl: 86400 * 40 });
+    return { ok: true, via: "split", split, left: total - cost };
   } catch (e) { try { await env.KV.put("dbg:tok", new Date().toISOString() + " " + String(e).slice(0, 200), { expirationTtl: 86400 }); } catch {} return { ok: true, via: "error" }; }
 }
 // v37 (fix F): refund a token spend when the video machine failed to start —
@@ -2115,6 +2129,14 @@ async function tokSpend(env, n, cost) {
 async function tokRefund(env, n, r, cost) {
   if (!r || !r.ok || !r.via || r.via === "unlimited" || r.via === "error") return;
   try {
+    // v71: a split spend is refunded bucket-for-bucket from its recorded
+    // split (the split sums to the spend cost) — never into one bucket.
+    if (r.via === "split" && r.split) {
+      if (r.split.weekly) await env.KV.put(`tokw:${n}:${istWeek()}`, String(Math.max(0, (await tokNum(env, `tokw:${n}:${istWeek()}`)) - r.split.weekly)), { expirationTtl: 86400 * 8 });
+      if (r.split.pool) await env.KV.put(`tokp:${n}`, String((await tokNum(env, `tokp:${n}`)) + r.split.pool));
+      if (r.split.plan) await env.KV.put(`tokplan:${n}:${istMonth()}`, String((await tokNum(env, `tokplan:${n}:${istMonth()}`)) + r.split.plan), { expirationTtl: 86400 * 40 });
+      return;
+    }
     if (r.via === "weekly") await env.KV.put(`tokw:${n}:${istWeek()}`, String(Math.max(0, (await tokNum(env, `tokw:${n}:${istWeek()}`)) - cost)), { expirationTtl: 86400 * 8 });
     else if (r.via === "pool") await env.KV.put(`tokp:${n}`, String((await tokNum(env, `tokp:${n}`)) + cost));
     else if (r.via === "plan") await env.KV.put(`tokplan:${n}:${istMonth()}`, String((await tokNum(env, `tokplan:${n}:${istMonth()}`)) + cost), { expirationTtl: 86400 * 40 });
