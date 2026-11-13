@@ -154,7 +154,7 @@ def chapter_brief(outline_data, idx):
 
 
 async def render_chapters(outline_data, chat, workdir, notify=None,
-                          deadline=None, results_out=None):
+                          deadline=None, results_out=None, ref_voice=None):
     """Render each chapter with doc.make_video (async), one chapter per
     sub-directory of workdir, sequentially — make_video already uses a
     process pool, so parallel chapters would oversubscribe the CPU.
@@ -177,8 +177,12 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
             break
         ch_dir = wd / f"ch{i + 1:02d}"
         try:
+            # ref_voice is passed only when set, so engine-shaped
+            # callers/stubs without the v71 parameter stay compatible.
             res = await doc.make_video(chapter_brief(outline_data, i), chat,
-                                       notify=notify, workdir=str(ch_dir))
+                                       notify=notify, workdir=str(ch_dir),
+                                       **({"ref_voice": ref_voice}
+                                          if ref_voice is not None else {}))
         except Exception as e:
             if not paths:
                 raise
@@ -196,7 +200,7 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
 
 
 async def make_long_video(brief, chat, workdir, target_minutes,
-                          notify=None, deadline=None):
+                          notify=None, deadline=None, ref_voice=None):
     """Runner entry point (v69): outline -> chaptered render -> assemble
     for a requested length of target_minutes (2-60). Returns a result
     dict shaped like doc.make_video's (path/title/duration/lang/caption/
@@ -225,7 +229,8 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                      f"~{target_minutes} min. Chapters render chestunna.")
     results = []
     paths = await render_chapters(out, chat, workdir, notify=notify,
-                                  deadline=deadline, results_out=results)
+                                  deadline=deadline, results_out=results,
+                                  ref_voice=ref_voice)
     if not paths:
         raise RuntimeError("long video: no chapters rendered")
     titles = [ch["title"] for ch in out["chapters"]][:len(paths)]
@@ -244,12 +249,18 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     if broll_sources:
         summary += (f"; B-roll: {len(broll_sources)} stock clips "
                     f"({', '.join(sorted({s.get('provider', '') for s in broll_sources}))})")
+    # v71: honest voice label, aggregated from the chapter results.
+    voice_note = next((r.get("voice_note") for r in results
+                       if r.get("voice_note")), None)
+    if voice_note:
+        summary += f"; Voice: {voice_note}"
     return {"path": final, "title": out["title"], "duration": duration,
             "lang": first.get("lang", "te"),
             "caption": first.get("caption", ""),
             "topic": first.get("topic", brief),
             "plan": first.get("plan", {}),
             "broll": broll_sources, "summary": summary,
+            "voice_note": voice_note,
             "partial": partial, "chapters_done": len(paths),
             "chapters_total": total_ch, "long": True}
 
