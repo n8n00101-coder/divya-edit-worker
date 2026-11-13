@@ -7,6 +7,11 @@
 
 const G = "https://graph.facebook.com/v21.0";
 let SYS = "";
+// v71 (Ajju, hard rule): a voice/file/setting "save" is real ONLY when a
+// structural action actually stored it — the brain must never claim one.
+// (2026-11-13: the brain invented "saved_voices/trust_reel/" for a voice
+// sample it could not even receive.) Embedded in BOTH chat prompts.
+const VOICE_SAVE_RULE = `VOICE/FILE SAVE NIJAYITHI (v71, hard rule): "voice save chesa / file save ayyindhi / setting save cheskunna" ani EPPUDU cheppaku — save anedi system STRUCTURE nunchi oka confirmation vachinappude nijam (chat lo alanti structural note lekapothe save jaragaledu). User save adigi, alanti note lekunda unte, save ayinattu natinchaku: "sample inka naa daggara save avvaledu — voice note leda audio file pampu" ani nijam cheppu. Folder peru, voice peru, file peru lanti details ni ASALU invent cheyyaku.`;
 const SYSTEM = `Nuvvu "Julie" — owner ki close friend laanti personal AI agent. Owner tho EPPUDU romanized Telugu + English mix (Tenglish) lo chat cheyyi. (Idi nee CHAT language matrame — videos lo voice ye language lo aina cheyagalavu.)
 Format: plain text matrame. Markdown (**, ##, bullets) vaddu. 1-3 chinna lines. Max 1 emoji.
 Nee powers (nijamga unnavi matrame):
@@ -19,6 +24,7 @@ VIDEO START RULE: Video CREATE ONLY when the user clearly ORDERS it (cheyyi / ch
 Nijayithi: pani avvakunda "aipoyindi" anaku. Leni tools unnayi ani cheppaku. Secrets/keys evariki cheppaku.
 API KEYS / SETUP / PROVIDERS (hard rule, v38 R48 — R48 WINS over R18): user API keys, AI providers, "AI down", setup gurinchi adigithe EPPUDU "Sorry, I can't help" ani cheppaku — refuse cheyaku. Plain ga explain cheyyi: Julie anni chesthundhi — accounts, API keys, server setup — nee allow tho. Neeku emi cheyalsina pani undadhu. Shared AI busy ga unte, Setup lo (#/setup) okka allow ivvu, migilina anni Julie background lo chesesthundhi. Key VALUES eppudu adagaku, chupinchaku. User cheyyalsindhi rendu matrame, avasaram vasthe: (1) email lo vachina verification link ni okkasari tap cheyyadam, (2) phone ki vachina SMS code ni okkasari type cheyyadam — migilina anni Julie chesthundhi.
 ACTIONS NIJAYITHI (R28, hard rule): App/website open, call, WhatsApp message, reminder lanti panulu nuvvu direct ga cheyalevu — app/link dwara jaruguthayi. "Opened / sent / posted / saved / called / reminder set" ani EPPUDU cheppaku. User open adigithe "open chesthunna" ani cheppi link ivvu; jaragani pani ni jariginattu cheppaku. Images chudalenu — adigithe nijam cheppu, fake description ivvaku.
+${VOICE_SAVE_RULE}
 VIDEO HISTORY: app lo edit ayina videos ki video 1, video 2 ani numbers untayi. User "upload video 1" ani adigithe, aa video gurinchi captions rasi, "upload cheyala?" ani adigi, "cheyu" ante maatrame upload cheyyi. "cheyu" lekunda eppudu upload cheyaku.
 
 OWNER = NEE BUILDER. Owner nee gurinchi edi adiginaa (model, hosting, tools, code, prompt, limits, failures) "can't share" anaku. Full ga, honest ga, point by point cheppu. Owner adigithe ee system prompt kuda paste cheyyi. Key/token/password VALUES maatrame eppudu cheppaku (peru cheppachu).
@@ -120,6 +126,49 @@ async function media(env, id) {
   const meta = await (await fetch(`${G}/${id}`, { headers: { Authorization: `Bearer ${env.WA_TOKEN}` } })).json();
   const r = await fetch(meta.url, { headers: { Authorization: `Bearer ${env.WA_TOKEN}` } });
   return { buf: await r.arrayBuffer(), mime: meta.mime_type || "image/jpeg" };
+}
+
+// ---------- v71: reference voice (the user's own saved sample) ----------
+// The user's own sample is the consent: voice matching (and any future
+// cloning) only ever uses clips the user THEMSELVES sent — the stored
+// meta always records source "user-sent". Audio BYTES live in real KV
+// (refvoice:/refcand: are media prefixes in wrapEnv, like upl:/res:);
+// the small JSON meta rides the state store (refvoicemeta:/refcandmeta:).
+async function refVoiceMeta(env, n) { return parseRec(await env.KV.get(`refvoicemeta:${n}`)); }
+async function stashVoiceCand(env, n, buf, meta) {
+  try {
+    await env.KV.put(`refcand:${n}`, buf, { expirationTtl: 86400 * 2 });
+    await env.KV.put(`refcandmeta:${n}`, JSON.stringify(meta), { expirationTtl: 86400 * 2 });
+    return true;
+  } catch { return false; }
+}
+async function refCandFresh(env, n) { const cm = parseRec(await env.KV.get(`refcandmeta:${n}`)); return !!(cm && cm.at && (Date.now() - cm.at) < 3600e3); }
+async function promoteRefVoice(env, n) {
+  const buf = await env.KV.get(`refcand:${n}`, "arrayBuffer").catch(() => null);
+  const cm = parseRec(await env.KV.get(`refcandmeta:${n}`));
+  if (!buf || !cm) return { ok: false, why: "nocand" };
+  const meta = { at: Date.now(), seconds: cm.seconds || 0, lang: cm.lang || "", wpm: cm.wpm || 0, mime: cm.mime || "", source: "user-sent" };
+  try {
+    await env.KV.put(`refvoice:${n}`, buf);
+    await env.KV.put(`refvoicemeta:${n}`, JSON.stringify(meta));
+  } catch { return { ok: false, why: "store" }; }
+  await env.KV.delete(`refcand:${n}`).catch(() => {});
+  await env.KV.delete(`refcandmeta:${n}`).catch(() => {});
+  return { ok: true, meta };
+}
+function refVoiceSavedLine(meta) { return `✅ Voice save ayyindhi — ${meta.seconds || 0}s sample, pace ~${meta.wpm || 0} wpm. Next videos lo ee pace ki match ayye close voice use chestha (exact clone inka ledu — voice matching v1).`; }
+// Save-my-voice intent — STRUCTURAL (never the brain's call), EN +
+// romanized Telugu + romanized Hindi. Two shapes: (a) a voice word AND a
+// save/use word in the same message; (b) a bare Telugu save imperative
+// ("save chesko") while a FRESH voice candidate (< 1 h) is waiting.
+function isVoiceSaveIntent(t, freshCand) {
+  const s = String(t || "").toLowerCase();
+  if (!s.trim()) return false;
+  const voiceWord = /\b(voice|voices|voice\s*note|audio|awaaz|gonthu)\b/.test(s);
+  const saveWord = /\b(save|store|keep|use|vaddu|vaadu)\b/.test(s) || /\bsave\s*(chesko|cheskoni|cheyyi|chey|chesey)\b/.test(s);
+  if (voiceWord && saveWord) return true;
+  if (freshCand && /\bsave\s*(chesko|cheskoni|cheyyi|chey|chesey)\b/.test(s)) return true;
+  return false;
 }
 
 async function history(env, user) { return JSON.parse((await env.KV.get(`h:${user}`)) || "[]").filter(x => !(x.role === "assistant" && /can[’']t (share|help)|cannot share/i.test(String(x.content)))); }
@@ -285,13 +334,37 @@ async function handle(env, m) {
     return say(env, user, ans);
   }
 
-  if (m.type === "audio") {
-    const { buf, mime } = await media(env, m.audio.id);
-    const fd = new FormData();
-    fd.append("file", new Blob([buf], { type: mime || "audio/ogg" }), "voice.ogg");
-    fd.append("model", "whisper-large-v3");
-    const tr = await (await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${env.GROQ_KEY}` }, body: fd })).json().catch(() => ({}));
-    if (!tr.text || !tr.text.trim()) return say(env, user, "Voice note ardham kaaledu, malli pampu leda type cheyyi.");
+  if (m.type === "audio" || (m.type === "document" && (m.document?.mime_type || "").startsWith("audio/"))) {
+    // v71: voice notes AND audio files sent as documents. (Ajju's Tripti
+    // sample arrived as an .m4a DOCUMENT and fell through to the canned
+    // "ardham chesukolenu" line — documents with an audio mime now take
+    // this path too.) Download (media()) -> Groq Whisper turbo with
+    // verbose_json (word timings -> pace) -> the transcript joins the
+    // normal text flow below. The clip is ALSO stashed as a
+    // reference-voice CANDIDATE: a save request (this message's caption,
+    // the note's own words, or the user's next text) is promoted
+    // structurally below — the brain never decides a save happened.
+    const aobj = m.audio || m.document;
+    const { buf, mime } = await media(env, aobj.id);
+    let tr = {};
+    if (env.GROQ_KEY) {
+      const fd = new FormData();
+      fd.append("file", new Blob([buf], { type: mime || "audio/ogg" }), "voice.ogg");
+      fd.append("model", "whisper-large-v3-turbo");
+      fd.append("response_format", "verbose_json");
+      tr = await (await fetch("https://api.groq.com/openai/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${env.GROQ_KEY}` }, body: fd })).json().catch(() => ({}));
+    }
+    if (!tr.text || !tr.text.trim()) return say(env, user, "Voice ardham kaaledu ra — clear ga vinipinchaledu. Malli pampu, leda text lo cheppu.");
+    const _words = Array.isArray(tr.words) ? tr.words : [];
+    const _secs = Number(tr.duration) || (_words.length ? Number(_words[_words.length - 1].end) || 0 : 0);
+    const _nw = _words.length || tr.text.trim().split(/\s+/).length;
+    const _meta = { at: Date.now(), seconds: Math.round(_secs * 10) / 10, lang: tr.language || "", wpm: _secs > 0 ? Math.round(_nw / (_secs / 60)) : 0, mime };
+    await stashVoiceCand(env, user, buf, _meta);
+    const _cap = (aobj.caption || "").trim();
+    if (_cap && isVoiceSaveIntent(_cap, true)) {
+      const pr = await promoteRefVoice(env, user);
+      await say(env, user, pr.ok ? refVoiceSavedLine(pr.meta) : "Voice save cheyadaniki try chesa kani store avvaka poyindi — malli okkasari pampu.");
+    }
     m = { ...m, type: "text", text: { body: tr.text.trim() } };
     await say(env, user, `🎙️ Vinnadi: "${tr.text.trim().slice(0, 300)}"`);
   }
@@ -331,6 +404,19 @@ async function handle(env, m) {
     if (ai && ["open", "play", "call", "whatsapp", "reminder", "time", "weather"].includes(ai.intent) && !/\b(video\s*\d|watch\s+video|upload\s+video|video\s+upload)\b/i.test(text)) {
       const r = await appAssist(env, { n: user }, { text, tz: "Asia/Kolkata", via: "wa" }, "te");
       return say(env, user, r.reply || "");
+    }
+    // v71: "ee voice save chesko" — the reference-voice save is
+    // STRUCTURAL: it runs only against a real stashed candidate and the
+    // reply is built from the store outcome, so Julie can never
+    // hallucinate a save again (the 2026-11-13 trust_reel fabrication,
+    // where the brain "saved" a voice it never received).
+    if (isVoiceSaveIntent(text, await refCandFresh(env, user))) {
+      const pr = await promoteRefVoice(env, user);
+      const a2 = pr.ok ? refVoiceSavedLine(pr.meta)
+        : (pr.why === "nocand" ? "Save cheyadaniki voice sample kanipinchaledu — mundhu voice note leda audio file pampu, tarvatha 'voice save chesko' ani cheppu."
+                               : "Voice save cheyadaniki try chesa kani store avvaka poyindi — konchem sepu tarvatha malli cheppu.");
+      const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh);
+      return say(env, user, a2);
     }
     // v48 (R54): a model name + API key pasted in chat — save it
     // structurally (resolve -> test -> save); redacted from history,
@@ -497,6 +583,7 @@ function appSys(isOwner, lang) {
   s += "\n\nTHEORY — books/tutorials/documentary practice as rules (follow like Hark): DESIGN — contrast first, one focal point per scene; hierarchy headline > visual > caption; max 2 fonts (Anton headlines, Montserrat body); colour = mood (red shock, dark blue serious, yellow highlight, warm motivation); 60px side gap; consistency IS the aesthetic. EDITING — one idea = one scene (2-4s); hook in first 2s; cut on the word/beat; change shot every 3-6s, never static >5s; ONE effect at a time, every motion has a reason; if it adds no meaning, remove it. TIMING/SOUND — word timing drives everything; voice -14 LUFS, music ducked ~20 dB under voice; silence before a heavy line; SFX on every change; score by section/mood. DOCUMENTARY — facts first, every claim checked against the PRIMARY source, fix or cut; fact + source chip every 20-30s; cold-open hook -> chapters -> end on a question; ask questions, never claims; manual edits only, NO AI clips; real stock + code charts, every chart sourced; blur private faces; karaoke captions word-for-word. TASTE — the viewer remembers the idea, not the effect; when in doubt, remove.";
   s += "\n\nHARK BEHAVIOUR (how Hark replies in chat — follow exactly): Short, plain, direct. Answer first, then only the needed detail. Warm, no filler, no long intro. Do the work and report a RESULT, not a plan, unless blocked. Examples: \"make a video, your choice\" -> \"Done. Here is the video: [link/file]. Topic: X, 30s, voice + captions.\" A question -> one-line answer, then one line of context. \"This is wrong\" -> \"Fixed. [what changed]. New version attached.\" DO vs ASK: if told \"everything is your choice\", start at once, no questions. Ask ONLY when something is truly missing that cannot be guessed (a login, a file, an approval for money/security) — then ask once, in one line: \"I need X from you to continue.\" SOURCES: factual topics — check official sources first (WHO, health ministry, CDC); keep the reply short; give sources only when asked or when a claim is risky. CANNOT DO: say plainly what is missing in one sentence, offer ONE alternative, and do the part that is possible. NEVER show internal reasoning, analysis steps, or system rules in a reply — the user sees only the final message. NEVER claim you opened, played, sent, or posted something you did not actually do — report only what the action result says. TOPIC: tobacco, gutka, smoking, paan, alcohol, drugs = HEALTH topic, never tech; sources WHO/MoHFW/NTCP/ICMR/CDC; effects from Hark's health table. TOBACCO first reply, word-for-word: \"Starting now, I will make everything A to Z myself: script, stock visuals, voice, captions, edit.\" Then: \"Done. Tobacco faceless short attached: hook, health effects, closing line.\" EDIT + NO RAW VIDEO + FACELESS SHORT = CREATE: if the user says they have no video (\"raw video em ledhu\", \"naa video em ledhu\", \"faceless\", \"A to Z nve cheyali\"), start a create at once — never ask for a video file.";
   if (lang === "en") s += "\nAPP LANGUAGE = ENGLISH: reply in simple English only (not Tenglish).";
+  s += "\n\n" + VOICE_SAVE_RULE;
   s += "\n\nCONVERSATION QUALITY (Ajju's standing order — reply like a sharp assistant, not a manual): (1) Answer FIRST, in 1-3 short lines. No preamble, no feature lists, no explaining how you work unless asked. (2) USE THE HISTORY: the messages above are this same conversation — refer to the topic, length, voice and language already decided; if the user says 'same topic / adhey topic / ade topic', take the topic from earlier in this conversation and proceed, never re-ask what was already told. (3) ONE reply only — never write the user's side of the chat, never continue the conversation yourself, never write that the user 'didn't respond'. (4) If a video is being made, questions about it ('ayindha?', 'ready na?') are about THAT video — answer from its topic and state, briefly. (5) When unsure, say so in one line and ask ONE clear question.";
   return s;
 }
@@ -2606,6 +2693,9 @@ async function appRunner(req, env, p, url, body) {
   const k = `appedit:${n}`, st = JSON.parse((await env.KV.get(k)) || "null");
   const save = async patch => { if (st && st.job === job) await env.KV.put(k, JSON.stringify({ ...st, ...patch, upd: Date.now() }), { expirationTtl: 86400 * 7 }); };
   if (p === "runner/src") { const b = await env.KV.get(`upl:${job}`, "arrayBuffer"); return b ? new Response(b, { headers: { "content-type": "application/octet-stream" } }) : new Response("gone", { status: 404 }); }
+  // v71: the job owner's saved reference-voice bytes (job-scoped, same
+  // x-runner-key + jobown gate as runner/src). 404 when none is saved.
+  if (p === "runner/refvoice") { const b = await env.KV.get(`refvoice:${n}`, "arrayBuffer"); return b ? new Response(b, { headers: { "content-type": "application/octet-stream" } }) : new Response("gone", { status: 404 }); }
   if (p === "runner/state" && req.method === "POST") {
     const state = ["running", "done", "failed"].includes(body.state) ? body.state : "running";
     const pct = Number.isFinite(body.pct) ? Math.max(0, Math.min(100, body.pct | 0)) : null;
@@ -3791,7 +3881,9 @@ export class JulieState {
     return new Response("bad op", { status: 400 });
   }
 }
-const KV_MEDIA_PREFIXES = ["upl:", "res:"];
+// v71: refvoice:/refcand: hold reference-voice AUDIO BYTES — they are
+// media too and must stay in real KV (the state store is text-only).
+const KV_MEDIA_PREFIXES = ["upl:", "res:", "refvoice:", "refcand:"];
 function wrapEnv(env) {
   if (!env || !env.KV || !env.STATE) return env;
   const real = env.KV;
@@ -3897,7 +3989,10 @@ export default {
       // env fallback). PIXABAY_KEY stays central-only (no per-user
       // pixabay concept exists).
       const ownPexels = jrec.to ? await openKey(env, jrec.to, "pexels") : "";
-      return Response.json({ ...jrec, WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: ownPexels || env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "" });
+      // v71: the job owner's saved reference voice (flags + pace/lang
+      // only — the bytes travel via /api/runner/refvoice, job-scoped).
+      const rvMeta = jrec.to ? await refVoiceMeta(env, jrec.to) : null;
+      return Response.json({ ...jrec, WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: ownPexels || env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "", refvoice: rvMeta ? { present: true, wpm: rvMeta.wpm || 0, lang: rvMeta.lang || "" } : { present: false } });
     }
     // Call media server fetches WA/Groq creds here (shared FORWARD_SECRET).
     if (url.pathname === "/callcreds" && req.method === "POST") {

@@ -517,7 +517,7 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=()):
 
 
 # ---------------- voice ----------------
-async def tts(text, voice, mood, out):
+async def tts(text, voice, mood, out, rate_add=0):
     import edge_tts
     rate, pitch = MOODS[mood][3]
     if voice == "en-US-ChristopherNeural":  # v32 (M12, Mark): calm, deep
@@ -528,6 +528,15 @@ async def tts(text, voice, mood, out):
         # Google TTS as a stand-in — edge-tts is blocked on this VM;
         # production uses real edge-tts.)
         rate = "+8%"
+    if rate_add:
+        # v71: pace-match adjustment (percentage POINTS on top of the
+        # rate above, total clamped to ±25%). rate_add=0 (default) is
+        # byte-identical to the old behaviour.
+        try:
+            _base = int(str(rate).rstrip("%"))
+        except ValueError:
+            _base = 0
+        rate = f"{max(-25, min(25, _base + rate_add)):+d}%"
     last = None
     for attempt in range(4):
         try:
@@ -540,6 +549,69 @@ async def tts(text, voice, mood, out):
         except Exception as e:
             last = e; await asyncio.sleep(1.5 * (attempt + 1))
     raise RuntimeError(f"TTS failed: {last}")
+
+
+# ---------------- v71: reference voice (the user's own saved sample) ----
+# The sample is the user's OWN voice clip, sent by them on WhatsApp and
+# saved structurally by the Worker (meta source "user-sent" — that send
+# is the consent; matching never uses anyone else's clip). v1 does NOT
+# clone the timbre: it picks the closest built-in voice and matches the
+# PACE. A future cloning engine replaces synth_voice() below only.
+FEMALE_VOICES = {"en-US-AvaMultilingualNeural", "te-IN-ShrutiNeural", "hi-IN-SwaraNeural"}
+REF_FEMALE_EN = "en-IN-NeerjaNeural"  # closest built-in: female, English (India)
+VOICE_NOTE_REF = "reference-matched (pace + closest voice) — exact clone engine pending"
+
+
+def pace_adjust_rate(ref_wpm, measured_wpm, cur_add=0):
+    """Pure: the rate_add (percentage points) that moves the measured
+    pace toward the reference pace. Inside a ±5% band -> no change.
+    The implied total adjustment stays clamped to ±25 points."""
+    if not ref_wpm or not measured_wpm:
+        return cur_add
+    ratio = float(ref_wpm) / float(measured_wpm)
+    if 0.95 <= ratio <= 1.05:
+        return cur_add
+    return max(-25, min(25, cur_add + round((ratio - 1) * 100)))
+
+
+def _vo_wpm(words, text):
+    """Words per minute of a synthesised scene, from the edge-tts word
+    timings [(start, dur, text), ...] — the real spoken pace."""
+    if not words:
+        return 0
+    end = max(o + d for (o, d, _w) in words)
+    if end <= 0:
+        return 0
+    return len(words) / (end / 60.0)
+
+
+async def synth_voice(text, voice, mood, out, ref=None):
+    """The single TTS entry point (v71). A future cloning engine
+    replaces THIS function. ref = {"path", "wpm", "lang"} (the user's
+    saved reference sample) or None.
+
+    No ref (or no measured pace): exactly the old tts() call, and the
+    plan's voice. With a ref: (a) closest built-in voice — a female
+    English-India voice when the reference is English and a female
+    voice is in use, else the plan's voice; (b) PACE MATCH — synthesise,
+    measure the real wpm from the word timings, re-synthesis at an
+    adjusted rate until within ~5% of the reference pace (max 2
+    adjustments, total rate clamped to ±25%). Returns (words, voice).
+    """
+    if not ref or not ref.get("wpm"):
+        return await tts(text, voice, mood, out), voice
+    v = voice
+    if str(ref.get("lang") or "").lower().startswith("en") and voice in FEMALE_VOICES:
+        v = REF_FEMALE_EN
+    add = 0
+    words = await tts(text, v, mood, out, rate_add=add)
+    for _ in range(2):
+        new_add = pace_adjust_rate(ref["wpm"], _vo_wpm(words, text), add)
+        if new_add == add:
+            break
+        add = new_add
+        words = await tts(text, v, mood, out, rate_add=add)
+    return words, v
 
 
 def dur(path):
@@ -2081,7 +2153,7 @@ def frame_qc(p, video_path, wd=None):
     return result
 
 
-async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False):
+async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False, ref_voice=None):
     global _P
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
     p = plan(brief, chat, recent, recent_styles, recent_families)
@@ -2127,8 +2199,15 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         voice = VOICES[("en", "male_calm")]
     if notify: await notify(f"Script ready: {p['title']} ({len(p['scenes'])} scenes, {p['lang']}). Voice, animation, music chestunna.")
     gap = 0.45  # v32 (M13, Mark 1a1c1028211d08d1 §1 step 6): 0.45 s breathing room per scene
+    # v71: with a saved reference voice, every scene goes through
+    # synth_voice (closest voice + pace match); the voice it picks on
+    # the first scene carries to the rest. Without one: plain tts().
     for i, s in enumerate(p["scenes"]):
-        a = f"{wd}/vo{i}.mp3"; s["words"] = await tts(s["vo"], voice, s["mood"], a)
+        a = f"{wd}/vo{i}.mp3"
+        if ref_voice:
+            s["words"], voice = await synth_voice(s["vo"], voice, s["mood"], a, ref_voice)
+        else:
+            s["words"] = await tts(s["vo"], voice, s["mood"], a)
         s["audio"] = a; s["adur"] = dur(a); s["d"] = s["adur"] + gap
     # v27 (Hark kit): hit-word timing — ONE hit word per sentence, priority =
     # number > topic noun > contrast/shock word. The visual lands 80 ms BEFORE
@@ -2300,4 +2379,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     return {"path": out, "delivery_path": delivery, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
             "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total,
             "broll": p.get("broll_sources", []),
+            # v71: honest label of what the voice actually is — set ONLY
+            # when a reference sample drove the synth (pace + closest
+            # voice). Never worded as a clone.
+            "voice_note": VOICE_NOTE_REF if ref_voice else None,
             "frame_qc": _fq, "qc_passed": _fq["passed"]}

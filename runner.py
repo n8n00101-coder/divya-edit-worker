@@ -549,6 +549,25 @@ async def create_job(j, wa, note):
     import create as _engines
     create = _engines.engine_module()  # DIVYA_ENGINE=v3 -> doc3, default doc (v2)
     to = j["to"]
+    # v71: the owner's saved reference voice (flagged in the job by the
+    # Worker). Bytes come from the job-scoped runner route; the dict is
+    # passed ONLY to engines that take it (doc.py, via synth_voice) —
+    # mirrors the recent_styles capability pattern below.
+    _ref = None
+    _rv = j.get("refvoice") or {}
+    if _rv.get("present"):
+        try:
+            _rr = httpx.get(f"{WORKER}/api/runner/refvoice", params={"job": JOB},
+                            headers={"x-runner-key": KEY}, timeout=60)
+            if _rr.status_code == 200 and len(_rr.content) > 1000:
+                _rp = os.path.join(os.environ["DATA_DIR"], f"ref_voice_{JOB}.audio")
+                open(_rp, "wb").write(_rr.content)
+                _ref = {"path": _rp, "wpm": _rv.get("wpm") or 0, "lang": _rv.get("lang") or ""}
+                print("refvoice: downloaded", len(_rr.content), "bytes, wpm", _ref["wpm"], "lang", _ref["lang"])
+            else:
+                print("refvoice: route answered", _rr.status_code, "— continuing without it")
+        except Exception as e:
+            print("refvoice download failed:", str(e)[:150])
     try:
         res = None
         # v69 FIX (Ajju 2026-11-13): WhatsApp creates only ever made ~1-min
@@ -572,7 +591,8 @@ async def create_job(j, wa, note):
                 workdir=os.path.join(os.environ.get("DATA_DIR", "/tmp/divya"),
                                      f"long_{JOB}"),
                 target_minutes=_target_min, notify=note,
-                deadline=_time.monotonic() + _budget)
+                deadline=_time.monotonic() + _budget,
+                ref_voice=_ref)
             print("long video", res["path"], res.get("duration"),
                   "partial" if res.get("partial") else "complete")
         else:
@@ -583,6 +603,8 @@ async def create_job(j, wa, note):
                     kw = {"recent": j.get("recent", "")}
                     if hasattr(create, "pick_look"):
                         kw["recent_styles"] = j.get("recent_styles") or []
+                    if _ref is not None and hasattr(create, "synth_voice"):
+                        kw["ref_voice"] = _ref
                     res = await create.make_video(j.get("brief", ""), groq_chat, notify=note, **kw)
                     print("look", res.get("plan", {}).get("look"), res.get("plan", {}).get("accent"))
                     break
@@ -627,6 +649,9 @@ async def create_job(j, wa, note):
         _broll_used = res.get("broll") or []
         if _broll_used:
             qcline += f"\n🎞️ B-roll: {len(_broll_used)} stock footage clips ({', '.join(sorted({s.get('provider', '') for s in _broll_used}))})"
+        # v71: honest voice line — what was actually used (never "clone").
+        if res.get("voice_note"):
+            qcline += f"\n🎙️ Voice: {res['voice_note']}"
         try:
             up = fit_size(res["path"], 23)
             # v28: report the chosen style (look + motion + transition) so the
