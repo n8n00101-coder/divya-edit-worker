@@ -2355,20 +2355,27 @@ async function tokSpend(env, n, cost) {
 // the user must never pay for a job that never queued. Reverses the exact
 // bucket tokSpend used.
 async function tokRefund(env, n, r, cost) {
-  if (!r || !r.ok || !r.via || r.via === "unlimited" || r.via === "error") return;
+  // v76: returns true ONLY when a bucket write actually completed —
+  // callers (refundJobSpend) must never claim or flag a refund on a
+  // silent no-op (unknown via, split without legs, a store write that
+  // threw). Total: never throws.
+  if (!r || !r.ok || !r.via || r.via === "unlimited" || r.via === "error") return false;
   try {
     // v71: a split spend is refunded bucket-for-bucket from its recorded
     // split (the split sums to the spend cost) — never into one bucket.
-    if (r.via === "split" && r.split) {
+    if (r.via === "split") {
+      if (!r.split || !(r.split.weekly || r.split.pool || r.split.plan)) return false;
       if (r.split.weekly) await env.KV.put(`tokw:${n}:${istWeek()}`, String(Math.max(0, (await tokNum(env, `tokw:${n}:${istWeek()}`)) - r.split.weekly)), { expirationTtl: 86400 * 8 });
       if (r.split.pool) await env.KV.put(`tokp:${n}`, String((await tokNum(env, `tokp:${n}`)) + r.split.pool));
       if (r.split.plan) await env.KV.put(`tokplan:${n}:${istMonth()}`, String((await tokNum(env, `tokplan:${n}:${istMonth()}`)) + r.split.plan), { expirationTtl: 86400 * 40 });
-      return;
+      return true;
     }
     if (r.via === "weekly") await env.KV.put(`tokw:${n}:${istWeek()}`, String(Math.max(0, (await tokNum(env, `tokw:${n}:${istWeek()}`)) - cost)), { expirationTtl: 86400 * 8 });
     else if (r.via === "pool") await env.KV.put(`tokp:${n}`, String((await tokNum(env, `tokp:${n}`)) + cost));
     else if (r.via === "plan") await env.KV.put(`tokplan:${n}:${istMonth()}`, String((await tokNum(env, `tokplan:${n}:${istMonth()}`)) + cost), { expirationTtl: 86400 * 40 });
-  } catch {}
+    else return false;
+    return true;
+  } catch { return false; }
 }
 // v73: every successful video spend is recorded against its job
 // (spend:<job>). The in-memory tk handle dies with the start request;
@@ -2381,21 +2388,32 @@ async function recordSpend(env, job, n, tk, cost) {
 }
 // v73: refund a job's spend from its durable record (idempotent — the
 // record's refunded flag is set in the same pass, so a second caller
-// never pays out twice). Falls back to LEGACY_JOB_SPENDS for the one
-// verified pre-v73 job whose split was never recorded (see below).
+// never pays out twice). Falls back to LEGACY_JOB_SPENDS for verified
+// jobs whose split was never recorded (see below).
 async function refundJobSpend(env, job, n) {
+  // v76: total + honest. The record read is isolated so a corrupt or
+  // unreadable spend record can never throw out of here; the refund is
+  // only reported (and the record only flagged) when tokRefund confirms
+  // a bucket write actually landed — a swallowed store failure used to
+  // flag the record refunded and strand the money forever. A record is
+  // trusted only when it is this user's AND structurally usable
+  // (known via, or a split with legs); anything else falls through to
+  // the job's verified legacy split when one exists.
+  let rec = null, bad = false;
+  try { rec = JSON.parse((await env.KV.get(`spend:${job}`)) || "null"); } catch { bad = true; }
   try {
-    const rec = JSON.parse((await env.KV.get(`spend:${job}`)) || "null");
-    if (rec && !rec.refunded && rec.n === n) {
-      await tokRefund(env, n, { ok: true, via: rec.via, split: rec.split }, rec.cost);
+    if (rec && rec.refunded) return false; // already paid out — never twice
+    const usable = !!rec && !bad && rec.n === n && (rec.via === "weekly" || rec.via === "pool" || rec.via === "plan" || (rec.via === "split" && !!rec.split && !!(rec.split.weekly || rec.split.pool || rec.split.plan)));
+    if (usable) {
+      if (!(await tokRefund(env, n, { ok: true, via: rec.via, split: rec.split }, rec.cost))) return false; // write failed — leave unflagged so a later read retries
       rec.refunded = true;
-      await env.KV.put(`spend:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 3 });
+      await env.KV.put(`spend:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 3 }).catch(() => {});
       return true;
     }
-    if (!rec && LEGACY_JOB_SPENDS[job]) {
+    if (LEGACY_JOB_SPENDS[job]) {
       const lg = LEGACY_JOB_SPENDS[job];
-      await tokRefund(env, n, { ok: true, via: lg.via, split: lg.split }, lg.cost);
-      await env.KV.put(`spend:${job}`, JSON.stringify({ n, via: lg.via, split: lg.split, cost: lg.cost, at: Date.now(), refunded: true, legacy: true }), { expirationTtl: 86400 * 3 });
+      if (!(await tokRefund(env, n, { ok: true, via: lg.via, split: lg.split }, lg.cost))) return false;
+      await env.KV.put(`spend:${job}`, JSON.stringify({ n, via: lg.via, split: lg.split, cost: lg.cost, at: Date.now(), refunded: true, legacy: true }), { expirationTtl: 86400 * 3 }).catch(() => {});
       return true;
     }
   } catch {}
@@ -2409,9 +2427,19 @@ async function refundJobSpend(env, job, n) {
 // that morning: weekly spent 500,000 of which 35,000 was chat charges
 // (7 x 5K), i.e. 465,000 weekly; pool 65,000 left of the 1,000,000
 // referral grant, i.e. 935,000 pool. Every job started under v73
-// records its own split via recordSpend — this table never grows.
+// records its own split via recordSpend; the only other entry is
+// a6421c3f (v76, below), whose spend fell in the deploy window.
 const LEGACY_JOB_SPENDS = {
   "2252f9cd": { via: "split", split: { weekly: 465000, pool: 935000, plan: 0 }, cost: 1400000 },
+  // v76: job a6421c3f (test account, 2026-11-13, the re-order after
+  // 2252f9cd's rescue) was created in the seconds around the v73 deploy
+  // and its spend was never recorded — the runner died ~40s into
+  // chapter 1 and the rescue could not refund what it could not see.
+  // Split proven from live balances: pre-start week 465,000 / pool
+  // 1,000,000; the order's own 5K chat charge left 460,000 weekly,
+  // which the video took in full (week 0 after); pool leg 940,000
+  // (60,000 left after). This table grows only by a verified entry.
+  "a6421c3f": { via: "split", split: { weekly: 460000, pool: 940000, plan: 0 }, cost: 1400000 },
 };
 const STUCK_JOB_MS = 30 * 60 * 1000;
 // v74: a job that DID start reporting and then went silent — 45 min
@@ -2429,41 +2457,68 @@ const STALE_PROGRESS_MS = 45 * 60 * 1000;
 // intent, and the runner polls (/job + /api/runner/*, excluding the
 // job being polled about).
 async function rescueStuckJobs(env, n, exceptJob = "") {
-  try {
-    const now = Date.now();
-    const deadEntry = x => {
-      if (!x || x.has_result) return false;
-      if (x.state !== "editing" && x.state !== "running") return false;
-      // v73: never started — still "editing", no progress, old enough.
-      if (x.state === "editing" && (x.pct || 0) === 0 && x.at && now - x.at >= STUCK_JOB_MS) return true;
-      // v74: started, then the runner died mid-job (the pre-v74 rescue
-      // only covered pct-0, so a progressed-then-killed job sat at
-      // "running" forever with its tokens spent).
-      const ev = x.upd || x.at;
-      return !!ev && now - ev >= STALE_PROGRESS_MS;
-    };
-    const list = await histList(env, n, 20);
-    for (const e of list) {
-      if (!e || !e.job || e.job === exceptJob) continue;
-      if (!deadEntry(e)) continue;
+  const NOTE_PLAIN = "Video machine start ayyi madhyalo aagipoyindhi — response raledhu. Malli order cheyyi.";
+  const NOTE_REFUNDED = "Video machine start ayyi madhyalo aagipoyindhi — response raledhu. Tokens refund chesa. Malli order cheyyi.";
+  const now = Date.now();
+  const deadEntry = x => {
+    if (!x || x.has_result) return false;
+    if (x.state !== "editing" && x.state !== "running") return false;
+    // v73: never started — still "editing", no progress, old enough.
+    if (x.state === "editing" && (x.pct || 0) === 0 && x.at && now - x.at >= STUCK_JOB_MS) return true;
+    // v74: started, then the runner died mid-job (the pre-v74 rescue
+    // only covered pct-0, so a progressed-then-killed job sat at
+    // "running" forever with its tokens spent).
+    const ev = x.upd || x.at;
+    return !!ev && now - ev >= STALE_PROGRESS_MS;
+  };
+  let list = [];
+  try { list = await histList(env, n, 20); } catch { return; }
+  for (const e of list) {
+    if (!e || !e.job || e.job === exceptJob) continue;
+    // v76: an entry an earlier rescue already failed whose refund could
+    // not land at the time (store error) gets its refund retried here —
+    // refundJobSpend's refunded flag keeps the retry idempotent, so the
+    // money is never stranded by one bad read and never paid twice.
+    if (e.state === "failed" && e.rescued) {
+      try {
+        if (await refundJobSpend(env, e.job, n)) {
+          const cur = await histGet(env, n, e.n);
+          if (cur && cur.state === "failed" && cur.note === NOTE_PLAIN) { cur.note = NOTE_REFUNDED; await histPut(env, n, cur); }
+        }
+      } catch {}
+      continue;
+    }
+    if (!deadEntry(e)) continue;
+    // v76: every entry is rescued in its OWN try/catch. The pre-v76
+    // single catch{} around the whole loop meant one throw anywhere in
+    // one entry's pass (a cleanup read, a store hiccup) silently
+    // aborted the rescue for every remaining entry — on every read,
+    // forever, with no trace (live: job a6421c3f, 2026-11-13).
+    try {
       // Re-read before acting: another surface may have rescued or
       // finished this entry since the list was built.
       const cur = await histGet(env, n, e.n);
       if (!cur || !deadEntry(cur)) continue;
-      const refunded = await refundJobSpend(env, e.job, n);
+      // v76: mark failed FIRST. The state correction can never be
+      // blocked by the refund path; the refund is best-effort after,
+      // and if it lands the note is upgraded to say so (two writes).
       cur.state = "failed"; cur.failedAt = now; cur.rescued = true;
-      cur.note = refunded
-        ? "Video machine start ayyi madhyalo aagipoyindhi — response raledhu. Tokens refund chesa. Malli order cheyyi."
-        : "Video machine start ayyi madhyalo aagipoyindhi — response raledhu. Malli order cheyyi.";
+      cur.note = NOTE_PLAIN;
       await histPut(env, n, cur);
+      let refunded = false;
+      try { refunded = await refundJobSpend(env, e.job, n); } catch {}
+      if (refunded) { cur.note = NOTE_REFUNDED; await histPut(env, n, cur); }
       // v74: keep the app's live edit record consistent with the rescue.
       const ae = JSON.parse((await env.KV.get(`appedit:${n}`)) || "null");
       if (ae && ae.job === e.job && ae.state !== "done" && ae.state !== "failed") { ae.state = "failed"; ae.note = cur.note; ae.upd = now; await env.KV.put(`appedit:${n}`, JSON.stringify(ae), { expirationTtl: 86400 * 7 }); }
       const aj = JSON.parse((await env.KV.get(`appjob:${n}`)) || "null");
       if (aj && aj.job === e.job) await env.KV.delete(`appjob:${n}`);
       if ((await env.KV.get(`curjob:${n}`)) === e.job) await env.KV.delete(`curjob:${n}`);
+    } catch (err) {
+      // Never silent again: leave a trace an operator can find.
+      try { await env.KV.put("dbg:rescue", `${new Date().toISOString()} job ${e.job} ${String((err && err.message) || err).slice(0, 200)}`, { expirationTtl: 86400 * 2 }); } catch {}
     }
-  } catch {}
+  }
 }
 const tokMsg = (lang, r) => (r && r.outage) ? (lang === "en" ? "Server busy right now — no tokens were cut. Try again in a minute." : "Server busy ga undhi — tokens emi cut avvaledu. Konchem sepu tarvatha malli try cheyyi.") : lang === "en" ? `Not enough tokens: this needs ${(r.need || 0).toLocaleString("en-IN")} tokens, you have ${(r.have || 0).toLocaleString("en-IN")}. Free tokens reset every Monday.` : `Tokens saripovu: deeniki ${(r.need || 0).toLocaleString("en-IN")} tokens kavali, neeku ${(r.have || 0).toLocaleString("en-IN")} unnayi. Free tokens prathi Monday reset avthayi.`;
 async function tokPlanId(env, n) { const p = await env.KV.get(`plan:${n}`).catch(() => null); return PLANS[p] ? p : "free"; }
