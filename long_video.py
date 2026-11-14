@@ -277,6 +277,16 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
         # vo0.mp3 write both died with ENOENT (run 43373013930).
         ch_dir.mkdir(parents=True, exist_ok=True)
         ch_brief = chapter_brief(outline_data, i, spec=spec)
+        # v84 (Stage 4 / P2): every chapter brief now carries the
+        # WHOLE-documentary structure — its arc role, the full chapter
+        # list, and the rule that only the final chapter may close
+        # the story. This is what stops chapters rendering as
+        # independent shorts with their own hooks and endings.
+        try:
+            import doc_structure as _ds
+            ch_brief += _ds.arc_context_block(outline_data, i)
+        except Exception as _e:
+            print(f"render_chapters: arc context failed ({str(_e)[:100]})")
         if amendments is not None:
             ch_brief = _fold_chapter_amendments(amendments, ch_brief, i + 1)
         # v79: footage-pool mark at this chapter's start — a compliance
@@ -386,6 +396,7 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
         # FAILs is re-rendered with the failures named in its brief —
         # fix only that chapter, max 2 rounds, keep the best attempt.
         # A passed deadline skips retries (partial semantics win).
+        _fix_rounds_used = 0
         if spec is not None:
             for _round in range(2):
                 rep = res.get("compliance") or {}
@@ -393,6 +404,7 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                           if c.get("status") == "FAIL"]
                 if not failed:
                     break
+                _fix_rounds_used += 1
                 if deadline is not None and time.monotonic() > deadline:
                     break
                 fix_lines = "; ".join(
@@ -432,6 +444,9 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                         pool._save()
                 if not failed2:
                     break
+        # v84 (Stage 2): record the TRUE correction rounds this
+        # chapter consumed — the long report used to hard-code 0.
+        res["fix_rounds_used"] = _fix_rounds_used
         paths.append(res["path"])
         if results_out is not None:
             results_out.append(res)
@@ -490,6 +505,34 @@ async def make_long_video(brief, chat, workdir, target_minutes,
         import broll as _broll
         pool = _broll.FootagePool(
             state_path=str(Path(workdir) / "footage_state.json"))
+        # v84 (Stage 3 / P1): vision verification on the long path —
+        # sampled frames vs narration, hash-cached verdicts, strict
+        # call budget (default 80/job from edit_memory config; the
+        # 60-90 s acceptance test passes 18). Vision unavailable ->
+        # UNVERIFIED verdicts, never a silent pass. Disable with
+        # JULIE_BROLL_VERIFY=0.
+        if os.environ.get("JULIE_BROLL_VERIFY", "1") != "0":
+            try:
+                import broll_verify as _bv
+                import edit_memory as _em
+                _mem = _em.EditMemory(
+                    os.environ.get("JULIE_EDIT_MEMORY") or
+                    str(Path(workdir) / "edit_memory.db"))
+                try:
+                    _em.seed_knowledge_base(_mem)
+                except Exception:
+                    pass
+                pool.verifier = _bv.BrollVerifier(
+                    call_budget=int(os.environ.get(
+                        "JULIE_VISION_BUDGET",
+                        str(int(_mem.config("vision_max_calls_per_job"))))),
+                    cache_path=str(Path(workdir) / "vision_cache.json"),
+                    memory=_mem, job_id=str(Path(workdir).name))
+                print(f"broll vision verification: ON "
+                      f"(budget {pool.verifier.budget} calls)")
+            except Exception as _e:
+                print(f"broll vision verification unavailable: "
+                      f"{str(_e)[:120]}")
     results = []
     # spec/cfg/pool are passed ONLY when a spec exists — the same
     # conditional-kwargs contract the rest of the codebase keeps
@@ -609,9 +652,23 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                 "chapters_done": len(paths),
             }
             verdicts = _comp.requirement_verdicts(spec, cfg, plan_info, minfo)
-            _rounds = sum(1 for r in results if (r.get("workdir") or "").find("fix") >= 0)
+            # v84 (Stage 2 / P0-D): structural documentary QC — one
+            # opening, one ending, no repeated hooks/CTAs/intros.
+            try:
+                import doc_structure as _ds
+                checks += _ds.structure_lints(
+                    [((r.get("plan") or {}).get("scenes") or [])
+                     for r in results])
+            except Exception as _e:
+                checks.append({"rule": "ST-1", "status": "UNVERIFIED",
+                               "detail": f"structure lint failed: {str(_e)[:100]}",
+                               "scene": None})
+            # v84 (Stage 2): the TRUE correction-round count (was
+            # hard-coded rounds=0 here as well).
+            _rounds = sum(int(r.get("fix_rounds_used") or 0)
+                          for r in results)
             report = _comp.build_report(spec, cfg, checks, verdicts,
-                                        rounds=0,
+                                        rounds=_rounds,
                                         fixes=[f for r in results
                                                for f in ((r.get("compliance") or {}).get("fixes_applied") or [])])
             for _name, _data in (("prompt_spec.json", spec),
@@ -626,6 +683,64 @@ async def make_long_video(brief, chat, workdir, target_minutes,
             print(f"long compliance: {'PASS' if not _nf else f'{len(_nf)} FAIL'}")
         except Exception as e:
             print("long compliance run failed:", str(e)[:200])
+    # v84 (Stage 1 / P0-A): UNCONDITIONAL QC. If the spec path did
+    # not produce a report — no spec, or the spec run itself crashed
+    # — the job STILL gets a truthful compliance_report.json: media
+    # audit + structural lints + whatever chapter checks exist.
+    # Checks that could not run are UNVERIFIED, never PASS (Q8:
+    # warn-and-deliver; the video above is delivered regardless).
+    if report is None:
+        try:
+            import qc_core as _qc84
+            _ch_checks = []
+            for _ci, _r in enumerate(results):
+                for _c in ((_r.get("compliance") or {}).get("checks") or []):
+                    _ch_checks.append({**_c, "chapter": _ci + 1})
+            _durs84 = []
+            for _pth in paths:
+                try:
+                    _durs84.append(_probe_duration(_pth))
+                except Exception:
+                    _durs84.append(0.0)
+            _starts84, _t84 = [], 0.0
+            for _d in _durs84:
+                _starts84.append(_t84)
+                _t84 += _d + CARD_SECONDS
+            report = _qc84.unconditional_long_report(
+                final, {"kind": "long"}, _ch_checks,
+                [((r.get("plan") or {}).get("scenes") or [])
+                 for r in results],
+                rounds=sum(int(r.get("fix_rounds_used") or 0)
+                           for r in results),
+                fixes=[f for r in results
+                       for f in ((r.get("compliance") or {}).get("fixes_applied") or [])],
+                workdir=str(Path(workdir)),
+                chapter_breaks=_starts84[1:])
+            _nf = [c for c in report["checks"] if c["status"] == "FAIL"]
+            print(f"long compliance (unconditional, no spec): "
+                  f"{'PASS' if not _nf else f'{len(_nf)} FAIL'}")
+        except Exception as e:
+            print("unconditional long compliance failed:", str(e)[:200])
+    # v84 (Stage 5 / P3): Editing Director, LOG-ONLY. Reads the
+    # chapter plans, writes director_log.json, changes NOTHING.
+    _director_log = None
+    try:
+        import director as _dir84
+        import doc_structure as _ds84
+        _roles = _ds84.assign_arc(len(results))
+        _all_scenes = []
+        for _ci, _r in enumerate(results):
+            for _s in ((_r.get("plan") or {}).get("scenes") or []):
+                _all_scenes.append({**_s, "arc_role": _roles[_ci]})
+        _director_log = _dir84.analyse_plan(
+            _all_scenes, job_id=str(Path(workdir).name))
+        with open(Path(workdir) / "director_log.json", "w",
+                  encoding="utf-8") as _f:
+            json.dump(_director_log, _f, indent=1)
+        print(f"director (log-only): "
+              f"{len(_director_log['recommendations'])} recommendations")
+    except Exception as e:
+        print("director log failed:", str(e)[:150])
     return {"path": final, "title": out["title"], "duration": duration,
             "lang": first.get("lang", "te"),
             "caption": first.get("caption", ""),
@@ -636,7 +751,8 @@ async def make_long_video(brief, chat, workdir, target_minutes,
             "amendments_applied": amend_applied,
             # v79: contract artifacts (FIX 1/5) for the runner upload.
             "spec": spec or [], "render_config": cfg or {},
-            "compliance": report, "workdir": str(workdir),
+            "compliance": report, "director": _director_log,
+            "workdir": str(workdir),
             "footage": pool.footage_json() if pool else {},
             "partial": partial, "chapters_done": len(paths),
             "chapters_total": total_ch, "long": True}

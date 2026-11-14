@@ -614,6 +614,7 @@ def _enforce_plan(p, brief=""):
              "pattern_bg": "paper"}
     fixes_all = []
     checks = []
+    _fix_rounds = 0
     for _round in range(3):  # audit, repair, audit, repair, audit
         checks = _comp.audit_plan(p["scenes"], cfg,
                                   topic_text=str(p.get("topic") or "") + " " + str(brief or ""),
@@ -625,8 +626,12 @@ def _enforce_plan(p, brief=""):
         if not fixes:
             break
         fixes_all += fixes
+        _fix_rounds += 1
     p["plan_checks"] = checks
     p["plan_fixes"] = fixes_all
+    # v84 (Stage 2): the TRUE number of correction rounds attempted —
+    # build_report used to hard-code rounds=0 and lie about this.
+    p["plan_fix_rounds"] = _fix_rounds
     _bad = [c for c in checks if c["status"] == "FAIL"]
     if _bad:
         print(f"plan enforcement: {len(_bad)} check(s) still failing after repairs: "
@@ -3197,7 +3202,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         _checks += _comp.audit_music_default(spec or [], cfg or {}, _plan_info)
         _verdicts = _comp.requirement_verdicts(spec or [], cfg or {}, _plan_info, _minfo)
         _report = _comp.build_report(spec or [], cfg or {}, _checks, _verdicts,
-                                     rounds=0, fixes=p.get("plan_fixes") or [])
+                                     rounds=int(p.get("plan_fix_rounds") or 0),
+                                     fixes=p.get("plan_fixes") or [])
         p["compliance"] = _report
         for _name, _data in (("prompt_spec.json", spec or []),
                              ("footage.json", p.get("footage") or {}),

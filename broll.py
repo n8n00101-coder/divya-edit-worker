@@ -322,6 +322,10 @@ class FootagePool:
         self.last_uploader = ""
         self.assignments = []
         self.rejected = []
+        # v84 (Stage 3): optional vision verifier (a
+        # broll_verify.BrollVerifier). Attached by the long pipeline;
+        # None = verification off (previous behaviour, byte-identical).
+        self.verifier = None
         if state_path and os.path.exists(state_path):
             try:
                 st = json.loads(open(state_path, encoding="utf-8").read())
@@ -403,6 +407,7 @@ class FootagePool:
             return None
         os.makedirs(workdir, exist_ok=True)
         used = set(self.used_ids)
+        _verified_count = 0  # v84: max 2 candidates verified per scene
         for query in [q for q in (queries or []) if str(q).strip()]:
             cands = []
             pk = (os.environ.get("PEXELS_KEY") or "").strip()
@@ -425,6 +430,30 @@ class FootagePool:
                                               "query": query,
                                               "reason": "download failed"})
                         continue
+                # v84 (Stage 3 / P1): vision verification of the
+                # ACTUAL frames against the narration line + the
+                # query (the scene's why). FAIL rejects the clip with
+                # the reason recorded (and feeds editing memory via
+                # the verifier); UNVERIFIED keeps the clip but is
+                # reported as unverified — never as a pass.
+                _verify = None
+                if self.verifier is not None and _verified_count < 2:
+                    _verified_count += 1
+                    try:
+                        _v, _reason, _cached = self.verifier.verify_candidate(
+                            {"id": cand["id"], "path": dest}, line, query,
+                            workdir=workdir)
+                        _verify = {"verdict": _v, "reason": _reason,
+                                   "cached": _cached}
+                        if _v == "fail":
+                            self.rejected.append(
+                                {**cand, "scene": scene_no, "query": query,
+                                 "reason": f"vision verification failed: {_reason}"})
+                            used.add(cand["id"])
+                            continue
+                    except Exception as _e:
+                        _verify = {"verdict": "unverified",
+                                   "reason": str(_e)[:100]}
                 start, motion = active_window(dest, needed_s)
                 keyword = ""
                 line_toks = _tokens(line)
@@ -437,7 +466,8 @@ class FootagePool:
                        "source_url": cand["page"], "query": query,
                        "keyword": keyword, "start": round(start, 2),
                        "path": dest, "static": motion < 1.2,
-                       "uploader": cand.get("uploader", "")}
+                       "uploader": cand.get("uploader", ""),
+                       **({"verify": _verify} if _verify else {})}
                 self.used_ids.append(cand["id"])
                 self.last_uploader = cand.get("uploader", "")
                 self.assignments.append(rec)
@@ -453,10 +483,11 @@ class FootagePool:
         keyword that matched the line (R10), start time — plus the
         rejected clips with their reasons (mail 1 Part 2 point 6)."""
         return {
-            "clips": [{k: r[k] for k in ("scene", "clip_id", "provider",
-                                         "source_url", "query", "keyword",
-                                         "start", "static")
-                       } for r in self.assignments],
+            "clips": [{**{k: r[k] for k in ("scene", "clip_id", "provider",
+                                            "source_url", "query", "keyword",
+                                            "start", "static")},
+                       **({"verify": r["verify"]} if r.get("verify") else {})}
+                      for r in self.assignments],
             "rejected": [{k: r.get(k) for k in ("scene", "clip_id",
                                                 "provider", "query",
                                                 "reason") if k in r}
