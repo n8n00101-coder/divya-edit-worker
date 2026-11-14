@@ -903,11 +903,29 @@ async function appTalk(env, u, text, lang, voiceId) {
   let edJob = edM ? edM[1] : null, edText = cleanText, edKind = null;
   if (!edJob) {
     const edPend = JSON.parse((await env.KV.get(`edpend:${u.n}`)) || "null");
-    if (edPend && /^\s*(short|long|face)\b/i.test(cleanText)) {
+    if (edPend && /(upload|post)/i.test(cleanText) && /(youtube|yt\b|instagram|insta)/i.test(cleanText)) {
+      // v87 F9: "edits kaadhu, youtube lo upload cheyu" — a correction beats
+      // the pending edit clarification. Re-route the staged video to upload.
+      edJob = edPend.job; edText = cleanText;
+      await env.KV.delete(`edpend:${u.n}`);
+    }
+    else if (edPend && /^\s*(short|long|face)\b/i.test(cleanText)) {
       edJob = edPend.job; edText = edPend.text;
       edKind = /^\s*short/i.test(cleanText) ? "short" : /^\s*long/i.test(cleanText) ? "long" : "face";
       await env.KV.delete(`edpend:${u.n}`);
     }
+  }
+  if (edJob && /(upload|post|pampinchu|pampu)/i.test(edText) && /(youtube|yt\b|instagram|insta)/i.test(edText)) {
+    // v87 F9: attached video + upload intent — start the YouTube/Instagram
+    // upload flow for the staged file (same uppend/runUpload path as
+    // Julie-made videos). NEVER the short/long/face edit question.
+    const targets = uploadTargets(edText.toLowerCase());
+    const copy = await genUploadCopy(env, u, { n: 0, job: edJob, title: "", topic: edText }, lang);
+    await env.KV.put(`uppend:${u.n}`, JSON.stringify({ num: 0, job: edJob, targets, copy, privacy: "unlisted", at: Date.now(), attached: true }), { expirationTtl: 1800 });
+    const tNames = targets.map(t => t === "yt" ? "YouTube" : "Instagram").join(" + ");
+    const a2 = lang === "en" ? `Upload — not an edit. Your video is ready to post.\nYouTube title: ${copy.yt_title}\nUpload to ${tNames} (unlisted)? Say "cheyu" to post, or tell me what to change.` : `Upload — edit kaadhu. Nee video post ki ready.\nYouTube title: ${copy.yt_title}\n${tNames} lo (unlisted) upload cheyala? "cheyu" ani cheppu, leda em marchalo cheppu.`;
+    h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
+    return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
   }
   if (edJob) {
     edKind = edKind || editKindFromWords(edText);
@@ -1303,6 +1321,9 @@ function blueprintLine(bp) {
 // the edit-tab redirect in appAssist.
 function chatFirst(text) {
   const t = text.toLowerCase();
+  // v87 F3: "play latest video of <channel>" is an assist action, never a
+  // video-create order — keep it out of the chat-first create hijack.
+  if (/(latest|kotha)\s+video/.test(t) && /(play|open|petu|pettu|veyyi|cheyyi|chey)/.test(t)) return false;
   if (/\[\[\s*EDITVIDEO:/.test(text)) return true;
   if (/(upload|post)\s+(video\s*)?\d+/.test(t)) return true;
   if (/video\s*\d+\s*(ni\s*)?(youtube|instagram|insta|both|renditlo)/.test(t)) return true;
@@ -2390,7 +2411,10 @@ function setupPauseLine(reason, lang) {
   // One plain line each — the user does this one tap, Julie does the rest.
   if (reason === "captcha") return en ? "An image challenge came up that I can't solve — take a quick look once, and I'll do the rest." : "Image challenge vachindhi, nenu solve cheyalenu — okkasari chusi continue cheyu, migilina anni nene chestha.";
   if (reason === "signin") return en ? "Google sign-in is needed once — sign in, and I'll do the rest." : "Google sign-in okkasari kavali — sign in cheyu, migilina anni nene chestha.";
-  return en ? "Tap the link in your email once, and I'll do the rest." : "Nee email lo vachina link ni okkasari tap cheyu, migilina anni nene chestha.";
+  // v87 F8: ONE truthful line, same as the runner's pause message — the
+  // link is opened by Julie herself (server-fed from Gmail); the user must
+  // NOT tap it (the session has to land in Julie's browser).
+  return en ? "The verification link was sent to your email — don't tap it. Julie will open it and sign in; if it doesn't arrive, use Take control." : "Verification link nee email ki vachindhi — link ni nuvvu tap cheyyaku, Julie ne link open chesi sign in avthundhi. Mail rakapothe Take control vadu.";
 }
 function setupMissingKeyReply(lang) {
   if (lang === "en") return "Setup finished, but I couldn't find a working key — one of the accounts didn't complete. Run setup again? Tap 'Run setup again' in Setup (#/setup) and I'll do the rest.";
@@ -2755,6 +2779,7 @@ function ruleIntent(text) {
   if ((m = t.match(/^(?:please\s+)?(?:call|phone|dial|కాల్ చేయి|కాల్)\s+(.+)$/i)) || (m = t.match(/^(.+?)\s+(?:ki|ku|కి|కు)\s+(?:call|phone|కాల్)\s*(?:cheyyi|chey|chei|cheyu|చేయి|చెయ్యి)?$/i))) return { intent: "call", name: m[1].trim() };
   if ((m = t.match(/^(?:whats\s?app|wa|వాట్సాప్)\s+(?:to\s+)?(\+?[\d\s-]{7,}|\S+)\s+(?:that\s+|saying\s+)?(.+)$/i))) return { intent: "whatsapp", name: m[1].trim(), message: m[2].trim() };
   if ((m = t.match(/^(?:send\s+)?(?:a\s+)?(?:whats\s?app|message|msg|text)\s+(?:to\s+)(\S+)\s+(?:that\s+|saying\s+)?(.+)$/i))) return { intent: "whatsapp", name: m[1].trim(), message: m[2].trim() };
+  if ((m = t.match(/(?:play|open|choodu|chudu|petu|pettu|veyyi|veyi)\s+(?:the\s+)?latest\s+video\s+(?:of|from)\s+(.+)/i)) || (m = t.match(/^(.+?)\s+(?:channel\s+)?(?:latest|kotha)\s+video\s*(?:play|open)?\s*(?:cheyyi|chey|cheyu|petu|pettu|veyyi)?$/i))) return { intent: "playLatest", target: m[1].trim() };
   if ((m = t.match(/^(?:please\s+)?play\s+(?:the\s+)?(.+?)(?:\s+(?:song|songs|music|video))?(?:\s+on youtube)?$/i)) || (m = t.match(/^(.+?)\s+(?:song|pata|paata|పాట)\s*(?:play|petu|pettu|vinipinchu|ప్లే)\s*(?:cheyyi|chey|చేయి)?$/i))) return { intent: "play", target: m[1].trim() };
   if ((m = t.match(/^(?:open|launch|ఓపెన్ చేయి|ఓపెన్)\s+(.+)$/i)) || (m = t.match(/^(.+?)\s+(?:open|ఓపెన్)\s*(?:cheyyi|chey|చేయి)?$/i))) return { intent: "open", target: m[1].trim() };
   if ((m = t.match(/^remind me (?:in|after)\s+(\d+)\s*(min|minute|minutes|mins|hour|hours|hr|hrs)\s+(?:to\s+)?(.+)$/i))) return { intent: "reminder", minutes: +m[1] * (/^h/i.test(m[2]) ? 60 : 1), message: m[3] };
@@ -2783,6 +2808,18 @@ function atToMs(at, tz) {
   let diff = (h * 60 + mi) - ((+parts.hour % 24) * 60 + +parts.minute); if (diff <= 0) diff += 1440;
   return Date.now() + diff * 60000;
 }
+// v87 F3: block-scope copy of the route-scoped ytToken (same KV key +
+// refresh + stale-null rules) so appAssist can resolve channel uploads.
+async function ytTokenShared(env, n) {
+  const t = JSON.parse((await env.KV.get(`tok:${n}:youtube`)) || "null");
+  if (!t || !t.access_token) return null;
+  if (t.expires_in && t.at && Date.now() - t.at > (t.expires_in - 300) * 1000 && t.refresh_token) {
+    const nt = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) })).json().catch(() => ({}));
+    if (nt.access_token) { const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in }; await env.KV.put(`tok:${n}:youtube`, JSON.stringify(merged)); return merged; }
+    return null;
+  }
+  return t;
+}
 async function appAssist(env, u, body, lang) {
   const text = String(body.text || "").trim().slice(0, 1000); const en = lang === "en";
   if (!text) return { ok: false, error: "empty" };
@@ -2798,6 +2835,14 @@ async function appAssist(env, u, body, lang) {
   // v21: never swallow a create order here — "Make a 30s short" contains "short"
   // and used to get the edit hint instead of a video. Genuine how-to questions
   // (no order verb) still get the hint.
+  // v87 F1/F2: a follow-up QUESTION about a video already in this
+  // conversation (ETA / status / "inka entha sepu") goes to the brain WITH
+  // the history — the canned edit hint here made Julie "forget" the topic
+  // she was already given.
+  if (/\b(edit|video|videos|reel|reels|short|shorts)\b|వీడియో|రీల్|ఎడిట్/i.test(text) && !isCreateOrder(text) && (/\?/.test(text) || /\b(entha sepu|eppudu|ayindha|ayinda|ready|status|inka|enduku|em ayindi|emayindi)\b/i.test(text))) {
+    const hPrev = await history(env, u.n);
+    if (hPrev.some(m => /video|reel|short|topic|CREATE/i.test(String(m.content || "")))) { const r = await appTalk(env, u, text, lang, body.voiceId); return { ok: true, intent: "chat", free: true, ...r }; }
+  }
   if (/\b(edit|video|videos|reel|reels|short|shorts)\b|వీడియో|రీల్|ఎడిట్/i.test(text) && !/\b(play|song|paata|pata)\b/i.test(text) && !isCreateOrder(text) && !isNoVideoEditOrder(text)) { const r = editHint(lang); const h = await history(env, u.n); h.push({ role: "user", content: text }, { role: "assistant", content: r }); await remember(env, u.n, h); return { ok: true, intent: "edit", free: true, reply: r }; }
   let it = ruleIntent(text);
   if (!it && (ACTION_RX.test(text) || PREMIUM_RX.test(text))) it = await llmIntent(env, u.n, text);
@@ -2825,6 +2870,30 @@ async function appAssist(env, u, body, lang) {
       const label = (APPS[tg] ? tg : (it.target || tg)).replace(/^\w/, c => c.toUpperCase());
       if (wa) return done(en ? `${label}: tap the link to open it.\n${url}` : `${label} link: ${url}\nLink meedha tap cheyyi, app open avuthundi.`, { type: "open", url });
       return done(en ? `Opening ${label}.` : `${label} open chesthunna.`, { type: "open", url });
+    }
+    case "playLatest": {
+      const ch = String(it.target || "").slice(0, 80);
+      const fallback = async () => {
+        const url = "https://www.youtube.com/results?search_query=" + encodeURIComponent(ch + " latest video");
+        return done(en ? `Opening YouTube search for the latest video from ${ch}.` : `${ch} latest video kosam YouTube search open chestunna.`, { type: "play", query: ch, url });
+      };
+      const t2 = await ytTokenShared(env, u.n).catch(() => null);
+      if (!t2) return fallback();
+      try {
+        const H = { Authorization: "Bearer " + t2.access_token };
+        const s = await (await fetch("https://www.googleapis.com/youtube/v3/search?part=snippet&type=channel&maxResults=1&q=" + encodeURIComponent(ch), { headers: H })).json();
+        const cid = s.items && s.items[0] && s.items[0].id && s.items[0].id.channelId;
+        if (!cid) return fallback();
+        const cd = await (await fetch("https://www.googleapis.com/youtube/v3/channels?part=contentDetails&id=" + cid, { headers: H })).json();
+        const up2 = cd.items && cd.items[0] && cd.items[0].contentDetails && cd.items[0].contentDetails.relatedPlaylists && cd.items[0].contentDetails.relatedPlaylists.uploads;
+        if (!up2) return fallback();
+        const pl = await (await fetch("https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=1&playlistId=" + up2, { headers: H })).json();
+        const sn = pl.items && pl.items[0] && pl.items[0].snippet;
+        const vid = sn && sn.resourceId && sn.resourceId.videoId;
+        if (!vid) return fallback();
+        const url = "https://www.youtube.com/watch?v=" + vid;
+        return done(en ? `Playing the latest video from ${sn.channelTitle || ch}: "${sn.title}".` : `${sn.channelTitle || ch} latest video play chestunna: "${sn.title}".`, { type: "play", query: ch, url });
+      } catch { return fallback(); }
     }
     case "play": {
       const q = String(it.target || "").slice(0, 120);
@@ -2856,7 +2925,16 @@ async function appAssist(env, u, body, lang) {
       return done(en ? `${where}: ${Math.round(c.temperature_2m)}°C, feels ${Math.round(c.apparent_temperature)}°C, ${sky}. Today ${Math.round(d.temperature_2m_min?.[0])}–${Math.round(d.temperature_2m_max?.[0])}°C, rain chance ${d.precipitation_probability_max?.[0] ?? "?"}%.` : `${where}: ${Math.round(c.temperature_2m)}°C, feels ${Math.round(c.apparent_temperature)}°C, ${sky}. Ee roju ${Math.round(d.temperature_2m_min?.[0])}–${Math.round(d.temperature_2m_max?.[0])}°C, varsham chance ${d.precipitation_probability_max?.[0] ?? "?"}%.`);
     }
     case "premium": {
-      if (!prem) { await log(premiumMsg(lang)); return { ok: true, intent: "premium", free: false, premium_required: true, reply: premiumMsg(lang), action: { type: "subscribe" } }; }
+      if (!prem) {
+        // v87 F10: the gate is the REAL token balance, not a placeholder
+        // plan. If the account can pay in tokens (weekly + pool + plan),
+        // the work proceeds and appTalk charges the true cost — a
+        // "coming soon" upsell must never block payable work.
+        const bal = await tokBalance(env, u.n).catch(() => null);
+        const have = bal ? (bal.weekLeft + bal.pool + bal.planLeft) : 0;
+        if (bal && (bal.unlimited || have > 0)) { const r = await appTalk(env, u, text, lang, body.voiceId); return { ok: true, intent: "premium", free: false, ...r }; }
+        await log(premiumMsg(lang)); return { ok: true, intent: "premium", free: false, premium_required: true, reply: premiumMsg(lang), action: { type: "subscribe" } };
+      }
       const r = await appTalk(env, u, text, lang, body.voiceId); return { ok: true, intent: "premium", free: false, ...r };
     }
     default: {
@@ -2886,6 +2964,20 @@ const acctGet = async (env, uid) => uid ? JSON.parse((await env.KV.get(`acct:${u
 const acctPut = (env, a) => env.KV.put(`acct:${a.uid}`, JSON.stringify(a));
 const normEmail = s => { const e = String(s || "").trim().toLowerCase(); return /^[^\s@]{1,64}@[^\s@]{1,190}\.[a-z]{2,}$/.test(e) ? e : ""; };
 function normPhone(s) { const n = appNum(s); return /^\d{11,15}$/.test(n) ? n : ""; }
+// v87 F7: email code sender. Stores the code FIRST (eotp:<uid>, same shape
+// sendPhoneCode uses for pwr:) and then tries the mail channel. No channel
+// is configured in this Worker yet, so it reports no-channel and the code
+// is deleted again — an undeliverable code must never look sent.
+async function sendEmailCode(env, uid, email) {
+  const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
+  await env.KV.put(`eotp:${uid}`, JSON.stringify({ code, tries: 0 }), { expirationTtl: 600 });
+  const sent = await sendMailChannel(env, { to: email, subject: "Julie password reset code", text: `Your Julie password reset code is ${code}. It expires in 10 minutes. If you did not ask for this, ignore this email.` });
+  if (!sent || !sent.ok) { await env.KV.delete(`eotp:${uid}`); return { ok: false, reason: "no-channel" }; }
+  return { ok: true };
+}
+// The ONE place an email provider gets wired in (Resend/Brevo free tier or
+// a Gmail app-password relay). Until then: honest no-channel.
+async function sendMailChannel(env, msg) { return { ok: false, reason: "no-channel" }; }
 async function acctFind(env, ident) {
   const e = normEmail(ident); if (e) return acctGet(env, await env.KV.get(`em:${e}`));
   const n = normPhone(ident); if (n) return acctGet(env, await env.KV.get(`ph:${n}`)); // only VERIFIED phones are indexed
@@ -2967,6 +3059,29 @@ async function acctPublic(req, env, p, body) {
     if (!a.phone) return appJson(req, { ok: false, no_phone: true, error: en ? "This account has no verified phone, so the password can't be reset by WhatsApp. Ask the Julie owner for help." : "Ee account ki verified phone ledu, kabatti WhatsApp tho reset avvadu. Julie owner ni adugu." }, 400);
     const r = await sendPhoneCode(env, a.uid, a.phone, "reset", en);
     return appJson(req, { ok: r.ok, sent: r.ok, to: r.to || mask(a.phone), status: r.status, error: r.error }, r.ok || r.status === "cooldown" ? 200 : 400);
+  }
+  // v87 F7: password reset by EMAIL code — for accounts with no verified
+  // phone (auth/forgot above is WhatsApp-only). The code store/check mirror
+  // pwr: exactly (eotp:<uid>, 10 min, 5 tries via codeCheck). Sending needs
+  // an email channel; NONE exists in this Worker today (no SMTP/Resend/
+  // MailChannels/send_email binding — verified by grep 2026-11-15), so
+  // sendEmailCode reports no-channel honestly instead of faking a send.
+  if (p === "auth/forgot-email" && req.method === "POST") {
+    const a = await acctFind(env, String(body.id || ""));
+    if (!a) return appJson(req, { ok: false, error: en ? "No account found with that email." : "Aa email tho account ledu." }, 404);
+    const r = await sendEmailCode(env, a.uid, a.email);
+    if (!r.ok) return appJson(req, { ok: false, no_channel: true, error: en ? "Email sending is not set up yet, so a code can't be emailed. Use WhatsApp reset if your phone is verified, or ask the Julie owner to finish the email setup." : "Email pampinche setup inka avvaledu, anduke code email cheyalenu. Phone verify ayyi unte WhatsApp reset vadandi, leda email setup finish cheyamani Julie owner ni adagandi." }, 501);
+    return appJson(req, { ok: true, sent: true, to: a.email.replace(/^(.).*(@.*)$/, "$1...$2") });
+  }
+  if (p === "auth/reset-email" && req.method === "POST") {
+    const a = await acctFind(env, String(body.id || ""));
+    if (!a) return appJson(req, { ok: false, error: en ? "Reset not possible for this account." : "Ee account ki reset kudaradu." }, 400);
+    const bad = pwBad(body.password, en); if (bad) return appJson(req, { ok: false, field: "password", error: bad }, 400);
+    const c = await codeCheck(env, `eotp:${a.uid}`, body.code);
+    if (!c.ok) return appJson(req, { ok: false, error: c.expired ? (en ? "Code expired. Ask for a new one." : "Code expire ayyindi. Kotha code adugu.") : (en ? "Wrong code." : "Code tappu.") }, 400);
+    a.pw = await pwMake(String(body.password)); a.pwv = (a.pwv || 1) + 1; await acctPut(env, a);
+    await env.KV.delete(`pwfail:${a.uid}:${req.headers.get("cf-connecting-ip") || "0"}`);
+    return appJson(req, { ok: true, token: await newSession(env, a), number: a.phone || "", owner: a.phone ? appAllowed(env, a.phone).owner : false });
   }
   if (p === "auth/reset") {
     const a = await acctFind(env, String(body.id || ""));
@@ -4530,6 +4645,7 @@ export default {
   async fetch(req, env, ctx) {
     env = wrapEnv(env);
     const url = new URL(req.url);
+    if (url.pathname.startsWith("/api/")) return appApi(req, env, url);
     if (url.pathname.startsWith("/api/")) {
       // v50: last-resort guard — an unexpected throw inside the app API
       // must surface as a clean JSON 500, never a bare error-1101 page.

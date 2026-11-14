@@ -173,9 +173,22 @@ CURSOR_JS = r"""
   const boot = () => {
     if (!document.body) { setTimeout(boot, 60); return; }
     const c = document.createElement('div'); c.id = '__julie_cursor';
-    c.style.cssText = 'position:fixed;left:0;top:0;width:26px;height:26px;z-index:2147483647;pointer-events:none;transition:left .18s ease,top .18s ease;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))';
-    c.innerHTML = '<svg width="26" height="26" viewBox="0 0 24 24"><path d="M5 3 L19 12 L12.5 13.5 L15 20 L12.5 21.5 L10 14.5 L5.5 18.5 Z" fill="#FF5A1F" stroke="#fff" stroke-width="1.4"/></svg>';
+    c.style.cssText = 'position:fixed;left:0;top:0;width:30px;height:30px;z-index:2147483647;pointer-events:none;transition:left .18s ease,top .18s ease;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))';
+    // v87 (U13): the cursor IS Julie — a penguin, not a plain arrow, so the
+    // user recognises the agent in the live view on every page.
+    c.innerHTML = '<svg width="30" height="30" viewBox="0 0 24 24"><ellipse cx="12" cy="13" rx="7" ry="9" fill="#111111" stroke="#ffffff" stroke-width="1.2"/><ellipse cx="12" cy="15.5" rx="4" ry="5.8" fill="#ffffff"/><circle cx="9.6" cy="9.2" r="1.15" fill="#ffffff"/><circle cx="14.4" cy="9.2" r="1.15" fill="#ffffff"/><path d="M10.4 11.2 L13.6 11.2 L12 13 Z" fill="#C17733"/></svg>';
     document.body.appendChild(c);
+    // v87 (U13): SPAs (YouTube et al.) can wipe injected nodes on route
+    // changes — watch and re-add the cursor + ring if they ever vanish,
+    // so the agent stays visible in every streamed frame on every page.
+    const guard = new MutationObserver(() => {
+      if (!document.getElementById('__julie_cursor') && document.body) {
+        document.body.appendChild(c);
+        const r2 = document.getElementById('__julie_ring');
+        if (!r2) document.body.appendChild(ring);
+      }
+    });
+    guard.observe(document.documentElement, { childList: true, subtree: true });
     const ring = document.createElement('div'); ring.id = '__julie_ring';
     ring.style.cssText = 'position:fixed;width:34px;height:34px;border:3px solid #FF5A1F;border-radius:50%;z-index:2147483646;pointer-events:none;opacity:0;transform:translate(-50%,-50%)';
     document.body.appendChild(ring);
