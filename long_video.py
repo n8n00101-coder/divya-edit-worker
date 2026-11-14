@@ -960,6 +960,28 @@ async def make_long_video(brief, chat, workdir, target_minutes,
               f"{len(_director_log['recommendations'])} recommendations")
     except Exception as e:
         print("director log failed:", str(e)[:150])
+    # v86: aggregate the Director's VISUAL PLANS (decided inside
+    # doc.plan, before rendering) across chapters: visual_plan.json +
+    # VISUAL_PLAN.md in the workdir, and on the result dict.
+    _visual_plan86 = []
+    try:
+        import director as _dir86b
+        for _ci, _r in enumerate(results):
+            for _rec in ((_r.get("plan") or {}).get("visual_plan") or []):
+                _visual_plan86.append({**_rec, "chapter": _ci + 1})
+        if _visual_plan86:
+            with open(Path(workdir) / "visual_plan.json", "w",
+                      encoding="utf-8") as _f:
+                json.dump(_visual_plan86, _f, indent=1)
+            with open(Path(workdir) / "VISUAL_PLAN.md", "w",
+                      encoding="utf-8") as _f:
+                _f.write(_dir86b.visual_plan_markdown(
+                    _visual_plan86, title=out["title"]))
+            print(f"director v86: visual plan — "
+                  f"{len(_visual_plan86)} beats across "
+                  f"{len(results)} chapter(s)")
+    except Exception as e:
+        print("visual plan aggregation failed:", str(e)[:150])
     # v85: Director vs the ACTUAL render — the comparison the v84
     # design promised (recommendations counted against the defects
     # QC really found). Still log-only: nothing is mutated.
@@ -1032,6 +1054,7 @@ async def make_long_video(brief, chat, workdir, target_minutes,
             # v79: contract artifacts (FIX 1/5) for the runner upload.
             "spec": spec or [], "render_config": cfg or {},
             "compliance": report, "director": _director_log,
+            "visual_plan": _visual_plan86,
             "workdir": str(workdir),
             "footage": pool.footage_json() if pool else {},
             "partial": partial, "chapters_done": len(paths),

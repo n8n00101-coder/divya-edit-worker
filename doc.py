@@ -597,14 +597,44 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
             p["end_question"] = cfg["end_card"]
         if "zoom" in (cfg.get("excludes") or []):
             p["no_zoom"] = True
-    _enforce_plan(p, brief)
+    # v86 (Ajju 2026-11-14): the Documentary Director directs the plan
+    # for long-form chapters — beat-splitting, per-beat visual
+    # decisions, varied backgrounds, a written visual plan — BEFORE
+    # anything renders, and BEFORE plan enforcement, so enforcement
+    # audits the beats that will actually render (and so the
+    # enforcement repair pass cannot first swap the writer's visuals
+    # for abstract fallbacks, the v85 filmstrip-for-a-contrast-line
+    # defect). Activation is director.should_direct (chapter briefs /
+    # cfg / env); ordinary short briefs are never directed. A
+    # directing failure keeps the writer's plan, logged — it must
+    # never take the render down.
+    _directed86 = False
+    try:
+        import director as _dir86
+        if _dir86.should_direct(brief, cfg):
+            p, _vplan86 = _dir86.direct_plan(p, brief=brief, cfg=cfg)
+            _directed86 = True
+            print(f"director v86: directed plan — {len(p['scenes'])} "
+                  f"beats, {len(_vplan86)} visual decisions")
+    except Exception as _e86:
+        print("director v86 failed (plan undirected):", str(_e86)[:150])
+    # a directed plan is audited but NOT repair-swapped (see
+    # _enforce_plan's repair=False contract)
+    _enforce_plan(p, brief, repair=not _directed86)
     return p
 
 
-def _enforce_plan(p, brief=""):
+def _enforce_plan(p, brief="", repair=True):
     """v79 plan enforcement: compliance.audit_plan + repair_plan,
     max 2 rounds. Repairs touch plan fields only (visual / title /
-    transition / sfx / bg kind) — never the voice line."""
+    transition / sfx / bg kind) — never the voice line.
+
+    v86: with repair=False the audit still runs and is recorded,
+    but NO repair swaps are applied. That is the mode for a
+    Director-led plan: the v79 repair pass optimises for its own
+    rule set and demonstrably undoes editorial decisions (it is
+    what swapped the v85 sample's contrast visual for a filmstrip);
+    on a directed plan, QC reports and the Director decides."""
     import compliance as _comp
     cfg = p.get("render_config") or {"kind": "short"}
     pools = {"visuals": list(C.VISUALS),
@@ -612,6 +642,22 @@ def _enforce_plan(p, brief=""):
              "sfx": sorted(set(SCENE_SFX.values())),
              "bg_kinds": list(VL.SCENE_BG),
              "pattern_bg": "paper"}
+    if not repair:
+        _checks = _comp.audit_plan(
+            p["scenes"], cfg,
+            topic_text=str(p.get("topic") or "") + " " + str(brief or ""),
+            measure=lambda txt, size: _label_width(
+                ImageDraw.Draw(Image.new("RGB", (8, 8))), txt) if txt else 0)
+        p["plan_checks"] = _checks
+        p["plan_fixes"] = []
+        p["plan_fix_rounds"] = 0
+        _bad = [c for c in _checks if c["status"] == "FAIL"]
+        if _bad:
+            print(f"plan audit (director-led, no repair): {len(_bad)} "
+                  f"check(s) failing: "
+                  + "; ".join(f"{c['rule']} s{c.get('scene')}"
+                              for c in _bad[:5]))
+        return
     fixes_all = []
     checks = []
     _fix_rounds = 0
