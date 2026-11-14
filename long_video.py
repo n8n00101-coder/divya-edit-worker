@@ -456,6 +456,146 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
     return paths
 
 
+async def _correct_assembled(final, paths, results, outline_data, chat,
+                             workdir, titles, size, notify=None,
+                             deadline=None, ref_voice=None,
+                             amendments=None, spec=None, cfg=None,
+                             pool=None, mq_cfg=None):
+    """v85: the assembled-file correction loop, wired end-to-end.
+
+    Inspect the ACTUAL assembled file with media_qc (deterministic
+    ffmpeg/ffprobe measurement: black / frozen / blank frames, A/V
+    mismatch, loudness, silence, colour drift, repeated visuals) ->
+    map each defect to its chapter -> correct at CHAPTER level
+    (re-render only the defective chapters, or fix the file-level
+    audio in place) -> re-assemble -> inspect again. Maximum 2
+    rounds (qc_core.bounded_correct_async); the TRUE round count
+    and fixes are returned for the compliance report. Defects that
+    cannot be corrected safely stay FAIL in the returned checks —
+    warn-and-deliver, never a false PASS.
+    Returns (mq_checks, rounds_used, fixes, final_path, paths)."""
+    import media_qc as _mq
+    import qc_core as _qcx
+    state = {"final": str(final), "paths": [str(p) for p in paths],
+             "dirty": False}
+
+    def _starts():
+        durs = []
+        for p in state["paths"]:
+            try:
+                durs.append(_probe_duration(p))
+            except Exception:
+                durs.append(0.0)
+        st, t = [], 0.0
+        for i, d in enumerate(durs):
+            st.append(t)
+            t += d + (CARD_SECONDS if i < len(durs) - 1 else 0.0)
+        return st
+
+    expected = None
+    if size:
+        expected = (int(size[0]), int(size[1]))
+    elif state["paths"]:
+        _inf = _mq.probe(state["paths"][0])
+        if _inf.get("video"):
+            expected = (_inf["video"].get("width"),
+                        _inf["video"].get("height"))
+
+    def check_fn():
+        ch, _info = _mq.inspect_file(
+            state["final"], cfg=mq_cfg, chapter_starts=_starts(),
+            workdir=str(workdir), expected_size=expected)
+        return ch
+
+    async def correct_fn(failed, rnd):
+        fixes = []
+        by_ch = _mq.chapter_defect_map(failed)
+        file_level = by_ch.get(None) or []
+        # --- file-level: loudness fixed in place (no re-render)
+        if any(c["rule"] == "MQ-LOUD" for c in file_level):
+            tmp = state["final"] + ".loud.mp4"
+            measured = _measure_loudness(state["final"])
+            if measured is not None:
+                p = _loudnorm_params(measured)
+                af = ("loudnorm=I=-14:TP=-1.0:LRA=11"
+                      f":measured_I={p['measured_I']}"
+                      f":measured_TP={p['measured_TP']}"
+                      f":measured_LRA={p['measured_LRA']}"
+                      f":measured_thresh={p['measured_thresh']}"
+                      f":offset={p['offset']}:linear={p['linear']}")
+            else:
+                af = "loudnorm=I=-14:TP=-1.0:LRA=11"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
+                            "-i", state["final"], "-af", af,
+                            "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+                            "-movflags", "+faststart", tmp], check=True)
+            os.replace(tmp, state["final"])
+            fixes.append(f"round {rnd}: re-applied dual-pass loudnorm "
+                         f"to the assembled file (no re-render)")
+        # --- chapter-level: re-render only defective chapters
+        done = 0
+        for chno in sorted(k for k in by_ch if k is not None):
+            if done >= 2:
+                break
+            rules = sorted({c["rule"] for c in by_ch[chno]})
+            if not set(rules) & {"MQ-BLACK", "MQ-FREEZE", "MQ-BLANK",
+                                 "MQ-SILENCE", "MQ-REPEAT"}:
+                continue
+            if deadline is not None and time.monotonic() > deadline:
+                fixes.append(f"round {rnd}: chapter {chno} fix skipped "
+                             f"— job deadline passed")
+                break
+            i = int(chno) - 1
+            fix_dir = Path(workdir) / f"ch{chno:02d}" / f"mqfix{rnd}"
+            fix_dir.mkdir(parents=True, exist_ok=True)
+            brief_i = chapter_brief(outline_data, i, spec=spec)
+            try:
+                import doc_structure as _ds
+                brief_i += _ds.arc_context_block(outline_data, i)
+            except Exception:
+                pass
+            brief_i += (
+                "\nQUALITY FIX — the previous render of this chapter "
+                f"had these measured defects in the ASSEMBLED video: "
+                f"{', '.join(rules)}. Regenerate the chapter with "
+                "complete, varied visuals: no black, frozen or blank "
+                "frames, no repeated footage, no unexplained silence.")
+            ch_cfg = None
+            if cfg is not None:
+                ch_cfg = dict(cfg)
+                ch_cfg["allow_cta"] = (
+                    i == len(outline_data["chapters"]) - 1)
+            res2 = await doc.make_video(
+                brief_i, chat, notify=notify, workdir=str(fix_dir),
+                **({"ref_voice": ref_voice} if ref_voice is not None else {}),
+                **({"amendments": amendments} if amendments is not None else {}),
+                **({"spec": spec, "cfg": ch_cfg, "footage_pool": pool}
+                   if spec is not None else {}))
+            state["paths"][i] = str(res2["path"])
+            if i < len(results):
+                results[i] = {**results[i], "path": str(res2["path"]),
+                              "duration": res2.get("duration"),
+                              "mq_fixed_round": rnd}
+            state["dirty"] = True
+            done += 1
+            fixes.append(f"round {rnd}: re-rendered chapter {chno} "
+                         f"({', '.join(rules)})")
+        # --- A/V mismatch or chapter changes: re-assemble once
+        if state["dirty"] or any(c["rule"] == "MQ-AVSYNC"
+                                  for c in file_level):
+            state["final"] = assemble(
+                state["paths"], state["final"], titles,
+                size=size, card_bg_from=list(state["paths"]))
+            state["dirty"] = False
+            fixes.append(f"round {rnd}: re-assembled the documentary "
+                         f"from its chapters")
+        return fixes
+
+    checks, rounds, fixes, _ok = await _qcx.bounded_correct_async(
+        check_fn, correct_fn, max_rounds=2)
+    return checks, rounds, fixes, state["final"], state["paths"]
+
+
 async def make_long_video(brief, chat, workdir, target_minutes,
                           notify=None, deadline=None, ref_voice=None,
                           amendments=None, spec=None, cfg=None):
@@ -498,6 +638,25 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     if notify:
         await notify(f"Long video: {out['title']} — {total_ch} chapters, "
                      f"~{target_minutes} min. Chapters render chestunna.")
+    # v85: editing memory exists for EVERY long job — not only spec
+    # jobs with vision verification on. Selections, rejections, QC
+    # failures, corrections and the final result are recorded at the
+    # end of the job (see the v85 block before the return), and the
+    # verifier below reads the SAME database. Guarded: a memory
+    # failure must never take the render down with it.
+    _mem84 = None
+    _job84 = str(Path(workdir).name)
+    try:
+        import edit_memory as _em85
+        _mem84 = _em85.EditMemory(
+            os.environ.get("JULIE_EDIT_MEMORY") or
+            str(Path(workdir) / "edit_memory.db"))
+        try:
+            _em85.seed_knowledge_base(_mem84)
+        except Exception:
+            pass
+    except Exception as _e:
+        print(f"edit memory unavailable: {str(_e)[:120]}")
     # v79 (mail 1 Part 2): ONE footage pool for the whole video — the
     # NO-REPEAT used_ids rule spans chapters, not just scenes.
     pool = None
@@ -515,13 +674,9 @@ async def make_long_video(brief, chat, workdir, target_minutes,
             try:
                 import broll_verify as _bv
                 import edit_memory as _em
-                _mem = _em.EditMemory(
+                _mem = _mem84 or _em.EditMemory(
                     os.environ.get("JULIE_EDIT_MEMORY") or
                     str(Path(workdir) / "edit_memory.db"))
-                try:
-                    _em.seed_knowledge_base(_mem)
-                except Exception:
-                    pass
                 pool.verifier = _bv.BrollVerifier(
                     call_budget=int(os.environ.get(
                         "JULIE_VISION_BUDGET",
@@ -721,6 +876,70 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                   f"{'PASS' if not _nf else f'{len(_nf)} FAIL'}")
         except Exception as e:
             print("unconditional long compliance failed:", str(e)[:200])
+    # v85: ASSEMBLED-FILE correction loop. The rendered documentary
+    # itself is measured (media_qc: black/frozen/blank frames, A/V
+    # mismatch, loudness, silence, colour drift, repeated visuals);
+    # defects are corrected at chapter level and the file is
+    # re-inspected, max 2 rounds, with the TRUE round count merged
+    # into the compliance report. Uncorrectable defects stay FAIL —
+    # warn-and-deliver (Q8), never a false PASS.
+    _mq_rounds = 0
+    _mq_fixes = []
+    try:
+        _mq_cfg = None
+        if _mem84 is not None:
+            try:
+                _mq_cfg = {
+                    "loud_target_lufs": float(
+                        _mem84.config("loudness_lufs_target")),
+                    "loud_tol_lufs": float(
+                        _mem84.config("loudness_tolerance")),
+                    "silence_min_s": float(
+                        _mem84.config("silence_gap_max_s")),
+                    "freeze_min_s": 2.0,
+                }
+            except Exception:
+                _mq_cfg = None
+        (_mq_checks, _mq_rounds, _mq_fixes, final, paths) = \
+            await _correct_assembled(
+                final, paths, results, out, chat, workdir, titles,
+                _size if (spec is not None and cfg) else None,
+                notify=notify, deadline=deadline, ref_voice=ref_voice,
+                amendments=amendments, spec=spec, cfg=cfg, pool=pool,
+                mq_cfg=_mq_cfg)
+        if report is not None:
+            report["checks"] = [
+                c for c in report["checks"]
+                if not str(c.get("rule", "")).startswith("MQ-")
+            ] + _mq_checks
+            report["fix_rounds"] = int(report.get("fix_rounds") or 0) \
+                + _mq_rounds
+            report["fixes_applied"] = list(
+                report.get("fixes_applied") or []) + _mq_fixes
+            _failed85 = [c for c in report["checks"]
+                         if c["status"] == "FAIL"]
+            report["checks_failed"] = len(_failed85)
+            report["passed"] = not _failed85 and not [
+                v for v in (report.get("requirements") or [])
+                if v["status"] == "FAIL"]
+            try:
+                with open(Path(workdir) / "compliance_report.json",
+                          "w", encoding="utf-8") as _f:
+                    json.dump(report, _f, indent=1)
+            except OSError:
+                pass
+        try:
+            duration = _probe_duration(final)
+        except Exception:
+            pass
+        if _mq_rounds:
+            summary += (f"; assembled-file QC corrections: "
+                        f"{_mq_rounds} round(s)")
+        _mq_left = [c for c in _mq_checks if c["status"] == "FAIL"]
+        print(f"assembled media QC: {_mq_rounds} correction round(s), "
+              f"{len(_mq_left)} defect(s) remaining")
+    except Exception as e:
+        print("assembled correction loop failed:", str(e)[:200])
     # v84 (Stage 5 / P3): Editing Director, LOG-ONLY. Reads the
     # chapter plans, writes director_log.json, changes NOTHING.
     _director_log = None
@@ -741,6 +960,67 @@ async def make_long_video(brief, chat, workdir, target_minutes,
               f"{len(_director_log['recommendations'])} recommendations")
     except Exception as e:
         print("director log failed:", str(e)[:150])
+    # v85: Director vs the ACTUAL render — the comparison the v84
+    # design promised (recommendations counted against the defects
+    # QC really found). Still log-only: nothing is mutated.
+    if _director_log is not None and report is not None:
+        try:
+            import director as _dir85
+            _director_log["render_comparison"] = \
+                _dir85.compare_with_render(_director_log, report)
+            with open(Path(workdir) / "director_log.json", "w",
+                      encoding="utf-8") as _f:
+                json.dump(_director_log, _f, indent=1)
+        except Exception as e:
+            print("director comparison failed:", str(e)[:120])
+    # v85: editing memory writes for THIS real job + the learning
+    # digest. Selections/rejections come from the footage pool, QC
+    # failures and corrections from the final report. The digest
+    # only PROPOSES rule changes — activation stays approval-gated
+    # (learning_loop.activate refuses unapproved proposals).
+    if _mem84 is not None:
+        try:
+            if pool is not None:
+                for _a in pool.assignments:
+                    _mem84.record_selection(
+                        _job84, str(_a.get("scene", "")),
+                        str(_a.get("clip_id", "")),
+                        str(_a.get("query", "")),
+                        detail={"provider": _a.get("provider"),
+                                "verify": _a.get("verify")})
+                for _r in pool.rejected:
+                    _mem84.record_rejection(
+                        _job84, str(_r.get("scene", "")),
+                        str(_r.get("clip_id") or _r.get("id") or ""),
+                        str(_r.get("query", "")),
+                        str(_r.get("reason", ""))[:300])
+            if report is not None:
+                for _c in report.get("checks") or []:
+                    if _c.get("status") == "FAIL":
+                        _mem84.record_qc_failure(
+                            _job84, str(_c.get("rule", "")),
+                            str(_c.get("detail", ""))[:300],
+                            str(_c.get("scene") or ""))
+                for _fx in report.get("fixes_applied") or []:
+                    _mem84.record_correction(_job84, "", str(_fx)[:200],
+                                             "applied")
+            _mem84.record_result(
+                _job84,
+                "partial" if partial else "delivered",
+                detail={"duration_s": round(float(duration or 0), 1),
+                        "chapters": f"{len(paths)}/{total_ch}",
+                        "checks_failed": (report or {}).get(
+                            "checks_failed")})
+            import learning_loop as _ll85
+            _digest = _ll85.build_digest(_mem84)
+            with open(Path(workdir) / "learning_digest.json", "w",
+                      encoding="utf-8") as _f:
+                json.dump(_digest, _f, indent=1, default=str)
+            print(f"edit memory: job {_job84} recorded; learning "
+                  f"digest: {len(_digest.get('new_proposals') or [])} "
+                  f"new proposal(s) (approval-gated)")
+        except Exception as e:
+            print("edit memory write failed:", str(e)[:150])
     return {"path": final, "title": out["title"], "duration": duration,
             "lang": first.get("lang", "te"),
             "caption": first.get("caption", ""),

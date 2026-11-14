@@ -3179,6 +3179,25 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             print("frame-fill audit failed:", str(_e)[:120])
         _mchecks, _minfo = _comp.audit_media(out, cfg or {"kind": "short"}, spec or [])
         _checks += _mchecks
+        # v85: deterministic inspection of the ACTUAL rendered file
+        # for the defects audit_media cannot see — black / frozen /
+        # blank (solid, incl. blank-blue) frames, A/V duration
+        # mismatch, repeated visual stretches, held-shot density.
+        # Loudness/silence/aspect are already covered by audit_media
+        # above, so those MQ rules are not duplicated here. A defect
+        # FAILs this report (warn-and-deliver) instead of shipping
+        # as an apparently successful video.
+        try:
+            import media_qc as _mq85
+            _mq_all, _mq_info = _mq85.inspect_file(out)
+            _checks += [c for c in _mq_all if c["rule"] in (
+                "MQ-AVSYNC", "MQ-BLACK", "MQ-FREEZE", "MQ-BLANK",
+                "MQ-REPEAT", "MQ-CUTS")]
+        except Exception as _e:
+            _checks.append({"rule": "MQ-BLANK", "status": "UNVERIFIED",
+                            "detail": f"media inspection could not run: "
+                                      f"{str(_e)[:80]}",
+                            "scene": None})
         _plan_info = {
             "lang": p.get("lang"), "topic": p.get("topic", brief),
             "voice_used": p.get("_voice_used", voice),

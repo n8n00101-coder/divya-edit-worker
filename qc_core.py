@@ -109,6 +109,30 @@ def bounded_correct(check_fn, correct_fn, max_rounds=2):
     return checks, rounds, fixes, not failed
 
 
+async def bounded_correct_async(check_fn, correct_coro, max_rounds=2):
+    """v85: the same bounded contract for pipelines that live inside
+    an event loop (long_video.make_long_video): correct_coro is an
+    async corrector (chapter re-renders are async doc.make_video
+    calls). Semantics identical to bounded_correct — true round
+    counts, hard stop at max_rounds, a raising corrector ends the
+    loop and is reported in fixes."""
+    fixes = []
+    rounds = 0
+    checks = check_fn()
+    failed = [c for c in checks if c.get("status") == "FAIL"]
+    while failed and rounds < int(max_rounds):
+        rounds += 1
+        try:
+            made = await correct_coro(failed, rounds) or []
+        except Exception as e:
+            fixes.append(f"round {rounds}: corrector failed: {str(e)[:120]}")
+            break
+        fixes += [str(x) for x in made]
+        checks = check_fn()
+        failed = [c for c in checks if c.get("status") == "FAIL"]
+    return checks, rounds, fixes, not failed
+
+
 if __name__ == "__main__":
     print(routing_log_line("doc", "long", False,
                            {"spec_qc": False, "unconditional_qc": True}))
