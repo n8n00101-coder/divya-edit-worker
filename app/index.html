@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <title>Julie</title>
-<meta name="theme-color" content="#231910" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#F3EAD3" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#212121" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
 <meta name="description" content="Julie — your personal AI: video editing, voice assistant, chat">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="favicon.png" type="image/png">
@@ -14,6 +14,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Julie">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -100,18 +102,14 @@
       <button class="icon-btn" id="menuBtn" aria-controls="drawer" aria-expanded="false" data-tl="openMenu">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
-      <!-- v53 (Julie rebrand): Muse-style brand header — circular mascot,
-           the name "julie", and UNDER it a live status line that mirrors the
-           app's real states (setup mini-box / edit job / chat), set by
-           updateLiveStatus() in app.js. The screen title stays for a11y +
-           document.title only. -->
-      <div class="brand">
-        <img class="mascot" id="mascotImg" src="mascot-live.webp" alt="">
-        <div class="brand-txt">
-          <span class="brand-name">julie</span>
-          <span class="brand-status" id="liveStatus" aria-live="polite">Online</span>
-        </div>
-      </div>
+      <!-- v87: top bar = hamburger (left) · new-chat [+] + tab-count chip · profile (right).
+           No brand/status text block here — the mascot + live progress line live
+           centered BELOW this bar, inside the chat screen only (.chat-hero). -->
+      <button class="icon-btn" id="newChatBtn" data-tl="newChat" aria-label="New chat">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="tab-chip" id="tabCountBtn" data-tl="openTabs" aria-label="Chats"><span aria-hidden="true">💬</span><span id="tabCount">1</span></button>
+      <span class="spacer" aria-hidden="true" style="flex:1"></span>
       <h1 id="screen-title" class="sr-only" tabindex="-1"></h1>
       <button class="avatar-btn" id="avatarBtn" data-tl="openProfile"><span class="avatar" id="avatarTop" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span></button>
     </header>
@@ -164,6 +162,10 @@
 
       <!-- CHAT -->
       <section id="s-chat" class="screen" data-title="sChat">
+        <div class="chat-hero" id="chatHero">
+          <img class="mascot" id="mascotImg" src="mascot-live.webp" alt="">
+          <span class="brand-status" id="liveStatus" aria-live="polite">Online</span>
+        </div>
         <div id="msgs" class="msgs" role="log" aria-live="polite"></div>
         <div class="composer-wrap">
           <div id="attachChip" class="attach-chip" hidden><span id="attachChipTxt"></span><button type="button" id="attachChipX" aria-label="Remove">×</button></div>
@@ -419,6 +421,13 @@
     <button id="bubbleBtn" class="bubble-btn" aria-label="Julie chat"><img src="mascot.webp" alt=""></button>
   </div>
   <div id="sr" class="sr-only" aria-live="polite"></div>
+  <div id="tabSwitcher" class="tab-switcher" hidden>
+    <div class="tab-switcher-card" role="dialog" aria-modal="true" aria-label="Chats">
+      <div class="tab-switcher-head"><b>Chats</b><button type="button" class="lv-x" id="tabSwitcherClose" aria-label="Close">✕</button></div>
+      <div id="tabList" class="tab-list"></div>
+      <button type="button" class="btn primary" id="tabNewBtn">+ New chat</button>
+    </div>
+  </div>
   <div id="sheet" class="sheet-bg" hidden><div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetText"><p id="sheetText"></p><div class="sheet-btns" id="sheetBtns"></div></div></div>
 </div>
 <script src="voices-kokoro.js"></script>

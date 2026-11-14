@@ -1,19 +1,21 @@
-/* Julie PWA — v59 WHEAT + PISTACHIO neumorphism (Soft UI; palette per
-   Ajju 2026-11-12: ONLY wheat and pista green). Surfaces share the bg
-   colour; raised/pressed read through a paired dark + light shadow.
-   Dark = deep pista night with wheat text. */
+/* Julie PWA — v87 ChatGPT-style design system (Ajju 2026-11-15):
+   pure black + light whites ONLY, Inter/system typography.
+   Dark: bg #212121, panels #171717, input #303030, borders #3A3A3A.
+   Light: bg #FFFFFF, secondary #F9F9F9, input #F4F4F4, borders #E5E5E5.
+   Accent colours are reserved for state only: success #19C37D, error #EF4146.
+   (The penguin mascot artwork itself keeps its B/W + orange beak.) */
 :root{
-  --bg:#E9D8B4;--surface:#E9D8B4;--surface2:#D3D9BE;--text:#46351D;--muted:#87764C;--line:rgba(120,95,50,.20);
-  --accent:#7C9A72;--accent2:#A9BE9C;--on-accent:#F7F1DC;--me:#93AE87;--on-me:#F7F1DC;--bot:#E9D8B4;
-  --shadow:5px 5px 12px rgba(133,102,55,.26),-5px -5px 12px rgba(248,240,214,.5);--r:24px;
+  --bg:#FFFFFF;--surface:#F9F9F9;--surface2:#F4F4F4;--panel:#F9F9F9;--input:#F4F4F4;--text:#0D0D0D;--muted:#676767;--muted2:#8E8E8E;--line:#E5E5E5;
+  --accent:#0D0D0D;--accent2:#F4F4F4;--on-accent:#FFFFFF;--me:#F4F4F4;--on-me:#0D0D0D;--bot:#FFFFFF;--success:#19C37D;--error:#EF4146;
+  --shadow:0 1px 3px rgba(0,0,0,.08);--r:24px;
   --sat:env(safe-area-inset-top);--sab:env(safe-area-inset-bottom);
-  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Noto Sans","Noto Sans Telugu",system-ui,sans-serif;
+  --font:Inter,system-ui,-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,"Noto Sans","Noto Sans Telugu",sans-serif;
   color-scheme:light;
 }
-html[data-theme=dark]{--bg:#2F3524;--surface:#2F3524;--surface2:#424B31;--text:#F1E6CB;--muted:#BFC49E;--line:rgba(241,230,203,.13);--accent:#B3C4A5;--accent2:#C2D2B4;--on-accent:#2A2118;--me:#8CA87E;--on-me:#F7F1DC;--bot:#2F3524;--shadow:5px 5px 12px rgba(10,12,4,.5),-5px -5px 12px rgba(230,205,150,.12);color-scheme:dark}
-@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#2F3524;--surface:#2F3524;--surface2:#424B31;--text:#F1E6CB;--muted:#BFC49E;--line:rgba(241,230,203,.13);--accent:#B3C4A5;--accent2:#C2D2B4;--on-accent:#2A2118;--me:#8CA87E;--on-me:#F7F1DC;--bot:#2F3524;--shadow:5px 5px 12px rgba(10,12,4,.5),-5px -5px 12px rgba(230,205,150,.12);color-scheme:dark}}
+html[data-theme=dark]{--bg:#212121;--surface:#171717;--surface2:#303030;--panel:#171717;--input:#303030;--text:#FFFFFF;--muted:#B4B4B4;--muted2:#8E8E8E;--line:#3A3A3A;--accent:#FFFFFF;--accent2:#303030;--on-accent:#0D0D0D;--me:#303030;--on-me:#FFFFFF;--bot:#212121;--success:#19C37D;--error:#EF4146;--shadow:0 1px 3px rgba(0,0,0,.4);color-scheme:dark}
+@media (prefers-color-scheme:dark){html[data-theme=auto]{--bg:#212121;--surface:#171717;--surface2:#303030;--panel:#171717;--input:#303030;--text:#FFFFFF;--muted:#B4B4B4;--muted2:#8E8E8E;--line:#3A3A3A;--accent:#FFFFFF;--accent2:#303030;--on-accent:#0D0D0D;--me:#303030;--on-me:#FFFFFF;--bot:#212121;--success:#19C37D;--error:#EF4146;--shadow:0 1px 3px rgba(0,0,0,.4);color-scheme:dark}}
 /* v62 (Ajju): NO shadow/glow effects inside input boxes — flat, clean,
-   professional fields: soft fill, one hairline border, pista focus ring. */
+   professional fields: soft fill, one hairline border, neutral focus ring. */
 input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file])),textarea,select{box-shadow:none!important;background:color-mix(in srgb,var(--surface2) 45%,var(--bg));border:1px solid var(--line)}
 input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file])):focus,textarea:focus,select:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 25%,transparent)!important}
 ::placeholder{color:color-mix(in srgb,var(--text) 58%,var(--bg));opacity:1}
@@ -256,9 +258,9 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .net-banner.in-app{margin:8px 10px;flex:none}
 .net-banner[hidden]{display:none}
 /* App update banner: fixed above the tab bar, one tap to refresh to the new version. */
-.upd-banner{position:fixed;left:12px;right:12px;bottom:84px;z-index:95;display:flex;gap:10px;align-items:center;background:var(--accent);color:var(--on-accent);border-radius:16px;padding:12px 14px;box-shadow:0 4px 18px rgba(122,84,38,.35);font-size:14px;line-height:1.4}
+.upd-banner{position:fixed;left:12px;right:12px;bottom:84px;z-index:95;display:flex;gap:10px;align-items:center;background:var(--accent);color:var(--on-accent);border-radius:16px;padding:12px 14px;box-shadow:0 4px 18px rgba(0,0,0,.25);font-size:14px;line-height:1.4}
 .upd-banner span{flex:1}
-.upd-banner .btn{flex:none;background:#F1E6CB;color:#5C7350;min-height:44px}
+.upd-banner .btn{flex:none;background:#FFFFFF;color:#0D0D0D;min-height:44px}
 .upd-banner[hidden]{display:none}
 .acct-card .h3{margin:0}
 .acct-card p{margin:0}
@@ -287,14 +289,14 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .lv-head b{flex:none}
 .lv-head span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lv-x{flex:none;width:38px;height:38px;border-radius:50%;background:var(--surface2);color:var(--text);font-size:16px}
-.lv-stage{flex:1;display:flex;align-items:center;justify-content:center;background:#101408;min-height:0;position:relative}
+.lv-stage{flex:1;display:flex;align-items:center;justify-content:center;background:#000;min-height:0;position:relative}
 .lv-stage img{max-width:100%;max-height:100%;object-fit:contain}
 .lv-stage [data-lv-wait]{position:absolute}
 .liveview .keyrow{display:flex;gap:6px;padding:8px 12px 0}
 .lv-bar{display:flex;gap:8px;padding:10px 12px calc(10px + var(--sab));border-top:1px solid var(--line)}
 .lv-btn{flex:1;min-height:48px;border-radius:12px;background:var(--surface2);color:var(--text);font-weight:700;font-size:14px}
 .lv-btn.primary{background:var(--accent);color:var(--on-accent)}
-.lv-btn.danger{background:#5A2E22;color:#F3D9CB}
+.lv-btn.danger{background:var(--error);color:#FFFFFF}
 .lv-btn.on{outline:2px solid var(--accent)}
 .progbar{height:8px;background:var(--surface2);border-radius:99px;overflow:hidden;margin:7px 0 5px}
 .progbar i{display:block;height:100%;background:var(--accent);border-radius:99px;transition:width .6s ease}
@@ -333,7 +335,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
    never overlapping the send button; the composer (z-index:70) always wins taps over the bubble (60). */
 .bubble{position:fixed;right:16px;bottom:150px;z-index:60;display:flex;flex-direction:column;align-items:flex-end;gap:10px}
 .bubble.dragging{transition:none}
-.bubble-btn{width:56px;height:56px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--text);font-size:24px;box-shadow:0 4px 16px rgba(122,84,38,.3);cursor:grab;touch-action:none;padding:0;overflow:hidden}
+.bubble-btn{width:56px;height:56px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--text);font-size:24px;box-shadow:0 4px 16px rgba(0,0,0,.25);cursor:grab;touch-action:none;padding:0;overflow:hidden}
 .bubble-btn img{width:100%;height:100%;object-fit:cover;display:block}
 .bubble-btn:active{cursor:grabbing}
 .bubble-panel{width:min(340px,calc(100vw - 16px));height:min(46vh,420px);background:var(--surface);border:1px solid var(--line);border-radius:16px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.3)}
@@ -356,7 +358,7 @@ body.blind .tabbar a{font-size:15px}
 .tpl-row{padding:0 14px 8px;flex:none;max-height:38vh;overflow-y:auto}
 .attach-chip{display:flex;align-items:center;gap:8px;margin:0 0 8px;padding:8px 12px;border-radius:12px;background:var(--surface);border:1px solid var(--line);font-size:14px}
 .attach-chip button{margin-left:auto;border:0;background:none;font-size:18px;cursor:pointer;color:var(--text)}
-.tpl-card{border:1px solid var(--line,#ddd);border-radius:12px;padding:0 0 8px;background:var(--card,#fff);text-align:left;cursor:pointer}
+.tpl-card{border:1px solid var(--line,#E5E5E5);border-radius:12px;padding:0 0 8px;background:var(--surface,#FFFFFF);text-align:left;cursor:pointer}
 .tpl-card.on{outline:2px solid var(--accent);outline-offset:1px}
 .tpl-prev{display:block;height:44px;border-radius:11px 11px 0 0;position:relative;overflow:hidden}
 .tpl-accent{position:absolute;left:0;top:0;bottom:0;width:6px}
@@ -386,3 +388,84 @@ body.blind .tabbar a{font-size:15px}
 #modelCard .field{display:block;margin-top:10px}
 #modelCard .field span{display:block;font-size:13px;margin-bottom:4px}
 #modelSaveBtn{margin-top:12px;width:100%}
+
+
+/* ================= v87: ChatGPT-style layer (P1–P4) ================= */
+body{font-size:15px;line-height:1.5}
+h1,h2,h3{letter-spacing:-.02em}
+/* header: hamburger | new-chat + tab chip | profile (no brand text block) */
+.appbar{gap:4px}
+.appbar .spacer{flex:1}
+.tab-chip{display:inline-flex;align-items:center;gap:6px;min-width:44px;height:44px;padding:0 12px;border-radius:999px;background:var(--surface2);border:1px solid var(--line);font-weight:700;font-size:14px;justify-content:center}
+.tab-chip:active{transform:scale(.96);opacity:.85}
+/* centered hero INSIDE the chat screen only: mascot + live progress under it */
+.chat-hero{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 16px 4px;flex:none;text-align:center}
+.chat-hero .mascot{width:72px;height:72px}
+.chat-hero .brand-status{font-size:13px;color:var(--muted);max-width:88vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-hero .brand-status.working{color:var(--text);font-weight:600}
+/* AI messages: no heavy container (ChatGPT-style); user bubble stays a pill */
+.msg.bot{background:transparent;border:0;box-shadow:none;max-width:min(92%,640px);padding:8px 6px}
+.msg.me{box-shadow:none}
+.msg.sys{box-shadow:none}
+.bubble{box-shadow:none}
+/* floating composer */
+.composer-wrap{padding:8px 12px calc(10px + var(--sab));background:transparent}
+.composer{background:var(--input);border:1px solid var(--line);border-radius:28px;padding:6px;box-shadow:var(--shadow);align-items:flex-end}
+.composer textarea{padding:11px 6px;line-height:1.45;max-height:160px;overflow-y:auto}
+.composer textarea::placeholder{color:var(--muted2)}
+.send-btn{background:var(--accent);color:var(--on-accent)}
+#chatSend{opacity:1}
+#chatSend:disabled{opacity:.35}
+/* modern inputs everywhere: rounded, vertically centred text, focus ring */
+input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file])),textarea,select{border-radius:14px;line-height:1.5;padding-top:0;padding-bottom:0}
+.field{border-radius:16px;background:var(--input)}
+.field input{line-height:1.5;padding:14px 0;border:0!important;background:none!important;box-shadow:none!important;outline:none!important}
+.big-input,.keyfield{background:var(--input);border-radius:14px;padding:13px 14px;line-height:1.5}
+.big-input:focus,.keyfield:focus,.field:focus-within{border-color:var(--muted2);box-shadow:0 0 0 3px color-mix(in srgb,var(--text) 12%,transparent);outline:none}
+.bubble-input input{background:var(--input);border-radius:12px;line-height:1.5;padding:10px 12px}
+.step .keyrow input,.tc-panel .keyrow input{background:var(--input);border-radius:12px;line-height:1.5}
+/* pressed-state feedback on every button type */
+.btn:active,.act-btn:active,.pill:active,.chip:active,.icon-btn:active,.lv-btn:active,.lv-x:active,.tabbar a:active{transform:scale(.97);opacity:.88}
+.btn,.act-btn,.pill,.lv-btn{transition:transform .1s ease,opacity .1s ease,background .15s ease}
+.act-btn{background:var(--accent);color:var(--on-accent)!important}
+.act-btn.alt{background:var(--surface2);color:var(--text)!important}
+.pill.go,.lv-btn.primary{background:var(--accent);color:var(--on-accent)}
+.upd-banner{background:var(--text);color:var(--bg)}
+/* floating mascot bubble: small, safe corner, BELOW sheets (30) & composer (70);
+   hidden on the chat screen by route() so it can never overlap chat content */
+.bubble{right:12px;bottom:calc(76px + var(--sab));z-index:25}
+.bubble-btn{width:44px;height:44px;box-shadow:0 2px 10px rgba(0,0,0,.22)}
+/* tab switcher overlay: blurred backdrop, tap backdrop to dismiss */
+.tab-switcher{position:absolute;inset:0;z-index:80;background:rgba(0,0,0,.35);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);display:flex;align-items:flex-start;justify-content:center;padding:calc(18px + var(--sat)) 14px 14px;animation:fade .18s}
+.tab-switcher[hidden]{display:none}
+.tab-switcher-card{width:100%;max-width:520px;max-height:82%;overflow-y:auto;background:var(--bg);border:1px solid var(--line);border-radius:20px;padding:16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+.tab-switcher-head{display:flex;align-items:center;justify-content:space-between}
+.tab-list{display:flex;flex-direction:column;gap:8px}
+.tab-item{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;min-height:56px}
+.tab-item.on{border-color:var(--text)}
+.tab-item .tt{flex:1;min-width:0}
+.tab-item .tt b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px}
+.tab-item .tt span{font-size:12.5px;color:var(--muted)}
+.tab-close{flex:none;width:40px;height:40px;border-radius:50%;background:var(--surface2);font-size:16px}
+.tab-close:active{transform:scale(.94);opacity:.85}
+/* plan screen: clean ChatGPT-style cards */
+#planList{background:transparent;border:0;box-shadow:none;padding:0;display:flex;flex-direction:column;gap:12px;overflow:visible}
+.plan-card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px 18px;display:flex;flex-direction:column;gap:4px}
+.plan-card.current{border-color:var(--text)}
+.plan-card .pc-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.plan-card .pc-name{font-size:18px;font-weight:700}
+.plan-card .pc-price{font-size:15px;font-weight:650}
+.plan-card .pc-grant{color:var(--muted);font-size:14px}
+.plan-voice-note{margin:2px 2px 0}
+/* live view: full-bleed stage between header and control bar */
+.liveview{background:#000;color:#FFFFFF}
+.lv-head{background:#171717;border-bottom-color:#3A3A3A;color:#FFFFFF}
+.lv-stage{flex:1 1 auto;width:100%;background:#000;min-height:0}
+.lv-stage img{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+.lv-bar{background:#171717;border-top-color:#3A3A3A}
+.lv-btn{background:#303030;color:#FFFFFF}
+.lv-btn.primary{background:#FFFFFF;color:#0D0D0D}
+.lv-btn.pressed{transform:scale(.96);opacity:.8}
+.liveview .keyrow{background:#171717}
+.err{color:var(--error)}
+.step.done .step-h:before{background:var(--success);color:#FFFFFF}
