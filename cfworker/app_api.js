@@ -1616,12 +1616,16 @@ async function chatWithFallback(env, u, messages) {
     const crec = JSON.parse((await env.KV.get(`umodel:${u.n}`)) || "null");
     if (crec && crec.base && crec.model) { const ck = await openKey(env, u.n, "custom"); if (ck) { const out = await customChat(ck, crec, messages).catch(() => ""); if (out) { u.via = "own-model"; return out; } } }
   } catch {}
-  const gk = await openKey(env, u.n, "groq");
-  if (gk) { const out = await groq({ ...env, GROQ_KEY: gk }, messages).catch(() => ""); if (out && !sorry.test(out)) { u.via = "own-groq"; return out; } }
-  const ok = await openKey(env, u.n, "openrouter");
-  if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (out) { u.via = "own-openrouter"; return out; } }
-  const gmk = await openKey(env, u.n, "gemini");
-  if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (out) { u.via = "own-gemini"; return out; } }
+  // hardening: each own-key step (openKey lookup + call) is isolated in
+  // try/catch — a throw in one step (e.g. a storage error inside openKey)
+  // falls through to the next provider instead of aborting the chain,
+  // exactly like the per-call .catch fallthrough below.
+  try { const gk = await openKey(env, u.n, "groq");
+    if (gk) { const out = await groq({ ...env, GROQ_KEY: gk }, messages).catch(() => ""); if (out && !sorry.test(out)) { u.via = "own-groq"; return out; } } } catch {}
+  try { const ok = await openKey(env, u.n, "openrouter");
+    if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (out) { u.via = "own-openrouter"; return out; } } } catch {}
+  try { const gmk = await openKey(env, u.n, "gemini");
+    if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (out) { u.via = "own-gemini"; return out; } } } catch {}
   const shared = await groq(env, messages).catch(() => "");
   if (shared && !sorry.test(shared)) { u.via = "shared"; return shared; }
   if (env.OPENROUTER_KEY) { const out = await orChat(env, env.OPENROUTER_KEY, messages).catch(() => ""); if (out) { u.via = "shared-openrouter"; return out; } }
