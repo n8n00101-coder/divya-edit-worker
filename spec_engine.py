@@ -66,6 +66,14 @@ LANGUAGE_VOICES = {
 }
 # doc.py's own default when a plan says nothing about gender.
 DEFAULT_VOICE_GENDER = "male"
+# v83: house CLONE voices — real zero-shot clones (Chatterbox via
+# doc.clone_tts) of consented house samples, routable as NAMED
+# voices ("Tripti voice" passes the gate). Language-limited: the
+# clone speaks only its sample's language(s). Asking for one over
+# another narration language stops upfront with the honest
+# alternative (FIX 6) — English with this voice, or a voice that
+# speaks the asked language — never a silent swap, never a fake.
+CLONE_VOICES = {"tripti": {"langs": ("en",), "display": "Tripti"}}
 # edge-tts voices the engine will pass through: the doc.VOICES catalogue
 # plus any well-formed <lang>-<REGION>-<Name>Neural id (R-P5: a voice
 # named in the prompt is a renderer parameter, never re-chosen).
@@ -503,11 +511,19 @@ def resolve_render_config(spec, kind="short"):
     voice_id = voice_gender = None
     voice_choice = None
     named_voice = lang_voice = gender_ask = None
+    clone_voice = clone_req_id = None
     for r in _find(spec, "voice"):
         v = str(r["value"]).strip()
         cfg["spec_ids"]["voice"] = r["id"]
         if VOICE_ID_RE.match(v):
             named_voice = v
+            continue
+        # v83: a house clone voice named in the prompt ("Tripti",
+        # "Tripti voice") is a routable NAMED voice — the clone
+        # route, not an unknown naming that stops upfront.
+        _vn = re.sub(r"\s+voice$", "", v.strip().lower())
+        if _vn in CLONE_VOICES:
+            clone_voice, clone_req_id = _vn, r["id"]
             continue
         code = r.get("language")
         if code not in LANGUAGE_VOICES:
@@ -525,10 +541,38 @@ def resolve_render_config(spec, kind="short"):
             raise SpecImpossible(r["id"],
                                  f"voice '{v}' is not a voice the engine has",
                                  "a named edge-tts voice (e.g. en-US-AndrewNeural), "
-                                 "male or female, or a voice language the engine "
-                                 "speaks (English, Telugu, Hindi)")
+                                 "male or female, a voice language the engine "
+                                 "speaks (English, Telugu, Hindi), or the "
+                                 "Tripti clone voice (English)")
     if named_voice:
         voice_id = named_voice
+    elif clone_voice:
+        # v83: the clone route. Language honesty (FIX 6): the clone
+        # speaks only its sample's language(s) — a narration language
+        # outside them (asked directly, or via a "<Language> voice"
+        # requirement alongside) stops upfront with the alternative,
+        # never a fake Telugu clone.
+        _langs = CLONE_VOICES[clone_voice]["langs"]
+        _want = lang or (lang_voice[0] if lang_voice else None)
+        if _want and _want not in _langs:
+            _disp = CLONE_VOICES[clone_voice]["display"]
+            _wl = _LANG_DISPLAY.get(_want, _want)
+            raise SpecImpossible(
+                clone_req_id,
+                f"voice '{_disp}' is an English clone voice — it "
+                f"cannot speak {_wl}",
+                f"English narration in the {_disp} voice, or a "
+                f"{_wl} voice instead")
+        voice_id = clone_voice
+        voice_choice = {"via": "clone", "voice_id": clone_voice,
+                        "engine": "chatterbox",
+                        "note": CLONE_VOICES[clone_voice]["display"].lower()
+                                + " (clone of house sample)"}
+        if lang is None:
+            # A clone-voice ask fixes the narration language to the
+            # clone's own when nothing else spoke (mirrors v79.1).
+            lang = _langs[0]
+            cfg["lang"] = lang
     elif lang_voice:
         code, gender = lang_voice
         use_gender = gender or gender_ask or DEFAULT_VOICE_GENDER

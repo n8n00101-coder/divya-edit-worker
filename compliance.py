@@ -1402,13 +1402,17 @@ def requirement_verdicts(spec, cfg, plan_info, media_info):
                 status = "PASS" if used == cfg["voice_id"] else "FAIL"
                 evidence = f"voice used: {used or 'unknown'}"
                 vc = cfg.get("voice_choice")
-                if vc:
+                if vc and vc.get("via") == "language":
                     # v79.1: a voice-LANGUAGE ask — record how it was
                     # routed (which language, which concrete voice,
                     # whose gender choice) in the report.
                     evidence += (f" ({vc['language']} voice routed to "
                                  f"{vc['voice_id']}, gender {vc['gender']} "
                                  f"— {vc['gender_source']} choice)")
+                elif vc and vc.get("via") == "clone":
+                    # v83: a house clone voice — the report names
+                    # what it actually is, never a built-in.
+                    evidence += f" ({vc.get('note') or 'clone voice'})"
             elif cfg.get("voice_gender"):
                 status = "PASS" if cfg["voice_gender"] in used.lower() or plan_info.get("voice_gender") == cfg["voice_gender"] else "UNVERIFIED"
                 evidence = f"voice gender asked {cfg['voice_gender']}, used {used or 'unknown'}"

@@ -692,6 +692,40 @@ REF_FEMALE_EN = "en-IN-NeerjaNeural"  # closest built-in: female, English (India
 VOICE_NOTE_REF = "reference-matched (pace + closest voice) — exact clone engine pending"
 
 
+# ---------------- v83: house CLONE voices ----------------
+# A clone voice is a REAL zero-shot clone (Chatterbox, clone_tts.py)
+# of a consented house sample — not a built-in, and never labelled as
+# anything else. "tripti" is the WHO TAUGHT US channel voice, supplied
+# by the owner for exactly this use (2026-11-13: "ee voice ni Julie lo
+# pettu, same as it is undali"). English only: the clone engine has
+# no Telugu/Hindi, and the spec gate (spec_engine.CLONE_VOICES) says
+# so upfront rather than faking it.
+CLONE_VOICES = {"tripti": {"langs": ("en",),
+                           "note": "tripti (clone of house sample)"}}
+
+# v83 delivery lock: per-line pace-guard records from clone_tts
+# (what correction, if any, each cloned line needed). synth_voice
+# appends; make_video files them in the job record as "voice_pace"
+# and resets the list per video.
+CLONE_PACE_RECORDS = []
+
+
+def _clone_ref_path(voice_id, ref=None):
+    """Where a house clone voice's reference WAV lives, in order:
+    (1) the job's refvoice asset, when the Worker attached one FOR
+    this voice (the ref dict carries voice_id — the v83 production
+    route, mirroring v71 user voices); (2) the env override
+    DIVYA_VOICE_REF_<ID>; (3) the local house library (this VM / dev).
+    """
+    if ref and ref.get("voice_id") == voice_id and ref.get("path"):
+        return ref["path"]
+    env = os.environ.get(f"DIVYA_VOICE_REF_{str(voice_id).upper()}")
+    if env:
+        return env
+    return os.path.expanduser(
+        f"~/workspace/voice-lib/{voice_id}/{voice_id}-ref.wav")
+
+
 def pace_adjust_rate(ref_wpm, measured_wpm, cur_add=0):
     """Pure: the rate_add (percentage points) that moves the measured
     pace toward the reference pace. Inside a ±5% band -> no change.
@@ -720,6 +754,14 @@ async def synth_voice(text, voice, mood, out, ref=None):
     replaces THIS function. ref = {"path", "wpm", "lang"} (the user's
     saved reference sample) or None.
 
+    v83: a CLONE voice id ("tripti") routes to clone_tts (Chatterbox)
+    BEFORE everything else: a real zero-shot clone of the house
+    sample. No pace-match loop — the clone speaks at the reference
+    speaker's own pace, which is the point. Word timings are
+    estimated from the rendered length (the engine returns no word
+    boundaries). A missing reference asset raises: the job fails
+    honestly instead of silently falling back to a built-in voice.
+
     No ref (or no measured pace): exactly the old tts() call, and the
     plan's voice. With a ref: (a) closest built-in voice — a female
     English-India voice when the reference is English and a female
@@ -728,6 +770,21 @@ async def synth_voice(text, voice, mood, out, ref=None):
     adjusted rate until within ~5% of the reference pace (max 2
     adjustments, total rate clamped to ±25%). Returns (words, voice).
     """
+    if voice in CLONE_VOICES:
+        import clone_tts
+        ref_path = _clone_ref_path(voice, ref)
+        if not os.path.exists(ref_path):
+            raise RuntimeError(
+                f"clone voice '{voice}': reference sample not found at "
+                f"{ref_path} — the house voice asset is not attached "
+                "to this job")
+        lang = str((ref or {}).get("lang") or "en").lower()
+        words = await asyncio.to_thread(
+            clone_tts.synth_to_file, text, ref_path, out, lang)
+        _pace = getattr(clone_tts, "LAST_PACE", None)
+        if _pace:
+            CLONE_PACE_RECORDS.append({"voice": voice, **_pace})
+        return words, voice
     if not ref or not ref.get("wpm"):
         return await tts(text, voice, mood, out), voice
     v = voice
@@ -2734,6 +2791,7 @@ def _amend_checkpoint(box, p, stage, chat=None):
 
 async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=None, recent_styles=None, recent_families=(), preview=False, ref_voice=None, amendments=None, spec=None, cfg=None, footage_pool=None, plan_override=None):
     global _P, W, H
+    CLONE_PACE_RECORDS.clear()  # v83: this video's pace log starts empty
     wd = workdir or tempfile.mkdtemp(prefix="doc_")
     # v75: a caller-supplied workdir is NOT created for us (the default
     # mkdtemp is). long_video's chapter dirs never existed on disk, so
@@ -2828,9 +2886,11 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # v71: with a saved reference voice, every scene goes through
     # synth_voice (closest voice + pace match); the voice it picks on
     # the first scene carries to the rest. Without one: plain tts().
+    # v83: a house clone voice routes through synth_voice too (it
+    # needs no user ref — its reference is the house sample).
     for i, s in enumerate(p["scenes"]):
         a = f"{wd}/vo{i}.mp3"
-        if ref_voice:
+        if ref_voice or voice in CLONE_VOICES:
             s["words"], voice = await synth_voice(s["vo"], voice, s["mood"], a, ref_voice)
         elif p.get("voice_rate_add"):
             # v79 (FIX 4): an edit's "slow the voice a little" — a rate
@@ -3178,7 +3238,14 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             # v71: honest label of what the voice actually is — set ONLY
             # when a reference sample drove the synth (pace + closest
             # voice). Never worded as a clone.
-            "voice_note": VOICE_NOTE_REF if ref_voice else None,
+            # v83: a clone voice IS a clone — the note says exactly
+            # that ("tripti (clone of house sample)").
+            "voice_note": (CLONE_VOICES[voice]["note"] if voice in CLONE_VOICES
+                           else (VOICE_NOTE_REF if ref_voice else None)),
+            # v83 delivery lock: per-line pace-guard records for a
+            # clone voice (empty for built-in voices) — the applied
+            # correction (none / regen / regen+atempo) is on record.
+            "voice_pace": list(CLONE_PACE_RECORDS),
             # v72: which mid-flight instructions were applied (with the
             # stage + what was done) and which missed this video.
             "amendments_applied": abox.applied if abox else [],
