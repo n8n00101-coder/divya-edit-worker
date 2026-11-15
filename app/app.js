@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v52";
+const APP_V = "julie-v53";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -859,7 +859,23 @@ function bubble(role, text, extra = {}) {
   // together ("Opened the YouTube app ✓Open youtube.com"). If the text
   // already ends with the single button's label, the duplicate is dropped.
   if (extra.buttons?.length === 1 && typeof text === "string") { const lb = String(extra.buttons[0].label || "").trim(); if (lb && text.trimEnd().endsWith(lb)) text = text.trimEnd().slice(0, text.trimEnd().length - lb.length).trimEnd(); }
-  if (extra.img) { const i = new Image(); i.src = extra.img; i.alt = "image"; d.appendChild(i); if (text) { const p = document.createElement("div"); p.textContent = text; d.appendChild(p); } }
+  if (extra.vid) {
+    // v53: a video sent in chat must LOOK sent — the actual video in the
+    // bubble (preview + name + duration), like images already do. Live
+    // sends carry an object URL; after a reload the bytes come back from
+    // the on-device copy (vidGet, keyed by the staged job).
+    const v = document.createElement("video"); v.controls = true; v.preload = "metadata"; v.playsInline = true; v.className = "msg-vid";
+    if (extra.vid.url) v.src = extra.vid.url;
+    if (extra.vid.job) { d.dataset.vidjob = extra.vid.job; if (!extra.vid.url) vidGet(extra.vid.job).then(b => { if (b && !v.src) v.src = URL.createObjectURL(b); }); }
+    if (extra.vid.name) d.dataset.vidname = extra.vid.name;
+    if (extra.vid.dur) d.dataset.viddur = extra.vid.dur;
+    d.appendChild(v);
+    const cap = document.createElement("div"); cap.className = "vid-cap"; cap.textContent = "🎬 " + (extra.vid.name || "video") + (extra.vid.dur ? " · " + extra.vid.dur : "");
+    d.appendChild(cap);
+    v.addEventListener("loadedmetadata", () => { if (!d.dataset.viddur && v.duration && isFinite(v.duration)) { const ds = fmtDur(v.duration); d.dataset.viddur = ds; cap.textContent = "🎬 " + (extra.vid.name || "video") + " · " + ds; saveChat(); } });
+    if (text) { const p = document.createElement("div"); p.className = "vid-text"; p.textContent = text; d.appendChild(p); }
+  }
+  else if (extra.img) { const i = new Image(); i.src = extra.img; i.alt = "image"; d.appendChild(i); if (text) { const p = document.createElement("div"); p.textContent = text; d.appendChild(p); } }
   else { const sp = document.createElement("span"); sp.className = "msg-text"; sp.innerHTML = (extra.heard ? `<span class="heard" aria-hidden="true">🎙️</span>` : "") + linkify(text); d.appendChild(sp); }
   if (extra.buttons?.length) { const box = document.createElement("div"); box.className = "act"; renderButtons(box, extra.buttons); d.appendChild(box); }
   $("#msgs").appendChild(d); scrollDown(); return d;
@@ -920,13 +936,20 @@ function renderEmpty() {
 let chatTabsState = null;
 const chatAcctKey = () => (S.number || S.acct?.email || S.acct?.name || "anon").toString().replace(/[^\w@.+-]/g, "_");
 const tabsStoreKey = () => "chatTabs_" + chatAcctKey();
-const snapshotMsgs = () => $$("#msgs .msg:not(.typing):not(.sys)").slice(-40).map(e => ({ r: e.classList.contains("me") ? "user" : "assistant", c: e.querySelector("img") ? "[image]" : (e.firstChild?.nodeType === 3 || !e.querySelector(".act") ? e.textContent : [...e.childNodes].filter(n => !(n.classList && n.classList.contains("act"))).map(n => n.textContent).join("")) }));
+const snapshotMsgs = () => $$("#msgs .msg:not(.typing):not(.sys)").slice(-40).map(e => {
+  const o = { r: e.classList.contains("me") ? "user" : "assistant", c: e.querySelector("img") ? "[image]" : (e.firstChild?.nodeType === 3 || !e.querySelector(".act") ? e.textContent : [...e.childNodes].filter(n => !(n.classList && n.classList.contains("act"))).map(n => n.textContent).join("")) };
+  // v53: a sent-video bubble persists as a video record (job + name +
+  // duration); drawTab/loadHistory re-render the <video> from the
+  // on-device bytes. Text = the user's own words only (dataset.text).
+  if (e.dataset.vidjob) { o.c = e.dataset.text || ""; o.v = { job: e.dataset.vidjob, name: e.dataset.vidname || "video", dur: e.dataset.viddur || "" }; }
+  return o;
+});
 function ensureTabs() { if (chatTabsState) return chatTabsState; const saved = store.get(tabsStoreKey(), null); if (saved && Array.isArray(saved.tabs) && saved.tabs.length) chatTabsState = saved; else { const legacy = store.get("chat", null); const first = { id: "t" + Date.now(), msgs: Array.isArray(legacy) ? legacy : [], ts: Date.now() }; chatTabsState = { activeId: first.id, tabs: [first] }; } persistTabs(); return chatTabsState; }
 function persistTabs() { if (chatTabsState) store.set(tabsStoreKey(), chatTabsState); renderTabCount(); }
 function activeTab() { const st = ensureTabs(); return st.tabs.find(x => x.id === st.activeId) || st.tabs[0]; }
 function renderTabCount() { const st = chatTabsState || store.get(tabsStoreKey(), null); const el = $("#tabCount"); if (el) el.textContent = String(st && st.tabs ? st.tabs.length : 1); }
 function saveChat() { const tab = activeTab(); if (!tab) return; tab.msgs = snapshotMsgs(); tab.ts = Date.now(); store.set("chat", tab.msgs); persistTabs(); }
-function drawTab(tab) { $("#msgs").innerHTML = ""; if (!tab || !tab.msgs || !tab.msgs.length) return renderEmpty(); tab.msgs.forEach(x => bubble(x.r, x.c)); }
+function drawTab(tab) { $("#msgs").innerHTML = ""; if (!tab || !tab.msgs || !tab.msgs.length) return renderEmpty(); tab.msgs.forEach(x => bubble(x.r, x.c, x.v ? { vid: x.v } : {})); }
 function createChatTab() { saveChat(); const st = ensureTabs(); const curTab = activeTab(); st.tabs = st.tabs.filter(x => x === curTab || (x.msgs && x.msgs.length)); if (curTab && !(curTab.msgs && curTab.msgs.length)) { st.activeId = curTab.id; persistTabs(); renderTabCount(); closeTabSwitcher(); if (cur !== "chat") go("chat"); setTimeout(() => $("#input")?.focus(), 60); return; } const tab = { id: "t" + Date.now(), msgs: [], ts: Date.now() }; st.tabs.unshift(tab); st.activeId = tab.id; persistTabs(); setupBoxEl = null; renderEmpty(); renderTabCount(); closeTabSwitcher(); if (cur !== "chat") go("chat"); setTimeout(() => $("#input")?.focus(), 60); } // v51 (F4): untouched empty tabs are discarded, never piled up; "new chat" on an empty tab reuses it
 function switchChatTab(id) { const st = ensureTabs(); if (id === st.activeId) { closeTabSwitcher(); return; } saveChat(); st.activeId = id; persistTabs(); setupBoxEl = null; drawTab(activeTab()); closeTabSwitcher(); if (cur !== "chat") go("chat"); }
 function closeChatTab(id) { const st = ensureTabs(); const i = st.tabs.findIndex(x => x.id === id); if (i < 0) return; const was = st.activeId === id; st.tabs.splice(i, 1); if (!st.tabs.length) { const tab = { id: "t" + Date.now(), msgs: [], ts: Date.now() }; st.tabs.push(tab); st.activeId = tab.id; } else if (was) st.activeId = st.tabs[Math.min(i, st.tabs.length - 1)].id; persistTabs(); if (was) { setupBoxEl = null; drawTab(activeTab()); } renderTabList(); }
@@ -941,7 +964,7 @@ $("#tabNewBtn") && ($("#tabNewBtn").onclick = () => createChatTab());
 $("#tabSwitcher")?.addEventListener("click", e => { if (e.target.id === "tabSwitcher") closeTabSwitcher(); });
 async function loadHistory() {
   const st = ensureTabs(); const tab = activeTab();
-  const draw = list => { if (!list.length) return renderEmpty(); $("#msgs").innerHTML = ""; list.forEach(x => bubble(x.r, x.c)); };
+  const draw = list => { if (!list.length) return renderEmpty(); $("#msgs").innerHTML = ""; list.forEach(x => bubble(x.r, x.c, x.v ? { vid: x.v } : {})); };
   if (tab && tab.msgs && tab.msgs.length) { draw(tab.msgs); renderTabCount(); return; }
   /* Only the initial (migrated) tab is seeded from server history — the server
      history is per-user, so seeding every tab would duplicate it everywhere. */
@@ -966,15 +989,25 @@ async function assist(text) {
    [[EDITVIDEO: <staged job>]] (server strips it). The user only ever sees
    their own words. R47: template picking removed — Julie chooses the
    aesthetic itself. */
+/* v53: the staged video's bytes are ALSO kept on-device (IndexedDB, keyed
+   by the staged job) so the sent bubble can show the actual video — the
+   server offers no fetch-back for staged uploads (result serves res: only)
+   and deletes them after 24h. Last 5 staged videos are kept. */
+const fmtDur = s => { s = Math.max(0, Math.round(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+function vidDb() { return new Promise((res, rej) => { const r = indexedDB.open("julie-vids", 1); r.onupgradeneeded = () => r.result.createObjectStore("vids"); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function vidPut(job, blob) { try { const db = await vidDb(); await new Promise((res, rej) => { const tx = db.transaction("vids", "readwrite"); tx.objectStore("vids").put(blob, job); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); const keep = store.get("vidJobs", []); if (!keep.includes(job)) keep.push(job); while (keep.length > 5) { const old = keep.shift(); if (old !== job) vidDel(old); } store.set("vidJobs", keep); } catch {} }
+async function vidGet(job) { try { const db = await vidDb(); return await new Promise(res => { const rq = db.transaction("vids").objectStore("vids").get(job); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); }); } catch { return null; } }
+async function vidDel(job) { try { const db = await vidDb(); db.transaction("vids", "readwrite").objectStore("vids").delete(job); } catch {} }
+function probeDur(pv) { try { const v = document.createElement("video"); v.preload = "metadata"; v.onloadedmetadata = () => { if (v.duration && isFinite(v.duration)) { pv.dur = fmtDur(v.duration); showChip(); } }; v.src = pv.url; } catch {} }
 let pendingVideo = null;
 function showChip() {
   const c = $("#attachChip"); if (!c) return;
   const parts = [];
-  if (pendingVideo) parts.push("\uD83D\uDCCE " + pendingVideo.name + " · " + t("attachChatNote"));
+  if (pendingVideo) parts.push("\uD83D\uDCCE " + pendingVideo.name + (pendingVideo.dur ? " · " + pendingVideo.dur : "") + " · " + t("attachChatNote"));
   if (!parts.length) { c.hidden = true; return; }
   $("#attachChipTxt").textContent = parts.join(" \u00b7 "); c.hidden = false;
 }
-$("#attachChipX").onclick = () => { pendingVideo = null; showChip(); updateBtn(); };
+$("#attachChipX").onclick = () => { if (pendingVideo && pendingVideo.url) URL.revokeObjectURL(pendingVideo.url); pendingVideo = null; showChip(); updateBtn(); };
 let busy = false;
 /* v50 (M3) + v51 (Q1): the composer NEVER eats a message. While a turn is
    in flight, a sent message appears instantly as a PLAIN user bubble and
@@ -1003,7 +1036,7 @@ async function send(text, opts) {
   if (!text && !pendingVideo) return;
   if (!text && pendingVideo) text = t("attachVideoMsg");
   if (busy && !(opts && opts.batched)) { queueMessage(text); return; }
-  busy = true; const rt = replyTo; replyTo = null; hideReplyBar(); const bEl = bubble("user", text); if (rt) { const q = document.createElement("span"); q.className = "quote-in"; q.textContent = (rt.who === "user" ? "You: " : "Julie: ") + rt.text.slice(0, 140); bEl.prepend(q); } $("#input").value = ""; autoGrow(); updateBtn(); typing(true);
+  busy = true; const rt = replyTo; replyTo = null; hideReplyBar(); const pv = pendingVideo; const bEl = bubble("user", text, pv ? { vid: pv } : {}); if (rt) { const q = document.createElement("span"); q.className = "quote-in"; q.textContent = (rt.who === "user" ? "You: " : "Julie: ") + rt.text.slice(0, 140); bEl.prepend(q); } $("#input").value = ""; autoGrow(); updateBtn(); typing(true);
   // v50 (M2): an Edit re-send marks the original message "edited".
   if (editingEl) { const tg = document.createElement("span"); tg.className = "edited-tag"; tg.textContent = " · edited"; editingEl.appendChild(tg); editingEl = null; }
   let serverText = text;
@@ -1474,7 +1507,7 @@ $("#file").onchange = async e => {
     try {
       const fd = new FormData(); fd.append("stage", "1"); fd.append("video", f, f.name);
       const d = await xhrUpload("edit", fd, () => {});
-      if (d.ok && d.staged) { pendingVideo = { job: d.staged, name: f.name }; showChip(); updateBtn(); }
+      if (d.ok && d.staged) { pendingVideo = { job: d.staged, name: f.name, url: URL.createObjectURL(f) }; vidPut(d.staged, f); probeDur(pendingVideo); showChip(); updateBtn(); }
       else toast(d.error || t("netErr"), true);
     } catch (x) { if (x.message !== "login") toast(t("netErr"), true); }
     typing(false); busy = false; return;
