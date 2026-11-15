@@ -323,12 +323,25 @@ def report_result(provider, status, key=None, error=None, extra=None):
 def get_job():
     # v24: a failed job fetch must be LOUD, not a silent "no job record".
     # (The one-tap run 42813523727 exited 0 in ~6s having done nothing.)
-    try:
-        r = httpx.get(f"{WORKER}/api/setup/runner/job", params={"job": JOB}, headers=H, timeout=20)
-    except Exception as e:
-        print(f"SETUP FAIL: get_job request failed: {e}", flush=True)
-        raise SystemExit(1)
-    if r.status_code != 200:
+    # v94 (F7): a TRANSIENT Worker 5xx / network blip gets 3 quick
+    # retries before the loud failure — run 43738326538 died 13s into
+    # a Resend signup on a single get_job HTTP 500 during a stop-check
+    # poll; the job itself was healthy.
+    r = None
+    for attempt in range(3):
+        try:
+            r = httpx.get(f"{WORKER}/api/setup/runner/job", params={"job": JOB}, headers=H, timeout=20)
+        except Exception as e:
+            if attempt == 2:
+                print(f"SETUP FAIL: get_job request failed: {e}", flush=True)
+                raise SystemExit(1)
+            time.sleep(3)
+            continue
+        if r.status_code == 200:
+            break
+        if r.status_code >= 500 and attempt < 2:
+            time.sleep(3)
+            continue
         print(f"SETUP FAIL: get_job HTTP {r.status_code}: {r.text[:300]}", flush=True)
         raise SystemExit(1)
     try:
