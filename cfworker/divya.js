@@ -12,7 +12,7 @@ let SYS = "";
 // (2026-11-13: the brain invented "saved_voices/trust_reel/" for a voice
 // sample it could not even receive.) Embedded in BOTH chat prompts.
 const VOICE_SAVE_RULE = `VOICE/FILE SAVE NIJAYITHI (v71, hard rule): "voice save chesa / file save ayyindhi / setting save cheskunna" ani EPPUDU cheppaku — save anedi system STRUCTURE nunchi oka confirmation vachinappude nijam (chat lo alanti structural note lekapothe save jaragaledu). User save adigi, alanti note lekunda unte, save ayinattu natinchaku: "sample inka naa daggara save avvaledu — voice note leda audio file pampu" ani nijam cheppu. Folder peru, voice peru, file peru lanti details ni ASALU invent cheyyaku.`;
-const AMEND_RULE = `MID-FLIGHT AMENDMENTS (v72, hard rule): oka video tayaru avuthunnappudu user production instructions isthe (footage, b-roll, SFX, sound effects, transitions, animations, visual effects, music, captions, style, extra content points) — avi ANNI AA RUNNING VIDEO ke; system vaatini madhyalone aa video lone apply chesthundhi (Hark laaga). "Next video lo chestha / next video nunchi apply avthundhi" ani production gurinchi EPPUDU cheppaku — adhi tappu. Alanti messages system structural ga handle chesthundhi; okavela neeku vachinaa, running video ki instruction ga ne treat chesi chinna confirmation ivvu. (Voice/language marchalanna request matrame exception — adi ee video ki avvadu, preference ga save avthundhi.)`;
+const AMEND_RULE = `MID-FLIGHT AMENDMENTS (v72, hard rule): oka video tayaru avuthunnappudu user production instructions isthe (footage, b-roll, SFX, sound effects, transitions, animations, visual effects, music, captions, style, extra content points) — avi ANNI AA RUNNING VIDEO ke; system vaatini madhyalone aa video lone apply chesthundhi (Hark laaga). "Next video lo chestha / next video nunchi apply avthundhi" ani production gurinchi EPPUDU cheppaku — adhi tappu. Alanti messages system structural ga handle chesthundhi; okavela neeku vachinaa, running video ki instruction ga ne treat chesi chinna confirmation ivvu. (Voice/language marchalanna request matrame exception — adi ee video ki avvadu, preference ga save avthundhi.) KOTHA TOPIC matram ASALU amendment/preference kaadu: message lo kotha topic unte (topic: X, leda 'a to z cheyu / nee own ga cheyu' lanti order), adhi KOTHA video — vere video render avuthunna kuda VENTANE start avuthundhi; danini 'next video' preference ga save cheyyaku, user ni 'cancel and redo' lanti maata cheppamani adagaku.`;
 const PROMPT_CONTRACT_RULE = `PROMPT = CONTRACT (v79, Blind R-P1..R-P7 — hard rules for EVERY video order):
 R-P1: The user's prompt is a contract, not a suggestion. Every sentence of it is a requirement — not just the topic.
 R-P2: User requirements override ALL Julie defaults. Only safety rules rank above the prompt.
@@ -783,7 +783,7 @@ function appSys(isOwner, lang) {
   if (lang === "en") s += "\nAPP LANGUAGE = ENGLISH: reply in simple English only (not Tenglish).";
   s += "\n\n" + VOICE_SAVE_RULE;
   s += "\n\n" + AMEND_RULE;
-  s += "\n\nCONVERSATION QUALITY (Ajju's standing order — reply like a sharp assistant, not a manual): (1) Answer FIRST, in 1-3 short lines. No preamble, no feature lists, no explaining how you work unless asked. (2) USE THE HISTORY: the messages above are this same conversation — refer to the topic, length, voice and language already decided; if the user says 'same topic / adhey topic / ade topic', take the topic from earlier in this conversation and proceed, never re-ask what was already told. (3) ONE reply only — never write the user's side of the chat, never continue the conversation yourself, never write that the user 'didn't respond'. (4) If a video is being made, questions about it ('ayindha?', 'ready na?') are about THAT video — answer from its topic and state, briefly. (5) When unsure, say so in one line and ask ONE clear question.";
+  s += "\n\nCONVERSATION QUALITY (Ajju's standing order — reply like a sharp assistant, not a manual): (1) Answer FIRST, in 1-3 short lines. No preamble, no feature lists, no explaining how you work unless asked. (2) USE THE HISTORY: the messages above are this same conversation — refer to the topic, length, voice and language already decided; if the user says 'same topic / adhey topic / ade topic', take the topic from earlier in this conversation and proceed, never re-ask what was already told. (3) ONE reply only — never write the user's side of the chat, never continue the conversation yourself, never write that the user 'didn't respond'. (4) If a video is being made, questions about it ('ayindha?', 'ready na?') are about THAT video — answer from its topic and state, briefly. (5) When unsure, say so in one line and ask ONE clear question. (6) NEVER defer work: no 'next video will…', no 'say X to…', no magic phrases, no 'I saved your preference' as a substitute for doing the thing — understand, act NOW, report in one line. A message with a NEW topic is a NEW video that starts at once, even while another renders.";
   return s;
 }
 async function appCode(env, n) {
@@ -1028,6 +1028,7 @@ async function appTalk(env, u, text, lang, voiceId) {
   // a video renders is saved as the next video's preference, said plainly.
   const busyNow = await env.KV.get(`busy:${u.n}`);
   const appjob = JSON.parse((await env.KV.get(`appjob:${u.n}`)) || "null");
+  const newOrder = isNewTopicOrder(cleanText); // v51 (G1): a NEW topic starts a NEW job — never an amendment, never a saved preference
   const isStatusQ = /(ayindha|ayyindha|ready|status|progress|ekkada\s*varaku|inka\s*(entha|emi)|ayipoyindha|vachindha|complete|done\s*ah|entha\s*dooram)/i.test(cleanText) && !isCreateOrder(cleanText);
   // v73: a status question first rescues any stuck job, so the answer
   // below can never call a dead job "still being made".
@@ -1054,7 +1055,7 @@ async function appTalk(env, u, text, lang, voiceId) {
   // language nextpref block below: production words win; a pure
   // voice/language change has no production vocabulary and still
   // falls through to nextpref exactly as in v67.
-  if (busyNow && isAmendment(cleanText)) {
+  if (busyNow && !newOrder && isAmendment(cleanText)) {
     const rj = await runningJob(env, u.n);
     if (rj) {
       await addAmendment(env, rj, cleanText);
@@ -1063,12 +1064,18 @@ async function appTalk(env, u, text, lang, voiceId) {
       return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
     }
   }
-  if (busyNow && !isCreateOrder(cleanText) && /(voice|male|female|telugu|hindi|english|language|sound)/i.test(cleanText)) {
+  if (busyNow && !newOrder && !isCreateOrder(cleanText) && /(voice|male|female|telugu|hindi|english|language|sound)/i.test(cleanText)) {
     const g = /female|aada/i.test(cleanText) ? "female" : /male|maga/i.test(cleanText) ? "male" : "";
     const lg2 = /telugu/i.test(cleanText) ? "Telugu" : /hindi/i.test(cleanText) ? "Hindi" : /english/i.test(cleanText) ? "English" : "";
     if (g || lg2) await env.KV.put(`nextpref:${u.n}`, JSON.stringify({ gender: g, langName: lg2, at: Date.now() }), { expirationTtl: 86400 });
+    // v51 (G2): the change is ALSO put on the running job itself (the
+    // runner reads amendments at its checkpoints) — Julie acts now and
+    // says so in one line. Never a deferral to a future video, never a
+    // phrase the user must recite.
+    const rj2 = await runningJob(env, u.n);
+    if (rj2) await addAmendment(env, rj2, cleanText);
     const what = [g, lg2].filter(Boolean).join(" ") || "that change";
-    const a2 = lang === "en" ? `This video is already rendering — its voice can't change midway. I've saved your preference (${what} voice); the NEXT video will use it. If you want this one redone instead, say "cancel and redo".` : `Ee video already tayaru avuthondi — madhyalo voice marchaledu. Nee preference (${what} voice) save chesa, NEXT video nunchi adhe vasthundhi. Idhe video malli cheyali ante "cancel chesi malli chey" ani cheppu.`;
+    const a2 = lang === "en" ? `Done — ${what} voice added to THIS video, and kept for your next ones too.` : `Done — ${what} voice ee video ki add chesa, next videos ki kuda adhe untundhi.`;
     h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
     return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
   }
@@ -1103,7 +1110,7 @@ async function appTalk(env, u, text, lang, voiceId) {
     // the user's side, or "User didn't respond yet..."). Cut everything
     // from the first fake turn — Julie sends ONE reply, hers only.
     ans = ans.split(/\n\s*(User|Nuvvu|Me|Customer)\s*:/i)[0].split(/user didn.t respond/i)[0].trim();
-    if (!mm && (forceCreate || isNoVideoEditOrder(text))) { mm = [null, cleanText]; ans = lang === "en" ? "Starting now — I'll make everything A to Z myself: script, visuals, voice, captions, edit." : "Sare, start chesa — script, visuals, voice, captions, edit, motham nene A to Z chestha. Ready ayyaka ikkade pampistha."; }
+    if (!mm && (forceCreate || newOrder || isNoVideoEditOrder(text))) { mm = [null, cleanText]; ans = lang === "en" ? "Starting now — I'll make everything A to Z myself: script, visuals, voice, captions, edit." : "Sare, start chesa — script, visuals, voice, captions, edit, motham nene A to Z chestha. Ready ayyaka ikkade pampistha."; }
     // R46 guard: if the reply still asks the user to attach/upload/send a video
     // and the user did not offer one, force a create instead — the rule holds
     // even if the model disobeys the prompt.
@@ -1115,13 +1122,19 @@ async function appTalk(env, u, text, lang, voiceId) {
   // plainly with the numbers — never start silently.
   let go = !!mm && !askOnly, started = false, sc = null;
   if (mm && askOnly) ans = lang === "en" ? "I can — shorts and long videos up to 60 min. Tell me topic, length and language and I'll start." : "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
+  // v51 (G1): a new-topic order starts NOW — the short/long question
+  // never stalls it; a sensible default length rides on the brief.
+  if (go && newOrder && !/(short|long|reel|9:16|16:9|30s|60s|\b3\s?min|\b10\s?min|documentary|face)/i.test(mm[1] || "")) mm = [mm[0], `${(mm[1] || cleanText).trim()} — short video (30s, 9:16), Julie voice-over, A to Z by Julie.`];
   // R40: a create order without short/long waits — ask ONCE, resume on the answer.
   if (go && !/(short|long|reel|9:16|16:9|30s|60s|\b3\s?min|\b10\s?min|documentary|face)/i.test(mm[1] || "")) {
     await env.KV.put(`crtpend:${u.n}`, JSON.stringify({ brief: mm[1], at: Date.now() }), { expirationTtl: 3600 });
     ans = lang === "en" ? "Short (30s, 9:16) or long (up to 60 min, 16:9)? Say short or long and I'll start." : "Short (30s, 9:16) na, long (60 min varaku, 16:9) na? Short/long ani cheppu, start chestha.";
     go = false;
   }
-  if (go && await env.KV.get(`busy:${u.n}`)) { ans = lang === "en" ? "One video is already being made. When it arrives, tell me and I'll start the next one." : "Okka video already tayaru avuthondi. Adi vachaka cheppu, next di start chestha."; go = false; }
+  // v51 (G1/G2): no busy refusal — a create order starts even while
+  // another video renders (each job is tracked by its own id and both
+  // deliver here). Julie never defers a job to "the next video" and
+  // never asks the user to recite a phrase to get work done.
   let premium_required = false;
   let tk = null, cost = 0;
   if (go) { cost = videoCost(parseMins(mm && mm[1])); tk = await tokSpend(env, u.n, cost); if (!tk.ok) { ans = tokMsg(lang, tk); go = false; } }
@@ -1148,7 +1161,12 @@ async function appTalk(env, u, text, lang, voiceId) {
     // A failed dispatch replaces it with an honest failure + token refund.
     else { await tokRefund(env, u.n, tk, cost); ans = lang === "en" ? "The video machine didn't start — try again in a few minutes. Your tokens were returned." : "Video machine start avvaledu — konchem sepu tarvatha malli try cheyyi. Nee tokens venakki ichesa."; }
   }
+  // v51 (G1/G2): started alongside an in-flight video — say exactly
+  // that, in one short line. Never "next video", never a magic phrase.
+  if (started && busyNow) { const tp = extractTopic(cleanText); ans = lang === "en" ? `Started your ${tp || "new"} video too — Julie voice, A to Z by me. The other one is still rendering; both will land here.` : `Nee ${tp || "kotha"} video kuda start chesa — Julie voice, motham A to Z nene chestha. Inko video inka render avuthondi; rendu ikkade vasthayi.`; }
   ans = await playbookGuard(env, ans, lang);
+  ans = busyWallGuard(ans, lang); // v51 (F2): a busy wall becomes one short line
+  { const prevA = [...h].reverse().find(m => m.role === "assistant"); if (ans && prevA && String(prevA.content || "") === ans) ans = antiRepeatLine(cleanText, lang); } // v51 (F3): never a verbatim repeat of the previous reply
   h.push({ role: "assistant", content: ans }); await remember(env, u.n, h);
   return { reply: ans, video_started: started, video_job: sc?.job || null, video_num: sc?.num || null, premium_required, brain: u.via || "shared" };
 }
@@ -1397,7 +1415,7 @@ async function appApi(req, env, url, ctx) {
   if (p === "me") { const a = u.acct; try { if (!(await env.KV.get(`joined:${u.n}`))) await env.KV.put(`joined:${u.n}`, String(Date.now())); } catch {} return appJson(req, { ok: true, number: a ? (a.phone || "") : u.n, owner: u.owner, premium: await isPremium(env, u.n), memory: JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null"), account: a ? { name: a.name, email: a.email, phone: a.phone || "", phone_pending: a.pphone || "" } : null }); }
   if (p.startsWith("account/") && req.method === "POST") return acctPrivate(req, env, u, p, body);
   if (p === "plan") { const bal = await tokBalance(env, u.n); const kt = await keyTierFor(env, u.n); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = PLANS[pid].voice; /* v37: voice assistant included in every plan (was a planvoice KV flag / ₹49 add-on) */ return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, period: "week", unlimited: bal.unlimited, brain: kt.tier, video_backend: "shared", pro: "soon" }); }
-  if (p === "assist" && req.method === "POST") return appJson(req, await appAssist(env, u, body, lang));
+  if (p === "assist" && req.method === "POST") { const r = await appAssist(env, u, body, lang); if (r && r.reply) r.reply = busyWallGuard(r.reply, lang); return appJson(req, r); }
   // v50 (Y3): per-user UI prefs, server-side (survive reinstall / new
   // phone). Today: lvMini — the floating mini message box over the live
   // view. Default ON when unset.
@@ -1424,6 +1442,12 @@ async function appApi(req, env, url, ctx) {
       const rec = parseRec(await env.KV.get(`vjob:${vid}`)); if (rec) { rec.state = "failed"; rec.error = "dispatch"; await env.KV.put(`vjob:${vid}`, JSON.stringify(rec), { expirationTtl: 3600 }); }
       return appJson(req, { ok: false, error: "house_engine_offline", detail: "Voice runner could not be started — tokens returned." }, 501);
     }
+    // v51 (V4 refund fix): record the spend against the job (same durable
+    // record video jobs use) so a TERMINAL runner failure can refund it
+    // exactly once via refundJobSpend. Recorded only after dispatch
+    // succeeded — the dispatch-failure path above already refunded from
+    // the in-memory receipt and leaves no record behind.
+    await recordSpend(env, vid, u.n, tk, TOK.COST.voice);
     return appJson(req, { ok: true, job: vid, state: "queued" });
   }
   if (p === "voice/status" && req.method === "GET") {
@@ -2529,6 +2553,43 @@ function setupGuideReply(lang) {
   if (lang === "en") return "The shared AI is busy right now — its free limit is full, so it can't answer at the moment. It clears on its own in a bit; please try again shortly.";
   return "Shared AI ippudu busy ga undhi — free limit full ayyindhi, anduke ippudu answer ivvaledu. Konchem sepu lo thane clear avuthundi; appudu malli try cheyyi.";
 }
+// v51 (F2): a busy/limit answer in chat is ONE short line — never a
+// paragraph wall. The brain sometimes expands the setup pitch into a
+// multi-sentence wall ("give one allow in Setup... tap the verification
+// link..."); any reply that is recognisably that wall collapses back to
+// the short line. (That wall text also became a chat-tab title on the
+// user's phone — tab titles now come only from user messages, app.js.)
+function busyWallGuard(reply, lang) {
+  const r = String(reply || "");
+  if (/shared ai is busy|free limit is full|shared ai ippudu busy/i.test(r) && (r.length > 180 || /give one allow|#\/setup|tap the verification|sms code/i.test(r))) return setupGuideReply(lang);
+  return r;
+}
+// v51 (F3): never the same assistant reply twice back-to-back. When the
+// brain repeats its previous reply byte-for-byte (the double "Hello"
+// greeting Ajju hit), swap in a short varied line instead.
+function antiRepeatLine(text, lang) {
+  if (/^(hi+|hello|hey|helo|hai)\b/i.test(String(text || "").trim())) return lang === "en" ? "Hi again — tell me what to make and I'll start." : "Malli hi — em cheyalo cheppu, start chestha.";
+  return lang === "en" ? "Same as I just said above — tell me if you want me to go ahead." : "Paine cheppina answer ye — proceed avvala ante cheppu.";
+}
+// v51 (F3): edit-intent trigger, Romanized-Telugu + typo tolerant
+// ("Short videps okati edits chesi ivvu" routes like English "edit a
+// short video"). Song/play requests stay excluded.
+function editHintRoute(text) {
+  const t = String(text || "");
+  return /\b(edit|edits|video|videos|videps|reel|reels|short|shorts)\b|వీడియో|రీల్|ఎడిట్/i.test(t) && !/\b(play|song|paata|pata)\b/i.test(t);
+}
+// v51 (G1 — Ajju 2026-11-15): a message carrying a NEW topic (or an
+// A-to-Z self-do order) is a NEW create job that starts NOW, even while
+// another video renders. It is never a mid-flight amendment and never
+// a preference saved for "the next video". An amendment is only a
+// message pointing at the in-flight job itself ("ee video lo…",
+// "this one", "adhe video") with NO new topic in it.
+function isNewTopicOrder(text) {
+  const t = String(text || "").toLowerCase();
+  if (/\btopic\b\s*[:\-]?\s*[a-z0-9]/.test(t)) return true; // "topic loneliness", "topic: space"
+  if (/(a\s*to\s*z|nee\s*own\s*ga|anni\s+n(uv)?ve\s+chey|nuvve\s+chey|motham\s+n(uv)?ve)/.test(t) && /(video|reel|short|cheyu|cheyyi|chey|chesi|ivvu|create|make)/.test(t)) return true;
+  return false;
+}
 function isDidItText(t) {
   // v88 (G1): "I did it / login chesa / chesanu" in English or Romanized
   // Telugu (typos included — "logij chesa" still carries "chesa").
@@ -2904,7 +2965,10 @@ async function vidCount(env, n) { const k = `vmon:${n}:${istMonth()}`; await env
 // no weekly count cap; the weekly grant is a token bucket, and tokSpend
 // already draws weekly -> pool -> plan (split) so a grant can never act
 // as a cap while the user holds pool/plan tokens.
-const editHint = lang => lang === "en" ? "Julie makes videos herself in chat — just tell me the topic. If you want your own video edited, attach it yourself with the attach button, say short, long or face video, and what to change — Julie edits it and tells you here when it's ready." : "Julie videos ni thane chat lo create chesthundi — topic cheppu chalu. Nee sontha video edit kavali ante, nuvve attach button tho video attach cheyyi, short, long leda face video ani cheppu, em marchalo cheppu — Julie edit chesi ready ayyaka ikkada chepthundi.";
+// v51 (F3): ONE short line when an edit is asked but no video is attached
+// yet — ask for the video (or offer to make one). Never the old paragraph,
+// never "attach it yourself" pushing the work back at the user.
+const editHint = lang => lang === "en" ? "Attach the video here and tell me what to change — I'll edit it. No video? Give me a topic and I'll make one." : "Video ikkade attach cheyyi, em marchalo cheppu — edit chestha. Video ledha? Topic cheppu, kotha video chestha.";
 async function appKeys(req, env, u, p, body, lang) {
   const en = lang === "en";
   if (p === "keys") {
@@ -3062,7 +3126,7 @@ async function appAssist(env, u, body, lang) {
     const hPrev = await history(env, u.n);
     if (hPrev.some(m => /video|reel|short|topic|CREATE/i.test(String(m.content || "")))) { const r = await appTalk(env, u, text, lang, body.voiceId); return { ok: true, intent: "chat", free: true, ...r }; }
   }
-  if (/\b(edit|video|videos|reel|reels|short|shorts)\b|వీడియో|రీల్|ఎడిట్/i.test(text) && !/\b(play|song|paata|pata)\b/i.test(text) && !isCreateOrder(text) && !isNoVideoEditOrder(text)) { const r = editHint(lang); const h = await history(env, u.n); h.push({ role: "user", content: text }, { role: "assistant", content: r }); await remember(env, u.n, h); return { ok: true, intent: "edit", free: true, reply: r }; }
+  if (editHintRoute(text) && !isCreateOrder(text) && !isNoVideoEditOrder(text)) { const r = editHint(lang); const h = await history(env, u.n); const lastA = [...h].reverse().find(m => m.role === "assistant"); if (!lastA || String(lastA.content || "") !== r) { h.push({ role: "user", content: text }, { role: "assistant", content: r }); await remember(env, u.n, h); return { ok: true, intent: "edit", free: true, reply: r }; } /* v51 (F3): the one-line ask was already the last reply — never repeat it verbatim; fall through and let the intent/brain flow answer instead. */ }
   let it = ruleIntent(text);
   if (!it && (ACTION_RX.test(text) || PREMIUM_RX.test(text))) it = await llmIntent(env, u.n, text);
   if (!it) it = { intent: "chat" };
@@ -4624,8 +4688,18 @@ async function appVoiceRunner(req, env, p, url, body) {
     return appJson(req, { ok: true });
   }
   if (p === "voice/runner/fail" && req.method === "POST") {
-    rec.state = "failed"; rec.error = String((body && body.error) || "runner").slice(0, 120);
-    await env.KV.put(`vjob:${job}`, JSON.stringify(rec), { expirationTtl: 3600 });
+    // v51 (V4 refund fix): a terminal failure refunds the speak charge
+    // exactly once — the spend was recorded against the job at dispatch
+    // (recordSpend in voice/speak) and refundJobSpend pays it back from
+    // that record, flagging it so a repeat fail callback can never pay
+    // twice. A job that already delivered audio (state done) is never
+    // flipped to failed and never refunded; an already-failed job is a
+    // no-op.
+    if (rec.state !== "done" && rec.state !== "failed") {
+      rec.state = "failed"; rec.error = String((body && body.error) || "runner").slice(0, 120);
+      await env.KV.put(`vjob:${job}`, JSON.stringify(rec), { expirationTtl: 3600 });
+      try { await refundJobSpend(env, job, rec.user); } catch {}
+    }
     return appJson(req, { ok: true });
   }
   return new Response("not found", { status: 404 });
