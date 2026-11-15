@@ -1,0 +1,275 @@
+{
+ "login-pw": {
+  "defects": [],
+  "infos": []
+ },
+ "login-signup": {
+  "defects": [],
+  "infos": []
+ },
+ "login-wa": {
+  "defects": [],
+  "infos": []
+ },
+ "login-forgot": {
+  "defects": [],
+  "infos": []
+ },
+ "login-reset-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "login-verifyphone-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "login-wacode-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "home": {
+  "defects": [],
+  "infos": []
+ },
+ "chat-setupbox-tc": {
+  "defects": [
+   {
+    "kind": "overlap",
+    "a": "a «Home»",
+    "b": "button.btn.primary «Set it up»",
+    "ix": 53,
+    "iy": 39,
+    "pct": 53
+   },
+   {
+    "kind": "overlap",
+    "a": "a.tab-voice «Voice»",
+    "b": "button.btn.primary «Set it up»",
+    "ix": 70,
+    "iy": 39,
+    "pct": 70
+   },
+   {
+    "kind": "overlap",
+    "a": "a «Chat»",
+    "b": "button.btn.primary «Set it up»",
+    "ix": 29,
+    "iy": 39,
+    "pct": 29
+   },
+   {
+    "kind": "overlap",
+    "a": "a «Chat»",
+    "b": "button.btn.secondary «Later»",
+    "ix": 31,
+    "iy": 25,
+    "pct": 20
+   },
+   {
+    "kind": "overlap",
+    "a": "a «Plan»",
+    "b": "button.btn.secondary «Later»",
+    "ix": 70,
+    "iy": 25,
+    "pct": 45
+   },
+   {
+    "kind": "overlap",
+    "a": "a «Setup»",
+    "b": "button.btn.secondary «Later»",
+    "ix": 53,
+    "iy": 25,
+    "pct": 34
+   }
+  ],
+  "infos": []
+ },
+ "sheet-setup-ask": {
+  "defects": [],
+  "infos": []
+ },
+ "setup": {
+  "defects": [],
+  "infos": []
+ },
+ "connect": {
+  "defects": [
+   {
+    "kind": "overflow-x",
+    "el": "span.muted.small «markk34200@gmail.com»",
+    "sw": 163,
+    "cw": 113,
+    "over": 50
+   },
+   {
+    "kind": "glyph-overflow-x",
+    "el": "span.muted.small «markk34200@gmail.com»",
+    "glyphW": 163,
+    "boxW": 113
+   }
+  ],
+  "infos": []
+ },
+ "voice": {
+  "defects": [
+   {
+    "kind": "overflow-y",
+    "el": "p#vState.v-state «Tap to talk»",
+    "sh": 27,
+    "ch": 24,
+    "over": 3
+   }
+  ],
+  "infos": []
+ },
+ "plan": {
+  "defects": [],
+  "infos": []
+ },
+ "download": {
+  "defects": [],
+  "infos": []
+ },
+ "profile": {
+  "defects": [],
+  "infos": []
+ },
+ "profile-delete-open": {
+  "defects": [],
+  "infos": []
+ },
+ "settings": {
+  "defects": [
+   {
+    "kind": "overflow-x",
+    "el": "div.list «Language TeluguEnglishहिन्दीHinglish Voice repliesWhen you s»",
+    "sw": 376,
+    "cw": 326,
+    "over": 50
+   },
+   {
+    "kind": "overflow-x",
+    "el": "div.row «Language TeluguEnglishहिन्दीHinglish»",
+    "sw": 376,
+    "cw": 326,
+    "over": 50
+   },
+   {
+    "kind": "clipped-by-ancestor",
+    "el": "button «Hinglish»",
+    "visW": 32,
+    "fullW": 76,
+    "by": "div.list «Language TeluguEnglishहिन्दीHinglish Voice repliesWhen you s»"
+   }
+  ],
+  "infos": []
+ },
+ "settings-voicelist": {
+  "defects": [
+   {
+    "kind": "overflow-x",
+    "el": "div.list «Language TeluguEnglishहिन्दीHinglish Voice repliesWhen you s»",
+    "sw": 376,
+    "cw": 326,
+    "over": 50
+   },
+   {
+    "kind": "overflow-x",
+    "el": "div.row «Language TeluguEnglishहिन्दीHinglish»",
+    "sw": 376,
+    "cw": 326,
+    "over": 50
+   },
+   {
+    "kind": "clipped-by-ancestor",
+    "el": "button «Hinglish»",
+    "visW": 32,
+    "fullW": 76,
+    "by": "div.list «Language TeluguEnglishहिन्दीHinglish Voice repliesWhen you s»"
+   }
+  ],
+  "infos": [
+   {
+    "kind": "overflow-x",
+    "el": "button.btn.voice-btn «Pedda Nanna · Aged 60+»",
+    "sw": 219,
+    "cw": 208,
+    "over": 11
+   }
+  ]
+ },
+ "history": {
+  "defects": [
+   {
+    "kind": "overflow-x",
+    "el": "div.card.hist-item «video 1The Solar System Documentary — Full Narrated Version »",
+    "sw": 332,
+    "cw": 326,
+    "over": 6
+   },
+   {
+    "kind": "container-spill",
+    "el": "a «https://instagram.com/reel/C1234567890abcdef»",
+    "left": 33,
+    "right": 349,
+    "boxLeft": 16,
+    "boxRight": 344,
+    "box": "div.card.hist-item «video 1The Solar System Documentary — Full Narrated Version »"
+   }
+  ],
+  "infos": []
+ },
+ "drawer": {
+  "defects": [],
+  "infos": []
+ },
+ "tabswitcher": {
+  "defects": [],
+  "infos": [
+   {
+    "kind": "overflow-x",
+    "el": "b «Please upload this video to my YouTube channel https://www.y»",
+    "sw": 470,
+    "cw": 218,
+    "over": 252
+   },
+   {
+    "kind": "overflow-x",
+    "el": "b «A chat with an extremely long first message that becomes the»",
+    "sw": 465,
+    "cw": 218,
+    "over": 247
+   },
+   {
+    "kind": "overflow-x",
+    "el": "b «Please upload this video to my YouTube channel https://www.y»",
+    "sw": 470,
+    "cw": 218,
+    "over": 252
+   },
+   {
+    "kind": "overflow-x",
+    "el": "b «A chat with an extremely long first message that becomes the»",
+    "sw": 465,
+    "cw": 218,
+    "over": 247
+   }
+  ]
+ },
+ "bubble-panel-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "toast-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "updbanner-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "chat-browsercard": {
+  "defects": [],
+  "infos": []
+ }
+}

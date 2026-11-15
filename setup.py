@@ -478,6 +478,38 @@ def wait_pause():
     return check_stop()
 
 
+def fed_verify_link(job):
+    """The verification link the server fed into the job record, or "".
+
+    v50 (X4): the chain is — the Worker reads the user's connected Gmail
+    itself (fetchVerifyLink), stores the fresh link on the job, and the
+    runner opens it in THIS browser. The user never taps the mail link."""
+    if not isinstance(job, dict):
+        return ""
+    link = str(job.get("verify_link") or job.get("verifyLink") or "").strip()
+    return link if link.startswith("http") else ""
+
+
+def wait_for_fed_link(seconds=240, poll=10):
+    """Poll the job until the server feeds a verification link, the job
+    resumes or stops, or the deadline passes. Returns the link ("" when
+    none arrived in time). Heartbeats keep the Worker watchdog aware that
+    a live runner is waiting (v39)."""
+    deadline = time.time() + seconds
+    while True:
+        j = get_job()
+        st = str(j.get("state") or "")
+        if st == "stopped":
+            return ""
+        link = fed_verify_link(j)
+        if link or st == "running":
+            return link
+        if time.time() > deadline:
+            return ""
+        heartbeat()
+        time.sleep(poll)
+
+
 def solve_audio_captcha(page):
     """Try the audio challenge: download the audio, transcribe on-device."""
     try:
@@ -1339,30 +1371,27 @@ def pause_for_email_verify(page, job, cfg):
         # instead of sitting in the email pause for the full 30 min:
         # they sign in directly on the login page, the session is
         # captured into the sealed profile, and key creation proceeds.
-        deadline = time.time() + 240
-        while True:
-            j0 = get_job()
-            st0 = str(j0.get("state") or "")
-            if st0 == "stopped":
-                return False
-            link0 = str(j0.get("verify_link") or j0.get("verifyLink") or "").strip()
-            if link0.startswith("http") or st0 == "running":
-                break
-            if time.time() > deadline:
-                print("no verification mail fed in 4 min - Take Control handover", flush=True)
-                if take_control(page, job, cfg):
-                    capture_profile(page.context)
-                    if _verify_signed_in(page, cfg, name):
-                        return True
-                return False
-            heartbeat()
-            time.sleep(10)
+        link0 = wait_for_fed_link(240)
+        if str(get_job().get("state") or "") == "stopped":
+            return False
+        if not link0 and str(get_job().get("state") or "") != "running":
+            print("no verification mail fed in 4 min - Take Control handover", flush=True)
+            if take_control(page, job, cfg):
+                capture_profile(page.context)
+                if _verify_signed_in(page, cfg, name):
+                    return True
+            return False
     elif wait_pause():
         return False
     page.wait_for_timeout(2000)
     j = get_job()
-    link = str(j.get("verify_link") or j.get("verifyLink") or "").strip()
-    if link.startswith("http"):
+    link = fed_verify_link(j)
+    if not link:
+        # v50 (X4): the pause may have been released (Continue / watchdog)
+        # just before the mail landed — give the feed a short second
+        # window instead of failing a run whose link is seconds away.
+        link = wait_for_fed_link(60)
+    if link:
         progress("running", "verify-link", f"{name} verification link open chesthunna — sign in avthundhi.", link)
         try:
             # Shape only (host/path/param NAMES/length) — never the
@@ -2163,9 +2192,8 @@ def flow_pexels(page, job, cfg):
         # (the pause text promises Julie opens it; the user must not
         # tap it), then re-read the API page below.
         try:
-            _j = get_job()
-            _link = str(_j.get("verify_link") or _j.get("verifyLink") or "").strip()
-            if _link.startswith("http"):
+            _link = fed_verify_link(get_job()) or wait_for_fed_link(45)
+            if _link:
                 goto(page, _link, tries=2)
                 page.wait_for_timeout(2500)
         except Exception:

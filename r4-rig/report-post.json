@@ -1,0 +1,369 @@
+{
+ "login-pw": {
+  "defects": [],
+  "infos": []
+ },
+ "login-signup": {
+  "defects": [],
+  "infos": []
+ },
+ "login-wa": {
+  "defects": [],
+  "infos": []
+ },
+ "login-forgot": {
+  "defects": [],
+  "infos": []
+ },
+ "login-reset-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "login-verifyphone-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "login-wacode-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "home": {
+  "defects": [],
+  "infos": []
+ },
+ "chat-setupbox-tc": {
+  "defects": [],
+  "infos": []
+ },
+ "measures": {
+  "chatA": {
+   "header": {
+    "menu": {
+     "x": 12,
+     "y": 10,
+     "w": 50,
+     "h": 50,
+     "right": 62,
+     "bottom": 60
+    },
+    "plus": null,
+    "tabchip": {
+     "x": 128,
+     "y": 10,
+     "w": 50,
+     "h": 50,
+     "right": 178,
+     "bottom": 60
+    },
+    "avatar": {
+     "x": 298,
+     "y": 10,
+     "w": 50,
+     "h": 50,
+     "right": 348,
+     "bottom": 60
+    },
+    "position": "fixed"
+   },
+   "tabchipText": "3",
+   "composer": {
+    "send": {
+     "x": 300,
+     "y": 600,
+     "w": 40,
+     "h": 40,
+     "right": 340,
+     "bottom": 640
+    },
+    "taBorderW": "0px",
+    "taBorderStyle": "none",
+    "taBg": "rgba(0, 0, 0, 0)",
+    "pill": {
+     "x": 12,
+     "y": 591,
+     "w": 336,
+     "h": 55,
+     "right": 348,
+     "bottom": 646
+    }
+   },
+   "tabbar": {
+    "x": 12,
+    "right": 348,
+    "w": 336,
+    "radius": "999px",
+    "labelWidths": [
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "active": {
+     "bg": "rgb(255, 255, 255)",
+     "w": 52,
+     "h": 52
+    }
+   }
+  },
+  "headerScrollY": {
+   "before": 10,
+   "after": 10
+  },
+  "chatB": {
+   "header": {
+    "menu": {
+     "x": 12,
+     "y": 10,
+     "w": 50,
+     "h": 50,
+     "right": 62,
+     "bottom": 60
+    },
+    "plus": null,
+    "tabchip": {
+     "x": 128,
+     "y": 10,
+     "w": 50,
+     "h": 50,
+     "right": 178,
+     "bottom": 60
+    },
+    "avatar": {
+     "x": 298,
+     "y": 10,
+     "w": 50,
+     "h": 50,
+     "right": 348,
+     "bottom": 60
+    },
+    "position": "fixed"
+   },
+   "tabchipText": "3",
+   "composer": {
+    "send": {
+     "x": 300,
+     "y": 600,
+     "w": 40,
+     "h": 40,
+     "right": 340,
+     "bottom": 640
+    },
+    "taBorderW": "0px",
+    "taBorderStyle": "none",
+    "taBg": "rgba(0, 0, 0, 0)",
+    "pill": {
+     "x": 12,
+     "y": 591,
+     "w": 336,
+     "h": 55,
+     "right": 348,
+     "bottom": 646
+    }
+   },
+   "tabbar": {
+    "x": 12,
+    "right": 348,
+    "w": 336,
+    "radius": "999px",
+    "labelWidths": [
+     1,
+     1,
+     1,
+     1,
+     1
+    ],
+    "active": {
+     "bg": "rgb(255, 255, 255)",
+     "w": 52,
+     "h": 52
+    }
+   }
+  }
+ },
+ "sheet-setup-ask": {
+  "defects": [],
+  "infos": []
+ },
+ "setup": {
+  "defects": [],
+  "infos": []
+ },
+ "connect": {
+  "defects": [],
+  "infos": []
+ },
+ "voice": {
+  "defects": [],
+  "infos": []
+ },
+ "plan": {
+  "defects": [],
+  "infos": []
+ },
+ "download": {
+  "defects": [],
+  "infos": []
+ },
+ "profile": {
+  "defects": [],
+  "infos": []
+ },
+ "profile-delete-open": {
+  "defects": [],
+  "infos": []
+ },
+ "settings": {
+  "defects": [],
+  "infos": []
+ },
+ "settings-voicelist": {
+  "defects": [],
+  "infos": []
+ },
+ "history": {
+  "defects": [],
+  "infos": []
+ },
+ "drawer": {
+  "defects": [],
+  "infos": []
+ },
+ "tabswitcher": {
+  "defects": [],
+  "infos": [
+   {
+    "kind": "overflow-x",
+    "el": "b «Please upload this video to my YouTube channel https://www.y»",
+    "sw": 470,
+    "cw": 218,
+    "over": 252
+   },
+   {
+    "kind": "overflow-x",
+    "el": "b «A chat with an extremely long first message that becomes the»",
+    "sw": 465,
+    "cw": 218,
+    "over": 247
+   },
+   {
+    "kind": "overflow-x",
+    "el": "b «Please upload this video to my YouTube channel https://www.y»",
+    "sw": 470,
+    "cw": 218,
+    "over": 252
+   },
+   {
+    "kind": "overflow-x",
+    "el": "b «A chat with an extremely long first message that becomes the»",
+    "sw": 465,
+    "cw": 218,
+    "over": 247
+   }
+  ]
+ },
+ "bubble-panel-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "toast-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "updbanner-forced": {
+  "defects": [],
+  "infos": []
+ },
+ "chat-browsercard": {
+  "defects": [],
+  "infos": []
+ },
+ "liveview": {
+  "defects": [],
+  "infos": []
+ },
+ "liveview-takecontrol": {
+  "defects": [],
+  "infos": []
+ },
+ "login-te": {
+  "defects": [],
+  "infos": []
+ },
+ "home-te": {
+  "defects": [],
+  "infos": []
+ },
+ "chat-te": {
+  "defects": [],
+  "infos": []
+ },
+ "setup-te": {
+  "defects": [
+   {
+    "kind": "overlap",
+    "a": "div#setupHow.card.note.small «Setup ela work avthundhi? Julie chesthundhi: accounts create»",
+    "b": "button.btn.primary «Setup cheyu»",
+    "ix": 153,
+    "iy": 9,
+    "pct": 13
+   }
+  ],
+  "infos": []
+ },
+ "plan-te": {
+  "defects": [
+   {
+    "kind": "overlap",
+    "a": "div#planList.card «FreeFree5 lakh tokens / month✓ Current planCreator₹129/mo50 »",
+    "b": "button.btn.primary «Setup cheyu»",
+    "ix": 153,
+    "iy": 9,
+    "pct": 13
+   },
+   {
+    "kind": "overlap",
+    "a": "div.plan-card.current «FreeFree5 lakh tokens / month✓ Current plan»",
+    "b": "button.btn.primary «Setup cheyu»",
+    "ix": 153,
+    "iy": 9,
+    "pct": 13
+   },
+   {
+    "kind": "overlap",
+    "a": "span.pill.ok «✓ Current plan»",
+    "b": "button.btn.primary «Setup cheyu»",
+    "ix": 139,
+    "iy": 9,
+    "pct": 16
+   }
+  ],
+  "infos": []
+ },
+ "voice-te": {
+  "defects": [
+   {
+    "kind": "overlap",
+    "a": "div.card.note.small «Free: 5 shorts a week (free), calls, WhatsApp message, apps/»",
+    "b": "button.btn.primary «Setup cheyu»",
+    "ix": 153,
+    "iy": 9,
+    "pct": 13
+   }
+  ],
+  "infos": []
+ },
+ "settings-te": {
+  "defects": [
+   {
+    "kind": "overlap",
+    "a": "div.row «Theme AutoLightDark»",
+    "b": "button.btn.primary «Setup cheyu»",
+    "ix": 153,
+    "iy": 6,
+    "pct": 47
+   }
+  ],
+  "infos": []
+ }
+}
