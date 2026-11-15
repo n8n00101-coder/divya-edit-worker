@@ -56,6 +56,25 @@ def _parse(raw):
         return None
 
 
+def _clean_tpl(tpl, valid_set):
+    """Normalise a model's template reply to a bare menu name.
+    Models copy the menu's display form — "primary [motion graphic]"
+    — bracket suffix and all (observed live 2026-11-15: every choice
+    was silently discarded by exact-match validation and directing
+    degraded to the v86 order). Strip the decoration; also accept a
+    reply that begins with a valid name. "" when nothing matches."""
+    tpl = str(tpl or "").strip()
+    if tpl in valid_set:
+        return tpl
+    base = re.sub(r"\s*\[.*\]\s*$", "", tpl).strip()
+    if base in valid_set:
+        return base
+    for v in valid_set:
+        if tpl.startswith(v):
+            return v
+    return ""
+
+
 def choose_visuals(menus, chat, taste="", beat_sheet=None):
     """menus: [{beat, line, role, analyst (dict|None), candidates:
     [{template, asset_type, why}]}] — one entry per beat, candidates in
@@ -113,8 +132,9 @@ def choose_visuals(menus, chat, taste="", beat_sheet=None):
             beat = int(r.get("beat"))
         except (TypeError, ValueError):
             continue
-        tpl = str(r.get("template") or "")
-        if beat in valid and tpl in valid[beat]:
+        tpl = _clean_tpl(r.get("template"),
+                         valid.get(beat) or set())
+        if beat in valid and tpl:
             out[beat] = {"template": tpl,
                          "why": str(r.get("why") or "")[:220],
                          "footage_query": str(
@@ -145,8 +165,9 @@ def replan_choice(beat_no, line, failed_template, failure_note,
     except Exception:
         return None
     data = _parse(raw)
-    tpl = str((data or {}).get("template") or "")
-    if tpl and tpl in menu_templates and tpl != failed_template:
+    tpl = _clean_tpl((data or {}).get("template"),
+                     set(menu_templates))
+    if tpl and tpl != failed_template:
         return {"template": tpl,
                 "why": str((data or {}).get("why") or "")[:220]}
     return None

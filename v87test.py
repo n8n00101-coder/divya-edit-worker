@@ -91,6 +91,11 @@ check("visual director: choice parsed + validated against the menu",
 got = VD.choose_visuals(menus, lambda m: json.dumps({"choices": [
     {"beat": 1, "template": "not_on_the_menu", "why": "x"}]}))
 check("visual director: off-menu choice dropped", got == {})
+got = VD.choose_visuals(menus, lambda m: json.dumps({"choices": [
+    {"beat": 1, "template": "evidence_document [document visual]",
+     "why": "the menu display form, copied verbatim (live 2026-11-15)"}]}))
+check("visual director: bracket-suffixed menu echo normalised",
+      got.get(1, {}).get("template") == "evidence_document")
 
 # ------------------------------------------------- directing with a brain
 import director as D
