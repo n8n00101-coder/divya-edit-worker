@@ -2420,7 +2420,11 @@ def _resend_dbg(page, tag):
                 continue
         txt = ""
         try:
-            txt = (page.inner_text("body") or "")[:400].replace("\n", " | ")
+            txt = (page.inner_text("body") or "")[:1200].replace("\n", " | ")
+            alerts = page.locator("[role='alert'], [class*='error' i], [class*='danger' i]").all_inner_texts()
+            alerts = [" ".join(a.split())[:300] for a in alerts if a.strip()][:3]
+            if alerts:
+                txt += " ALERTS=" + repr(alerts)
         except Exception:
             pass
         print(f"RESEND-DBG {tag}: url={page.url} dialogs={page.locator('[role=dialog]').count()} "
