@@ -623,6 +623,15 @@ async function appApi(req, env, url, ctx) {
   if (p.startsWith("account/") && req.method === "POST") return acctPrivate(req, env, u, p, body);
   if (p === "plan") { const bal = await tokBalance(env, u.n); const kt = await keyTierFor(env, u.n); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = PLANS[pid].voice; /* v37: voice assistant included in every plan (was a planvoice KV flag / ₹49 add-on) */ return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, edits_limit: Math.floor(TOK.WEEKLY_FREE / TOK.PER_MIN), edits_used: Math.floor(bal.weekSpent / TOK.PER_MIN), edits_left: bal.videosWeek, period: "week", unlimited: bal.unlimited, brain: kt.tier, video_backend: "shared", pro: "soon" }); }
   if (p === "assist" && req.method === "POST") return appJson(req, await appAssist(env, u, body, lang));
+  if (p === "voice/speak" && req.method === "POST") {
+    // v49 HOUSE VOICE: live synthesis belongs to the julie-ai-voice-engine
+    // route (Chatterbox clone + LOCKED voice/settings.json) running on the
+    // runner. There is no always-on TTS server at Rs 0, so until that route
+    // is live this answers an honest 501 — the app then tells the user in one
+    // line instead of silently swapping in Kokoro or the phone voice. The
+    // picker sample needs no synthesis: it is the engine's approved recording.
+    return appJson(req, { ok: false, error: "house_engine_offline", detail: "House-voice live synthesis runs on the voice-engine runner route, which is not live yet." }, 501);
+  }
   if (p.startsWith("setup/")) return appJson(req, await appSetupUser(req, env, u, p, body, lang));
   if (p.startsWith("keys")) return appKeys(req, env, u, p, body, lang);
   if (p === "model" || p.startsWith("model/")) return appModel(req, env, u, p, body, lang);

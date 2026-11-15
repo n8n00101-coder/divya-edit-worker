@@ -513,3 +513,25 @@ input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=
 .composer .send-btn{width:40px;height:40px}
 #micSend.mic{background:transparent;color:var(--text)}
 #micSend.send{background:var(--accent);color:var(--on-accent)}
+
+/* ================= v49 (Round 3): shared form-field pattern + voice rows ====
+   ONE pattern for every labelled form field (Add Model, Add Account keyrows,
+   Redeem, Post form): the label sits ABOVE the field, outside it; the field
+   itself is a single-line 52px box whose text/placeholder is vertically
+   centred and can never spill out of the box. The old per-form overrides
+   (#modelCard .field{display:block} + .field input{padding:14px 0} inside a
+   fixed 56px pill) stacked the label and the input inside one box and pushed
+   the placeholder out of the bottom edge — that class of bug ends here:
+   forms use .fld, never a bare .field with a visible label span. */
+.fld{display:block;margin-top:12px}
+.fld>span{display:block;font-size:13px;font-weight:650;color:var(--muted);margin:0 0 6px 2px}
+.fld input{display:block;width:100%;height:52px;min-height:52px;padding:0 14px;font-size:16px;line-height:1.2;border-radius:14px;box-sizing:border-box}
+#modelCard .fld{margin-top:10px}
+.bubble-input input{height:52px;min-height:52px}
+.step .keyrow input,.tc-panel .keyrow input{height:52px;min-height:52px;padding:0 12px}
+/* Voice picker rows: name takes the row (flex-1, full name visible), the
+   sample play control is a SMALL 40px circle pinned at the right — never a
+   full-width pill that crushes the name to two letters. */
+.voice-row .voice-btn{flex:1 1 auto;min-width:0}
+.voice-row .voice-sample{flex:0 0 40px;width:40px;height:40px;min-height:40px;padding:0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:1}
+.voice-row .voice-house{flex:0 0 auto;font-size:11px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 8px;white-space:nowrap}
