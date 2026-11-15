@@ -224,3 +224,102 @@ Distilled from a 6-reel editing course; every rule below was checked against the
 - Minimal is a style chosen per topic, with the same rigour as maximal
   — grain, vignette and one symbol watermark can carry a whole world.
   (Reel 4.)
+
+# — Professional editors' canon (merged 2026-11-15)
+
+## Deciding between two legal options
+- When two cut points, visuals or orders are both legal, choose by
+  Murch's order — emotion > story > rhythm > eye-trace > screen plane
+  > spatial continuity — and record which criterion won in the plan.
+- A technically imperfect option that serves the emotion beats a clean
+  option that kills it. Continuity is the cheapest criterion (4%) —
+  sacrifice it first (never across a backbone veto: 180°, eyeline).
+- Every beat's plan entry carries its intended FEELING (1–2 words)
+  next to its "why". No named feeling = no defence for the visual.
+
+## Phrasing (the level above the beat)
+- Plan in phrases of 3–6 beats: one tension build, one release. Big
+  rhythm changes happen at phrase boundaries, not on a metronome.
+- QC checks three rhythms separately: physical (something moves),
+  emotional (the feeling travels), event (the story advances). A
+  phrase that fails event rhythm is cut, however pretty.
+- A preparation and its payoff are never separated by an unrelated
+  beat. If beat N winds up, beat N+1 lands it.
+- Beat length follows the content curve: a beat ends when its
+  information is absorbed. Dense beats get full read time; simple
+  beats are cut the moment they land.
+- Inside a phrase the rhythm stays consistent — a rhythm break is a
+  signal, reserved for the turning point.
+
+## Empathy and story economy
+- Scenes with people or a persona open with the want-test in the
+  plan: who wants what, why right now, what if they don't get it.
+  No nameable want → restructure or cut the scene.
+- When a line lands, hold the reaction for its measured length.
+  Time the reaction first; trim everything else around it.
+- Story-economy pass on every script: delete each line that adds no
+  information, feeling or turn; let the next beat carry the moment.
+- A monologue of facts is visualised on the receiving side — the
+  face, the consequence, the person affected. The source appears
+  for the key line only.
+- Every plan ends with a subtraction pass: list every effect and
+  device; remove each whose removal loses nothing. The removals
+  are written into the diff like additions.
+
+## Documentary passes (structure before polish)
+- Paper edit before visuals, always: spine paragraph, beat list,
+  order — as text. No visual is chosen before the paper edit exists.
+- String-out test: the lines in order, no visuals, must hold as a
+  story. If they don't, fix the script — never cover a broken story
+  with visuals.
+- Passes in order, never merged: assembly (all beats, loose) →
+  structure (rearrange, cut, shape the arc) → visuals (cover the
+  locked structure) → sound (curve and SFX on locked picture).
+- The structure pass names its deletions (beat + reason) in the
+  diff. A structure pass that deleted nothing did not happen.
+- The spine states a CHANGE or a QUESTION, never a topic: what is
+  different at the end, or what the ending answers.
+- Post-render, QC screens as an audience member and logs the beats
+  where attention drops. Those beats are re-planned first.
+
+## Retention engineering
+- Match the promise: the hook's implied promise is visibly confirmed
+  within the first 2 beats. The first cliff is a broken promise.
+- Stakes by beat two: why this matters to the viewer (cost, risk,
+  gain, curiosity debt). Topic alone is not stakes.
+- Tease the destination in the first quarter: a glimpse of the
+  payoff's shape, never the payoff itself.
+- Staircase, don't plateau: each reveal bigger, stranger or more
+  consequential than the last. A smaller beat after a bigger one is
+  swapped or merged.
+- Re-engagement beats are marked in the plan before rendering:
+  ~40–50% in a short; ~1/3 and ~2/3 in a longer piece. A stakes
+  raise, a reveal, a new element, a direct question.
+- The governor: never cut faster than the story can carry. A beat
+  the emotion needs held is held. Pace serves story.
+- Cause and effect stay in the same beat: claim + proof visual,
+  number + meaning, setup + payoff image are never split by a cut.
+- Land the key point twice — fact, then consequence — as two
+  different visual ideas. Two good hits read as one great hit;
+  a repeated template is not a second hit.
+- The payoff must be earned: its setup (question, stakes, partial
+  answer) exists earlier in the plan, or the payoff is demoted.
+- (ASPIRATIONAL — needs the analytics feed) Log drop-off seconds
+  per published video in editing memory. The same structural cliff
+  in 3 videos becomes a standing fix in the next plan; a spike's
+  structure becomes a reusable pattern.
+
+## Montage, with the honesty leash
+- Juxtaposition only where the line itself makes the comparison —
+  the viewer builds the contrast the words already set up.
+- A cut may never imply a fact, cause or source the line does not
+  state. If the montage claims it, the line must say it.
+
+## Sound decisions
+- At an idea change, choose the lead: sound-first (~0.2–0.4 s
+  pre-lap) to pull the viewer in, picture-first for a reveal.
+  Never default; the choice is in the plan.
+- A hit is earned by the calm before it. Widen the calm; don't
+  raise the hit.
+- Planned silence is near-silence: room tone or music tail stays
+  under it. Digital zero reads as a failure, not as drama.
