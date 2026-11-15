@@ -616,8 +616,6 @@ input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=
 /* ================= v50 (M2/M3): message menu + send queue ================= */
 .ctxmenu{flex-wrap:wrap;max-width:92vw}
 .ctxmenu-q{display:flex;align-items:center;padding:0 6px;font-size:14px;font-weight:600}
-.msg.queued{opacity:.62}
-.queued-tag{display:block;margin-top:5px;font-size:11px;color:var(--muted)}
 .edited-tag{font-size:11px;color:var(--muted)}
 
 /* ================= v50 (Y1/Y3/Y4) ================= */
@@ -637,3 +635,20 @@ input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=
 .lv-mini input{flex:1;min-width:0;background:transparent!important;border:0!important;box-shadow:none!important;color:var(--text);font-size:15px;min-height:36px}
 .lv-mini-send{flex:0 0 36px;width:36px;height:36px;border-radius:50%;background:var(--accent);color:var(--on-accent);font-size:15px}
 .lv-mini-status{padding:4px 16px 0;font-size:12px;color:var(--muted);min-height:16px}
+
+/* ================= v51 (Q1/F1/F5): Muse parity round =================
+   Q1: no queue UI exists anymore (rules above removed with the tag).
+   F1: the header is FLOATING ELEMENTS ONLY — the appbar container itself
+   is click-through (pointer-events:none; its circular buttons stay
+   tappable), there is no bar/strip background anywhere, and the chat
+   hero shrinks to the logo + ONE live-progress pill, so the floating
+   cluster covers as little of the conversation as possible. Messages
+   live in their own scroll area below the in-flow hero — the first
+   message can never slide under the header. */
+.appbar{pointer-events:none}
+.appbar>*{pointer-events:auto}
+.chat-hero{padding:6px 16px 2px;gap:4px}
+.chat-hero .mascot{width:46px;height:46px}
+.msgs{padding-top:10px}
+/* F5: keyboard open -> bottom tab bar hides; composer only. */
+body.kb-open .tabbar{display:none}
