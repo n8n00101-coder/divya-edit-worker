@@ -3690,10 +3690,14 @@ async function appRunner(req, env, p, url, body) {
 // (free on public repos). The Worker dispatches setup.yml; the runner drives
 // the signup/key flows and posts progress + keys back. The chat mini-box
 // polls setup/status (needsSetup + per-step progress). Captchas: audio
-// challenge solved on-device by the runner (faster-whisper). The ONLY two
-// things the user ever does, and only if needed: tap the email verification
-// link once, or type the phone SMS code once — then setup resumes on its
-// own. Never a third-party captcha service, never silent. Cloudflare
+// challenge solved on-device by the runner (faster-whisper). The ONLY
+// things the user ever does, and only if needed: type the phone SMS code
+// once, or take one step inside Take Control (their own sign-in / an
+// image captcha). Email verification links are NEVER the user's job —
+// the Worker reads the connected Gmail itself and feeds the link to the
+// runner, which opens it in its own browser (v40 feed; v92: cron
+// monitoring + the runner waits for the feed itself). Never a
+// third-party captcha service, never silent. Cloudflare
 // (server) is the last step of the chain, after the API-key providers —
 // the runner-side flow_cloudflare() posts its token back via setup/runner/key.
 function parseRec(s) {
@@ -3988,7 +3992,7 @@ async function maybeAutoCheck(env, n, email, force) {
   // password (no stored one, e.g. a pre-v39 setup) means an existing
   // account falls back to the surfaced sign-in pause.
   const storedPass = await openSetupPass(env, n);
-  const autoChain = { providers: candidates, done: [], failed: [], current: null, email: em, pass: storedPass || setupPass(), at: now, auto: true, why };
+  const autoChain = { providers: candidates, done: [], failed: [], current: null, email: em, pass: storedPass || setupPass(), at: now, auto: true, why, browser: "profile" };
   await env.KV.put(`setupchain:${n}`, JSON.stringify(autoChain), { expirationTtl: 86400 * 7 });
   const next = await setupStartNext(env, n);
   if (!next.ok) {
@@ -4231,7 +4235,12 @@ const VERIFY_PROVIDERS = {
   // domains: preferred link hosts (magic links live here); from/subj:
   // sender + subject keywords for the matcher; q: Gmail list query;
   // mode "and" = from AND subj must match, "or" = either matches.
-  groq: { domains: ["groq.com", "stytch"], from: ["noreply@groq.com"], subj: ["login request", "groq"], q: "from:noreply@groq.com", mode: "and" },
+  // v92: sender matched at DOMAIN level — requiring the exact mailbox
+  // (noreply@groq.com) made the AND match fail forever if Stytch/Groq
+  // ever send from another @groq.com mailbox, which reads as
+  // "no-mail-yet" until the runner times out and hands the user the
+  // sign-in. Domain + a subject keyword stays strict.
+  groq: { domains: ["groq.com", "stytch"], from: ["groq.com"], subj: ["login request", "verify", "sign in", "sign-in", "login", "groq"], q: "from:groq.com", mode: "and" },
   openrouter: { domains: ["openrouter.ai", "clerk"], from: ["openrouter"], subj: ["openrouter", "verify"], q: "OpenRouter", mode: "or" },
   cloudflare: { domains: ["cloudflare.com"], from: ["cloudflare"], subj: ["verify", "confirm", "cloudflare"], q: "from:cloudflare", mode: "and" },
   generic: { domains: [], from: [], subj: ["verify", "confirm", "activate", "login"], q: "verify", mode: "or" },
@@ -4387,7 +4396,12 @@ async function maybeFeedVerifyLink(env, job, chainAt) {
   // mailFetch + mailFetchAt recorded, job stays paused. Never throws —
   // a mail-fetch exception must never break the runner's polling.
   try {
-    if (!job || job.state !== "paused" || (job.pauseReason || "email") !== "email") return job;
+    if (!job || job.state !== "paused") return job;
+    // v92: a pause that BEGAN as an email verification keeps being fed
+    // even if it later flips to a Take Control sign-in pause (the
+    // runner stamps verifyWait on the verify-email pause) — a mail
+    // landing during Take Control must still be found and fed.
+    if ((job.pauseReason || "email") !== "email" && !job.verifyWait) return job;
     if (job.verifyLink || job.verifyCode) return job;
     if (job.mailFetchAt && Date.now() - job.mailFetchAt < 20000) return job; // v50 (X4): 45s -> 20s — a fresh mail should resume the run in well under a minute
     const r = await fetchVerifyLink(env, job.user, job.provider, job, chainAt);
@@ -4405,6 +4419,30 @@ async function maybeFeedVerifyLink(env, job, chainAt) {
     await env.KV.put(`setupjob:${job.job}`, JSON.stringify(job), { expirationTtl: 86400 * 2 });
     return job;
   } catch { return job; }
+}
+async function feedAwaitingVerifyLinks(env) {
+  // v92 (Ajju: "Gmail ni eppudu monitor cheskuntu undali" — Julie must
+  // watch Gmail herself): the cron sweep. Every minute, independent of
+  // the app being open and of any runner still waiting, find every
+  // setup job still paused on an email verification and feed it its
+  // link from the owner's connected Gmail. A user whose setup is stuck
+  // at "check your email" gets the link fed server-side; when their
+  // runner polls the job (or a later run resumes it), the link is
+  // already there and Julie opens it herself. Per-job throttling and
+  // the recency guard live in maybeFeedVerifyLink / fetchVerifyLink.
+  try {
+    const list = await env.KV.list({ prefix: "setupchain:" });
+    for (const k of (list.keys || [])) {
+      try {
+        const chain = parseRec(await env.KV.get(k.name));
+        if (!chain || !chain.current) continue;
+        const job = parseRec(await env.KV.get(`setupjob:${chain.current}`));
+        if (!job || job.state !== "paused" || job.verifyLink || job.verifyCode) continue;
+        if ((job.pauseReason || "email") !== "email" && !job.verifyWait) continue;
+        await maybeFeedVerifyLink(env, job, chain.at || 0);
+      } catch {}
+    }
+  } catch {}
 }
 async function gmailStateFor(env, n, job) {
   // setup/status `gmail` field for the app's re-consent card. Carries no
@@ -4569,7 +4607,13 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // v47 (R51): browser mode for this run — "profile" runs the flows
     // in the persistent-profile real browser (session survives between
     // runs); anything else keeps the original ephemeral contexts.
-    const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: body.browser === "profile" ? "profile" : "ephemeral" };
+    // v92: profile is the DEFAULT (R51's persistent-profile browser).
+    // The old line required the app to explicitly send "profile" — it
+    // never did — so every chain silently ran ephemeral, where the
+    // email-verification pause blocks on the user's Continue tap
+    // instead of waiting for the server-fed link. Ephemeral now only
+    // when explicitly requested.
+    const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: body.browser === "ephemeral" ? "ephemeral" : "profile" };
     // v39 Phase 2: seal the generated provider-account password so a later
     // autonomous run can sign back in to the accounts this run creates
     // (replacement keys). Sealed with the app KEK, never returned by any API.
@@ -4586,10 +4630,12 @@ async function appSetupUser(req, env, u, p, body, lang) {
     return { ok: true };
   }
   if (p === "setup/pause" && req.method === "POST") {
-    // v38 (R48, item 7): pause ONLY for the two unavoidable user actions —
-    // the email verification link tap, or the phone/SMS code. The runner
-    // polls the job state and waits while it is "paused"; the user does the
-    // one action, taps Continue, and the runner resumes on its own.
+    // v38 (R48, item 7): pause ONLY for the unavoidable user actions —
+    // the phone/SMS code, or a Take Control step (own sign-in / image
+    // captcha). An EMAIL pause is not a user action since v40: the
+    // Worker feeds the verification link from Gmail and the job flips
+    // back to "running" on its own (v92). The runner polls the job
+    // state and waits while it is "paused".
     // v39: Take Control pauses are real too — "signin" (the user signs in
     // on the provider page themselves) and "captcha" (image challenge with
     // no audio alternative). The old code rejected both and the app's Take
@@ -4610,9 +4656,9 @@ async function appSetupUser(req, env, u, p, body, lang) {
     return { ok: true, reason, message: j.note };
   }
   if (p === "setup/continue" && req.method === "POST") {
-    // Resume after a pause (Julie opened the fed link / SMS code entered). The
-    // runner polls setup/runner/job and resumes when the job flips back to
-    // "running" — no further user action needed after this one tap.
+    // Resume after a pause (Julie opened the fed link / SMS code entered /
+    // a Take Control step finished). The runner polls setup/runner/job
+    // and resumes when the job flips back to "running".
     const chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     if (!chain || !chain.current) return { ok: false, error: "no job" };
     const j = parseRec(await env.KV.get(`setupjob:${chain.current}`));
@@ -5018,8 +5064,8 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // Gemini Google sign-in). Store the reason as-is — never coerce a
     // captcha/signin pause into an email pause (that would tell the user
     // to tap an email link that does not exist).
-    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); if (prevState !== "paused") rec.pausedAt = Date.now(); /* v40: job.upd at pause, for the mail recency guard */ rec.tc = !!body.tc; /* v48: Take Control live-view active for this pause */ }
-    else if (state === "running") { rec.pauseReason = ""; rec.tc = false; delete rec.pausedAt; }
+    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); if (prevState !== "paused") rec.pausedAt = Date.now(); /* v40: job.upd at pause, for the mail recency guard */ rec.tc = !!body.tc; /* v48: Take Control live-view active for this pause */ if (body.verifyWait) rec.verifyWait = true; /* v92: this pause began as an email verification — the Gmail feed + cron sweep keep working even if the pause later flips to a Take Control sign-in */ }
+    else if (state === "running") { rec.pauseReason = ""; rec.tc = false; rec.verifyWait = false; delete rec.pausedAt; }
     // v64 WRITE-BUDGET (Ajju: server error must never come back): the runner
     // posts progress on every small step; identical heartbeats used to burn
     // one KV write each and eat the free daily budget. Write only when the
@@ -5222,6 +5268,9 @@ export default {
     // when a cron trigger is configured — until then the setup/status
     // opportunistic trigger is the live path.
     ctx.waitUntil(autoCheckAll(env).catch(() => {}));
+    // v92: Gmail self-heal sweep — feed verification links to every
+    // setup job still waiting on one, app open or not.
+    ctx.waitUntil(feedAwaitingVerifyLinks(env).catch(() => {}));
   },
   async fetch(req, env, ctx) {
     env = wrapEnv(env);

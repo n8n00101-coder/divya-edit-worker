@@ -105,7 +105,7 @@ BROWSER_MODE = os.environ.get("BROWSER_MODE", "ephemeral")
 PROFILE_MODE = BROWSER_MODE == "profile"
 PROFILE_STATE = None
 
-EMAIL_PAUSE_MSG = "Verification link nee email ki vachindhi — link ni nuvvu tap cheyyaku, Julie ne link open chesthundhi. Ayyaka Continue nokku."
+EMAIL_PAUSE_MSG = "Verification link nee email ki vachindhi — link ni nuvvu tap cheyyaku, Julie ne Gmail nunchi link theesi open chesthundhi. Neeku emi cheyalsina pani ledu."
 SMS_PAUSE_MSG = "Nee phone ki vachina SMS code ni app lo enter chesi Continue nokku — migilina anni nene chestha."
 CAPTCHA_PAUSE_MSG = "Image captcha — Take Control tho nuvve okka step cheyyi, tarvatha Continue nokku."
 GOOGLE_PAUSE_MSG = "Google sign-in — Take Control tho nuvve sign in cheyyi, tarvatha Continue nokku."
@@ -117,8 +117,11 @@ VERIFY_NEEDLES = ["check your email", "email was sent", "verify your email", "ve
 
 
 def MAGIC_LINK_PAUSE_MSG(name):
+    # v92: no user action in this message — Julie waits for the
+    # server-fed link herself and opens it; the old "Continue nokku"
+    # line made the email pause read as the user's job.
     return (f"{name} verification link nee email ki vachindhi — link ni nuvvu tap cheyyaku, "
-            f"Continue nokku, Divya ne link open chesi sign in avthundhi.")
+            f"Julie ne Gmail nunchi link theesi open chesi sign in avthundhi. Neeku emi cheyalsina pani ledu.")
 
 def SIGNIN_PAUSE_MSG(name):
     # v39: the one plain line for a provider whose auth page needs the
@@ -199,7 +202,7 @@ CURSOR_JS = r"""
 })();
 """
 
-def progress(state, step="", note="", url="", status=None, reason=None, tc=False):
+def progress(state, step="", note="", url="", status=None, reason=None, tc=False, verify_wait=False):
     """POST progress to the Worker (best-effort: never fails the setup).
 
     Payload carries BOTH shapes: the legacy {state, step, note, url} the
@@ -221,6 +224,11 @@ def progress(state, step="", note="", url="", status=None, reason=None, tc=False
         payload["reason"] = rsn
     if tc:
         payload["tc"] = True
+    if verify_wait:
+        # v92: this pause began as an email verification — the Worker
+        # stamps verifyWait on the job so the Gmail feed + cron sweep
+        # keep feeding it even if the pause later flips to Take Control.
+        payload["verifyWait"] = True
     LAST_PROGRESS.update({"state": state, "step": step, "note": note, "url": url, "reason": rsn, "tc": bool(tc)})
     try:
         httpx.post(f"{WORKER}/api/setup/runner/progress", params={"job": JOB},
@@ -1314,8 +1322,12 @@ def tc_apply_inputs(page, inputs):
         page.wait_for_timeout(250)
 
 
-def take_control(page, job, cfg):
+def take_control(page, job, cfg, escape_when=None):
     """v48 (R51 Take Control): hand THIS browser to the user in the app.
+    v92: `escape_when(job)` — optional; when it returns True the wait
+    ends early with True (the email-verification caller passes "a
+    verification link has been fed", so a mail landing mid-Take-Control
+    is opened by Julie instead of waiting for the user's sign-in).
     The runner streams screenshots (setup/runner/tcframe) and applies the
     user's queued inputs (delivered on the job poll as tcInputs) while
     the job stays paused-signin with tc on. The user signs in AS
@@ -1336,6 +1348,13 @@ def take_control(page, job, cfg):
         st = j.get("state", "")
         if st == "stopped":
             return False
+        if escape_when is not None:
+            try:
+                if escape_when(j):
+                    print("take control: escaped — verification link fed, Julie opens it herself", flush=True)
+                    return True
+            except Exception:
+                pass
         inputs = j.get("tcInputs") or []
         if inputs:
             tc_apply_inputs(page, inputs)
@@ -1352,40 +1371,90 @@ def take_control(page, job, cfg):
     return False
 
 
-def pause_for_email_verify(page, job, cfg):
+def click_verify_button(page):
+    """v92 (Ajju: "ee button clicking kuda add chesko" — add the button
+    clicking too): some magic-link landing pages (Stytch/Clerk hosted
+    flows) park on a page with a Confirm / Verify / Continue button
+    instead of exchanging the token on load — the click IS the
+    verification step there. Click ONE such visible button (top frame
+    or any child frame) and return its text; "" when none was clicked.
+    Buttons suggesting a different action (sign up, cancel, resend,
+    back) are never clicked."""
+    js = r"""
+    () => {
+      const want = /verify|confirm|continue|sign in|log in|proceed/i;
+      const skip = /sign up|cancel|resend|back|create account|register/i;
+      const els = document.querySelectorAll('button, a, input[type="submit"], [role="button"]');
+      for (const el of els) {
+        const t = ((el.innerText || el.value || '') + '').trim();
+        if (!t || !want.test(t) || skip.test(t)) continue;
+        const r = el.getBoundingClientRect();
+        const cs = getComputedStyle(el);
+        if (r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none') { el.click(); return t; }
+      }
+      return '';
+    }
+    """
+    for frame in page.frames:
+        try:
+            hit = frame.evaluate(js)
+        except Exception:
+            hit = ""
+        if hit:
+            print(f"verify landing: clicked button '{hit}'", flush=True)
+            return hit
+    return ""
+
+
+def pause_for_email_verify(page, job, cfg, _link_retries=0):
     """Magic-link verification pause (v39 C7): Groq (Stytch) sends a link
     instead of a password step. Pause with reason=email so the app surfaces
-    the verification step; on resume, open the link the user supplied via
-    setup/continue (job.verify_link) in THIS browser — that is where the
-    session must land — then verify the console is reachable signed-in.
-    Returns True only when signed in; False when stopped or the sign-in
-    did not complete (the caller fails clearly, never hangs)."""
+    the verification step; the Worker feeds the link from the user's Gmail
+    onto the job and the runner opens it in THIS browser — that is where
+    the session must land — then verifies the console is reachable
+    signed-in. Returns True only when signed in; False when stopped or
+    the sign-in did not complete (the caller fails clearly, never hangs).
+
+    v92: Julie waits for the fed link HERSELF, in BOTH browser modes —
+    rounds of waiting (12 min total; the feed fires from the runner's
+    own job polls, from app status polls, and from the Worker's minute
+    cron sweep). The user is never asked to tap anything for an email
+    verification. Take Control (the user signs in themselves in this
+    browser) is only the last resort after the full wait — and even
+    then, a link fed during Take Control escapes it and Julie opens
+    the link herself."""
     global LAST_VERIFY_DIAG
     LAST_VERIFY_DIAG = ""
     name = cfg["name"]
-    progress("paused", "verify-email", MAGIC_LINK_PAUSE_MSG(name), page.url, reason="email")
-    if PROFILE_MODE:
-        # v49: bounded wait (~4 min) for the server-fed link. If the mail
-        # never lands (the provider throttles magic-link mail after
-        # repeated runs), hand the browser to the user (Take Control)
-        # instead of sitting in the email pause for the full 30 min:
-        # they sign in directly on the login page, the session is
-        # captured into the sealed profile, and key creation proceeds.
-        link0 = wait_for_fed_link(240)
-        if str(get_job().get("state") or "") == "stopped":
-            return False
-        if not link0 and str(get_job().get("state") or "") != "running":
-            print("no verification mail fed in 4 min - Take Control handover", flush=True)
-            if take_control(page, job, cfg):
-                capture_profile(page.context)
-                if _verify_signed_in(page, cfg, name):
-                    return True
-            return False
-    elif wait_pause():
+    progress("paused", "verify-email", MAGIC_LINK_PAUSE_MSG(name), page.url, reason="email", verify_wait=True)
+    link = ""
+    for _round in range(3):
+        link = wait_for_fed_link(240)
+        if link:
+            break
+        if str(get_job().get("state") or "") in ("stopped", "running"):
+            break
+    if str(get_job().get("state") or "") == "stopped":
         return False
-    page.wait_for_timeout(2000)
-    j = get_job()
-    link = fed_verify_link(j)
+    if not link:
+        link = fed_verify_link(get_job())
+    if not link and str(get_job().get("state") or "") != "running":
+        # 12 minutes and no mail was fed — last resort: Take Control
+        # (v49: the provider may also throttle magic-link mail after
+        # repeated runs; the user signs in directly on the login page
+        # and the session is captured into the sealed profile).
+        print("no verification mail fed in 12 min - Take Control handover", flush=True)
+        if take_control(page, job, cfg, escape_when=lambda j: bool(fed_verify_link(j))):
+            if PROFILE_MODE:
+                try:
+                    capture_profile(page.context)
+                except Exception:
+                    pass
+            link = fed_verify_link(get_job())
+            if not link and _verify_signed_in(page, cfg, name):
+                return True
+        if not link:
+            return False
     if not link:
         # v50 (X4): the pause may have been released (Continue / watchdog)
         # just before the mail landed — give the feed a short second
@@ -1406,6 +1475,11 @@ def pause_for_email_verify(page, job, cfg):
             goto(page, link, tries=2)
         except Exception:
             pass
+        # v92: a landing page that parks on a Confirm/Verify/Continue
+        # button gets its button clicked — for some hosted flows that
+        # click IS the token exchange.
+        page.wait_for_timeout(2500)
+        click_verify_button(page)
         # v43: the provider SPA must EXCHANGE the magic-link token
         # client-side before a session exists (Groq/Stytch: the redirect
         # lands on the console login page with the token in the URL; the
@@ -1420,10 +1494,16 @@ def pause_for_email_verify(page, job, cfg):
         # routing away from the auth page by itself, or a provider error
         # (expired / already used) — captured as the diagnostic.
         deadline = time.time() + 45
+        clicked_again = False
         while time.time() < deadline:
             page.wait_for_timeout(2000)
             if _page_says(page, ["dashboard", "api keys", "create api key", "log out", "sign out"]):
                 break
+            if not clicked_again and time.time() > deadline - 30:
+                # Still on the auth page ~15s in: a Confirm button may
+                # have rendered late — one more click attempt (v92).
+                clicked_again = True
+                click_verify_button(page)
             err = _link_error(page)
             if err:
                 LAST_VERIFY_DIAG = err
@@ -1458,11 +1538,16 @@ def pause_for_email_verify(page, job, cfg):
     # the sealed profile and this run continues to key creation.
     if PROFILE_MODE:
         print(f"verify: {name} automated sign-in refused — Take Control ki velthunna (user sign-in).", flush=True)
-        if take_control(page, job, cfg):
+        if take_control(page, job, cfg, escape_when=lambda j: bool(fed_verify_link(j))):
             try:
                 capture_profile(page.context)
             except Exception:
                 pass
+            if fed_verify_link(get_job()) and _link_retries < 1:
+                # The verification mail landed DURING Take Control —
+                # open the fed link and finish the sign-in herself
+                # instead of relying on the user's manual sign-in.
+                return pause_for_email_verify(page, job, cfg, _link_retries=_link_retries + 1)
             return _verify_signed_in(page, cfg, name)
     return False
 
@@ -2184,8 +2269,15 @@ def flow_pexels(page, job, cfg):
         # paused-email — the server feeds the link and the runner opens
         # it on resume (the user never taps it); the API page is re-read
         # right after.
-        progress("paused", "verify-email", EMAIL_PAUSE_MSG, page.url, reason="email")
-        if wait_pause():
+        progress("paused", "verify-email", EMAIL_PAUSE_MSG, page.url, reason="email", verify_wait=True)
+        # v92: Julie waits for the server-fed link HERSELF first — the
+        # user is never asked to tap anything for an email verification.
+        # The old Continue wait remains only as the fallback when no
+        # mail is fed within ~5 minutes.
+        _fed = wait_for_fed_link(180) or wait_for_fed_link(120)
+        if str(get_job().get("state") or "") == "stopped":
+            return _stopped()
+        if not _fed and str(get_job().get("state") or "") != "running" and wait_pause():
             return _stopped()
         # v88 (G2/G3): the server feeds the verification link from the
         # user's Gmail into the job record — open it in THIS browser
@@ -2196,6 +2288,7 @@ def flow_pexels(page, job, cfg):
             if _link:
                 goto(page, _link, tries=2)
                 page.wait_for_timeout(2500)
+                click_verify_button(page)
         except Exception:
             pass
         goto(page, cfg["url"])
