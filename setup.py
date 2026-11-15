@@ -105,7 +105,7 @@ BROWSER_MODE = os.environ.get("BROWSER_MODE", "ephemeral")
 PROFILE_MODE = BROWSER_MODE == "profile"
 PROFILE_STATE = None
 
-EMAIL_PAUSE_MSG = "Nee email lo vachina link ni okkasari tap cheyu, migilina anni nene chestha"
+EMAIL_PAUSE_MSG = "Verification link nee email ki vachindhi — link ni nuvvu tap cheyyaku, Julie ne link open chesthundhi. Ayyaka Continue nokku."
 SMS_PAUSE_MSG = "Nee phone ki vachina SMS code ni app lo enter chesi Continue nokku — migilina anni nene chestha."
 CAPTCHA_PAUSE_MSG = "Image captcha — Take Control tho nuvve okka step cheyyi, tarvatha Continue nokku."
 GOOGLE_PAUSE_MSG = "Google sign-in — Take Control tho nuvve sign in cheyyi, tarvatha Continue nokku."
@@ -124,7 +124,7 @@ def SIGNIN_PAUSE_MSG(name):
     # v39: the one plain line for a provider whose auth page needs the
     # USER's own sign-in (Groq SSO chooser / existing account). The app
     # shows this next to an "Open in browser" button for the sign-in URL.
-    return f"{name} sign-in kavali — browser lo open chesi sign in cheyu, tarvatha Continue nokku, migilina anni nene chestha."
+    return f"{name} sign-in kavali — Take Control tho Divya browser lone sign in cheyu, tarvatha Continue nokku, migilina anni nene chestha."
 
 # v39: last progress payload, re-posted as a heartbeat while the runner
 # waits on a pause — so the Worker's staleness watchdog sees a live
@@ -388,11 +388,15 @@ def capture_profile(ctx):
 
 def profile_context_kwargs():
     """The user's own browser configuration for the profile browser:
-    a normal laptop viewport, their locale and timezone, and their
-    saved session when one exists. Nothing is disguised — these are
-    the settings a real browser for this user carries."""
+    a PHONE viewport (v88 H1 — Ajju: the live view must show mobile
+    layouts like Muse's browser, readable on the user's phone, not a
+    desktop page squeezed), their locale and timezone, and their saved
+    session when one exists."""
     kw = {
-        "viewport": {"width": 1366, "height": 768},
+        "viewport": {"width": 412, "height": 915},
+        "device_scale_factor": 2,
+        "is_mobile": True,
+        "has_touch": True,
         "locale": "en-IN",
         "timezone_id": "Asia/Kolkata",
         "color_scheme": "light",
@@ -409,7 +413,7 @@ def open_context(browser):
     if PROFILE_MODE:
         ctx = browser.new_context(**profile_context_kwargs())
     else:
-        ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+        ctx = browser.new_context(viewport={"width": 412, "height": 915}, device_scale_factor=2, is_mobile=True, has_touch=True)
     try:
         ctx.add_init_script(CURSOR_JS)  # v68: visible agent cursor in the live view
     except Exception:
@@ -658,6 +662,48 @@ def fill(page, selectors, value, timeout=8000):
     return False
 
 
+def human_move(page, x, y):
+    """Move the agent cursor to (x, y) in visible steps (v88 H2 — Ajju:
+    the live view must LOOK like Muse working, cursor travelling to
+    its target, not teleporting). The injected cursor div follows
+    mousemove, so stepped moves read as travel in the streamed frames."""
+    try:
+        page.mouse.move(float(x), float(y), steps=14)
+        page.wait_for_timeout(120)
+    except Exception:
+        pass
+
+
+def human_scroll(page, dy, steps=None):
+    """Scroll in visible increments (v88 H2): wheel bursts of ~280px
+    with a frame attempt between them, so a viewer watches the page
+    move bit by bit (the transcript-scroll pattern) instead of jumping."""
+    try:
+        total = float(dy)
+        if total == 0:
+            return
+        n = steps or max(1, min(8, int(abs(total) // 280) + 1))
+        per = total / n
+        for _ in range(n):
+            page.mouse.wheel(0, per)
+            page.wait_for_timeout(220)
+            tc_post_frame(page, force=True)
+    except Exception:
+        pass
+
+
+def _cursor_to(page, el):
+    """Travel the cursor to an element's centre + post a frame, so the
+    click that follows is seen landing on the target (v88 H2)."""
+    try:
+        bb = el.bounding_box()
+        if bb:
+            human_move(page, bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+            tc_post_frame(page, force=True)
+    except Exception:
+        pass
+
+
 def click_submit(page):
     """Click the AUTH FORM's own submit button — the form holding the email
     field. Text matching alone is unsafe ('Sign up' is also the header nav
@@ -674,6 +720,7 @@ def click_submit(page):
                     el = loc.nth(i)
                     try:
                         if el.is_visible():
+                            _cursor_to(page, el)
                             el.click(timeout=8000)
                             return True
                     except Exception:
@@ -694,6 +741,7 @@ def click(page, selectors, timeout=8000):
                 el = loc.nth(i)
                 try:
                     if el.is_visible():
+                        _cursor_to(page, el)
                         el.click(timeout=timeout)
                         return True
                 except Exception:
@@ -1166,8 +1214,8 @@ def _verify_fail_msg(name):
         LAST_TC_TIMEOUT = False
         return (f"{name} sign-in time ayipoyindhi — Take Control lo sign in "
                 f"cheyaledhu, malli setup run cheyachu (step: Take Control sign-in).")
-    base = (f"{name} sign-in complete avvaledu — verification link open chesi "
-            f"sign in ayyaka malli setup run cheyyi (step: email verification).")
+    base = (f"{name} sign-in complete avvaledu — verification link Divya ne open "
+            f"chesthundhi; mail rakapothe Take Control tho sign in chesi malli setup run cheyyi (step: email verification).")
     return base + (f" [{LAST_VERIFY_DIAG}]" if LAST_VERIFY_DIAG else "")
 
 
@@ -1177,7 +1225,7 @@ TC_PAUSE_MSG = "Sign-in okkasari nuvve cheyyi — Divya browser screen ikkade ap
 _TC_FRAME_LAST = {"at": 0.0, "hash": ""}
 
 
-def tc_post_frame(page):
+def tc_post_frame(page, force=False):
     """Stream one screenshot of the live browser to the Worker (the app
     shows it to the user during Take Control). Best-effort: a failed
     frame never breaks the pause.
@@ -1185,10 +1233,13 @@ def tc_post_frame(page):
     be a KV put on the Worker, and one 25-min TC window of ~1.2s frames
     burned the whole daily KV write quota (free tier), taking
     setup/status and gmail/verify down with 500s. An unchanged screen
-    sends nothing."""
+    sends nothing.
+    v88 (H2): force=True (stepwise scroll / cursor travel) relaxes the
+    throttle to >=0.9s so a viewer can actually watch the work happen,
+    still change-only so a static screen costs nothing."""
     try:
         now = time.time()
-        if now - _TC_FRAME_LAST["at"] < 2.5:
+        if now - _TC_FRAME_LAST["at"] < (0.9 if force else 2.5):
             return
         shot = page.screenshot(type="jpeg", quality=55)
         import hashlib
@@ -1221,7 +1272,7 @@ def tc_apply_inputs(page, inputs):
                 if k:
                     page.keyboard.press(k)
             elif t == "scroll":
-                page.mouse.wheel(0, float(inp.get("dy") or 0))
+                human_scroll(page, float(inp.get("dy") or 0))
             elif t == "nav":
                 u = str(inp.get("url") or "")
                 if u.startswith("https://"):
@@ -1522,7 +1573,16 @@ def flow_email_signup(page, job, cfg):
         page.wait_for_timeout(1500)
         ctrls = wait_for_auth_form(page, cfg, timeout_s=30)
     if ctrls is None:
-        return _fail(f"{name} sign-in page load avvaledu — form kanipinchaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
+        # v88 (G3): no auth form at all can mean the sealed profile
+        # already holds a signed-in session for this provider (the user
+        # signed in via Take Control, or a previous run landed it).
+        # Detect the session and go straight to key creation instead of
+        # failing the provider as a "form not found" miss.
+        if _verify_signed_in(page, cfg, name):
+            progress("running", "api-key", f"{name} session already undhi — key create chesthunna.", page.url)
+            ctrls = {"signed_in": True}
+        else:
+            return _fail(f"{name} sign-in page load avvaledu — form kanipinchaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
     if ctrls.get("stopped"):
         return _stopped()
     mode = detect_auth_mode(ctrls)
@@ -1640,10 +1700,12 @@ def flow_email_signup(page, job, cfg):
     sms = maybe_sms(page, job)
     if sms is False:
         return _stopped()
-    # Email verification: Divya cannot open the user's mailbox yet (Gmail
-    # connect pending) — pause and let the user tap the link + Continue.
-    # v39 C7: the magic-link resume opens the supplied link in this browser
-    # (session must land here) and verifies the console before proceeding.
+    # Email verification (v39 C7): the server feeds the link from the
+    # user's Gmail (or the user supplies it via setup/continue) and the
+    # magic-link resume opens it in THIS browser — the session must land
+    # here; the user must NOT tap the link themselves. On resume without
+    # a link, _verify_signed_in detects a session the user created via
+    # Take Control and key creation proceeds (v88 G3).
     if _page_says(page, VERIFY_NEEDLES):
         if not pause_for_email_verify(page, job, cfg):
             return _fail(_verify_fail_msg(cfg["name"]), extra={"no_retry": True})
@@ -2090,11 +2152,24 @@ def flow_pexels(page, job, cfg):
     if state != "has-key" and _page_says(page, VERIFY_NEEDLES):
         # A fresh Pexels account can ask for email verification (Google
         # signups usually skip it). Same pause kind as everywhere else:
-        # paused-email — the user taps the link in their mail, then
-        # Continue; the API page is re-read right after.
+        # paused-email — the server feeds the link and the runner opens
+        # it on resume (the user never taps it); the API page is re-read
+        # right after.
         progress("paused", "verify-email", EMAIL_PAUSE_MSG, page.url, reason="email")
         if wait_pause():
             return _stopped()
+        # v88 (G2/G3): the server feeds the verification link from the
+        # user's Gmail into the job record — open it in THIS browser
+        # (the pause text promises Julie opens it; the user must not
+        # tap it), then re-read the API page below.
+        try:
+            _j = get_job()
+            _link = str(_j.get("verify_link") or _j.get("verifyLink") or "").strip()
+            if _link.startswith("http"):
+                goto(page, _link, tries=2)
+                page.wait_for_timeout(2500)
+        except Exception:
+            pass
         goto(page, cfg["url"])
         page.wait_for_timeout(2500)
         text, html = _pexels_snapshot(page)

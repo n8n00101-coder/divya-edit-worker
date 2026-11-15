@@ -469,3 +469,69 @@ input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=
 .liveview .keyrow{background:#171717}
 .err{color:var(--error)}
 .step.done .step-h:before{background:var(--success);color:#FFFFFF}
+
+/* ================= v88: Round 2 (Ajju device check of v46) ================= */
+/* N1: header FLOATS like Muse — no bar strip, no border line, no bar
+   background. Each control is its own circular chip over the content. */
+.appbar{background:transparent;border-bottom:none;backdrop-filter:none;-webkit-backdrop-filter:none;padding:calc(10px + var(--sat)) 12px 6px;gap:8px}
+.appbar .icon-btn{border-radius:50%;background:var(--surface2);border:1px solid var(--line);box-shadow:0 2px 10px rgba(0,0,0,.16);width:44px;height:44px}
+.appbar .icon-btn:hover{background:var(--surface2)}
+.appbar .tab-chip{box-shadow:0 2px 10px rgba(0,0,0,.16)}
+.appbar .avatar-btn{box-shadow:0 2px 10px rgba(0,0,0,.16);border-radius:50%}
+/* N2: the ONE primary action in a setup pause stands out; the rest recede */
+.setup-box .act .pill{opacity:.82}
+.setup-box .act .pill.primary-act,.setup-box .pill.primary-act{opacity:1;background:var(--accent);color:var(--on-accent);border-color:var(--accent);font-weight:700}
+/* N4: redeem row (and every .bubble-input row) can never overflow the card:
+   the input shrinks (min-width:0), the button never does */
+.bubble-input{max-width:100%}
+.bubble-input input{flex:1 1 auto;min-width:0}
+.bubble-input .btn{flex:none;flex-shrink:0}
+/* N5: unified token total on the Plan screen */
+.tok-total{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.tok-total .tt-num{font-size:24px;font-weight:750;letter-spacing:-.01em}
+.tok-total .tt-label{font-weight:650}
+
+/* ==== v88 H3/H4/N6: live-view step line, chat browser card, Muse composer ====
+   H3: the runner's current step sits under the live-view header. */
+.lv-sub{padding:2px 14px 6px;font-size:12.5px;color:var(--muted);min-height:16px}
+/* H4: browser card inside the chat setup box — frame + step, tap = live view */
+.browser-card{margin:10px 0 2px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface2)}
+.browser-card img{display:block;width:100%;aspect-ratio:412/915;max-height:300px;object-fit:cover;object-position:top;background:#000;cursor:pointer}
+.bc-meta{display:flex;align-items:center;gap:7px;padding:7px 10px;font-size:12.5px;color:var(--muted)}
+.bc-dot{width:8px;height:8px;border-radius:50%;background:#3ba55d;flex:none;animation:bcPulse 1.6s ease-in-out infinite}
+@keyframes bcPulse{0%,100%{opacity:1}50%{opacity:.35}}
+.bc-step{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* N6: composer = Muse's floating pill — compact (~56px), side margins,
+   fully rounded, [+] attach + mic inside as ghost circles, send = one
+   filled circle with an up arrow. Auto-grow caps at 140px (JS) with the
+   textarea scrolling internally; safe-area padding keeps it clear of
+   the bottom edge/tab bar, and it stays floating above the keyboard. */
+.composer-wrap{padding:6px 12px calc(10px + var(--sab));background:transparent}
+.composer{border-radius:999px;padding:5px;gap:2px;align-items:flex-end}
+.composer textarea{padding:9px 6px;max-height:140px}
+.composer .icon-btn{width:40px;height:40px;border-radius:50%;background:transparent;border:0;box-shadow:none;color:var(--text);flex:none}
+.composer .send-btn{width:40px;height:40px}
+#micSend.mic{background:transparent;color:var(--text)}
+#micSend.send{background:var(--accent);color:var(--on-accent)}
+
+/* ================= v49 (Round 3): shared form-field pattern + voice rows ====
+   ONE pattern for every labelled form field (Add Model, Add Account keyrows,
+   Redeem, Post form): the label sits ABOVE the field, outside it; the field
+   itself is a single-line 52px box whose text/placeholder is vertically
+   centred and can never spill out of the box. The old per-form overrides
+   (#modelCard .field{display:block} + .field input{padding:14px 0} inside a
+   fixed 56px pill) stacked the label and the input inside one box and pushed
+   the placeholder out of the bottom edge — that class of bug ends here:
+   forms use .fld, never a bare .field with a visible label span. */
+.fld{display:block;margin-top:12px}
+.fld>span{display:block;font-size:13px;font-weight:650;color:var(--muted);margin:0 0 6px 2px}
+.fld input{display:block;width:100%;height:52px;min-height:52px;padding:0 14px;font-size:16px;line-height:1.2;border-radius:14px;box-sizing:border-box}
+#modelCard .fld{margin-top:10px}
+.bubble-input input{height:52px;min-height:52px}
+.step .keyrow input,.tc-panel .keyrow input{height:52px;min-height:52px;padding:0 12px}
+/* Voice picker rows: name takes the row (flex-1, full name visible), the
+   sample play control is a SMALL 40px circle pinned at the right — never a
+   full-width pill that crushes the name to two letters. */
+.voice-row .voice-btn{flex:1 1 auto;min-width:0}
+.voice-row .voice-sample{flex:0 0 40px;width:40px;height:40px;min-height:40px;padding:0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:14px;line-height:1}
+.voice-row .voice-house{flex:0 0 auto;font-size:11px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 8px;white-space:nowrap}

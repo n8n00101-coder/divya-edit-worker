@@ -172,19 +172,19 @@
           <div id="recBar" class="rec-bar" hidden><span class="dot" aria-hidden="true"></span><span id="recTime">0:00</span><span class="muted small" data-t="releaseToSend"></span></div>
           <form id="composer" class="composer">
             <button type="button" class="icon-btn" id="attach" data-tl="attachImage">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/><path d="M19 17v6M16 20h6"/></svg>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
             </button>
             <input type="file" id="file" accept="image/*,video/*" hidden>
             <label for="input" class="sr-only" data-t="typeMsg"></label>
             <textarea id="input" rows="1" data-tp="typeMsg"></textarea>
             <button type="button" class="send-btn mic" id="micSend" data-tl="holdToTalk">
               <svg class="i-mic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg>
-              <svg class="i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
+              <svg class="i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
             </button>
             <!-- R32: separate always-visible send button next to the mic — the send
                  affordance must never depend on a class that may never flip. -->
             <button type="button" class="send-btn send" id="chatSend" aria-label="Send">
-              <svg class="i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
+              <svg class="i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
             </button>
           </form>
         </div>
@@ -237,7 +237,16 @@
           <div class="card note" id="setupStateCard" hidden>
             <p><b id="setupStateTitle"></b></p>
             <p class="muted small" id="setupStateSub"></p>
+            <!-- v88 (N2): the FULL provider step list lives HERE, on the
+                 Setup screen only — chat shows a one-line summary. -->
+            <div id="setupStepsList"></div>
             <button class="btn secondary" id="setupRetryBtn" data-t="setupRetry" hidden></button>
+          </div>
+          <!-- v88 (F11): honest status while this account runs on the
+               inviter's models (own keys not ready yet). Shown by
+               loadSetupState() from setup/status keyTier. -->
+          <div class="card note" id="inviterNote" hidden>
+            <p class="small" id="inviterNoteTxt"></p>
           </div>
           <!-- v40: Gmail re-consent — shown by loadSetupState() only when
                setup/status reports gmail needs-scope / no-token during a
@@ -275,8 +284,8 @@
             <p><b data-t="modelTitle"></b></p>
             <p class="muted small" data-t="modelSub"></p>
             <p class="small" id="modelState"></p>
-            <label class="field"><span data-t="modelNameL"></span><input class="keyfield" id="modelName" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tp="modelNamePh"></label>
-            <label class="field"><span data-t="modelKeyL"></span><input class="keyfield" id="modelKey" type="password" autocomplete="off" spellcheck="false" data-tp="modelKeyPh"></label>
+            <label class="fld"><span data-t="modelNameL"></span><input class="keyfield" id="modelName" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tp="modelNamePh"></label>
+            <label class="fld"><span data-t="modelKeyL"></span><input class="keyfield" id="modelKey" type="password" autocomplete="off" spellcheck="false" data-tp="modelKeyPh"></label>
             <button class="btn primary" id="modelSaveBtn" data-t="testSave"></button>
             <p class="muted small" id="modelMsg" aria-live="polite"></p>
             <div class="btns" id="modelBtns" hidden><button class="act-btn alt" id="modelTestBtn" data-t="test"></button><button class="act-btn alt" id="modelDelBtn" data-t="remove"></button></div>
@@ -304,6 +313,9 @@
       <section id="s-plan" class="screen" data-title="sPlan">
         <div class="scroll pad">
           <p class="muted" id="planNow"></p>
+          <!-- v88 (N5): ONE unified token total for the account (weekly
+               remaining + bonus pool + plan grant), filled by loadPlan(). -->
+          <div class="card tok-total"><span class="tt-label" data-t="tokTotalL"></span><b class="tt-num" id="tokTotal">–</b><span class="muted small" id="tokTotalSub"></span></div>
           <div class="card plan">
             <h2 data-t="freePlan"></h2>
             <ul class="ticks"><li data-t="f0"></li><li data-t="f1"></li><li data-t="f2"></li><li data-t="f3"></li><li data-t="f4"></li></ul>
@@ -346,6 +358,7 @@
             <div class="row"><span data-t="email"></span><span class="muted r" id="profEmail"></span></div>
             <div class="row"><span data-t="phone"></span><span class="muted r" id="profPhone"></span></div>
             <a class="row link" href="#/plan"><span data-t="planL"></span><span class="muted r"><span id="profPlan"></span> ›</span></a>
+            <div class="row"><span data-t="tokensL"></span><span class="muted r" id="profTok">–</span></div>
             <a class="row link" href="#/chat"><span data-t="editsLeftT"></span><span class="muted r"><span id="profEdits"></span> ›</span></a>
             <a class="row link" href="#/connect"><span data-t="connected"></span><span class="muted r"><span id="profConn"></span> ›</span></a>
           </div>
@@ -418,7 +431,10 @@
       <div id="bubbleLog" class="bubble-log" aria-live="polite"></div>
       <div class="bubble-input"><input id="bubbleText" type="text" data-tp="bubblePh" aria-label="Message Julie"><button id="bubbleSend" class="btn primary">➤</button></div>
     </div>
-    <button id="bubbleBtn" class="bubble-btn" aria-label="Julie chat"><img src="mascot.webp" alt=""></button>
+    <!-- v88 (N3): NO floating mascot button — Ajju: the penguin must never
+         float over content on any screen (it covered plan prices). The
+         panel stays for the Blind-Mode captcha guide, which opens it
+         programmatically; the only mascot left is the chat hero avatar. -->
   </div>
   <div id="sr" class="sr-only" aria-live="polite"></div>
   <div id="tabSwitcher" class="tab-switcher" hidden>

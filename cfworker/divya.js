@@ -33,7 +33,7 @@ Voice gurinchi nijam: idi best free neural voice, chala natural ga untundi kani 
 YouTube/Instagram upload: chat lone — user "upload video N" ani adigithe, video history nunchi video teesukoni, captions rasi, owner OK ("upload cheyala?") adigi, "cheyu" ante maatrame upload cheyyi.
 VIDEO START RULE: Video CREATE ONLY when the user clearly ORDERS it (cheyyi / chey / create / make / pampu + topic or "nuve topic select chey"). Question laaga adigithe ("cheyagalava?", "can you?", "chestava?") START CHEYAKU: nijayithi ga answer chey (shorts mariyu 60 min varaku LONG videos rendU chestham — user length adigithe adhe length CREATE lo rayi, "only short videos" ani refuse cheyaku) and topic, length, language adugu. Okka message ki okka video maatrame. Mundu history lo "start chesa" unte adi already start ayyindi, malli start cheyaku. Order clear ga unnappudu maatrame chinna reply: "Sare, start chesa. Ready ayyaka ikkade pampistha." (time promise vaddu) and chivara separate line lo exactly [[CREATE: <request details in English: topic or AUTO, voice language, male/female, length (short 30s 9:16, or long up to 60 min 16:9, as the user said it in chat)>]] rayi.
 Nijayithi: pani avvakunda "aipoyindi" anaku. Leni tools unnayi ani cheppaku. Secrets/keys evariki cheppaku.
-API KEYS / SETUP / PROVIDERS (hard rule, v38 R48 — R48 WINS over R18): user API keys, AI providers, "AI down", setup gurinchi adigithe EPPUDU "Sorry, I can't help" ani cheppaku — refuse cheyaku. Plain ga explain cheyyi: Julie anni chesthundhi — accounts, API keys, server setup — nee allow tho. Neeku emi cheyalsina pani undadhu. Shared AI busy ga unte, Setup lo (#/setup) okka allow ivvu, migilina anni Julie background lo chesesthundhi. Key VALUES eppudu adagaku, chupinchaku. User cheyyalsindhi rendu matrame, avasaram vasthe: (1) email lo vachina verification link ni okkasari tap cheyyadam, (2) phone ki vachina SMS code ni okkasari type cheyyadam — migilina anni Julie chesthundhi.
+API KEYS / SETUP / PROVIDERS (hard rule, v38 R48 — R48 WINS over R18): user API keys, AI providers, "AI down", setup gurinchi adigithe EPPUDU "Sorry, I can't help" ani cheppaku — refuse cheyaku. Plain ga explain cheyyi: Julie anni chesthundhi — accounts, API keys, server setup — nee allow tho. Neeku emi cheyalsina pani undadhu. Shared AI busy ga unte, Setup lo (#/setup) okka allow ivvu, migilina anni Julie background lo chesesthundhi. Key VALUES eppudu adagaku, chupinchaku. User cheyyalsindhi okkate matrame, avasaram vasthe: phone ki vachina SMS code ni okkasari type cheyyadam. Verification link email ki vasthundhi — danini Julie ne open chesthundhi, user danini tap cheyyakudadhu (single-use link); sign-in avasaram aithe Take Control lo Julie browser lone cheyyali — migilina anni Julie chesthundhi.
 ACTIONS NIJAYITHI (R28, hard rule): App/website open, call, WhatsApp message, reminder lanti panulu nuvvu direct ga cheyalevu — app/link dwara jaruguthayi. "Opened / sent / posted / saved / called / reminder set" ani EPPUDU cheppaku. User open adigithe "open chesthunna" ani cheppi link ivvu; jaragani pani ni jariginattu cheppaku. Images chudalenu — adigithe nijam cheppu, fake description ivvaku.
 ${VOICE_SAVE_RULE}
 ${AMEND_RULE}
@@ -972,6 +972,14 @@ async function appTalk(env, u, text, lang, voiceId) {
   // R46: the EDIT-only branch is deleted — it asked the user to attach a video.
   // Any video order without a user-supplied video falls through to the brain
   // and becomes a create from scratch (isNoVideoEditOrder + the reply guard).
+  // v88 (G1/G2c): "login chesa / I did it" triggers a deterministic
+  // setup re-check BEFORE the brain, the action intents and the setup
+  // pitch — a brain outage or a pasted provider URL must never swallow
+  // it into the busy fallback (the 2026-11-15 Groq scene).
+  if (isDidItText(cleanText)) {
+    const rc = await setupDidItRecheck(env, u, lang).catch(() => null);
+    if (rc) { h.push({ role: "assistant", content: rc }); await remember(env, u.n, h); return { reply: rc, video_started: false, premium_required: false, brain: u.via || "shared" }; }
+  }
   // R28: action intents (open/play/call/whatsapp/reminder) go through the structured
   // appAssist path — never let the free-form brain answer them, or it invents
   // "opened/sent" claims with no action behind them (bubble "Youtube opened." bug).
@@ -1368,8 +1376,17 @@ async function appApi(req, env, url, ctx) {
   if (p === "logout" && req.method === "POST") { await env.KV.delete(`sess:${(req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim()}`); return appJson(req, { ok: true }); }
   if (p === "me") { const a = u.acct; try { if (!(await env.KV.get(`joined:${u.n}`))) await env.KV.put(`joined:${u.n}`, String(Date.now())); } catch {} return appJson(req, { ok: true, number: a ? (a.phone || "") : u.n, owner: u.owner, premium: await isPremium(env, u.n), memory: JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null"), account: a ? { name: a.name, email: a.email, phone: a.phone || "", phone_pending: a.pphone || "" } : null }); }
   if (p.startsWith("account/") && req.method === "POST") return acctPrivate(req, env, u, p, body);
-  if (p === "plan") { const bal = await tokBalance(env, u.n); const own = !!((await env.KV.get(`ukey:${u.n}:groq`)) || (await env.KV.get(`ukey:${u.n}:openrouter`)) || (await env.KV.get(`umodel:${u.n}`))); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = PLANS[pid].voice; /* v37: voice assistant included in every plan (was a planvoice KV flag / ₹49 add-on) */ return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, edits_limit: Math.floor(TOK.WEEKLY_FREE / TOK.PER_MIN), edits_used: Math.floor(bal.weekSpent / TOK.PER_MIN), edits_left: bal.videosWeek, period: "week", unlimited: bal.unlimited, brain: own ? "own" : "shared", video_backend: "shared", pro: "soon" }); }
+  if (p === "plan") { const bal = await tokBalance(env, u.n); const kt = await keyTierFor(env, u.n); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = PLANS[pid].voice; /* v37: voice assistant included in every plan (was a planvoice KV flag / ₹49 add-on) */ return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, edits_limit: Math.floor(TOK.WEEKLY_FREE / TOK.PER_MIN), edits_used: Math.floor(bal.weekSpent / TOK.PER_MIN), edits_left: bal.videosWeek, period: "week", unlimited: bal.unlimited, brain: kt.tier, video_backend: "shared", pro: "soon" }); }
   if (p === "assist" && req.method === "POST") return appJson(req, await appAssist(env, u, body, lang));
+  if (p === "voice/speak" && req.method === "POST") {
+    // v49 HOUSE VOICE: live synthesis belongs to the julie-ai-voice-engine
+    // route (Chatterbox clone + LOCKED voice/settings.json) running on the
+    // runner. There is no always-on TTS server at Rs 0, so until that route
+    // is live this answers an honest 501 — the app then tells the user in one
+    // line instead of silently swapping in Kokoro or the phone voice. The
+    // picker sample needs no synthesis: it is the engine's approved recording.
+    return appJson(req, { ok: false, error: "house_engine_offline", detail: "House-voice live synthesis runs on the voice-engine runner route, which is not live yet." }, 501);
+  }
   if (p.startsWith("setup/")) return appJson(req, await appSetupUser(req, env, u, p, body, lang));
   if (p.startsWith("keys")) return appKeys(req, env, u, p, body, lang);
   if (p === "model" || p.startsWith("model/")) return appModel(req, env, u, p, body, lang);
@@ -2360,6 +2377,32 @@ async function geminiChat(env, key, messages) {
   }
   return "";
 }
+// v88 (F11): inviter key inheritance. refRedeem records refed:<n> =
+// {code, at}; the owner of that code (ref:<code>) is the inviter.
+// Inheritance is active while the user has FEWER than 5 own working
+// models (setupKeyList count) and the inviter has at least one working
+// key. Keys stay sealed — opened only inside chatWithFallback, under the
+// inviter's own records, and never returned by any endpoint.
+async function inviterOf(env, n) {
+  try {
+    const rec = parseRec(await env.KV.get(`refed:${n}`));
+    if (!rec || !rec.code) return null;
+    const owner = await env.KV.get(`ref:${rec.code}`);
+    return owner && owner !== n ? owner : null;
+  } catch { return null; }
+}
+// The key resolution shared by chat, /plan and setup/status: "own"
+// (5+ own models, or some own keys and no usable inviter), "inviter"
+// (borrowing the inviter's keys right now), or "shared" (no own keys).
+async function keyTierFor(env, n) {
+  try {
+    const ownCount = (await setupKeyList(env, n)).count;
+    if (ownCount >= 5) return { tier: "own", ownCount, inviter: null };
+    const inv = await inviterOf(env, n);
+    if (inv && (await setupKeyList(env, inv)).count > 0) return { tier: "inviter", ownCount, inviter: inv };
+    return { tier: ownCount > 0 ? "own" : "shared", ownCount, inviter: inv };
+  } catch { return { tier: "shared", ownCount: 0, inviter: null }; }
+}
 // R10 failover: chat tries the user's own keys first (Groq -> OpenRouter -> Gemini),
 // then the shared keys in the same order. Every step is isolated — one provider
 // failing never stops the chain. Returns "" only when every provider failed.
@@ -2371,12 +2414,38 @@ async function chatWithFallback(env, u, messages) {
     const crec = JSON.parse((await env.KV.get(`umodel:${u.n}`)) || "null");
     if (crec && crec.base && crec.model) { const ck = await openKey(env, u.n, "custom"); if (ck) { const out = await customChat(ck, crec, messages).catch(() => ""); if (out) { u.via = "own-model"; return out; } } }
   } catch {}
-  const gk = await openKey(env, u.n, "groq");
-  if (gk) { const out = await groq({ ...env, GROQ_KEY: gk }, messages).catch(() => ""); if (out && !sorry.test(out)) { u.via = "own-groq"; return out; } }
-  const ok = await openKey(env, u.n, "openrouter");
-  if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (out) { u.via = "own-openrouter"; return out; } }
-  const gmk = await openKey(env, u.n, "gemini");
-  if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (out) { u.via = "own-gemini"; return out; } }
+  // hardening: each own-key step (openKey lookup + call) is isolated in
+  // try/catch — a throw in one step (e.g. a storage error inside openKey)
+  // falls through to the next provider instead of aborting the chain,
+  // exactly like the per-call .catch fallthrough below.
+  try { const gk = await openKey(env, u.n, "groq");
+    if (gk) { const out = await groq({ ...env, GROQ_KEY: gk }, messages).catch(() => ""); if (out && !sorry.test(out)) { u.via = "own-groq"; return out; } } } catch {}
+  try { const ok = await openKey(env, u.n, "openrouter");
+    if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (out) { u.via = "own-openrouter"; return out; } } } catch {}
+  try { const gmk = await openKey(env, u.n, "gemini");
+    if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (out) { u.via = "own-gemini"; return out; } } } catch {}
+  // v88 (F11): INVITER tier — own keys exhausted. A user who joined via a
+  // referral code and still has FEWER than 5 own working models borrows
+  // the INVITER's keys, in the same order as the own tier (custom model
+  // -> Groq -> OpenRouter -> Gemini), opened from the inviter's sealed
+  // records. Bridge only: at 5+ own models this tier disappears, and the
+  // automate setup still proceeds to get the user's own keys.
+  try {
+    const ownCount = (await setupKeyList(env, u.n)).count;
+    if (ownCount < 5) {
+      const inv = await inviterOf(env, u.n);
+      if (inv) {
+        try { const crec = JSON.parse((await env.KV.get(`umodel:${inv}`)) || "null");
+          if (crec && crec.base && crec.model) { const ck = await openKey(env, inv, "custom"); if (ck) { const out = await customChat(ck, crec, messages).catch(() => ""); if (out) { u.via = "inviter-model"; return out; } } } } catch {}
+        try { const gk = await openKey(env, inv, "groq");
+          if (gk) { const out = await groq({ ...env, GROQ_KEY: gk }, messages).catch(() => ""); if (out && !sorry.test(out)) { u.via = "inviter-groq"; return out; } } } catch {}
+        try { const ok = await openKey(env, inv, "openrouter");
+          if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (out) { u.via = "inviter-openrouter"; return out; } } } catch {}
+        try { const gmk = await openKey(env, inv, "gemini");
+          if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (out) { u.via = "inviter-gemini"; return out; } } } catch {}
+      }
+    }
+  } catch {}
   const shared = await groq(env, messages).catch(() => "");
   if (shared && !sorry.test(shared)) { u.via = "shared"; return shared; }
   if (env.OPENROUTER_KEY) { const out = await orChat(env, env.OPENROUTER_KEY, messages).catch(() => ""); if (out) { u.via = "shared-openrouter"; return out; } }
@@ -2390,7 +2459,7 @@ async function chatWithFallback(env, u, messages) {
 // worse than no answer: the user gets the R48 one-allow Setup flow
 // instead. R48 WINS over R18: Julie creates the accounts, API keys and
 // server setup itself on one allow — the user does NO work except, only
-// if needed, ONE email-link tap or ONE SMS code.
+// if needed, ONE SMS code — the email link is opened by Julie herself.
 const SETUP_Q_RX = /\bapi[- ]?keys?\b|\bais?\b.{0,25}\b(down|pani\s*cheyy|work\s*avva|providers?)\b|providers?\s+down\b|bring\s+(the\s+)?(api\s+)?keys?\b|keys?\s+(kavali|theesko|teeskoni|ivvu|create|ela|lu)\b|key\s+(setup|create|ela)\b|free\s+(ai|key|keys?)\b|setup\s+(keys?|api|ai|account|start|cheyu|cheyyi|ela|enti|status|progress|malli)\b|\bgroq\b|\bopenrouter\b|\bgemini\b|\bcloudflare\b|\bcohere\b|\btogether\b|\bsambanova\b|\bfireworks\b|\bcerebras\b|\bnvidia\b|\bmistral\b|\bai21\b|\bvoyage\b|\btavily\b|\bserper\b|\bexa\b|\bdeepgram\b|\bassemblyai\b|\belevenlabs\b|\bstability\b|\bjina\b|\bpexels\b/i;
 function isSetupQuestion(text) {
   const t = String(text || "");
@@ -2398,8 +2467,64 @@ function isSetupQuestion(text) {
   return SETUP_Q_RX.test(t);
 }
 function setupGuideReply(lang) {
-  if (lang === "en") return "The shared AI is busy right now — its free limit is full, so it can't answer at the moment. It clears on its own in a bit, and you can try again. For no more limits, give one allow in Setup (#/setup) — Julie does everything: accounts, API keys, server setup, all in the background. You don't have to do anything. Only if needed: tap the verification link in your email once, and I'll do the rest. If an SMS code arrives on your phone, type that code once, and I'll do the rest. Your keys stay encrypted and are never shown to anyone.";
-  return "Shared AI ippudu busy ga undhi — free limit full ayyindhi, konchem sepu tarvatha thane clear avuthundi, malli try cheyachu. Ee problem malli raakunda, Setup lo (#/setup) okka allow ivvu — Julie anni chesthundhi: accounts, API keys, server setup, anni background lo. Neeku emi cheyalsina pani undadhu. Okka vishayam matrame, avasaram vasthe: nee email lo vachina link ni okkasari tap cheyu, migilina anni nene chestha. Phone ki SMS code vasthe, aa code okkasari type cheyu, migilina anni nene chestha. Nee keys encrypted ga untayi, evariki kanipinchavu.";
+  // v88 (G2): SHORT and honest — the busy truth + retry. Never a Setup
+  // sales pitch, and never the old tap-the-email-link line:
+  // the standing truth (F8) is the link goes to the user's email and
+  // JULIE opens it herself; the user taps only inside Take Control.
+  if (lang === "en") return "The shared AI is busy right now — its free limit is full, so it can't answer at the moment. It clears on its own in a bit; please try again shortly.";
+  return "Shared AI ippudu busy ga undhi — free limit full ayyindhi, anduke ippudu answer ivvaledu. Konchem sepu lo thane clear avuthundi; appudu malli try cheyyi.";
+}
+function isDidItText(t) {
+  // v88 (G1): "I did it / login chesa / chesanu" in English or Romanized
+  // Telugu (typos included — "logij chesa" still carries "chesa").
+  const s = String(t || "").trim();
+  if (!s) return false;
+  return /\b(chesa|chesanu|chesesa|chusanu|chesina)\b/i.test(s)
+    || /\b(i\s+did\s+it|did\s+it|logged\s+in|signed\s+in|login\s+(done|complete|chesa)|sign\s?in\s+(done|complete|chesa))\b/i.test(s)
+    || /^(done|ayindhi|aipoyindhi|login\s+ayindhi|verify\s+ayindhi)[\s.!]*$/i.test(s);
+}
+async function setupDidItRecheck(env, u, lang) {
+  // v88 (G1): deterministic setup RE-CHECK for "login chesa chudu" —
+  // runs pre-brain, independent of the LLM. Verifies the paused
+  // provider's REAL state: (1) its key already exists -> the step is
+  // complete, clear the pause; (2) email pause -> try feeding the
+  // verification link from Gmail right now (throttle bypassed — the
+  // user explicitly asked for a check); (3) otherwise flip the job back
+  // to running (the same signal as setup/continue) so the runner
+  // re-verifies its browser session NOW — a session the user created
+  // inside Julie's Take Control browser is detected by the runner and
+  // key creation proceeds (G3). Returns one truthful line, or null when
+  // no setup pause is active (the message then falls through normally).
+  const en = lang === "en";
+  const chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
+  if (!chain || !chain.current) return null;
+  let j = parseRec(await env.KV.get(`setupjob:${chain.current}`));
+  if (!j || j.state !== "paused") return null;
+  const provId = j.provider || "";
+  const provName = (SETUP_PROVIDERS[provId] && SETUP_PROVIDERS[provId].name) || provId || "Setup";
+  const resume = async () => {
+    j.state = "running"; j.note = ""; j.pauseReason = ""; j.resumedAt = Date.now(); j.upd = Date.now();
+    delete j.pausedAt;
+    await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
+  };
+  if (provId && await env.KV.get(`ukey:${u.n}:${provId}`)) {
+    await resume();
+    return en ? `Checked ✓ — your ${provName} key is ready, so I cleared the pause. Setup is continuing on its own.` : `Check chesa ✓ — nee ${provName} key ready ga undhi, pause clear chesa. Setup thane continue avuthundhi.`;
+  }
+  const kind = String(j.pauseReason || "email").toLowerCase();
+  if (kind === "email") {
+    j.mailFetchAt = 0; // user asked for a check — bypass the 45s feed throttle
+    j = await maybeFeedVerifyLink(env, j, chain.at || 0);
+    if (j && j.state === "running") return en ? `Checked ✓ — the ${provName} verification mail arrived and I opened the link myself. Setup is continuing.` : `Check chesa ✓ — ${provName} verification mail vachindhi, link nene open chesa. Setup continue avuthundhi.`;
+    const gs = await gmailStateFor(env, u.n, j);
+    await resume(); // runner re-checks its browser session now (G3)
+    if (gs.state === "needs-scope" || gs.state === "no-token") return en ? `Checked — I still need your Gmail permission to open the ${provName} link myself. Allow it once (the card in this chat / Setup) and I'll read the mail and open the link.` : `Check chesa — ${provName} link nene open cheyadaniki nee Gmail permission inka kavali. Chat lo / Setup lo card undhi — okkasari allow cheyyi, mail chadivi link nene open chestha.`;
+    return en ? `Checked — the ${provName} verification mail hasn't arrived yet; when it comes I'll open the link myself (don't tap it). A sign-in in another browser can't reach me — sign in via 'Take control' in Julie's browser and the runner will check the session and create the key.` : `Check chesa — ${provName} verification mail inka raaledhu; vachaka link nene open chestha (nuvvu tap cheyyaku). Vere browser login naaku pani cheyadhu — 'Take control' tho Julie browser lo sign in cheste, runner session check chesi key create chesthundhi.`;
+  }
+  await resume();
+  if (kind === "sms") return en ? `Checking again — if the SMS code reached your phone, type it here and I'll finish ${provName}.` : `Malli check chesthunna — phone ki SMS code vachunte ikkada type cheyyi, ${provName} nene complete chestha.`;
+  if (kind === "captcha") return en ? `Checking again — if the image challenge is still there, finish that one step via 'Take control' and I'll do the rest.` : `Malli check chesthunna — image challenge inka unte 'Take control' tho adi okkasari complete cheyyi, migilindhi nene chestha.`;
+  return en ? `Re-checking now — if you signed in inside Julie's browser (Take control), ${provName} finishes right away. A sign-in in another browser doesn't reach me: tap 'Take control' and sign in in Julie's browser.` : `Malli check chesthunna — nuvvu Julie browser (Take control) lo sign in chesi unte ${provName} ippude complete avuthundhi. Vere browser lo sign in cheste aa session naaku raadhu: 'Take control' nokki Julie browser lo sign in cheyyi.`;
 }
 // v38 (R48): the ONLY two things the user ever has to do in setup, each as
 // one plain line — never phrased as "user work".
@@ -2410,7 +2535,7 @@ function setupPauseLine(reason, lang) {
   // alternative; Gemini Google sign-in the headless browser cannot do).
   // One plain line each — the user does this one tap, Julie does the rest.
   if (reason === "captcha") return en ? "An image challenge came up that I can't solve — take a quick look once, and I'll do the rest." : "Image challenge vachindhi, nenu solve cheyalenu — okkasari chusi continue cheyu, migilina anni nene chestha.";
-  if (reason === "signin") return en ? "Google sign-in is needed once — sign in, and I'll do the rest." : "Google sign-in okkasari kavali — sign in cheyu, migilina anni nene chestha.";
+  if (reason === "signin") return en ? "A sign-in is needed once — tap 'Take control' and sign in inside Julie's browser, and I'll do the rest." : "Sign-in okkasari kavali — 'Take control' tho Julie browser lo sign in cheyu, migilina anni nene chestha.";
   // v87 F8: ONE truthful line, same as the runner's pause message — the
   // link is opened by Julie herself (server-fed from Gmail); the user must
   // NOT tap it (the session has to land in Julie's browser).
@@ -2820,6 +2945,22 @@ async function ytTokenShared(env, n) {
   }
   return t;
 }
+async function waSendText(env, to, text) {
+  // v88 (H5, ROUTE A): one text message from Julie's OWN connected
+  // WhatsApp number (Meta Cloud API — the same WA_TOKEN / PHONE_ID the
+  // bot runs on). Returns {ok, id} or {ok:false, error} with Meta's own
+  // reason, shortened — the caller reports it honestly, never a fake
+  // success, and falls back to a labeled wa.me link only on failure.
+  if (!env.WA_TOKEN || !env.PHONE_ID) return { ok: false, error: "Julie WhatsApp number connect avvaledu" };
+  try {
+    const r = await fetch(`https://graph.facebook.com/v21.0/${env.PHONE_ID}/messages`, { method: "POST", headers: { Authorization: `Bearer ${env.WA_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body: String(text).slice(0, 4000) } }) });
+    const j = await r.json().catch(() => ({}));
+    const id = j && j.messages && j.messages[0] && j.messages[0].id;
+    if (r.ok && id) return { ok: true, id };
+    const em = (j && j.error && (j.error.message || j.error.type)) || `HTTP ${r.status}`;
+    return { ok: false, error: String(em).slice(0, 160) };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 120) }; }
+}
 async function appAssist(env, u, body, lang) {
   const text = String(body.text || "").trim().slice(0, 1000); const en = lang === "en";
   if (!text) return { ok: false, error: "empty" };
@@ -2859,8 +3000,17 @@ async function appAssist(env, u, body, lang) {
     case "whatsapp": {
       const num = digitsNum(it.number || it.name); const name = num ? "" : String(it.name || "").slice(0, 60); const msg = String(it.message || "").slice(0, 1000);
       const waUrl = `https://wa.me/${num || ""}?text=${encodeURIComponent(msg)}`;
-      if (wa) return done(num ? (en ? `WhatsApp message ready${name ? " for " + name : ""}: tap the link, then tap send.\n${waUrl}` : `WhatsApp message ready${name ? ", " + name : ""}: link nokku, tarvatha send nokku.\n${waUrl}`) : (en ? `I don't have a number for ${name}.` : `${name} number naa daggara ledu.`), { type: "whatsapp", name, number: num, text: msg });
-      return done(en ? `Opening WhatsApp with your message filled in${name ? " for " + name : ""}. Tap send.` : `WhatsApp lo message ready chesi open chestunna${name ? ", " + name : ""}. Send nokku.`, { type: "whatsapp", name, number: num, text: msg });
+      if (!num) return done(en ? `I don't have a number for ${name}.` : `${name} number naa daggara ledu.`, { type: "whatsapp", name, number: num, text: msg });
+      if (!msg) return done(en ? `What should I send to +${num}? Tell me the message.` : `+${num} ki em pampali? Message cheppu.`, { type: "whatsapp", name, number: num, text: msg });
+      // v88 (H5, ROUTE A — replaces the prefill dead-end entirely):
+      // Julie sends from her OWN connected WhatsApp number via the
+      // Cloud API; the user does nothing. The wa.me prefill survives
+      // ONLY as a labeled fallback when the send itself fails.
+      const sent = await waSendText(env, num, msg);
+      if (sent.ok) return done(en ? `WhatsApp message sent ✓ — from Julie's number to ${name || "+" + num}: "${msg}"` : `WhatsApp message pampina ✓ — Julie number nunchi ${name || "+" + num} ki: "${msg}"`, { type: "whatsapp", sent: true, id: sent.id || "", name, number: num, text: msg });
+      const reason = sent.error || "WhatsApp connect avvaledu";
+      if (wa) return done(en ? `I couldn't send it from Julie's number — ${reason}. Fallback: tap the link and send it yourself (the message is filled in):\n${waUrl}` : `Julie number nunchi pampaledhu — ${reason}. Fallback: ee link nokki nuvve send cheyyi (message ready ga untundhi):\n${waUrl}`, { type: "whatsapp", sent: false, fallback: true, name, number: num, text: msg });
+      return done(en ? `I couldn't send it from Julie's number — ${reason}. Fallback: tap "Open WhatsApp" and send it yourself — the message is filled in.` : `Julie number nunchi pampaledhu — ${reason}. Fallback: "Open WhatsApp" nokki nuvve send cheyyi — message ready ga untundhi.`, { type: "whatsapp", sent: false, fallback: true, name, number: num, text: msg });
     }
     case "open": {
       const TEL = { "యూట్యూబ్": "youtube", "గూగుల్": "google", "వాట్సాప్": "whatsapp", "ఇన్‌స్టాగ్రామ్": "instagram", "ఇన్స్టాగ్రామ్": "instagram", "ఫేస్‌బుక్": "facebook", "ఫేస్బుక్": "facebook", "మ్యాప్స్": "maps", "జీమెయిల్": "gmail", "టెలిగ్రామ్": "telegram", "స్పాటిఫై": "spotify" };
@@ -3936,6 +4086,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${u.n}:${id}`)) keys[id] = true;
     if (await env.KV.get(`umodel:${u.n}`)) keys.custom = true; // v48 (R54): a saved own model counts as set up
     const keyList = await setupKeyList(env, u.n); // v51 (R55): rows for the Setup keys list
+    const kt = await keyTierFor(env, u.n); // v88 (F11): own/inviter/shared resolution — same one chat uses
     // v38 (R48, item 1): login-time setup-needed check. A fresh account has
     // no own AI key stored; the shared fallback is rate-limited, so it does
     // not count as "set up". sharedFallback only reports whether a shared
@@ -3951,7 +4102,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       if (stalled) {
         const state = setupStateFor(null, null, stalled, keys);
         const autoLog = await autoLogRead(env, u.n);
-        return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(stalled), keys, keyList, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (stalled && stalled.geminiVerify) || null, autoLog: autoLog.slice(0, 10) };
+        return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(stalled), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownCount, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (stalled && stalled.geminiVerify) || null, autoLog: autoLog.slice(0, 10) };
       }
       chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     }
@@ -3966,7 +4117,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       let auto = null;
       try { auto = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", false); } catch {}
       const autoLog = await autoLogRead(env, u.n);
-      return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(fin), keys, keyList, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
+      return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(fin), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownCount, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
     }
     let cur = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null;
     // v40 (R19): paused on email verification — try feeding the magic link
@@ -3997,7 +4148,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // of a bare "Setup running…". Additive field; older app builds ignore it.
     const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang), tc: !!cur.tc } : null;
     const autoLog = await autoLogRead(env, u.n);
-    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, keyList, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, geminiVerify: chain.geminiNeedsVerify || null, autoLog: autoLog.slice(0, 10) };
+    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownCount, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, geminiVerify: chain.geminiNeedsVerify || null, autoLog: autoLog.slice(0, 10) };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
@@ -4067,7 +4218,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     return { ok: true, reason, message: j.note };
   }
   if (p === "setup/continue" && req.method === "POST") {
-    // Resume after a pause (email link tapped / SMS code entered). The
+    // Resume after a pause (Julie opened the fed link / SMS code entered). The
     // runner polls setup/runner/job and resumes when the job flips back to
     // "running" — no further user action needed after this one tap.
     const chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
