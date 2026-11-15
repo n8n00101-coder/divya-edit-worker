@@ -113,6 +113,9 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .msg a{color:inherit;text-decoration:underline}
 .msg img{display:block;max-width:240px;max-height:280px;border-radius:14px}
 .msg.me:has(img){padding:4px;background:var(--surface2);color:var(--text)}.msg.me:has(img) div{padding:4px 10px 6px}
+.msg video.msg-vid{display:block;width:100%;max-width:260px;border-radius:14px;background:#000}
+.msg.me:has(video){padding:4px;background:var(--surface2);color:var(--text)}.msg.me:has(video) div{padding:4px 10px 6px}
+.msg .vid-cap{font-size:12px;opacity:.75}
 .msg .heard{font-size:12px;opacity:.75;display:block;margin-bottom:2px}
 .msg.sys{align-self:center;background:var(--surface2);color:var(--muted);font-size:13px;padding:6px 12px;border-radius:12px}
 .msg .act{margin-top:8px;display:flex;flex-wrap:wrap;gap:8px;white-space:normal}
