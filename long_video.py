@@ -701,6 +701,143 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                                      if spec is not None else {}))
     if not paths:
         raise RuntimeError("long video: no chapters rendered")
+    # v87 (role 4): TASTE QC — sampled frames judged against the
+    # visual plan's own promises. FAIL beats are RE-PLANNED (the
+    # Visual Director directs again with the failed templates
+    # excluded) and the chapter is re-rendered from the corrected
+    # plan; max 2 re-plan rounds per chapter. With no vision route,
+    # every beat stays UNVERIFIED and chapters ship as rendered —
+    # never a fake PASS.
+    _taste87 = {"version": "v87-frame-taste-qc-1", "rounds": 0,
+                "vision": "unavailable", "chapters": []}
+    try:
+        import copy as _copy87
+        import director as _dir87
+        import frame_taste_qc as _tq87
+        import visual_director as _vd87
+        _vision87 = None
+        try:
+            import vision as _vis87
+            if _vis87.available():
+                _vision87 = _vis87.describe_images
+        except Exception:
+            _vision87 = None
+        _taste87["vision"] = "live" if _vision87 else "unavailable"
+        for _ci in range(len(results)):
+            _plan0 = results[_ci].get("plan") or {}
+            _writer = _plan0.get("writer_scenes")
+            if not _plan0.get("visual_plan") or not _writer:
+                continue
+            _entry = {"chapter": _ci + 1, "rounds": []}
+            _taste87["chapters"].append(_entry)
+            _excl = {}
+            for _round in range(3):  # audit + up to 2 re-plan rounds
+                _plan = results[_ci].get("plan") or {}
+                _recs = _plan.get("visual_plan") or []
+                _starts = _plan.get("starts") or []
+                _scenes = _plan.get("scenes") or []
+                _beats = []
+                for _bi, _rec in enumerate(_recs):
+                    _st = _starts[_bi] if _bi < len(_starts) else 0.0
+                    _d = 3.0
+                    if _bi < len(_scenes):
+                        _d = float(_scenes[_bi].get("d")
+                                   or _rec.get("duration_est_s") or 3)
+                    _beats.append({"beat": _rec["beat"],
+                                   "line": _rec["heard"],
+                                   "promise": _rec["see"],
+                                   "why": _rec.get("why", ""),
+                                   "start": _st, "duration": _d})
+                _rep = await _tq87.audit_beats(
+                    results[_ci]["path"], _beats,
+                    str(Path(workdir) / f"ch{_ci + 1:02d}" / "taste"),
+                    vision=_vision87)
+                _entry["rounds"].append(
+                    {"round": _round, "vision": _rep["vision"],
+                     "counts": _rep["counts"],
+                     "beats": [{"beat": b["beat"],
+                                "status": b["status"],
+                                "note": b["note"]}
+                               for b in _rep["beats"]]})
+                print(f"taste QC v87: chapter {_ci + 1} round "
+                      f"{_round} — {_rep['counts']}")
+                if _mem84 is not None:
+                    try:
+                        for _b in _rep["beats"]:
+                            _tpl = ""
+                            _line = ""
+                            if 0 < _b["beat"] <= len(_recs):
+                                _tpl = _recs[_b["beat"] - 1].get(
+                                    "visual_concept", "")
+                            if 0 < _b["beat"] <= len(_beats):
+                                _line = _beats[_b["beat"] - 1]["line"]
+                            _mem84.record_taste_outcome(
+                                _job84,
+                                f"ch{_ci + 1} beat {_b['beat']}",
+                                _tpl, _line, _b["status"], _b["note"])
+                    except Exception:
+                        pass
+                _failed = [b for b in _rep["beats"]
+                           if b["status"] == "FAIL"]
+                if not _failed or _round >= 2 or _vision87 is None:
+                    break
+                for _b in _failed:
+                    if 0 < _b["beat"] <= len(_recs):
+                        _tpl = _recs[_b["beat"] - 1].get(
+                            "visual_concept", "")
+                        if _tpl:
+                            _excl.setdefault(
+                                _b["beat"], []).append(_tpl)
+                _brief_i = chapter_brief(out, _ci, spec=spec)
+                try:
+                    import doc_structure as _ds87
+                    _brief_i += _ds87.arc_context_block(out, _ci)
+                except Exception:
+                    pass
+                _inp = _copy87.deepcopy(results[_ci].get("plan") or {})
+                _inp["scenes"] = _copy87.deepcopy(_writer)
+                _new_plan, _new_recs = _dir87.direct_plan(
+                    _inp, brief=_brief_i, chapter_index=_ci,
+                    chapter_count=len(out["chapters"]),
+                    brain={"chat": chat, "taste": _vd87.taste_pack(),
+                           "beat_sheet": _inp.get("beat_sheet"),
+                           "exclude": _excl})
+                _new_plan["writer_scenes"] = _copy87.deepcopy(_writer)
+                if _inp.get("beat_sheet"):
+                    _new_plan["beat_sheet"] = _inp["beat_sheet"]
+                _tdir = Path(workdir) / f"ch{_ci + 1:02d}" / \
+                    f"taste{_round + 1}"
+                _tdir.mkdir(parents=True, exist_ok=True)
+                _ch_cfg = None
+                if cfg is not None:
+                    _ch_cfg = dict(cfg)
+                    _ch_cfg["allow_cta"] = (
+                        _ci == len(out["chapters"]) - 1)
+                _res2 = await doc.make_video(
+                    _brief_i, chat, notify=notify, workdir=str(_tdir),
+                    plan_override=_new_plan,
+                    **({"ref_voice": ref_voice}
+                       if ref_voice is not None else {}),
+                    **({"amendments": amendments}
+                       if amendments is not None else {}),
+                    **({"spec": spec, "cfg": _ch_cfg,
+                        "footage_pool": pool}
+                       if spec is not None else {}))
+                _res2["fix_rounds_used"] = int(
+                    results[_ci].get("fix_rounds_used") or 0)
+                results[_ci] = _res2
+                paths[_ci] = _res2["path"]
+                _taste87["rounds"] += 1
+                _entry["replanned"] = {str(k): v
+                                       for k, v in _excl.items()}
+                print(f"taste QC v87: chapter {_ci + 1} re-planned "
+                      f"(excluded {_excl}) and re-rendered")
+        with open(Path(workdir) / "taste_qc.json", "w",
+                  encoding="utf-8") as _f:
+            json.dump(_taste87, _f, indent=1)
+    except Exception as e:
+        print("taste QC v87 loop failed:", str(e)[:200])
+        _taste87["error"] = str(e)[:200]
     titles = [ch["title"] for ch in out["chapters"]][:len(paths)]
     if spec is not None and cfg:
         _size = (int(cfg["width"]), int(cfg["height"]))
@@ -947,6 +1084,17 @@ async def make_long_video(brief, chat, workdir, target_minutes,
         import director as _dir84
         import doc_structure as _ds84
         _roles = _ds84.assign_arc(len(results))
+        # v87: the arc follows the analyst's reading, not only the
+        # arithmetic — a chapter whose script turns is the turning
+        # point, wherever it sits.
+        try:
+            _roles, _arc_notes87 = _ds84.validate_arc_with_analyst(
+                _roles, [(_r.get("plan") or {}).get("beat_sheet")
+                         for _r in results])
+            for _n87 in _arc_notes87:
+                print("arc validation v87:", _n87)
+        except Exception:
+            pass
         _all_scenes = []
         for _ci, _r in enumerate(results):
             for _s in ((_r.get("plan") or {}).get("scenes") or []):
@@ -980,6 +1128,27 @@ async def make_long_video(brief, chat, workdir, target_minutes,
             print(f"director v86: visual plan — "
                   f"{len(_visual_plan86)} beats across "
                   f"{len(results)} chapter(s)")
+        # v87: the Story Analyst's BEAT SHEETS ride with the delivery
+        # (BEAT_SHEET.md + beat_sheet.json) — the readable structure
+        # the whole brain planned from.
+        import story_analyst as _sa87b
+        _sheets87 = []
+        _md87 = []
+        for _ci, _r in enumerate(results):
+            _sh = (_r.get("plan") or {}).get("beat_sheet")
+            if _sh:
+                _sheets87.append({**_sh, "chapter": _ci + 1})
+                _md87.append(_sa87b.beat_sheet_markdown(
+                    _sh, title=f"Chapter {_ci + 1}"))
+        if _sheets87:
+            with open(Path(workdir) / "beat_sheet.json", "w",
+                      encoding="utf-8") as _f:
+                json.dump(_sheets87, _f, indent=1)
+            with open(Path(workdir) / "BEAT_SHEET.md", "w",
+                      encoding="utf-8") as _f:
+                _f.write("\n\n".join(_md87))
+            print(f"story analyst v87: beat sheets for "
+                  f"{len(_sheets87)} chapter(s)")
     except Exception as e:
         print("visual plan aggregation failed:", str(e)[:150])
     # v85: Director vs the ACTUAL render — the comparison the v84
@@ -1055,6 +1224,7 @@ async def make_long_video(brief, chat, workdir, target_minutes,
             "spec": spec or [], "render_config": cfg or {},
             "compliance": report, "director": _director_log,
             "visual_plan": _visual_plan86,
+            "taste_qc": _taste87,
             "workdir": str(workdir),
             "footage": pool.footage_json() if pool else {},
             "partial": partial, "chapters_done": len(paths),

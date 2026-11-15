@@ -205,6 +205,16 @@ class EditMemory:
         return self._record(job_id, scene_id, "correction", "",
                             what, result)
 
+    def record_taste_outcome(self, job_id, scene_id, template, line,
+                             status, note=""):
+        """v87: one beat's Taste-QC outcome — which visual kinds pass
+        or fail, on which lines. This is the learning-loop signal the
+        Visual Director's future choices are audited against."""
+        return self._record(job_id, scene_id, "decision", template,
+                            str(line or "")[:300],
+                            f"taste_qc {status}: {note}"[:300],
+                            {"taste_qc": status})
+
     def record_result(self, job_id, result, detail=None):
         return self._record(job_id, "", "result", "", "", result, detail)
 

@@ -181,10 +181,19 @@ def _pixabay_search(query, key, orientation):
     return {"url": c["url"], "page": c["page"]}
 
 
-def fetch_broll(query, workdir, orientation="portrait"):
+def fetch_broll(query, workdir, orientation="portrait", verify=None):
     """Fetch one stock clip matching query into workdir (cached per
     query+orientation). Returns {"path", "provider", "source_url",
-    "query"} or None on any failure. Never raises."""
+    "query"} or None on any failure. Never raises.
+
+    v87: `verify` — an optional callable (clip_path, query) -> truthy
+    verdict. When given, a downloaded clip enters the plan ONLY if
+    the verifier accepts it (vision verification is mandatory before
+    a clip is used — the long pipeline's FootagePool verifier has
+    enforced this since v84; this is the same gate for the direct
+    fetch path). A rejected clip is deleted and reported as no-fetch.
+    Queries themselves now originate from the Visual Director's
+    per-beat decisions (director v87 writes beat["queries"])."""
     try:
         query = " ".join(str(query or "").split()).strip()
         if not query or not workdir:
@@ -216,6 +225,19 @@ def fetch_broll(query, workdir, orientation="portrait"):
             return None
         if not _download(hit["url"], dest):
             return None
+        if verify is not None:
+            try:
+                _ok = verify(dest, query)
+            except Exception:
+                _ok = None
+            if not _ok:
+                try:
+                    os.remove(dest)
+                except OSError:
+                    pass
+                print(f"broll: clip for '{query}' rejected by "
+                      f"verification — not used")
+                return None
         meta = {"provider": provider, "source_url": hit["page"],
                 "query": query}
         try:

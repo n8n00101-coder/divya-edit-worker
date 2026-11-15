@@ -49,6 +49,30 @@ def assign_arc(n_chapters):
     return roles
 
 
+def validate_arc_with_analyst(roles, chapter_sheets):
+    """v87: arc roles validated against the Story Analyst's reading
+    of each chapter's script. A chapter whose script CONTAINS a
+    turning point but whose position-assigned role is a generic
+    middle role is promoted to "turning_points" — the arc follows
+    the story, not the arithmetic. Returns (roles, notes); the
+    inputs are not mutated."""
+    roles = list(roles or [])
+    notes = []
+    for i, sheet in enumerate(chapter_sheets or []):
+        if i >= len(roles):
+            break
+        if not sheet or not sheet.get("turning_points"):
+            continue
+        if roles[i] in ("context", "evidence", "contradictions",
+                        "emotional_development", "build_up"):
+            notes.append(
+                f"chapter {i + 1}: role {roles[i]} -> turning_points "
+                f"(analyst found turning point(s) at scene(s) "
+                f"{sheet['turning_points']})")
+            roles[i] = "turning_points"
+    return roles, notes
+
+
 def arc_context_block(outline, idx, roles=None):
     """The whole-documentary context for chapter idx's brief."""
     chapters = (outline or {}).get("chapters") or []

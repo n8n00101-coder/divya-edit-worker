@@ -441,8 +441,186 @@ class _Replan(Exception):
     pass
 
 
+def _why_shares_words(why, line):
+    """Blind R2, enforced: a reason counts only if it shares an actual
+    content word with the line it claims to serve."""
+    w = {x.strip(".,!?:;\"'").lower() for x in str(why or "").split()}
+    low = {x.strip(".,!?:;\"'").lower() for x in str(line or "").split()}
+    return any(x in low for x in w if len(x) >= 4)
+
+
+def _predict_templates(sc, bt, feats, is_parent_first, document_used):
+    """The template NAMES direct_plan's candidate construction will
+    offer for this beat (menu prediction for the Visual Director).
+    Advisory only: the real candidates are built in the loop and every
+    LLM choice is validated against them there."""
+    out = []
+    scene_vis = str(sc.get("visual", ""))
+    if is_parent_first:
+        out.append("closing_stamp" if scene_vis == "stamp"
+                   and not str(sc.get("value", "")).strip()
+                   else "primary")
+    if feats["quote"]:
+        out.append("quote_typewriter")
+    if feats["term"]:
+        out.append("keyterm_card")
+    _numvals = [v for v in (_number_value(t) for t in feats["numbers"])
+                if v]
+    if len(_numvals) >= 2 or (feats["numbers"] and
+                              any("%" in t for t in feats["numbers"])):
+        out.append("stat_bars")
+    elif _numvals:
+        out.append("counter")
+    _opp = any(a in bt.lower() and b in bt.lower()
+               for a, b in _OPPOSITES)
+    if scene_vis == "versus" or _opp:
+        out += ["contrast_scale", "versus_card"]
+    if feats["enumeration"]:
+        out.append("timeline")
+    if feats["evidence"]:
+        if not document_used:
+            out.append("evidence_document")
+        out.append("evidence_newspaper")
+    if feats["time"]:
+        out.append("time_visual")
+    if feats["question"]:
+        out.append("question_card")
+    if feats["energy"]:
+        out.append("energy_meter")
+    if feats["relation"]:
+        out.append("relation_heart")
+    if feats["talk"]:
+        out.append("speech_bubble")
+    out += ["document_dev", "typewriter_dev", "list_dev", "steps_dev",
+            "checklist_dev"]
+    return out
+
+
+def editing_director_pass(beats, records, chat=None, taste=""):
+    """v87 role 3: the Editing Director, APPLIED (Ajju's Q7 reversal —
+    applied-with-diff-log replaces v84's log-only contract; the v84
+    analyse_plan above stays pure and untouched).
+
+    Authority, in order:
+    1. Transitions: beats of one parent scene are ONE idea — the
+       transition between them becomes a hard cut. Transitions mark
+       idea changes only.
+    2. Silences: only the three sanctioned spots (after the turning
+       point, just before the payoff, just before the ending),
+       0.8-1.5 s, written as silence_after_s on the beat that precedes
+       the gap — doc.make_video executes them in the voice track and
+       doc.music executes them in the music track.
+    3. Music intensity: the arc curve already on each beat, adjusted
+       by ONE LLM pass (clamped to +/-0.25, range 0.15-0.95) — and
+       this time doc.music() renders the curve.
+
+    Every change is returned as a diff {beat, field, from, to, reason}
+    and the matching visual-plan records are updated in place.
+    Never raises."""
+    diffs = []
+
+    def _sync_rec_transition(beat_idx):
+        # records[j] holds the transition OUT of beat j (into j+1)
+        if 0 < beat_idx <= len(records):
+            records[beat_idx - 1]["transition"] =                 beats[beat_idx].get("transition", "")
+
+    for i in range(1, len(beats)):
+        if beats[i].get("parent_label") and                 beats[i].get("parent_label") ==                 beats[i - 1].get("parent_label"):
+            old = beats[i].get("transition") or ""
+            if old:
+                beats[i]["transition"] = ""
+                diffs.append({
+                    "beat": i + 1, "field": "transition",
+                    "from": old, "to": "",
+                    "reason": "same parent scene — one idea; transitions "
+                              "mark idea changes only, so this is a hard cut"})
+                _sync_rec_transition(i)
+
+    def _silence(idx, dur, reason):
+        if 0 <= idx < len(beats):
+            old = float(beats[idx].get("silence_after_s") or 0)
+            new = min(SILENCE_MAX_S, max(SILENCE_MIN_S, float(dur)))
+            if abs(new - old) > 1e-9:
+                beats[idx]["silence_after_s"] = new
+                diffs.append({"beat": idx + 1, "field": "silence_after_s",
+                              "from": old, "to": new, "reason": reason})
+                if idx < len(records):
+                    records[idx]["silence_after_s"] = new
+
+    _tp = [i for i, b in enumerate(beats)
+           if b.get("arc_role") == "turning_point"]
+    if _tp:
+        _silence(_tp[-1], 1.0, "after the turning point — let it land")
+    _pay = [i for i, b in enumerate(beats)
+            if b.get("arc_role") == "payoff"]
+    if _pay and _pay[0] > 0:
+        _silence(_pay[0] - 1, 1.0,
+                 "just before the payoff — anticipation")
+    if len(beats) > 2:
+        _silence(len(beats) - 2, 1.2,
+                 "just before the ending — closure")
+
+    if chat is not None and beats:
+        try:
+            import json as _json
+            import re as _re
+            _blocks = []
+            for i, b in enumerate(beats):
+                _blocks.append(
+                    f"Beat {i + 1} (role {b.get('arc_role', '')}, "
+                    f"visual {(b.get('dir') or {}).get('template', '')}, "
+                    f"music now {b.get('music_intensity', 0.5)}): "
+                    f"\"{str(b.get('vo', ''))[:90]}\"")
+            _raw = chat([
+                {"role": "system", "content":
+                 "You are Julie's Editing Director. You output strict "
+                 "JSON only — no prose, no markdown fences."},
+                {"role": "user", "content":
+                 (taste or "") +
+                 "\n\nReview these directed beats. Your main job is "
+                 "RESTRAINT and rhythm. Adjust music_intensity only "
+                 "where the story truly swells or dips (hook 0.7, "
+                 "evidence 0.5, turning point 0.3, payoff 0.85, "
+                 "ending 0.4 are the arc defaults — deviate only "
+                 "with a reason from the line). Reply with strict "
+                 'JSON: {"adjustments": [{"beat": <n>, '
+                 '"music_intensity": <0.15-0.95>, "note": "<short '
+                 'reason>"}]} — an empty list is a valid, respected '
+                 "answer.\n\n" + "\n".join(_blocks)}])
+            _m = _re.search(r"\{[\s\S]*\}", str(_raw or ""))
+            _rows = (_json.loads(_m.group(0)) or {}).get(
+                "adjustments") if _m else None
+            for _r in _rows or []:
+                try:
+                    _bi = int(_r.get("beat")) - 1
+                    _v = float(_r.get("music_intensity"))
+                except (TypeError, ValueError):
+                    continue
+                if not (0 <= _bi < len(beats)):
+                    continue
+                _old = float(beats[_bi].get("music_intensity") or 0.5)
+                _new = min(0.95, max(0.15, _old + max(-0.25,
+                             min(0.25, _v - _old))))
+                if abs(_new - _old) > 1e-9:
+                    beats[_bi]["music_intensity"] = round(_new, 2)
+                    diffs.append({
+                        "beat": _bi + 1, "field": "music_intensity",
+                        "from": _old, "to": round(_new, 2),
+                        "reason": str(_r.get("note") or
+                                      "editing director rhythm "
+                                      "adjustment")[:160]})
+        except Exception as _e:
+            print("editing director v87: LLM rhythm pass failed "
+                  "(arc curve kept):", str(_e)[:120])
+    for i, rec in enumerate(records):
+        if i < len(beats):
+            rec["music_intensity"] = beats[i].get(
+                "music_intensity", rec.get("music_intensity"))
+    return diffs
+
+
 def direct_plan(plan, brief="", cfg=None, chapter_index=None,
-                chapter_count=None):
+                chapter_count=None, brain=None):
     """The v86 Documentary Director. Takes the writer's chapter plan
     (doc.plan output) and returns (directed_plan, visual_plan_records).
     The input is NOT mutated. Every beat of the output is a full
@@ -495,6 +673,31 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
                                     si, len(scenes), feats), si))
     n = len(raw_beats)
 
+    # ---- v87 brain prep: the Story Analyst's sheet steers roles ----
+    _brain = brain or {}
+    _sheet87 = _brain.get("beat_sheet")
+    _analyst_rows = {}
+    if _sheet87:
+        for _row in _sheet87.get("scenes") or []:
+            try:
+                _analyst_rows[int(_row.get("scene") or 0) - 1] = _row
+            except (TypeError, ValueError):
+                pass
+        # turning points come from the SCRIPT (the analyst read it),
+        # not from scene-position arithmetic: the first beat of a
+        # turning-point scene carries the turning_point role.
+        _seen_parents = set()
+        _rb = []
+        for (_sc, _bt, _feats, _role0, _si) in raw_beats:
+            _row = _analyst_rows.get(_si) or {}
+            if _row.get("turning_point") and _si not in _seen_parents \
+                    and _role0 not in ("hook", "conclusion"):
+                _role0 = "turning_point"
+            _seen_parents.add(_si)
+            _rb.append((_sc, _bt, _feats, _role0, _si))
+        raw_beats = _rb
+        n = len(raw_beats)
+
     # ---- pass 2: visual decisions ----------------------------------
     bg_order = list(VL.SCENE_BG)
     _off = (seed + chapter_index * 3) % len(bg_order)
@@ -512,6 +715,39 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
     window = []                  # effective visuals of the last 2 beats
     used_labels = set()
     document_used = 0
+
+    # ---- v87: the Visual Director (LLM) chooses, per beat, from the
+    # candidate menus; the deterministic gates below still veto. One
+    # call per chapter. Failure -> {} -> v86 order, reported.
+    _vd_choices = {}
+    if _brain.get("chat") is not None:
+        try:
+            import visual_director as _vd87
+            _menus = []
+            _doc_seen = False
+            for _bi, (_sc, _bt, _feats, _role0, _si) in \
+                    enumerate(raw_beats):
+                _ipf = (_bi == 0 or raw_beats[_bi - 1][0] is not _sc)
+                _tpls = _predict_templates(_sc, _bt, _feats, _ipf,
+                                           _doc_seen)
+                if "evidence_document" in _tpls:
+                    _doc_seen = True
+                _menus.append({
+                    "beat": _bi + 1, "line": _bt, "role": _role0,
+                    "analyst": _analyst_rows.get(_si),
+                    "candidates": [{"template": _t, "asset_type": "",
+                                    "why": ""} for _t in _tpls]})
+            _vd_choices = _vd87.choose_visuals(
+                _menus, _brain["chat"], taste=_brain.get("taste", ""),
+                beat_sheet=_sheet87)
+            if _vd_choices:
+                print(f"visual director v87: LLM chose "
+                      f"{len(_vd_choices)}/{len(_menus)} beat visuals")
+        except Exception as _e:
+            print("visual director v87 failed (deterministic order "
+                  "kept):", str(_e)[:120])
+            _vd_choices = {}
+    _exclude87 = _brain.get("exclude") or {}
 
     def effective_of(b):
         return _comp.effective_visual(b)
@@ -546,6 +782,9 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
         b["vo"] = bt
         b["parent_label"] = str(sc.get("label", ""))
         b["arc_role"] = role
+        if _analyst_rows.get(si):
+            b["analyst"] = _analyst_rows[si]
+        b["music_intensity"] = ARC_MUSIC_CURVE.get(role, 0.5)
         if is_parent_first:
             b["label"] = str(sc.get("label", ""))
         else:
@@ -699,7 +938,30 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
         cands = (groups["p"] + groups["f"] + groups["d"]) if _pri_first \
             else (groups["f"] + groups["p"] + groups["d"])
 
+        # v87: Taste-QC re-plan rounds EXCLUDE the templates that
+        # already failed their frame check on this beat (a new
+        # decision, never a re-render of the failed one); the Visual
+        # Director's choice, when it names a surviving candidate,
+        # leads the order — the vetoes below still judge it.
+        _excl = _exclude87.get(bi + 1) or []
+        _excl_note = ""
+        if _excl:
+            _kept = [c for c in cands if c["template"] not in _excl]
+            if _kept and len(_kept) != len(cands):
+                _excl_note = ("taste re-plan: excluded " +
+                              ", ".join(_excl))
+                cands = _kept
+        _vd = _vd_choices.get(bi + 1)
+        if _vd:
+            for _ci2, _c in enumerate(cands):
+                if _c["template"] == _vd["template"]:
+                    if _ci2:
+                        cands = [_c] + cands[:_ci2] + cands[_ci2 + 1:]
+                    break
+
         chosen, notes = None, []
+        if _excl_note:
+            notes.append(_excl_note)
         for cand in cands:
             probe = copy.deepcopy(b)
             probe.update(cand["extra"])
@@ -735,6 +997,16 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
         # the beat's meaning record names the exact line segment the
         # visual serves (the R2 audit asks for exactly this link)
         b["why"] = cand["why"] + f' (line: "{bt[:60]}")'
+        # v87: when the Visual Director's choice won, its reason
+        # replaces the heuristic one — but only if the reason shares
+        # words with the line (Blind R2, enforced in code).
+        if _vd and cand["template"] == _vd["template"]:
+            if _vd.get("why") and _why_shares_words(_vd["why"], bt):
+                b["why"] = _vd["why"] + f' (line: "{bt[:60]}")'
+            if _vd.get("footage_query"):
+                b["queries"] = ([_vd["footage_query"]] +
+                                [q for q in (b.get("queries") or [])
+                                 if q != _vd["footage_query"]])[:2]
         # an inherited lib_visual belongs to the OLD plan's decision
         # (doc.plan sets one for 'place' fact types — including the
         # accidental trigger of the phrase "in the first place").
@@ -882,6 +1154,25 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
     p["fx_used"] = used_fx
     p["directed"] = "v86-documentary-director"
     p["visual_plan"] = records
+    # ---- v87: the Editing Director pass — APPLIED, diff-logged.
+    # Runs whenever a brain is present (with or without an LLM: the
+    # transition + silence authority is deterministic; the LLM only
+    # adjusts the music curve). The diff rides on the plan so the
+    # runner, the report and edit_memory can all audit it.
+    if _brain:
+        try:
+            _diffs87 = editing_director_pass(
+                beats, records, chat=_brain.get("chat"),
+                taste=_brain.get("taste", ""))
+            if _diffs87:
+                p["transitions"] = [bb.get("transition", "")
+                                    for bb in beats[1:]]
+                print(f"editing director v87: {len(_diffs87)} applied "
+                      f"change(s), diff-logged")
+            p["editing_director_diff"] = _diffs87
+        except Exception as _e:
+            print("editing director v87 failed:", str(_e)[:120])
+            p["editing_director_diff"] = []
     return p, records
 
 

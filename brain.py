@@ -63,11 +63,17 @@ def _read(path, limit):
 
 
 def playbooks() -> str:
-    """Trimmed editing + assistant playbooks, added to the system prompt as background know-how."""
-    ed = _read(os.path.join(SKILLS, "editing_playbook.md"), 5000)
+    """Assistant playbook + the editing TASTE PACK, added to the system
+    prompt as background know-how. v87: the taste pack is read IN FULL
+    — the old 5,000-char playbook excerpt starved every planner that
+    shared this brain (the documentary brain now reads the same pack,
+    so shorts and documentaries share one taste). The excerpt remains
+    only as a fallback if the pack file is missing."""
+    ed = _read(os.path.join(SKILLS, "taste_pack.md"), 20000) or \
+        _read(os.path.join(SKILLS, "editing_playbook.md"), 5000)
     asst = _read(os.path.join(SKILLS, "assistant_playbook.md"), 2500)
     return ("\n\nASSISTANT PLAYBOOK (how to behave):\n" + asst if asst else "") + \
-           ("\n\nEDITING PLAYBOOK (excerpt, use for taste and defaults):\n" + ed if ed else "")
+           ("\n\nEDITING TASTE PACK (full — use for taste and defaults):\n" + ed if ed else "")
 
 
 _notes_cache = {"t": 0.0, "txt": ""}

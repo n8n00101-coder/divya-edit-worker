@@ -612,7 +612,38 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
     try:
         import director as _dir86
         if _dir86.should_direct(brief, cfg):
-            p, _vplan86 = _dir86.direct_plan(p, brief=brief, cfg=cfg)
+            # v87 (the Editing Brain): the Story Analyst reads the
+            # writer's finished script FIRST and its beat sheet +
+            # the full taste pack ride into the Director as `brain` —
+            # the Visual Director (LLM) chooses visuals from the
+            # sheet, the Editing Director pass applies its rhythm
+            # decisions with a diff log. Any analyst failure degrades
+            # to v86 directing, logged — never a silent fake sheet.
+            _brain87 = {"chat": chat}
+            try:
+                import copy as _copy87
+                import story_analyst as _sa87
+                import visual_director as _vd87
+                _brain87["taste"] = _vd87.taste_pack()
+                _sheet87 = _sa87.analyse_script(
+                    p["scenes"], chat, taste=_brain87["taste"],
+                    topic=str(p.get("topic") or ""))
+                if _sheet87:
+                    _brain87["beat_sheet"] = _sheet87
+                    p["beat_sheet"] = _sheet87
+                    print(f"story analyst v87: beat sheet — "
+                          f"{len(_sheet87['scenes'])} scenes, "
+                          f"turning points {_sheet87['turning_points']}")
+                else:
+                    print("story analyst v87: unavailable — directing "
+                          "without a beat sheet")
+                # the writer's scenes ride along so Taste-QC failures
+                # can be RE-PLANNED from the original script (v87).
+                p["writer_scenes"] = _copy87.deepcopy(p["scenes"])
+            except Exception as _e87a:
+                print("story analyst v87 failed:", str(_e87a)[:120])
+            p, _vplan86 = _dir86.direct_plan(p, brief=brief, cfg=cfg,
+                                             brain=_brain87)
             _directed86 = True
             print(f"director v86: directed plan — {len(p['scenes'])} "
                   f"beats, {len(_vplan86)} visual decisions")
@@ -2062,7 +2093,8 @@ def _payoff_idx(p):
     return best
 
 
-def music(total, starts, moods, path, hits=None, payoff=None):
+def music(total, starts, moods, path, hits=None, payoff=None,
+          intensity=None, silences=None):
     n = int(SR * total); out = np.zeros(n); rng = np.random.RandomState(7)
     dark = sum(m in ("tense", "sad", "mystery") for m in moods) >= len(moods) / 2
     prog = [[50, 57, 62, 65], [46, 53, 58, 62], [48, 55, 60, 64], [45, 52, 57, 61]] if dark else \
@@ -2120,6 +2152,33 @@ def music(total, starts, moods, path, hits=None, payoff=None):
         tick = rng.randn(_tl) * np.exp(-np.arange(_tl) / SR * 200) * 0.6
         for (ht, kind) in hits:
             add(hit if kind == "hit" else pop if kind == "pop" else tick, ht)
+    # v87: the Editing Director's per-beat intensity curve, EXECUTED.
+    # Each scene segment is gained toward its planned intensity,
+    # smoothed across boundaries so the curve breathes instead of
+    # stepping. v85/v86 planned this curve and never rendered it —
+    # the identical flat ~2.5 LU loudness range on both was the
+    # receipt. Sanctioned silences stop the music (and SFX) for real.
+    if intensity:
+        _g = np.ones(n)
+        _bounds = [float(x) for x in starts] + [float(total)]
+        for _i in range(min(len(intensity), len(starts))):
+            if intensity[_i] is None:
+                continue
+            _a = int(max(0.0, _bounds[_i]) * SR)
+            _b = int(min(_bounds[_i + 1], total) * SR)
+            if _b > _a:
+                _g[_a:_b] = 0.45 + 0.85 * float(intensity[_i])
+        _k = max(1, int(0.35 * SR))
+        _ker = np.ones(_k) / _k
+        _g = np.convolve(np.pad(_g, (_k, _k), mode="edge"),
+                         _ker, mode="same")[_k:-_k]
+        out = out * _g[:n]
+    if silences:
+        for (_t0, _dur) in silences:
+            _a = int(float(_t0) * SR)
+            _e = min(n, int((float(_t0) + float(_dur)) * SR))
+            if 0 <= _a < n and _e > _a:
+                out[_a:_e] = 0; sfx[_a:_e] = 0
     fade = np.minimum(1, (total - np.arange(n) / SR) / 2.0); out = out / (np.abs(out).max() + 1e-6) * 0.6 * fade
     for arr, pth in ((out, path), (sfx / (np.abs(sfx).max() + 1e-6) * 0.7, path.replace(".wav", "_sfx.wav"))):
         w = wave.open(pth, "w"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
@@ -2998,7 +3057,12 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                     hit = o; break
         s["pop_t"] = max(0.0, float(hit or 0.0) - 0.08)
     starts, t = [], 0.4  # 0.4 s pre-roll for the boom
-    for s in p["scenes"]: starts.append(t); t += s["d"]
+    # v87: a scene's silence_after_s (Editing Director, sanctioned
+    # spots only) becomes a REAL gap: the next scene starts later, so
+    # the narration itself pauses and the previous visual holds.
+    for s in p["scenes"]:
+        starts.append(t)
+        t += s["d"] + float(s.get("silence_after_s") or 0)
     p["starts"] = starts; p["voice_end"] = t; total = t + OUTRO
     if notify: await notify("Voice ready. Scenes render chestunna (animation + music).")
     # v69: stock B-roll for ~half the scenes (see _attach_broll). Runs
@@ -3093,7 +3157,12 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # the mix. "off" silences the finished track afterwards, so the
     # mix graph (and the loudness design) stays exactly as built.
     aflags.update(_amend_checkpoint(abox, p, "audio"))
-    music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff)
+    _inten87 = [s.get("music_intensity") for s in p["scenes"]]
+    _sil87 = [(starts[_i] + float(_s.get("d") or 0),
+               float(_s["silence_after_s"]))
+              for _i, _s in enumerate(p["scenes"])
+              if _s.get("silence_after_s")]
+    music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff, intensity=_inten87, silences=_sil87)
     # v79 (FIX 2): a spec switch ("no music" / "no SFX" in the prompt)
     # outranks the engine default AND a mid-flight amendment — the
     # requirement wins, the default is switched off.
@@ -3108,7 +3177,7 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # (mood + track) is recorded on the plan -> project.json.
     _music_on = not (aflags.get("music") == "off" or cfg.get("music") is False)
     if _music_on and _wav_rms(f"{wd}/music.wav") < 0.005:
-        music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff)
+        music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff, intensity=_inten87, silences=_sil87)
         if aflags.get("sfx") == "off" or cfg.get("sfx") is False:
             _silence_wav(f"{wd}/music_sfx.wav", total)  # the regen rewrote it
         p.setdefault("plan_fixes", []).append(
