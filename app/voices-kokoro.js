@@ -46,11 +46,15 @@ const KOKORO_FALLBACK = { F: "af_heart", M: "am_michael" };
 let kokoroTTS = null, kokoroLoading = null, kokoroVoices = null;
 /* R34: load state the UI can read — "idle" | "loading" | "ready" | "failed". */
 let kokoroState = "idle", kokoroError = "", kokoroErrorShort = "", kokoroPhase = "idle";
+/* v50 (V3b): real download progress (0-100) for the picker status line, and
+ * ONE automatic retry with backoff after a failed load — a transient
+ * network drop must not leave every voice "not loaded" until a manual tap. */
+let kokoroProgress = 0, kokoroAutoRetried = false;
 /* v39: kokoroAttempt numbers every fresh load (cache-bust query); kokoroGen
  * numbers the current attempt so a stale/hung attempt can never overwrite a
  * newer one's state. kokoroTriedCDN names the CDN the last attempt used. */
 let kokoroAttempt = 0, kokoroGen = 0, kokoroTriedCDN = "";
-const kokoroStatus = () => ({ state: kokoroState, error: kokoroError, short: kokoroErrorShort, phase: kokoroPhase, attempt: kokoroAttempt, cdn: kokoroTriedCDN });
+const kokoroStatus = () => ({ state: kokoroState, error: kokoroError, short: kokoroErrorShort, phase: kokoroPhase, attempt: kokoroAttempt, cdn: kokoroTriedCDN, progress: kokoroProgress });
 
 /* Short, plain-language reason for a load failure (shown under Retry). */
 function kokoroShortError(e, phase) {
@@ -97,9 +101,9 @@ async function kokoroLoad() {
     // of hanging the voice picker forever on a stalled connection.
     kokoroPhase = "model";
     let tts;
-    try { tts = await kokoroWithTimeout(KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q8" }), KOKORO_MODEL_TIMEOUT_MS, "model"); }
+    try { tts = await kokoroWithTimeout(KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q8", progress_callback: p => { if (p && typeof p.progress === "number" && isFinite(p.progress)) kokoroProgress = Math.max(kokoroProgress, Math.min(100, Math.round(p.progress))); } }), KOKORO_MODEL_TIMEOUT_MS, "model"); }
     catch (e1) { // v67 (Ajju): on slow phones the ~90 MB q8 download never finishes and voices "don't load" — fall back to the ~half-size q4 model before giving up.
-      tts = await kokoroWithTimeout(KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q4" }), KOKORO_MODEL_TIMEOUT_MS, "model"); }
+      tts = await kokoroWithTimeout(KokoroTTS.from_pretrained(KOKORO_MODEL, { dtype: "q4", progress_callback: p => { if (p && typeof p.progress === "number" && isFinite(p.progress)) kokoroProgress = Math.max(kokoroProgress, Math.min(100, Math.round(p.progress))); } }), KOKORO_MODEL_TIMEOUT_MS, "model"); }
     if (gen !== kokoroGen) throw new Error("kokoro: superseded");
     kokoroTTS = tts;
     try { kokoroVoices = await tts.list_voices(); } catch { kokoroVoices = null; }
@@ -111,6 +115,10 @@ async function kokoroLoad() {
     kokoroLoading = null; kokoroState = "failed"; kokoroPhase = "failed";
     kokoroError = String(e && e.message || e);
     kokoroErrorShort = kokoroShortError(e, failedPhase);
+    // v50 (V3b): ONE automatic retry after 8s — a transient drop during the
+    // ~90 MB download should heal itself, not strand every voice until the
+    // user finds the manual Retry button.
+    if (!kokoroAutoRetried) { kokoroAutoRetried = true; setTimeout(() => { if (!kokoroTTS && kokoroState === "failed") { try { const r = kokoroRetry(); if (r && r.catch) r.catch(() => {}); } catch {} } }, 8000); }
     throw e;
   });
   return kokoroLoading;

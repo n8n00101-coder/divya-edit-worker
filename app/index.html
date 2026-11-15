@@ -108,7 +108,7 @@
       <button class="icon-btn" id="newChatBtn" data-tl="newChat" aria-label="New chat">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
       </button>
-      <button class="tab-chip" id="tabCountBtn" data-tl="openTabs" aria-label="Chats"><span aria-hidden="true">💬</span><span id="tabCount">1</span></button>
+      <button class="tab-chip" id="tabCountBtn" data-tl="openTabs" aria-label="Chats"><span id="tabCount">1</span></button>
       <span class="spacer" aria-hidden="true" style="flex:1"></span>
       <h1 id="screen-title" class="sr-only" tabindex="-1"></h1>
       <button class="avatar-btn" id="avatarBtn" data-tl="openProfile"><span class="avatar" id="avatarTop" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span></button>
@@ -397,6 +397,8 @@
               <span class="switch"><input type="checkbox" id="setVoice" role="switch"><span aria-hidden="true"></span></span></div>
             <div class="row"><label for="setVF"><span data-t="voiceFirst"></span><br><span class="muted small" data-t="voiceFirstSub"></span></label>
               <span class="switch"><input type="checkbox" id="setVF" role="switch"><span aria-hidden="true"></span></span></div>
+            <div class="row"><label for="setLvMini"><span data-t="lvMiniT"></span><br><span class="muted small" data-t="lvMiniSub"></span></label>
+              <span class="switch"><input type="checkbox" id="setLvMini" role="switch" checked><span aria-hidden="true"></span></span></div>
             <div class="row"><label for="setBlind"><span data-t="blindMode"></span><br><span class="muted small" data-t="blindModeSub"></span></label>
               <span class="switch"><input type="checkbox" id="setBlind" role="switch"><span aria-hidden="true"></span></span></div>
             <button class="row link" id="voiceRow"><span data-t="voicePick"></span><span class="muted r"><span class="voiceName"></span> ›</span></button>
