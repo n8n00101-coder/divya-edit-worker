@@ -8,6 +8,8 @@ scene's full-frame background.
 Providers (first hit wins):
   1. Pexels Video API  — key from env PEXELS_KEY
   2. Pixabay Video API — key from env PIXABAY_KEY
+  3. Wikimedia Commons — KEYLESS, v88; only when JULIE_COMMONS_FOOTAGE=1
+     (title-gated candidates, WebM transcoded to MP4 on download)
 Both are free-tier APIs with free licences (Pexels Licence / Pixabay
 Content Licence — no attribution required, commercial use allowed). The
 source page URL of every clip is returned so the caller can record it in
@@ -96,6 +98,34 @@ def _download(url, dest):
             pass
 
 
+def _download_transcoded(url, dest):
+    """v88: download a non-MP4 clip (Commons WebM) and transcode it to
+    a muted MP4 at dest, so every downstream consumer (frame extract,
+    active-window, the renderer) sees the one format it expects.
+    Height is capped at 1920 — a beat never needs more. False on any
+    failure, exactly like _download."""
+    import subprocess
+    raw = dest + ".src"
+    try:
+        if not _download(url, raw):
+            return False
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-i", raw, "-an",
+             "-vf", "scale=-2:min(1920\\,ih)", "-c:v", "libx264",
+             "-preset", "veryfast", "-crf", "20", dest],
+            capture_output=True, timeout=300)
+        return (r.returncode == 0 and os.path.exists(dest)
+                and os.path.getsize(dest) > 50_000)
+    except Exception:
+        return False
+    finally:
+        try:
+            if os.path.exists(raw):
+                os.remove(raw)
+        except OSError:
+            pass
+
+
 def _best_file(files, orientation):
     """Prefer a file near 1080 wide (enough for the crop, small to
     download); never a giant 4K original."""
@@ -179,6 +209,89 @@ def _pixabay_search(query, key, orientation):
         return None
     c = cands[0]
     return {"url": c["url"], "page": c["page"]}
+
+
+# ------------------------------------------------------------------
+# v88: Wikimedia Commons — the KEYLESS provider. Pexels/Pixabay need
+# API keys; Commons needs none (free licences, mostly CC-BY / public
+# domain), so it is the fallback that lets a keyless environment —
+# a local test rig, a BYOC instance whose owner sealed no stock key —
+# still cut REAL footage instead of drawn graphics. It is OFF unless
+# JULIE_COMMONS_FOOTAGE=1: production keeps the Pexels-first behaviour
+# byte-identical, and Commons' catalogue (documentary / newsreel /
+# lecture material) is topically weaker than Pexels', so candidates
+# are STRICTLY gated: the file title must share at least 2 content
+# words with the query (or 1 when the query has a single content
+# word), and a >=640px-wide transcoded derivative must exist. Files
+# arrive as WebM and are transcoded to MP4 at download time (the
+# candidate carries transcode=True; FootagePool.assign honours it).
+# ------------------------------------------------------------------
+
+_COMMONS_STOP = {"the", "and", "for", "with", "video", "file", "webm",
+                 "ogv", "clip", "footage"}
+
+
+def commons_enabled():
+    return (os.environ.get("JULIE_COMMONS_FOOTAGE") or "").strip() == "1"
+
+
+def _commons_candidates(query, orientation, per_page=10):
+    """Commons video search -> candidate dicts (same shape as the
+    Pexels/Pixabay candidates, plus transcode=True). Title-gated:
+    an ungated Commons search returns lectures and newsreels whose
+    titles merely brush the query — those must never reach a beat."""
+    qt = {t for t in _tokens(query) if t not in _COMMONS_STOP}
+    if not qt:
+        return []
+    data = _get_json("https://commons.wikimedia.org/w/api.php",
+                     params={"action": "query", "format": "json",
+                             "generator": "search",
+                             "gsrsearch": f"filetype:video {query}",
+                             "gsrnamespace": 6, "gsrlimit": per_page,
+                             "prop": "videoinfo",
+                             "viprop": "derivatives|size|url",
+                             "viderivatives": 30})
+    if not data:
+        return []
+    pages = ((data.get("query") or {}).get("pages") or {})
+    out = []
+    for p in pages.values():
+        title = str(p.get("title") or "")
+        tt = {t for t in _tokens(title) if t not in _COMMONS_STOP}
+        need = 1 if len(qt) <= 1 else 2
+        if len(qt & tt) < need:
+            continue  # relevance gate: title must really be about it
+        vi = (p.get("videoinfo") or [{}])[0]
+        ders = [d for d in (vi.get("derivatives") or [])
+                if d.get("src") and (d.get("width") or 0) >= 640]
+        if not ders:
+            continue
+        if orientation == "portrait":
+            ders.sort(key=lambda d: abs((d.get("height") or 1) /
+                                        max(1, d.get("width") or 1) - 1.78))
+        else:
+            ders.sort(key=lambda d: -min(d.get("width") or 0, 1920))
+        best = ders[0]
+        out.append({"id": f"commons:{p.get('pageid')}",
+                    "provider": "commons",
+                    "url": best["src"],
+                    "page": vi.get("descriptionurl") or "",
+                    "width": int(best.get("width") or 0),
+                    "height": int(best.get("height") or 0),
+                    "duration": float(vi.get("duration") or 0),
+                    "uploader": "",
+                    "slug": title,
+                    "transcode": True})
+    return out
+
+
+def providers_available():
+    """True when ANY footage route can serve: a stock key is set, or
+    the keyless Commons provider is enabled. Callers use this to
+    decide whether building a FootagePool is worthwhile at all."""
+    return bool((os.environ.get("PEXELS_KEY") or "").strip()
+                or (os.environ.get("PIXABAY_KEY") or "").strip()
+                or commons_enabled())
 
 
 def fetch_broll(query, workdir, orientation="portrait", verify=None):
@@ -371,8 +484,7 @@ class FootagePool:
             pass
 
     def available(self):
-        return bool((os.environ.get("PEXELS_KEY") or "").strip()
-                    or (os.environ.get("PIXABAY_KEY") or "").strip())
+        return providers_available()
 
     def fetch_by_id(self, clip_id, workdir):
         """v79 (FIX 4): re-download the EXACT clip a saved project
@@ -425,7 +537,7 @@ class FootagePool:
         query, keyword, start, static} or None."""
         if not self.available():
             self.rejected.append({"scene": scene_no,
-                                  "reason": "no stock-footage key configured"})
+                                  "reason": "no stock-footage provider configured"})
             return None
         os.makedirs(workdir, exist_ok=True)
         used = set(self.used_ids)
@@ -438,6 +550,8 @@ class FootagePool:
                 cands += _pexels_candidates(query, pk, orientation)
             if xk:
                 cands += _pixabay_candidates(query, xk, orientation)
+            if commons_enabled():
+                cands += _commons_candidates(query, orientation)
             kept, rejected = filter_candidates(cands, needed_s, used,
                                                self.last_uploader)
             self.rejected.extend({**r, "scene": scene_no, "query": query}
@@ -447,7 +561,10 @@ class FootagePool:
                 dest = os.path.join(
                     workdir, f"pool_{cand['provider']}_{str(cand['id']).split(':')[-1]}.mp4")
                 if not (os.path.exists(dest) and os.path.getsize(dest) > 50_000):
-                    if not _download(cand["url"], dest):
+                    _dl_ok = (_download_transcoded(cand["url"], dest)
+                              if cand.get("transcode")
+                              else _download(cand["url"], dest))
+                    if not _dl_ok:
                         self.rejected.append({**cand, "scene": scene_no,
                                               "query": query,
                                               "reason": "download failed"})

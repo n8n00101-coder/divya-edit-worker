@@ -319,7 +319,8 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                                               if amendments is not None else {}),
                                            **({"spec": spec, "cfg": ch_cfg,
                                                "footage_pool": pool}
-                                              if spec is not None else {}))
+                                              if spec is not None or pool is not None
+                                              else {}))
                 break
             except Exception as e:
                 last_err = e
@@ -501,10 +502,32 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
             expected = (_inf["video"].get("width"),
                         _inf["video"].get("height"))
 
+    def _designed_silences():
+        """v88: the Editing Director's sanctioned silence windows
+        (silence_after_s on the chapter plans), mapped to absolute
+        time in the assembled file. media_qc reports gaps inside
+        these as DESIGNED instead of failing them as dead air —
+        v87 shipped 5 such false FAILs and the correction loop
+        re-rendered chapters over pauses the director had chosen."""
+        wins = []
+        starts = _starts()
+        for ci, r in enumerate(results or []):
+            plan = (r or {}).get("plan") or {}
+            scs = plan.get("scenes") or []
+            st = plan.get("starts") or []
+            base = starts[ci] if ci < len(starts) else 0.0
+            for j, s in enumerate(scs):
+                sil = float(s.get("silence_after_s") or 0)
+                if sil > 0 and j < len(st):
+                    a = base + float(st[j]) + float(s.get("d") or 0)
+                    wins.append((round(a, 2), round(a + sil, 2)))
+        return wins
+
     def check_fn():
         ch, _info = _mq.inspect_file(
             state["final"], cfg=mq_cfg, chapter_starts=_starts(),
-            workdir=str(workdir), expected_size=expected)
+            workdir=str(workdir), expected_size=expected,
+            designed_silences=_designed_silences())
         return ch
 
     async def correct_fn(failed, rnd):
@@ -570,7 +593,7 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
                 **({"ref_voice": ref_voice} if ref_voice is not None else {}),
                 **({"amendments": amendments} if amendments is not None else {}),
                 **({"spec": spec, "cfg": ch_cfg, "footage_pool": pool}
-                   if spec is not None else {}))
+                   if spec is not None or pool is not None else {}))
             state["paths"][i] = str(res2["path"])
             if i < len(results):
                 results[i] = {**results[i], "path": str(res2["path"]),
@@ -659,11 +682,17 @@ async def make_long_video(brief, chat, workdir, target_minutes,
         print(f"edit memory unavailable: {str(_e)[:120]}")
     # v79 (mail 1 Part 2): ONE footage pool for the whole video — the
     # NO-REPEAT used_ids rule spans chapters, not just scenes.
+    # v88: the pool is also built when NO spec exists but a footage
+    # route is available (a stock key, or the keyless Commons
+    # provider) — v85-v87's spec-less runs silently had no pool at
+    # all, so footage could never attach even where a route existed.
     pool = None
+    import broll as _broll88
+    if spec is not None or _broll88.providers_available():
+        pool = _broll88.FootagePool(
+            state_path=str(Path(workdir) / "footage_state.json"))
     if spec is not None:
         import broll as _broll
-        pool = _broll.FootagePool(
-            state_path=str(Path(workdir) / "footage_state.json"))
         # v84 (Stage 3 / P1): vision verification on the long path —
         # sampled frames vs narration, hash-cached verdicts, strict
         # call budget (default 80/job from edit_memory config; the
@@ -693,12 +722,19 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     # conditional-kwargs contract the rest of the codebase keeps
     # (engine-shaped callers/stubs without those parameters stay
     # compatible; cf. v78test's render_chapters stub).
+    # v88: a long documentary renders with ONE locked grade and the
+    # full-frame composition rules (doc module flags — the runner
+    # serves one job per process, and doc.plan stamps both onto the
+    # plan so a later short in the same process is unaffected).
+    doc.GRADE_LOCK = True
+    doc.FULL_FRAME = True
     paths = await render_chapters(out, chat, workdir, notify=notify,
                                   deadline=deadline, results_out=results,
                                   ref_voice=ref_voice,
                                   amendments=amendments,
                                   **({"spec": spec, "cfg": cfg, "pool": pool}
-                                     if spec is not None else {}))
+                                     if spec is not None or pool is not None
+                                     else {}))
     if not paths:
         raise RuntimeError("long video: no chapters rendered")
     # v87 (role 4): TASTE QC — sampled frames judged against the
@@ -822,7 +858,7 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                        if amendments is not None else {}),
                     **({"spec": spec, "cfg": _ch_cfg,
                         "footage_pool": pool}
-                       if spec is not None else {}))
+                       if spec is not None or pool is not None else {}))
                 _res2["fix_rounds_used"] = int(
                     results[_ci].get("fix_rounds_used") or 0)
                 results[_ci] = _res2

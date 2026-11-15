@@ -34,7 +34,9 @@ def check(name, cond, detail=""):
 import visual_director as VD
 
 pack = VD.taste_pack()
-check("taste pack loads in full (5-9k chars)", 5000 <= len(pack) <= 9500,
+check("taste pack loads in full (v88: bound follows the merged pack — "
+      "Premiere-course + pro-editor rules took it to ~17.8k chars)",
+      15000 <= len(pack) <= 60000,
       f"{len(pack)} chars")
 check("taste pack carries the core laws",
       all(w in pack for w in ("Blind R2", "LRA", "sanctioned",

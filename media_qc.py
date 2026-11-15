@@ -20,7 +20,12 @@ chapter start times are given — to the chapter that contains it):
 - MQ-BLANK   sampled frames that are (near-)solid colour — incl. the
              blank-BLUE frame (solid navy background, no content)
 - MQ-LOUD    integrated loudness / true peak vs configurable targets
-- MQ-SILENCE silence gaps > threshold outside chapter breaks
+- MQ-SILENCE silence gaps > threshold outside chapter breaks. v88: a
+             gap that overlaps a DESIGNED silence window (the Editing
+             Director's sanctioned silence_after_s beats, passed in as
+             `designed_silences`) is reported with status DESIGNED —
+             visible in the report, never a FAIL, never a re-render
+             trigger. Undesigned gaps keep failing as before.
 - MQ-COLOUR  per-chapter mean-luma drift beyond threshold (the same
              scene family suddenly much darker/lighter = grade break)
 - MQ-REPEAT  repeated visual stretches: sampled-frame dHashes that
@@ -191,7 +196,7 @@ def _frame_stats(path, every_s, workdir):
 
 
 def inspect_file(path, cfg=None, chapter_starts=None, workdir=None,
-                 expected_size=None):
+                 expected_size=None, designed_silences=None):
     """Full deterministic inspection of one rendered file.
     Returns (checks, info). checks use the compliance check shape
     {rule, status, detail, scene} — `scene` carries the CHAPTER
@@ -333,13 +338,34 @@ def inspect_file(path, cfg=None, chapter_starts=None, workdir=None,
         breaks = list(chapter_starts or [])[1:]
         real = [(a, b) for a, b in gaps
                 if not any(abs(a - cb) < 1.6 for cb in breaks)]
+        designed = [(float(a), float(b))
+                    for a, b in (designed_silences or []) if b > a]
         for a, b in real:
             ch = _chapter_of(a, chapter_starts)
-            checks.append({"rule": "MQ-SILENCE", "status": "FAIL",
-                           "detail": f"silence {a:.1f}s-{b:.1f}s "
-                                     f"({b - a:.1f}s) outside chapter breaks",
-                           "scene": (ch + 1) if ch is not None else None,
-                           "start": round(a, 2), "end": round(b, 2)})
+            # v88: a gap is DESIGNED when it substantially overlaps a
+            # window the Editing Director sanctioned in the plan (the
+            # measured gap starts inside the window, or covers most
+            # of it) — a held beat before a payoff is a decision, not
+            # dead air. It is still REPORTED, as DESIGNED, so the
+            # distinction stays auditable.
+            is_designed = any(
+                (da - 0.35) <= a <= (db + 0.35)
+                or (min(b, db) - max(a, da)) >= 0.5 * (b - a)
+                for da, db in designed)
+            if is_designed:
+                checks.append({"rule": "MQ-SILENCE",
+                               "status": "DESIGNED",
+                               "detail": f"silence {a:.1f}s-{b:.1f}s "
+                                         f"({b - a:.1f}s) — designed "
+                                         f"(director's sanctioned pause)",
+                               "scene": (ch + 1) if ch is not None else None,
+                               "start": round(a, 2), "end": round(b, 2)})
+            else:
+                checks.append({"rule": "MQ-SILENCE", "status": "FAIL",
+                               "detail": f"silence {a:.1f}s-{b:.1f}s "
+                                         f"({b - a:.1f}s) outside chapter breaks",
+                               "scene": (ch + 1) if ch is not None else None,
+                               "start": round(a, 2), "end": round(b, 2)})
     except Exception as e:
         checks.append({"rule": "MQ-LOUD", "status": "UNVERIFIED",
                        "detail": f"audio checks failed: {str(e)[:80]}",

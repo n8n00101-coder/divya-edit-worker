@@ -62,15 +62,28 @@ def _read(path, limit):
         return ""
 
 
+_pack_log_done = {"done": False}
+
+
 def playbooks() -> str:
     """Assistant playbook + the editing TASTE PACK, added to the system
     prompt as background know-how. v87: the taste pack is read IN FULL
     — the old 5,000-char playbook excerpt starved every planner that
     shared this brain (the documentary brain now reads the same pack,
     so shorts and documentaries share one taste). The excerpt remains
-    only as a fallback if the pack file is missing."""
-    ed = _read(os.path.join(SKILLS, "taste_pack.md"), 20000) or \
+    only as a fallback if the pack file is missing.
+    v88: the read cap rises 20,000 -> 60,000 chars. The pack (playbook
+    + Premiere-course rules + pro-editor rules) reached ~17.9k chars —
+    inside the old cap but one merge away from silent truncation,
+    which is exactly how taste starved before v87. The loaded char
+    count is logged once per process so a truncated pack is visible
+    in the run log instead of invisible in the output."""
+    ed = _read(os.path.join(SKILLS, "taste_pack.md"), 60000) or \
         _read(os.path.join(SKILLS, "editing_playbook.md"), 5000)
+    if ed and not _pack_log_done["done"]:
+        _pack_log_done["done"] = True
+        print(f"taste pack loaded: {len(ed)} chars "
+              f"(cap 60000 — full pack, no truncation)")
     asst = _read(os.path.join(SKILLS, "assistant_playbook.md"), 2500)
     return ("\n\nASSISTANT PLAYBOOK (how to behave):\n" + asst if asst else "") + \
            ("\n\nEDITING TASTE PACK (full — use for taste and defaults):\n" + ed if ed else "")

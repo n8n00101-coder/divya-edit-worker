@@ -27,6 +27,26 @@ VIDEO_FX = None
 
 
 W, H, FPS = 1080, 1920, 30
+# v88 (Hark-like picture): the long-documentary path sets these two
+# module flags before rendering chapters (long_video.make_long_video)
+# and plan() stamps them onto the plan dict, so every frame of the
+# film shares them while shorts in another process never see them.
+# GRADE_LOCK: one colour grade for the whole film — the per-section
+# palette swaps that made v85-v87 chapters drift teal->green->brown
+# are ignored. FULL_FRAME: every beat must be a full-frame
+# composition (the _fit_above_label fill rule + richer backdrop).
+GRADE_LOCK = False
+FULL_FRAME = False
+# v88: optional scene-image generator hook, set by a caller (test
+# rigs / a future image route) as fn(prompt, dest_path) -> bool.
+# When set, scenes that wanted footage but got none receive a
+# generated full-frame photographic backdrop with a slow push-in
+# (photo-motion) instead of the bare gradient. Production default
+# None = off: real footage (Pexels) is the production route and
+# this hook never fabricates a backdrop silently — the plan records
+# every scene that used one (sc["has_sceneimg"]).
+_SCENE_IMG_GEN = None
+_FF_ACTIVE = False  # set per-plan in scene_frame; read by _fit_above_label
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONTS = os.path.join(HERE, "fonts")
 TR = 0.36  # transition length (s)
@@ -652,6 +672,10 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
     # a directed plan is audited but NOT repair-swapped (see
     # _enforce_plan's repair=False contract)
     _enforce_plan(p, brief, repair=not _directed86)
+    # v88: stamp the caller's composition flags onto the plan (set by
+    # the long path via the module globals above).
+    p["grade_lock"] = bool(GRADE_LOCK)
+    p["full_frame"] = bool(FULL_FRAME)
     return p
 
 
@@ -1256,6 +1280,35 @@ _VIS_NAME_MAP = {
 _SBG = {}
 
 
+def _ff_fill(lay, lo, hi):
+    """v88 FULL-FRAME FILL: crop the visual layer to its content and
+    scale the content so it FILLS the visual band — height ~94% of
+    the band or width ~92% of the frame, whichever binds, capped at
+    2.4x (bold flat graphics survive this upscale; the width-bound
+    case stops text-bearing visuals well before it). This is the
+    direct kill for the 'centred island on empty dark' look Ajju
+    rejected in v85-v87: the band fit below only ever scaled DOWN,
+    so a small clock/battery/scale drawing stayed small in a 930px
+    band no matter how the QC complained afterwards. Only active
+    for plans stamped full_frame (the long path)."""
+    bb = lay.getbbox()
+    if not bb:
+        return lay
+    x0, y0, x1, y1 = bb
+    cw, ch = max(1, x1 - x0), max(1, y1 - y0)
+    span = hi - lo
+    f = min(0.94 * span / ch, 0.92 * W / cw)
+    f = max(1.0, min(2.4, f))
+    if f <= 1.01:
+        return lay
+    content = lay.crop(bb).resize((int(cw * f), int(ch * f)),
+                                  Image.BICUBIC)
+    out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    out.alpha_composite(content, ((W - content.width) // 2,
+                                  lo + (span - content.height) // 2))
+    return out
+
+
 def _fit_above_label(lay, extra_scale=1.0):
     # v36 (Blind A1 — fixed zones, 720-layer coords x1.5): a 1080x1920 visual
     # layer's CONTENT fits the VISUAL band y 480-1410 (below the title zone
@@ -1285,7 +1338,7 @@ def _fit_above_label(lay, extra_scale=1.0):
             return lay
         top, bot = bb[1], bb[3]
     elif top >= lo and bot <= hi:
-        return lay
+        return _ff_fill(lay, lo, hi) if _FF_ACTIVE else lay
     bh = bot - top
     span = hi - lo
     s = min(1.0, span / max(1, bh))
@@ -1301,7 +1354,7 @@ def _fit_above_label(lay, extra_scale=1.0):
     dy = lo + (span - bh) // 2 - top
     dx = (W - lay.size[0]) // 2
     out.alpha_composite(lay, (dx, dy))
-    return out
+    return _ff_fill(out, lo, hi) if _FF_ACTIVE else out
 
 
 def _call_lib_vis(name, t, st, d, acc, words=None, extra=None):
@@ -1781,11 +1834,111 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None):
     p["footage"] = pool.footage_json()
 
 
+# ---------------- v88: generated photographic backdrops ------------
+# When a caller installs _SCENE_IMG_GEN (a test rig or a future image
+# route), scenes that asked for footage but received none get a
+# generated full-frame photographic backdrop instead of the bare
+# gradient: the photo fills the frame, the drawn graphic is treated
+# over it exactly like the v79 footage treatment (blurred + darkened
+# when the graphic must own the frame), and a SLOW backdrop-only
+# push-in/pan keeps the frame alive — the content layer's camera
+# stays static per the v33 rule; this is the still's own motion,
+# alternating direction per scene so it never reads as one constant
+# zoom. Production default: hook unset, feature off, Pexels footage
+# is the real route. Every use is recorded on the plan
+# (sc["has_sceneimg"], p["sceneimg"]) — never silent.
+
+_SIMG = {}
+
+
+def _attach_scene_images(p, wd):
+    gen = _SCENE_IMG_GEN
+    if gen is None:
+        return
+    import compliance as _comp_si
+    sdir = os.path.join(wd, "sceneimg")
+    os.makedirs(sdir, exist_ok=True)
+    out = {}
+    for i, sc in enumerate(p["scenes"]):
+        if sc.get("has_footage"):
+            continue
+        queries = [q for q in (sc.get("queries") or [])
+                   if str(q).strip()]
+        if not queries:
+            continue
+        dest = os.path.join(sdir, f"sc{i}.jpg")
+        ok = os.path.exists(dest) and os.path.getsize(dest) > 20_000
+        if not ok:
+            prompt = (str(queries[0]) +
+                      ", cinematic documentary photograph, moody "
+                      "natural light, rich texture and depth, "
+                      "no text, no words, no watermark")
+            try:
+                ok = bool(gen(prompt, dest))
+            except Exception as e:
+                print(f"scene image scene {i + 1} failed: "
+                      f"{str(e)[:100]}")
+                ok = False
+        if ok:
+            blur = bool(_comp_si.needs_blur_treatment(sc)) or \
+                str(sc.get("visual") or "") not in ("primary",)
+            out[i] = {"path": dest, "blur": blur,
+                      "query": str(queries[0])}
+            sc["has_sceneimg"] = True
+    if out:
+        p["sceneimg"] = out
+        print(f"scene images: photographic backdrops on "
+              f"{len(out)}/{len(p['scenes'])} scenes")
+
+
+def _sceneimg_frame(p, idx, t):
+    """The scene's photographic backdrop at scene-local time t, with
+    its slow push-in/pan applied, or None. Treated (blurred +
+    darkened) variants are cached alongside the clean one."""
+    info = (p.get("sceneimg") or {}).get(idx)
+    if not info:
+        return None
+    path = info["path"]
+    key = (path, bool(info.get("blur")))
+    try:
+        if key not in _SIMG:
+            im = Image.open(path).convert("RGB")
+            tw, th = int(W * 1.12), int(H * 1.12)
+            im = im.resize((tw, th), Image.BICUBIC)
+            if info.get("blur"):
+                im = im.filter(ImageFilter.GaussianBlur(7))
+                im = Image.eval(im, lambda v: int(v * 0.6))
+            _SIMG[key] = im
+        base = _SIMG[key]
+        sc = p["scenes"][idx]
+        d = max(0.1, float(sc.get("d") or 6.0))
+        q = eio(clamp(t / d))
+        bw, bh = base.size
+        if idx % 2 == 0:  # slow push-in
+            cw = int(bw * (1.0 - 0.055 * q))
+            chh = int(bh * (1.0 - 0.055 * q))
+            x0 = (bw - cw) // 2
+            y0 = (bh - chh) // 2
+        else:  # gentle pan at near-constant scale
+            cw = int(bw * 0.95)
+            chh = int(bh * 0.95)
+            x0 = int((bw - cw) * q)
+            y0 = (bh - chh) // 2
+        frame = base.crop((x0, y0, x0 + cw, y0 + chh)).resize(
+            (W, H), Image.BICUBIC).convert("RGBA")
+        frame.alpha_composite(_broll_shade())
+        return frame
+    except Exception:
+        return None
+
+
 def scene_frame(p, idx, t, return_layers=False):
     # return_layers (v35 frame-QC): also return the visual/label layer alpha
     # bboxes + the effect choice, so the QC can check geometry (overlap,
     # cutoff, collisions) on the actual layers instead of guessing from a
     # flat composited frame. Returns (rgb, vlay_bbox, llay_bbox, choice).
+    global _FF_ACTIVE
+    _FF_ACTIVE = bool(p.get("full_frame"))
     sc = p["scenes"][idx]; n = len(p["scenes"]); mood = sc["mood"]
     # v25: the look + title seed drive the palette, chapter card, layout and move.
     look = p.get("look", "A"); seed = p.get("seed", 0)
@@ -1804,11 +1957,19 @@ def scene_frame(p, idx, t, return_layers=False):
     # labels readable on bright footage. No clip -> the code-drawn
     # background below, byte-for-byte the old behaviour.
     _fb = _broll_frame(p, idx, t)
+    _sib = None if _fb is not None else _sceneimg_frame(p, idx, t)
     if _fb is not None:
         bg = _fb.convert("RGBA")
         bg.alpha_composite(_broll_shade())
+    elif _sib is not None:
+        bg = _sib
     else:
-        bg = background(mood, look, sc.get("section")).convert("RGBA")
+        # v88 GRADE_LOCK: one grade for the whole film — the section
+        # palette (which recoloured every section teal/green/brown in
+        # v85-v87) is ignored; mood glow + the look still carry it.
+        bg = background(mood, look,
+                        None if p.get("grade_lock")
+                        else sc.get("section")).convert("RGBA")
         # v36 (Blind C3): the FAR layer — two soft shape layers drifting at
         # 2 px/s and 6 px/s (different speeds), tiled so they wrap. The camera
         # stays static — only the background layers drift. (Bokeh = mid, dust = near.)
@@ -1822,11 +1983,16 @@ def scene_frame(p, idx, t, return_layers=False):
         # look bg, cached per kind in _SBG.
         _bk = sc.get("bg_kind")
         if _bk and _bk in VL.SCENE_BG:
-            if _bk not in _SBG:
+            # v88: full-frame plans get a more present scene layer
+            # (0.35 -> 0.55 alpha) — the backdrop must read as a
+            # place with depth, not a tint on a void.
+            _ffk = (_bk, "ff") if p.get("full_frame") else _bk
+            if _ffk not in _SBG:
                 _sb = VL.scene_bg(_bk).resize((W, H), Image.BICUBIC).convert("RGBA")
-                _sb.putalpha(_sb.split()[3].point(lambda v: int(v * 0.35)))
-                _SBG[_bk] = _sb
-            bg.alpha_composite(_SBG[_bk])
+                _alpha = 0.55 if p.get("full_frame") else 0.35
+                _sb.putalpha(_sb.split()[3].point(lambda v: int(v * _alpha)))
+                _SBG[_ffk] = _sb
+            bg.alpha_composite(_SBG[_ffk])
     lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     for (x, y, r, sp) in PART:
         yy = (y - t * sp - idx * 140) % (H + 200) - 100
@@ -1895,6 +2061,15 @@ def scene_frame(p, idx, t, return_layers=False):
     else:  # standard
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 945, acc)
         label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw, scale=float(p.get("title_scale") or 1.0)) if not nolabel else None
+    # v88 FULL-FRAME: the drawn visual is scaled to fill the visual
+    # band BEFORE its one motion effect is applied (so enter/emphasis
+    # animations still play on the filled composition). Layout 1 is
+    # already full-bleed by design; layouts 0/2 — including the old
+    # "compact" — are filled. This, with the _fit_above_label fill,
+    # is what makes the A1 frame-fill rule pass by construction
+    # instead of by post-hoc QC enlargement.
+    if p.get("full_frame") and layout != 1:
+        vlay = _ff_fill(vlay, 480, 1410)
     # v35: ONE motion effect on the visual layer — the choice made above by
     # pick_one_effect(). "build_in" means the visual animates itself (word-
     # timed / draw-on) and NO layer transform is applied on top of it; that
@@ -3083,6 +3258,14 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     if p.get("broll_sources") and notify:
         await notify(f"B-roll: {len(p['broll_sources'])} stock footage clips "
                      f"({', '.join(sorted({s['provider'] for s in p['broll_sources']}))}).")
+    # v88: photographic backdrops for the scenes footage did not
+    # reach — only when a caller installed the generator hook
+    # (_SCENE_IMG_GEN); production default off. Any failure leaves
+    # the plan untouched, exactly like the B-roll attach above.
+    try:
+        _attach_scene_images(p, wd)
+    except Exception as e:
+        print("scene image attach failed:", str(e)[:150])
     # v36 (Blind E6 — pre-render geometry QC + auto-fix): BEFORE the chunk
     # render, check every scene's layer geometry at mid-scene. If two layers
     # intersect, scale the visual to 80% and re-check; still hitting, drop
@@ -3283,8 +3466,10 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                 if _i == len(p["scenes"]) - 1 and _s.get("visual") == "stamp_cta":
                     continue
                 _lay = scene_frame(p, _i, max(0.6, float(_s.get("d") or 4) / 2), return_layers=True)
-                _frames.append((_i + 1, _lay[0], bool(_s.get("has_footage"))))
-                _islands.append((_i + 1, _lay[1], bool(_s.get("has_footage"))))
+                _ff88 = bool(_s.get("has_footage")
+                             or _s.get("has_sceneimg"))
+                _frames.append((_i + 1, _lay[0], _ff88))
+                _islands.append((_i + 1, _lay[1], _ff88))
             _checks += _comp.audit_frame_fill(_frames)
             # v79.2 (item 8): full-screen compositions — a main
             # visual that is a small central island FAILs (A6); a
@@ -3327,6 +3512,9 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             "sources_shown": bool(cfg.get("show_sources")) and any(_s.get("source") for _s in p["scenes"]),
             "camera_moves": False,  # v33: the engine's camera is static
             "footage_coverage": (sum(1 for s in p["scenes"] if s.get("has_footage")) / max(1, len(p["scenes"]))),
+            # v88: generated photographic backdrops are reported as
+            # their OWN coverage — never folded into footage.
+            "sceneimg_coverage": (sum(1 for s in p["scenes"] if s.get("has_sceneimg")) / max(1, len(p["scenes"]))),
             "end_card_text": p.get("end_question", ""),
             "chapters_done": None,
         }
