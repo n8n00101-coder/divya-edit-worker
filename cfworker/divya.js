@@ -856,6 +856,67 @@ function editLenFromWords(t) {
   if (/\bfull\b/.test(s)) return "full";
   return "auto";
 }
+// v93 (intent-yield, Ajju 2026-11-15): a pending short/long question
+// (crtpend / edpend) must YIELD to unrelated messages. A message is a
+// plausible ANSWER to the pending question only when it is short and
+// made of answer-words: short/long/face, a duration, a language/voice
+// word, or a bare yes/no. Anything else PARKS the intent (kept in KV,
+// resumable, same 1h expiry) and is answered on its own merits —
+// Julie never re-pitches the video question at a greeting, a math
+// question, or small talk (the "loneliness" lock: 'Em chesthunnav'
+// and '82639272-1 entha' both got the short/long pitch).
+function isPendAnswer(text, kind) {
+  const t = String(text || "").trim();
+  if (!t) return false;
+  if (/^\s*(short|long)\b/i.test(t)) return true;
+  if (kind === "edit" && /^\s*face\b/i.test(t)) return true;
+  if (kind === "edit" && /(upload|post)/i.test(t) && /(youtube|yt\b|instagram|insta)/i.test(t)) return true;
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length > 6) return false;
+  if (/^(yes|yeah|yep|ok|okay|sare|avunu|haa|han|cheyu|cheyyi|chey|go|proceed|start|ledhu|ledu|vadhu|no|nope|kaadhu|kadhu)[\s.!?]*$/i.test(t)) return true;
+  if (words.length <= 5 && /\b\d+\s*(s|sec|secs|second|seconds|min|mins|minute|minutes|m)\b/i.test(t)) return true;
+  if (words.length <= 5 && /\b(full|half\s*min)\b/i.test(t)) return true;
+  if (words.length <= 4 && /\b(telugu|hindi|english|male|female|voice)\b/i.test(t)) return true;
+  return false;
+}
+// v93: does a reply read as the short/long (or edit-kind) PITCH for a
+// parked video? Backstop for parked turns only — the brain paraphrases
+// the pitch, so the v51 verbatim anti-repeat guard never catches it;
+// this matches the pitch's shape, not its exact words.
+function isVideoPitch(ans, topic) {
+  const a = String(ans || "");
+  if (!a) return false;
+  const choice = /(which length|say\s+["']?short|just say|short\s+or\s+long|length do you want|ready to make|say one word|or face video)/i.test(a);
+  if (!choice) return false;
+  if (!/(video|reel|short|long)/i.test(a)) return false;
+  if (topic && a.toLowerCase().includes(String(topic).toLowerCase())) return true;
+  return /(which length do you want|say\s+["']?short["']?\s+or\s+["']?long|just say\s+["']?short|short\s*\(?\s*30\s*s[\s\S]{0,40}long|say one word)/i.test(a);
+}
+// v93.1: exact quick arithmetic ("82639272-1 entha") — answered in
+// code, never left to a distracted brain.
+function mathAnswer(t) {
+  let m = String(t || "").match(/(\d+)\s*([-+])\s*(\d+)/);
+  if (m) { const a = +m[1], b = +m[3]; return `${a} ${m[2]} ${b} = ${m[2] === "-" ? a - b : a + b}`; }
+  m = String(t || "").match(/(\d+)\s*(?:x|\*)\s*(\d+)/i);
+  if (m) return `${+m[1]} x ${+m[2]} = ${(+m[1]) * (+m[2])}`;
+  return null;
+}
+// v93.1: offer-shaped replies (incl. the anti-repeat guard's own nudge
+// lines) — on a parked/chat turn these are the pitch wearing a mask.
+function isVideoOffer(ans) {
+  const a = String(ans || "");
+  if (/(tell me what to make|tell me if you want me to go ahead|want me to (make|create|start)|shall i (make|create|start)|em cheyalo cheppu|proceed avvala)/i.test(a)) return true;
+  return a.length < 220 && /(video|reel|short)\b/i.test(a) && /(ready|start chestha|create chestha|cheyyadaniki|start cheyyadaniki)/i.test(a);
+}
+// v93.1: last-resort reply for a parked/chat turn — keyed to the
+// message itself, never a video nudge.
+function parkedFallback(text, lang) {
+  const ma = mathAnswer(text); if (ma) return ma;
+  const t = String(text || "").trim();
+  if (/^(hi+|hello|hey|helo|hai|namaste)\b/i.test(t)) return lang === "en" ? "Hi! Tell me what you need." : "Hii! Cheppu, em kavali?";
+  if (/(em\s+chesthunnav|enti\s+chesthunnav|what are you doing)/i.test(t)) return lang === "en" ? "Just here with you — nothing else going on. What do you need?" : "Emi cheyyatledhu, neethone unna. Cheppu, em kavali?";
+  return lang === "en" ? "Tell me — what do you need?" : "Cheppu, em kavali?";
+}
 // v50 (M4): playbook-leak guard — Julie's internal rules/methods must NEVER
 // reach a chat reply (Ajju 2026-11-15: a topic message got her numbered
 // rules dumped back). Numbered rule lists / ALWAYS-style rule lines / the
@@ -914,11 +975,21 @@ async function appTalk(env, u, text, lang, voiceId) {
   } catch {}
   // R40: resume a create that waited for short/long (asked once, now answered).
   let resumeBrief = null;
+  let pendParked = false, parkedTopic = ""; // v93: a pending intent yielding this turn
   const crtPend = JSON.parse((await env.KV.get(`crtpend:${u.n}`)) || "null");
   if (crtPend && /^\s*(short|long)\b/i.test(cleanText)) {
     await env.KV.delete(`crtpend:${u.n}`);
     const kw = /^\s*short/i.test(cleanText) ? "short (30s, 9:16)" : "long (up to 60 min, 16:9)";
     resumeBrief = `${crtPend.brief || "AUTO"} Length: ${kw}.`;
+  }
+  else if (crtPend && !isPendAnswer(cleanText, "create") && !isCreateOrder(cleanText) && !isNewTopicOrder(cleanText)) {
+    // v93 (intent-yield): NOT an answer to the pending question and NOT
+    // a new order — PARK the pending create (kept in KV, resumable by a
+    // later short/long, expiry unchanged at 1h) and let this message be
+    // answered on its own merits below. The brain note + pitch backstop
+    // further down keep the video out of this turn entirely.
+    pendParked = true; parkedTopic = extractTopic(crtPend.brief || "") || "";
+    if (!crtPend.parked) { try { crtPend.parked = true; crtPend.parkedAt = Date.now(); await env.KV.put(`crtpend:${u.n}`, JSON.stringify(crtPend), { expirationTtl: 3600 }); } catch {} }
   }
   // R40: edit a video attached in chat. Kind from the user's words; if none,
   // ask once and wait (edpend holds the staged job).
@@ -935,6 +1006,13 @@ async function appTalk(env, u, text, lang, voiceId) {
       edJob = edPend.job; edText = edPend.text;
       edKind = /^\s*short/i.test(cleanText) ? "short" : /^\s*long/i.test(cleanText) ? "long" : "face";
       await env.KV.delete(`edpend:${u.n}`);
+    }
+    else if (edPend && !isPendAnswer(cleanText, "edit") && !isCreateOrder(cleanText) && !isNewTopicOrder(cleanText)) {
+      // v93 (intent-yield): the pending edit-kind question yields too —
+      // the staged video stays parked in edpend (resumable); this
+      // message is not its answer and is answered normally below.
+      pendParked = true; parkedTopic = parkedTopic || (extractTopic(edPend.text || "") || "");
+      if (!edPend.parked) { try { edPend.parked = true; edPend.parkedAt = Date.now(); await env.KV.put(`edpend:${u.n}`, JSON.stringify(edPend), { expirationTtl: 3600 }); } catch {} }
     }
   }
   if (edJob && /(upload|post|pampinchu|pampu)/i.test(edText) && /(youtube|yt\b|instagram|insta)/i.test(edText)) {
@@ -1105,9 +1183,20 @@ async function appTalk(env, u, text, lang, voiceId) {
     }
   }
   let ans, mm;
+  // v93.1: pure chat turns (greeting / small talk / quick math) with NO
+  // pending intent and NO video context get the same yield protection
+  // as parked turns — the brain must not prime a video onto them.
+  const chitChat = !pendParked && !crtPend && !resumeBrief && (
+    /^\s*(hi+|hello|hey|helo|hai|namaste|hii+)[\s!.]*$/i.test(cleanText) ||
+    /(em\s+chesthunnav|enti\s+chesthunnav|ela\s+unnav|how\s+are\s+you|what\s+are\s+you\s+doing)/i.test(cleanText) ||
+    !!mathAnswer(cleanText));
   if (resumeBrief) { ans = lang === "en" ? "Starting your video now." : "Nee video start chesthunna."; mm = [null, resumeBrief]; }
   else {
-    ans = await userBrain(env, u, [{ role: "system", content: appSys(u.owner, lang) }, ...(await memContext(env, u.n)), ...h], lang);
+    const brainMsgs = [{ role: "system", content: appSys(u.owner, lang) }, ...(await memContext(env, u.n))];
+    if (pendParked) brainMsgs.push({ role: "system", content: "PARKED VIDEO QUESTION (v93): earlier you asked the user a short/long question for a video and they have NOT answered it — that question is parked, not cancelled, and will resume when they answer it. Their NEW message is unrelated to it. Answer the NEW message itself, normally and briefly: a greeting gets a greeting, a math question gets the number, small talk gets small talk. Do NOT mention the video, do NOT ask short/long again, do NOT start or offer a video in this reply." });
+    else if (chitChat) brainMsgs.push({ role: "system", content: "CHAT MESSAGE (v93): the user is greeting you, making small talk, or asking a quick question — no video has been mentioned in this conversation. Answer THIS message itself, briefly and warmly, in the user's language style (work out math exactly and give the number). Do NOT mention videos, do NOT offer to make one, do NOT say you are ready to create — just chat normally." });
+    brainMsgs.push(...h);
+    ans = await userBrain(env, u, brainMsgs, lang);
     mm = ans.match(/\[\[\s*CREATE\s*:\s*([^\]]*)\]\]/i);
     ans = ans.replace(/\[\[[^\]]*\]\]/g, "").replace(/\*\*|__|^#+\s*/gm, "").trim();
     // v67: small models sometimes continue the chat themselves (writing
@@ -1119,6 +1208,31 @@ async function appTalk(env, u, text, lang, voiceId) {
     // and the user did not offer one, force a create instead — the rule holds
     // even if the model disobeys the prompt.
     if (!mm && /(\battach\b|\bupload\b|\bsend\b|\bpampu\b).{0,30}\bvideo\b|\bvideo\b.{0,30}(\battach\b|\bupload\b|\bpampu\b)/i.test(ans) && !/(naa\s+video|nenu\s+(pampina|upload)|video\s+istha|link\s*pampanu)/i.test(text)) { mm = [null, cleanText]; ans = lang === "en" ? "Starting now — I'll make everything A to Z myself: script, visuals, voice, captions, edit." : "Sare, start chesa — script, visuals, voice, captions, edit, motham nene A to Z chestha. Ready ayyaka ikkade pampistha."; }
+    if (pendParked || chitChat) {
+      // v93 backstop: a parked intent (or a pure chat turn) must not
+      // fire or pitch a video on an unrelated message, however the
+      // brain phrases it. A [[CREATE]] marker is stripped (genuine new
+      // orders were excluded from parking above, so they never reach
+      // here parked); a pitch / offer / verbatim-repeat reply is
+      // replaced by a corrective brain call that sees ONLY this
+      // message; quick math is answered deterministically in code.
+      // The fallback is parkedFallback — NEVER antiRepeatLine, whose
+      // own lines are video nudges ("tell me what to make and I'll
+      // start"), which is how the loop survived the v51 guard.
+      if (mm) mm = null;
+      const ma = mathAnswer(cleanText);
+      const ansTxt = String(ans || "");
+      const repeated = !!ansTxt && h.some((m) => m && m.role === "assistant" && String(m.content || "").trim() === ansTxt.trim());
+      if (ma && (isVideoPitch(ans, parkedTopic) || !ansTxt.includes(ma.split(" = ")[1]))) {
+        ans = ma;
+      } else if (!ans || isVideoPitch(ans, parkedTopic) || isVideoOffer(ans) || repeated || /^(Starting now|Sare, start chesa)/.test(ansTxt)) {
+        let fix = "";
+        for (let attempt = 0; attempt < 2 && !fix; attempt++) {
+          try { const f = await userBrain(env, u, [{ role: "system", content: "Answer ONLY the user's message below — briefly and helpfully, in the user's own language style (Romanized Telugu stays Romanized Telugu, English stays English). Work out math exactly and give the number. If they ask what you are doing, answer conversationally — you are Julie, chatting with them. No video talk, no offers, no video questions." }, { role: "user", content: cleanText }], lang); const fc = String(f || "").replace(/\[\[[^\]]*\]\]/g, "").replace(/\*\*|__|^#+\s*/gm, "").trim(); if (fc && !isVideoPitch(fc, parkedTopic) && !isVideoOffer(fc)) fix = fc; } catch {}
+        }
+        ans = fix || (ma || parkedFallback(cleanText, lang));
+      }
+    }
   }
   const askOnly = askOnlyQ(text);
   // R30: app chat CAN create from scratch — same trigger as the WhatsApp brain
