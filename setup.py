@@ -2686,10 +2686,44 @@ def flow_resend(page, job, cfg):
     if not ok:
         return _fail(f"{name} signup form kanipinchaledu — site layout marindhi (step: signup form). Take Control tho try cheyyi.")
     tick_consent(page)
-    if not click_submit(page):
-        click(page, ["button:has-text('Sign up')", "button:has-text('Create account')", "button[type='submit']"])
+    # Submit via the form's own "Create account" button BY TEXT: the
+    # SSO buttons share this form and its first type=submit is "Log in
+    # with Google" — run 4's generic click_submit landed the runner on
+    # accounts.google.com and the account was never created (which is
+    # also why login said "Invalid credentials" and no reset mail
+    # existed to feed).
+    submitted = False
+    try:
+        form = page.locator("form:has(input[type='email']), form:has(input[name*='email' i]), form:has(input[type='password'])").first
+        if form.count():
+            loc = form.locator("button:has-text('Create account')")
+            for i in range(min(loc.count(), 3)):
+                el = loc.nth(i)
+                try:
+                    if el.is_visible():
+                        el.click(timeout=8000)
+                        submitted = True
+                        break
+                except Exception:
+                    continue
+    except Exception:
+        pass
+    if not submitted:
+        click_submit(page)
     page.wait_for_timeout(4000)
     maybe_captcha(page)
+    if "accounts.google.com" in (page.url or "") or "github.com/login" in (page.url or ""):
+        # A social button was hit anyway — back to the form and redo
+        # the submit explicitly (fields may need refilling).
+        goto(page, cfg["url"])
+        page.wait_for_timeout(2500)
+        _fill_identity_fields(page, job)
+        fill(page, _AUTH_EMAIL, job["email"])
+        fill(page, _AUTH_PASS, job["pass"])
+        tick_consent(page)
+        click(page, ["button:has-text('Create account')"])
+        page.wait_for_timeout(4000)
+        maybe_captcha(page)
     _resend_dbg(page, "signup-after-submit")
     if check_stop():
         return _stopped()
