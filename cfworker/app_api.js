@@ -647,7 +647,7 @@ async function appApi(req, env, url, ctx) {
   // phone). Today: lvMini — the floating mini message box over the live
   // view. Default ON when unset.
   if (p === "prefs" && req.method === "GET") { const pr = JSON.parse((await env.KV.get(`prefs:${u.n}`)) || "{}"); return appJson(req, { ok: true, prefs: pr }); }
-  if (p === "prefs" && req.method === "POST") { const b = await req.json().catch(() => ({})); const cur = JSON.parse((await env.KV.get(`prefs:${u.n}`)) || "{}"); if (typeof b.lvMini === "boolean") cur.lvMini = b.lvMini; await env.KV.put(`prefs:${u.n}`, JSON.stringify(cur)); return appJson(req, { ok: true, prefs: cur }); }
+  if (p === "prefs" && req.method === "POST") { const b = body; /* v54: use the body appApi already parsed — a second req.json() always throws (body consumed), so the pref was NEVER stored and every toggle silently failed to persist */ const cur = JSON.parse((await env.KV.get(`prefs:${u.n}`)) || "{}"); if (typeof b.lvMini === "boolean") cur.lvMini = b.lvMini; await env.KV.put(`prefs:${u.n}`, JSON.stringify(cur)); return appJson(req, { ok: true, prefs: cur }); }
   if (p === "voice/speak" && req.method === "POST") {
     // v50 (V4): ASYNC house-voice route. The text is charged TOK.COST.voice
     // in tokens (the only gate), a vjob is stored, and the voice workflow
