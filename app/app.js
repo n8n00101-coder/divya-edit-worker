@@ -553,7 +553,7 @@ function playHouseSample() { return playAudioFile("house-sample-en.mp3"); }
    bundled with the app (voice-samples/<id>.mp3, rendered once with the same
    Kokoro model + voice + rate + pitch the live engine uses) — the sample
    plays with ZERO model download, on any network. */
-function playVoiceSample(id) { return playAudioFile("voice-samples/" + id + ".mp3"); }
+function playVoiceSample(id) { return playAudioFile("voice-sample-" + id + ".mp3"); }
 function speak(text, ov, opts) {
   return new Promise(async res => {
     const fin = ok => res(!!ok);
