@@ -3061,7 +3061,7 @@ const SETUP_PROVIDERS = {
   resend: { name: "Resend", site: "resend.com", url: "https://resend.com/signup", flow: "resend" },
 };
 function setupJobId() { return [...crypto.getRandomValues(new Uint8Array(10))].map(b => b.toString(16).padStart(2, "0")).join(""); }
-function setupPass() { const c = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#"; const r = crypto.getRandomValues(new Uint8Array(16)); return [...r].map(b => c[b % c.length]).join(""); }
+function setupPass() { const c = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#"; const r = crypto.getRandomValues(new Uint8Array(16)); const out = [...r].map(b => c[b % c.length]); const D = "23456789", S = "!@#"; const p1 = r[0] % 16, p2 = (p1 + 1 + (r[1] % 15)) % 16; out[p1] = D[r[2] % D.length]; out[p2] = S[r[3] % S.length]; return out.join(""); } // v94 (F7): force one digit + one symbol at two distinct positions — signup checklists (Resend: letters+numbers+symbols) silently rejected symbol-less draws
 async function setupDispatch(env, job, provider, browser) {
   // v47 (R51): `browser` selects the runner's browser mode — "profile"
   // (persistent-profile real browser, session restored from KV) or

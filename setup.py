@@ -2727,6 +2727,12 @@ def flow_resend(page, job, cfg):
     _resend_dbg(page, "signup-after-submit")
     if check_stop():
         return _stopped()
+    if "/signup" in (page.url or "") and _page_says(page, ["not satisfied"]):
+        # The password checklist refused the form (run 5: the chain
+        # password had no symbol). Fail fast with the real reason
+        # instead of wandering into login/reset for an account that
+        # was never created.
+        return _fail(f"{name} signup password rule satisfy avvaledu — password lo letters, numbers mariyu symbols undali (step: signup form).", extra={"no_retry": True})
     # Verification wall (link or code by email) — the server-fed pause.
     if _page_says(page, VERIFY_NEEDLES) or _visible(page, ["input[name*='code' i]", "input[inputmode='numeric']"]):
         if not pause_for_email_verify(page, job, cfg):
