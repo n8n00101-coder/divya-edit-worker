@@ -237,7 +237,16 @@
           <div class="card note" id="setupStateCard" hidden>
             <p><b id="setupStateTitle"></b></p>
             <p class="muted small" id="setupStateSub"></p>
+            <!-- v88 (N2): the FULL provider step list lives HERE, on the
+                 Setup screen only — chat shows a one-line summary. -->
+            <div id="setupStepsList"></div>
             <button class="btn secondary" id="setupRetryBtn" data-t="setupRetry" hidden></button>
+          </div>
+          <!-- v88 (F11): honest status while this account runs on the
+               inviter's models (own keys not ready yet). Shown by
+               loadSetupState() from setup/status keyTier. -->
+          <div class="card note" id="inviterNote" hidden>
+            <p class="small" id="inviterNoteTxt"></p>
           </div>
           <!-- v40: Gmail re-consent — shown by loadSetupState() only when
                setup/status reports gmail needs-scope / no-token during a
@@ -304,6 +313,9 @@
       <section id="s-plan" class="screen" data-title="sPlan">
         <div class="scroll pad">
           <p class="muted" id="planNow"></p>
+          <!-- v88 (N5): ONE unified token total for the account (weekly
+               remaining + bonus pool + plan grant), filled by loadPlan(). -->
+          <div class="card tok-total"><span class="tt-label" data-t="tokTotalL"></span><b class="tt-num" id="tokTotal">–</b><span class="muted small" id="tokTotalSub"></span></div>
           <div class="card plan">
             <h2 data-t="freePlan"></h2>
             <ul class="ticks"><li data-t="f0"></li><li data-t="f1"></li><li data-t="f2"></li><li data-t="f3"></li><li data-t="f4"></li></ul>
@@ -346,6 +358,7 @@
             <div class="row"><span data-t="email"></span><span class="muted r" id="profEmail"></span></div>
             <div class="row"><span data-t="phone"></span><span class="muted r" id="profPhone"></span></div>
             <a class="row link" href="#/plan"><span data-t="planL"></span><span class="muted r"><span id="profPlan"></span> ›</span></a>
+            <div class="row"><span data-t="tokensL"></span><span class="muted r" id="profTok">–</span></div>
             <a class="row link" href="#/chat"><span data-t="editsLeftT"></span><span class="muted r"><span id="profEdits"></span> ›</span></a>
             <a class="row link" href="#/connect"><span data-t="connected"></span><span class="muted r"><span id="profConn"></span> ›</span></a>
           </div>
@@ -418,7 +431,10 @@
       <div id="bubbleLog" class="bubble-log" aria-live="polite"></div>
       <div class="bubble-input"><input id="bubbleText" type="text" data-tp="bubblePh" aria-label="Message Julie"><button id="bubbleSend" class="btn primary">➤</button></div>
     </div>
-    <button id="bubbleBtn" class="bubble-btn" aria-label="Julie chat"><img src="mascot.webp" alt=""></button>
+    <!-- v88 (N3): NO floating mascot button — Ajju: the penguin must never
+         float over content on any screen (it covered plan prices). The
+         panel stays for the Blind-Mode captcha guide, which opens it
+         programmatically; the only mascot left is the chat hero avatar. -->
   </div>
   <div id="sr" class="sr-only" aria-live="polite"></div>
   <div id="tabSwitcher" class="tab-switcher" hidden>

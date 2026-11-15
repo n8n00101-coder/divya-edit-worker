@@ -105,7 +105,7 @@ BROWSER_MODE = os.environ.get("BROWSER_MODE", "ephemeral")
 PROFILE_MODE = BROWSER_MODE == "profile"
 PROFILE_STATE = None
 
-EMAIL_PAUSE_MSG = "Nee email lo vachina link ni okkasari tap cheyu, migilina anni nene chestha"
+EMAIL_PAUSE_MSG = "Verification link nee email ki vachindhi — link ni nuvvu tap cheyyaku, Julie ne link open chesthundhi. Ayyaka Continue nokku."
 SMS_PAUSE_MSG = "Nee phone ki vachina SMS code ni app lo enter chesi Continue nokku — migilina anni nene chestha."
 CAPTCHA_PAUSE_MSG = "Image captcha — Take Control tho nuvve okka step cheyyi, tarvatha Continue nokku."
 GOOGLE_PAUSE_MSG = "Google sign-in — Take Control tho nuvve sign in cheyyi, tarvatha Continue nokku."
@@ -124,7 +124,7 @@ def SIGNIN_PAUSE_MSG(name):
     # v39: the one plain line for a provider whose auth page needs the
     # USER's own sign-in (Groq SSO chooser / existing account). The app
     # shows this next to an "Open in browser" button for the sign-in URL.
-    return f"{name} sign-in kavali — browser lo open chesi sign in cheyu, tarvatha Continue nokku, migilina anni nene chestha."
+    return f"{name} sign-in kavali — Take Control tho Divya browser lone sign in cheyu, tarvatha Continue nokku, migilina anni nene chestha."
 
 # v39: last progress payload, re-posted as a heartbeat while the runner
 # waits on a pause — so the Worker's staleness watchdog sees a live
@@ -1166,8 +1166,8 @@ def _verify_fail_msg(name):
         LAST_TC_TIMEOUT = False
         return (f"{name} sign-in time ayipoyindhi — Take Control lo sign in "
                 f"cheyaledhu, malli setup run cheyachu (step: Take Control sign-in).")
-    base = (f"{name} sign-in complete avvaledu — verification link open chesi "
-            f"sign in ayyaka malli setup run cheyyi (step: email verification).")
+    base = (f"{name} sign-in complete avvaledu — verification link Divya ne open "
+            f"chesthundhi; mail rakapothe Take Control tho sign in chesi malli setup run cheyyi (step: email verification).")
     return base + (f" [{LAST_VERIFY_DIAG}]" if LAST_VERIFY_DIAG else "")
 
 
@@ -1522,7 +1522,16 @@ def flow_email_signup(page, job, cfg):
         page.wait_for_timeout(1500)
         ctrls = wait_for_auth_form(page, cfg, timeout_s=30)
     if ctrls is None:
-        return _fail(f"{name} sign-in page load avvaledu — form kanipinchaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
+        # v88 (G3): no auth form at all can mean the sealed profile
+        # already holds a signed-in session for this provider (the user
+        # signed in via Take Control, or a previous run landed it).
+        # Detect the session and go straight to key creation instead of
+        # failing the provider as a "form not found" miss.
+        if _verify_signed_in(page, cfg, name):
+            progress("running", "api-key", f"{name} session already undhi — key create chesthunna.", page.url)
+            ctrls = {"signed_in": True}
+        else:
+            return _fail(f"{name} sign-in page load avvaledu — form kanipinchaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
     if ctrls.get("stopped"):
         return _stopped()
     mode = detect_auth_mode(ctrls)
@@ -1640,10 +1649,12 @@ def flow_email_signup(page, job, cfg):
     sms = maybe_sms(page, job)
     if sms is False:
         return _stopped()
-    # Email verification: Divya cannot open the user's mailbox yet (Gmail
-    # connect pending) — pause and let the user tap the link + Continue.
-    # v39 C7: the magic-link resume opens the supplied link in this browser
-    # (session must land here) and verifies the console before proceeding.
+    # Email verification (v39 C7): the server feeds the link from the
+    # user's Gmail (or the user supplies it via setup/continue) and the
+    # magic-link resume opens it in THIS browser — the session must land
+    # here; the user must NOT tap the link themselves. On resume without
+    # a link, _verify_signed_in detects a session the user created via
+    # Take Control and key creation proceeds (v88 G3).
     if _page_says(page, VERIFY_NEEDLES):
         if not pause_for_email_verify(page, job, cfg):
             return _fail(_verify_fail_msg(cfg["name"]), extra={"no_retry": True})
@@ -2090,11 +2101,24 @@ def flow_pexels(page, job, cfg):
     if state != "has-key" and _page_says(page, VERIFY_NEEDLES):
         # A fresh Pexels account can ask for email verification (Google
         # signups usually skip it). Same pause kind as everywhere else:
-        # paused-email — the user taps the link in their mail, then
-        # Continue; the API page is re-read right after.
+        # paused-email — the server feeds the link and the runner opens
+        # it on resume (the user never taps it); the API page is re-read
+        # right after.
         progress("paused", "verify-email", EMAIL_PAUSE_MSG, page.url, reason="email")
         if wait_pause():
             return _stopped()
+        # v88 (G2/G3): the server feeds the verification link from the
+        # user's Gmail into the job record — open it in THIS browser
+        # (the pause text promises Julie opens it; the user must not
+        # tap it), then re-read the API page below.
+        try:
+            _j = get_job()
+            _link = str(_j.get("verify_link") or _j.get("verifyLink") or "").strip()
+            if _link.startswith("http"):
+                goto(page, _link, tries=2)
+                page.wait_for_timeout(2500)
+        except Exception:
+            pass
         goto(page, cfg["url"])
         page.wait_for_timeout(2500)
         text, html = _pexels_snapshot(page)
