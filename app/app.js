@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v53";
+const APP_V = "julie-v54";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -1379,7 +1379,7 @@ function openLive(control) {
       `<div class="lv-bar"><button class="lv-btn danger" data-lv-stop>${esc(t("setupStop"))}</button><button class="lv-btn" data-lv-take>${esc(t("setupTake"))}</button><button class="lv-btn primary" data-lv-done>${esc(t("setupDidIt"))}</button></div>`;
     document.body.appendChild(v); bindLive(v);
   }
-  v.hidden = false; liveCtl = !!control; syncLiveCtl(v); { const st = v.querySelector("[data-lv-status]"); if (st) st.textContent = "Opening\u2026"; }
+  v.hidden = false; liveCtl = !!control; syncLiveCtl(v); applyLvMini(); /* v54: the mini box always reflects the current pref at open time */ { const st = v.querySelector("[data-lv-status]"); if (st) st.textContent = "Opening\u2026"; }
   // v88 (H3): Muse-style header — status line "Working · <host>" /
   // "Completed · <host>" / "Paused · <host>" (+ "You control" while the
   // user drives) and the runner's current step under it.
@@ -2236,7 +2236,7 @@ if (connBack) {
   history.replaceState(null, "", BASE + "#/chat");
   setTimeout(() => { toast("✓ " + connBack + " connect ayyindi"); loadConnect().catch(() => {}); if (S.token) pollSetup(); }, 600);
 }
-applyTheme(); applyLang(); $("#setVoice").checked = S.voice; $("#setVF").checked = S.vf; $("#setBlind").checked = S.blind; applyBlind(); $("#wakeToggle").checked = S.wake && !!SR; $("#wakeToggle").disabled = !SR; updateBtn(); setJob(null); setVState("idle");
+applyTheme(); applyLang(); $("#setVoice").checked = S.voice; $("#setVF").checked = S.vf; $("#setBlind").checked = S.blind; applyBlind(); applyLvMini(); /* v54: sync the Floating-message-box switch + box from S at boot like every other toggle — it was omitted, so the switch showed the hardcoded HTML state while the feature was off */ $("#wakeToggle").checked = S.wake && !!SR; $("#wakeToggle").disabled = !SR; updateBtn(); setJob(null); setVState("idle");
 if (S.token) { enter(); netCheck(); } else showLogin();
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 /* ---------- app updates: a stale cached shell bit twice (black screen; missing
