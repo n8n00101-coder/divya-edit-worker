@@ -2581,7 +2581,8 @@ def _resend_reset_password(page, job, cfg):
     progress("paused", "verify-email", MAGIC_LINK_PAUSE_MSG(name), page.url, reason="email", verify_wait=True)
     if not click_submit(page):
         click(page, ["button:has-text('Reset password')", "button:has-text('Reset')", "button:has-text('Send')", "button:has-text('Continue')", "button[type='submit']"])
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(8000)
+    _resend_dbg(page, "reset-sent")
     link = wait_for_fed_link(300)
     if not link:
         link = fed_verify_link(get_job())
@@ -2745,6 +2746,12 @@ def flow_resend(page, job, cfg):
         if key:
             return _ok(key=key)
         return _fail(f"{name} key kanipinchaledu — create dialog tarvatha kuda (step: key creation). Take Control tho try cheyyi.")
+    if _page_says(page, ["something went wrong while processing"]):
+        # Resend's generic processing refusal (runs 6-7, form fully
+        # valid): the account may still exist from an earlier partial
+        # attempt — let the auth tail (login, then the fed password
+        # reset) decide before this is called a wall.
+        return _resend_after_auth(page, job, cfg)
     err = _submit_error(page)
     if err and "already" not in err.lower():
         return _fail(f"{name} signup error: {err} (step: signup form).")
