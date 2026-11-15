@@ -621,7 +621,9 @@ async function handle(env, m) {
     const askOnly = /(gala(va|ra|vu)|cheya(gala|lava)|chesta(va|ra)|can you|could you|possible\s*a|avuthunda)\s*\??\s*$/i.test(text) && !/\b(chey(yi|i)?|create|make)\b\s*$/i.test(text);
     let go = !!mm && !askOnly;
     if (mm && askOnly) ans = "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
-    if (go && await env.KV.get(`busy:${user}`)) { ans = "Okka video already tayaru avuthondi. Adi vachaka next di start chestha."; go = false; }
+    // v51 (G1): a NEW-topic order starts even while another video
+    // renders — never deferred to "next di" (app path parity).
+    if (go && !isNewTopicOrder(text) && await env.KV.get(`busy:${user}`)) { ans = "Okka video already tayaru avuthondi. Adi vachaka next di start chestha."; go = false; }
     // v79 (FIX 4): an edit of the last finished video — structural
     // (the brain's [[CREATE:]] is not required for an edit to start);
     // it spends the ORIGINAL video's cost and suppresses the create.
