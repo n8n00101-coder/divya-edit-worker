@@ -2395,6 +2395,40 @@ def flow_mistral(page, job, cfg):
     return _fail(f"{name} key kanipinchaledu — phone verification tarvatha kuda (step: key creation). Take Control tho try cheyyi.")
 
 
+def _resend_dbg(page, tag):
+    """Diagnostic snapshot of the Resend dashboard for the Actions log —
+    URL, dialog/button/input inventory, a slice of visible text. Any
+    re_-shaped token is redacted BEFORE printing: a key value must
+    never reach a log, even a failed run's."""
+    try:
+        def red(s):
+            return re.sub(r"re_[A-Za-z0-9_\-]{4,}", "re_...", str(s or ""))
+        btns = []
+        for el in page.locator("button").all()[:20]:
+            try:
+                if el.is_visible():
+                    btns.append((el.inner_text() or "").strip()[:40])
+            except Exception:
+                continue
+        inps = []
+        for el in page.locator("input").all()[:12]:
+            try:
+                if el.is_visible():
+                    inps.append({"type": el.get_attribute("type"), "name": el.get_attribute("name"),
+                                 "ph": el.get_attribute("placeholder")})
+            except Exception:
+                continue
+        txt = ""
+        try:
+            txt = (page.inner_text("body") or "")[:400].replace("\n", " | ")
+        except Exception:
+            pass
+        print(f"RESEND-DBG {tag}: url={page.url} dialogs={page.locator('[role=dialog]').count()} "
+              f"buttons={red(btns)} inputs={red(inps)} text={red(txt)}", flush=True)
+    except Exception as e:
+        print(f"RESEND-DBG {tag}: failed: {e}", flush=True)
+
+
 def flow_resend(page, job, cfg):
     """v94 (F7): Resend — signup + email verification are the generic
     email flow (the server feeds the verification link; the runner
@@ -2407,24 +2441,54 @@ def flow_resend(page, job, cfg):
         return res
     name = cfg["name"]
     progress("running", "api-key", f"{name} key dialog open chesthunna.", cfg["keys_url"])
+    _resend_dbg(page, "after-generic-fail")
     goto(page, cfg["keys_url"])
     page.wait_for_timeout(3000)
+    _resend_dbg(page, "keys-page")
     key = extract_key(page, cfg["key_patterns"])
     if key:
         return _ok(key=key)
     click(page, ["button:has-text('Create API Key')", "button:has-text('Create')", "a:has-text('Create API Key')"])
-    page.wait_for_timeout(2500)
+    # Wait for the dialog to actually appear (up to 10s).
+    for _ in range(10):
+        try:
+            if page.locator("[role='dialog']").count():
+                break
+        except Exception:
+            pass
+        page.wait_for_timeout(1000)
+    _resend_dbg(page, "dialog-open")
     # The dialog's Name field is required — fill it if offered.
     try:
         fill(page, ["[role='dialog'] input[type='text']", "[role='dialog'] input:not([type])",
                     "input[name='name']", "input[placeholder*='name' i]"], "julie-mail")
     except Exception:
         pass
+    try:
+        lab = page.get_by_label(re.compile("name", re.I))
+        if lab.count() and not (lab.first.input_value() or "").strip():
+            lab.first.fill("julie-mail")
+    except Exception:
+        pass
     page.wait_for_timeout(800)
     click(page, ["[role='dialog'] button:has-text('Create API Key')", "[role='dialog'] button:has-text('Create')",
-                 "button:has-text('Create API Key')", "button:has-text('Create')", "button:has-text('Add')"])
-    page.wait_for_timeout(4000)
-    key = extract_key(page, cfg["key_patterns"])
+                 "[role='dialog'] button[type='submit']", "button:has-text('Create API Key')",
+                 "button:has-text('Create')", "button:has-text('Add')"])
+    # Poll for the revealed key (up to 10s), page HTML + rendered text.
+    key = None
+    for _ in range(10):
+        page.wait_for_timeout(1000)
+        key = extract_key(page, cfg["key_patterns"])
+        if key:
+            break
+        try:
+            m = re.search(r"(re_[A-Za-z0-9_\-]{20,})", page.inner_text("body") or "")
+            if m:
+                key = m.group(1)
+                break
+        except Exception:
+            pass
+    _resend_dbg(page, "after-create")
     if not key:
         # The freshly shown key may live in a readonly input's value.
         try:
