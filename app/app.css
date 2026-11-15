@@ -490,3 +490,26 @@ input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=
 .tok-total{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .tok-total .tt-num{font-size:24px;font-weight:750;letter-spacing:-.01em}
 .tok-total .tt-label{font-weight:650}
+
+/* ==== v88 H3/H4/N6: live-view step line, chat browser card, Muse composer ====
+   H3: the runner's current step sits under the live-view header. */
+.lv-sub{padding:2px 14px 6px;font-size:12.5px;color:var(--muted);min-height:16px}
+/* H4: browser card inside the chat setup box — frame + step, tap = live view */
+.browser-card{margin:10px 0 2px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface2)}
+.browser-card img{display:block;width:100%;aspect-ratio:412/915;max-height:300px;object-fit:cover;object-position:top;background:#000;cursor:pointer}
+.bc-meta{display:flex;align-items:center;gap:7px;padding:7px 10px;font-size:12.5px;color:var(--muted)}
+.bc-dot{width:8px;height:8px;border-radius:50%;background:#3ba55d;flex:none;animation:bcPulse 1.6s ease-in-out infinite}
+@keyframes bcPulse{0%,100%{opacity:1}50%{opacity:.35}}
+.bc-step{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* N6: composer = Muse's floating pill — compact (~56px), side margins,
+   fully rounded, [+] attach + mic inside as ghost circles, send = one
+   filled circle with an up arrow. Auto-grow caps at 140px (JS) with the
+   textarea scrolling internally; safe-area padding keeps it clear of
+   the bottom edge/tab bar, and it stays floating above the keyboard. */
+.composer-wrap{padding:6px 12px calc(10px + var(--sab));background:transparent}
+.composer{border-radius:999px;padding:5px;gap:2px;align-items:flex-end}
+.composer textarea{padding:9px 6px;max-height:140px}
+.composer .icon-btn{width:40px;height:40px;border-radius:50%;background:transparent;border:0;box-shadow:none;color:var(--text);flex:none}
+.composer .send-btn{width:40px;height:40px}
+#micSend.mic{background:transparent;color:var(--text)}
+#micSend.send{background:var(--accent);color:var(--on-accent)}

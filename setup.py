@@ -388,11 +388,15 @@ def capture_profile(ctx):
 
 def profile_context_kwargs():
     """The user's own browser configuration for the profile browser:
-    a normal laptop viewport, their locale and timezone, and their
-    saved session when one exists. Nothing is disguised — these are
-    the settings a real browser for this user carries."""
+    a PHONE viewport (v88 H1 — Ajju: the live view must show mobile
+    layouts like Muse's browser, readable on the user's phone, not a
+    desktop page squeezed), their locale and timezone, and their saved
+    session when one exists."""
     kw = {
-        "viewport": {"width": 1366, "height": 768},
+        "viewport": {"width": 412, "height": 915},
+        "device_scale_factor": 2,
+        "is_mobile": True,
+        "has_touch": True,
         "locale": "en-IN",
         "timezone_id": "Asia/Kolkata",
         "color_scheme": "light",
@@ -409,7 +413,7 @@ def open_context(browser):
     if PROFILE_MODE:
         ctx = browser.new_context(**profile_context_kwargs())
     else:
-        ctx = browser.new_context(viewport={"width": 1280, "height": 800})
+        ctx = browser.new_context(viewport={"width": 412, "height": 915}, device_scale_factor=2, is_mobile=True, has_touch=True)
     try:
         ctx.add_init_script(CURSOR_JS)  # v68: visible agent cursor in the live view
     except Exception:
@@ -658,6 +662,48 @@ def fill(page, selectors, value, timeout=8000):
     return False
 
 
+def human_move(page, x, y):
+    """Move the agent cursor to (x, y) in visible steps (v88 H2 — Ajju:
+    the live view must LOOK like Muse working, cursor travelling to
+    its target, not teleporting). The injected cursor div follows
+    mousemove, so stepped moves read as travel in the streamed frames."""
+    try:
+        page.mouse.move(float(x), float(y), steps=14)
+        page.wait_for_timeout(120)
+    except Exception:
+        pass
+
+
+def human_scroll(page, dy, steps=None):
+    """Scroll in visible increments (v88 H2): wheel bursts of ~280px
+    with a frame attempt between them, so a viewer watches the page
+    move bit by bit (the transcript-scroll pattern) instead of jumping."""
+    try:
+        total = float(dy)
+        if total == 0:
+            return
+        n = steps or max(1, min(8, int(abs(total) // 280) + 1))
+        per = total / n
+        for _ in range(n):
+            page.mouse.wheel(0, per)
+            page.wait_for_timeout(220)
+            tc_post_frame(page, force=True)
+    except Exception:
+        pass
+
+
+def _cursor_to(page, el):
+    """Travel the cursor to an element's centre + post a frame, so the
+    click that follows is seen landing on the target (v88 H2)."""
+    try:
+        bb = el.bounding_box()
+        if bb:
+            human_move(page, bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+            tc_post_frame(page, force=True)
+    except Exception:
+        pass
+
+
 def click_submit(page):
     """Click the AUTH FORM's own submit button — the form holding the email
     field. Text matching alone is unsafe ('Sign up' is also the header nav
@@ -674,6 +720,7 @@ def click_submit(page):
                     el = loc.nth(i)
                     try:
                         if el.is_visible():
+                            _cursor_to(page, el)
                             el.click(timeout=8000)
                             return True
                     except Exception:
@@ -694,6 +741,7 @@ def click(page, selectors, timeout=8000):
                 el = loc.nth(i)
                 try:
                     if el.is_visible():
+                        _cursor_to(page, el)
                         el.click(timeout=timeout)
                         return True
                 except Exception:
@@ -1177,7 +1225,7 @@ TC_PAUSE_MSG = "Sign-in okkasari nuvve cheyyi — Divya browser screen ikkade ap
 _TC_FRAME_LAST = {"at": 0.0, "hash": ""}
 
 
-def tc_post_frame(page):
+def tc_post_frame(page, force=False):
     """Stream one screenshot of the live browser to the Worker (the app
     shows it to the user during Take Control). Best-effort: a failed
     frame never breaks the pause.
@@ -1185,10 +1233,13 @@ def tc_post_frame(page):
     be a KV put on the Worker, and one 25-min TC window of ~1.2s frames
     burned the whole daily KV write quota (free tier), taking
     setup/status and gmail/verify down with 500s. An unchanged screen
-    sends nothing."""
+    sends nothing.
+    v88 (H2): force=True (stepwise scroll / cursor travel) relaxes the
+    throttle to >=0.9s so a viewer can actually watch the work happen,
+    still change-only so a static screen costs nothing."""
     try:
         now = time.time()
-        if now - _TC_FRAME_LAST["at"] < 2.5:
+        if now - _TC_FRAME_LAST["at"] < (0.9 if force else 2.5):
             return
         shot = page.screenshot(type="jpeg", quality=55)
         import hashlib
@@ -1221,7 +1272,7 @@ def tc_apply_inputs(page, inputs):
                 if k:
                     page.keyboard.press(k)
             elif t == "scroll":
-                page.mouse.wheel(0, float(inp.get("dy") or 0))
+                human_scroll(page, float(inp.get("dy") or 0))
             elif t == "nav":
                 u = str(inp.get("url") or "")
                 if u.startswith("https://"):

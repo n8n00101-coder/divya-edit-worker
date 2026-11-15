@@ -172,19 +172,19 @@
           <div id="recBar" class="rec-bar" hidden><span class="dot" aria-hidden="true"></span><span id="recTime">0:00</span><span class="muted small" data-t="releaseToSend"></span></div>
           <form id="composer" class="composer">
             <button type="button" class="icon-btn" id="attach" data-tl="attachImage">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/><path d="M19 17v6M16 20h6"/></svg>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
             </button>
             <input type="file" id="file" accept="image/*,video/*" hidden>
             <label for="input" class="sr-only" data-t="typeMsg"></label>
             <textarea id="input" rows="1" data-tp="typeMsg"></textarea>
             <button type="button" class="send-btn mic" id="micSend" data-tl="holdToTalk">
               <svg class="i-mic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5"/></svg>
-              <svg class="i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
+              <svg class="i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
             </button>
             <!-- R32: separate always-visible send button next to the mic — the send
                  affordance must never depend on a class that may never flip. -->
             <button type="button" class="send-btn send" id="chatSend" aria-label="Send">
-              <svg class="i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>
+              <svg class="i-send" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
             </button>
           </form>
         </div>

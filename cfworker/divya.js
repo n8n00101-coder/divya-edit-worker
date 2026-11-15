@@ -2936,6 +2936,22 @@ async function ytTokenShared(env, n) {
   }
   return t;
 }
+async function waSendText(env, to, text) {
+  // v88 (H5, ROUTE A): one text message from Julie's OWN connected
+  // WhatsApp number (Meta Cloud API — the same WA_TOKEN / PHONE_ID the
+  // bot runs on). Returns {ok, id} or {ok:false, error} with Meta's own
+  // reason, shortened — the caller reports it honestly, never a fake
+  // success, and falls back to a labeled wa.me link only on failure.
+  if (!env.WA_TOKEN || !env.PHONE_ID) return { ok: false, error: "Julie WhatsApp number connect avvaledu" };
+  try {
+    const r = await fetch(`https://graph.facebook.com/v21.0/${env.PHONE_ID}/messages`, { method: "POST", headers: { Authorization: `Bearer ${env.WA_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ messaging_product: "whatsapp", to, type: "text", text: { body: String(text).slice(0, 4000) } }) });
+    const j = await r.json().catch(() => ({}));
+    const id = j && j.messages && j.messages[0] && j.messages[0].id;
+    if (r.ok && id) return { ok: true, id };
+    const em = (j && j.error && (j.error.message || j.error.type)) || `HTTP ${r.status}`;
+    return { ok: false, error: String(em).slice(0, 160) };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 120) }; }
+}
 async function appAssist(env, u, body, lang) {
   const text = String(body.text || "").trim().slice(0, 1000); const en = lang === "en";
   if (!text) return { ok: false, error: "empty" };
@@ -2975,8 +2991,17 @@ async function appAssist(env, u, body, lang) {
     case "whatsapp": {
       const num = digitsNum(it.number || it.name); const name = num ? "" : String(it.name || "").slice(0, 60); const msg = String(it.message || "").slice(0, 1000);
       const waUrl = `https://wa.me/${num || ""}?text=${encodeURIComponent(msg)}`;
-      if (wa) return done(num ? (en ? `WhatsApp message ready${name ? " for " + name : ""}: tap the link, then tap send.\n${waUrl}` : `WhatsApp message ready${name ? ", " + name : ""}: link nokku, tarvatha send nokku.\n${waUrl}`) : (en ? `I don't have a number for ${name}.` : `${name} number naa daggara ledu.`), { type: "whatsapp", name, number: num, text: msg });
-      return done(en ? `Opening WhatsApp with your message filled in${name ? " for " + name : ""}. Tap send.` : `WhatsApp lo message ready chesi open chestunna${name ? ", " + name : ""}. Send nokku.`, { type: "whatsapp", name, number: num, text: msg });
+      if (!num) return done(en ? `I don't have a number for ${name}.` : `${name} number naa daggara ledu.`, { type: "whatsapp", name, number: num, text: msg });
+      if (!msg) return done(en ? `What should I send to +${num}? Tell me the message.` : `+${num} ki em pampali? Message cheppu.`, { type: "whatsapp", name, number: num, text: msg });
+      // v88 (H5, ROUTE A — replaces the prefill dead-end entirely):
+      // Julie sends from her OWN connected WhatsApp number via the
+      // Cloud API; the user does nothing. The wa.me prefill survives
+      // ONLY as a labeled fallback when the send itself fails.
+      const sent = await waSendText(env, num, msg);
+      if (sent.ok) return done(en ? `WhatsApp message sent ✓ — from Julie's number to ${name || "+" + num}: "${msg}"` : `WhatsApp message pampina ✓ — Julie number nunchi ${name || "+" + num} ki: "${msg}"`, { type: "whatsapp", sent: true, id: sent.id || "", name, number: num, text: msg });
+      const reason = sent.error || "WhatsApp connect avvaledu";
+      if (wa) return done(en ? `I couldn't send it from Julie's number — ${reason}. Fallback: tap the link and send it yourself (the message is filled in):\n${waUrl}` : `Julie number nunchi pampaledhu — ${reason}. Fallback: ee link nokki nuvve send cheyyi (message ready ga untundhi):\n${waUrl}`, { type: "whatsapp", sent: false, fallback: true, name, number: num, text: msg });
+      return done(en ? `I couldn't send it from Julie's number — ${reason}. Fallback: tap "Open WhatsApp" and send it yourself — the message is filled in.` : `Julie number nunchi pampaledhu — ${reason}. Fallback: "Open WhatsApp" nokki nuvve send cheyyi — message ready ga untundhi.`, { type: "whatsapp", sent: false, fallback: true, name, number: num, text: msg });
     }
     case "open": {
       const TEL = { "యూట్యూబ్": "youtube", "గూగుల్": "google", "వాట్సాప్": "whatsapp", "ఇన్‌స్టాగ్రామ్": "instagram", "ఇన్స్టాగ్రామ్": "instagram", "ఫేస్‌బుక్": "facebook", "ఫేస్బుక్": "facebook", "మ్యాప్స్": "maps", "జీమెయిల్": "gmail", "టెలిగ్రామ్": "telegram", "స్పాటిఫై": "spotify" };

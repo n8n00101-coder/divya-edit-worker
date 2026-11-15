@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v47";
+const APP_V = "julie-v48";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -700,9 +700,12 @@ function planAction(a) {
     if (num) { out.buttons.push({ label: t("callBtn", who), href: "tel:+" + num }); out.auto = () => openUrl("tel:+" + num); }
     else { pendingContact = { name: a.name, action: a }; out.say = t("noNumber", a.name); addContactButtons(out, a); }
   } else if (a.type === "whatsapp") {
-    const num = a.number || findContact(a.name); const url = num ? waIntentUrl(num, a.text) : `https://wa.me/?text=${encodeURIComponent(a.text || "")}`;
-    out.buttons.push({ label: t("waBtn"), href: url }); out.auto = async () => { const r = await openUrl(url); out.say = num ? openWaSay(r) : openSay("WhatsApp", r); };
-    if (!num && a.name) addContactButtons(out, a, true);
+    if (a.sent) { /* v88 (H5): already sent from Julie's own number — the reply text is the confirmation; NO wa.me button, NO auto-open. */ }
+    else {
+      const num = a.number || findContact(a.name); const url = num ? waIntentUrl(num, a.text) : `https://wa.me/?text=${encodeURIComponent(a.text || "")}`;
+      out.buttons.push({ label: t("waBtn"), href: url }); out.auto = async () => { const r = await openUrl(url); out.say = num ? openWaSay(r) : openSay("WhatsApp", r); };
+      if (!num && a.name) addContactButtons(out, a, true);
+    }
   } else if (a.type === "open") { const host = new URL(a.url).hostname.replace(/^www\./, ""); const isYT = /^youtube\.com$/.test(host); const href = isYT ? ytAppUrl() : a.url; const isSignin = /accounts\.google\.com/.test(a.url) || /\/signin|\/login/.test(a.url); out.buttons.push({ label: isSignin ? t("setupOpen") : t("openBtn", host), href }); out.auto = async () => { const r = await openUrl(href); out.say = isYT ? openYTSay(r) : openSay(host, r); }; }
   else if (a.type === "play") { const u = ytUrl(a.query || ""); out.buttons.push({ label: t("playBtn"), href: u }); out.auto = async () => { const r = await openUrl(u); out.say = openYTSay(r); }; }
   else if (a.type === "reminder") { addReminder(a.at, a.text); out.buttons.push({ label: t("calBtn"), href: calUrl(a.at, a.text), alt: true }); }
@@ -1058,6 +1061,14 @@ function renderSetupBox(d) {
   // exactly the bug the live test caught.
   const actionUrl = (d.action && d.action.url) || (cur && cur.url) || "";
   window.__lvUrl = actionUrl;
+  window.__lvJob = { state: (cur && cur.state) || state, note: (cur && cur.note) || title }; // v88 (H3): live-view header/step source — the JOB state (paused/running), not the setup-level state
+  // v88 (H4): Muse-style browser card in chat while the runner works —
+  // latest frame thumbnail + current step; tap opens the live view.
+  // (When Take Control is on, the tc panel above already shows it.)
+  const jobActive = !!(cur && (cur.state === "running" || cur.state === "paused"));
+  if (jobActive && !tcOn) {
+    html += `<div class="browser-card"><img data-tc-img alt=""><div class="bc-meta"><span class="bc-dot"></span><span class="bc-step">${esc((cur && cur.note) || title)}</span></div></div>`;
+  }
   html += `<div class="act">` +
     `<button class="pill" data-a="live">${esc(t("liveBtn"))}</button>` +
     (actionUrl ? `<button class="pill" data-a="open">${esc(t("setupOpen"))}</button>` : "") +
@@ -1104,7 +1115,7 @@ function renderSetupBox(d) {
   if (stop) stop.onclick = async () => { await api("setup/stop", { method: "POST", json: {} }); pollSetup(); };
   const cont = setupBoxEl.querySelector('[data-a="continue"]');
   if (cont) cont.onclick = async () => { await api("setup/continue", { method: "POST", json: {} }); pollSetup(); };
-  if (tcOn) { tcBind(setupBoxEl); const ti = setupBoxEl.querySelector("[data-tc-text]"); if (ti && tcTextKeep) ti.value = tcTextKeep; tcStart(); } else tcStop();
+  if (tcOn) { tcBind(setupBoxEl); const ti = setupBoxEl.querySelector("[data-tc-text]"); if (ti && tcTextKeep) ti.value = tcTextKeep; tcStart(); } else if (setupBoxEl.querySelector("[data-tc-img]")) { tcStart(); const ci = setupBoxEl.querySelector(".browser-card img"); if (ci) ci.onclick = () => openLive(false); } else tcStop();
   // v87 (P2/U2/U4): a pause is NEVER a screen-covering sheet. The setup box
   // above IS the in-chat pause bubble — one reused element with its action
   // buttons (Watch live / Open in browser / I did it \u2713 / Take control /
@@ -1169,13 +1180,17 @@ function openLive(control) {
   if (!v) {
     v = document.createElement("div"); v.id = "liveView"; v.className = "liveview"; v.hidden = true;
     v.innerHTML = `<div class="lv-head"><b>${esc(t("liveTitle"))}</b><span class="muted small" data-lv-status></span><button class="lv-x" data-lv-ext aria-label="Open page externally">↗</button><button class="lv-x" data-lv-close aria-label="Close">✕</button></div>` +
+      `<div class="lv-sub" data-lv-step></div>` +
       `<div class="lv-stage"><img data-lv-img alt=""><div class="muted small" data-lv-wait>${esc(t("liveWaiting"))}</div></div>` +
       `<div class="keyrow" data-lv-keys hidden><input class="keyfield" data-lv-text type="text" autocomplete="off" spellcheck="false" placeholder="${esc(t("tcPh"))}"><button class="act-btn" data-lv-type>${esc(t("tcTypeBtn"))}</button><button class="act-btn alt" data-lv-enter>Enter</button></div>` +
       `<div class="lv-bar"><button class="lv-btn danger" data-lv-stop>${esc(t("setupStop"))}</button><button class="lv-btn" data-lv-take>${esc(t("setupTake"))}</button><button class="lv-btn primary" data-lv-done>${esc(t("setupDidIt"))}</button></div>`;
     document.body.appendChild(v); bindLive(v);
   }
   v.hidden = false; liveCtl = !!control; syncLiveCtl(v); { const st = v.querySelector("[data-lv-status]"); if (st) st.textContent = "Opening\u2026"; }
-  const fetchF = async () => { try { const d = await api("setup/tc"); const im = v.querySelector("[data-lv-img]"); const wt = v.querySelector("[data-lv-wait]"); if (d && d.ok && d.active && d.img && im) { im.src = "data:image/jpeg;base64," + d.img; if (wt) wt.hidden = true; } const st = v.querySelector("[data-lv-status]"); if (st) st.textContent = d && d.url ? d.url.replace(/^https?:\/\//, "").slice(0, 40) : ""; } catch {} };
+  // v88 (H3): Muse-style header — status line "Working · <host>" /
+  // "Completed · <host>" / "Paused · <host>" (+ "You control" while the
+  // user drives) and the runner's current step under it.
+  const fetchF = async () => { try { const d = await api("setup/tc"); const im = v.querySelector("[data-lv-img]"); const wt = v.querySelector("[data-lv-wait]"); if (d && d.ok && d.active && d.img && im) { im.src = "data:image/jpeg;base64," + d.img; if (wt) wt.hidden = true; } if (d && d.url) window.__lvUrl = d.url; const st = v.querySelector("[data-lv-status]"); if (st) { const host = String(window.__lvUrl || "").replace(/^https?:\/\//, "").split("/")[0]; const j = window.__lvJob || {}; const word = liveCtl ? "You control" : j.state === "done" ? "Completed" : j.state === "paused" ? "Paused" : (j.state === "failed" || j.state === "stopped") ? "Failed" : "Working"; st.textContent = host ? `${word} · ${host}` : word; } const sp = v.querySelector("[data-lv-step]"); if (sp) sp.textContent = (window.__lvJob && window.__lvJob.note) || ""; } catch {} };
   fetchF(); if (livePoll) clearInterval(livePoll); livePoll = setInterval(fetchF, 1500);
 }
 function closeLive() { const v = $("#liveView"); if (v) v.hidden = true; if (livePoll) { clearInterval(livePoll); livePoll = null; } }
@@ -1271,7 +1286,7 @@ function setupShowStalled() {
 $("#oneTapBtn").onclick = () => startOneTapSetup();
 syncOneTapBtn(); // v39: disabled until the permission box is ticked
 const input = $("#input");
-function autoGrow() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; }
+function autoGrow() { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 140) + "px"; }
 function updateBtn() { $("#chatSend").disabled = !input.value.trim() && !pendingVideo; }
 $("#chatSend").onclick = () => send(input.value);
 input.addEventListener("input", () => { autoGrow(); updateBtn(); });
