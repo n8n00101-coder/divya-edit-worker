@@ -12,7 +12,7 @@ let SYS = "";
 // (2026-11-13: the brain invented "saved_voices/trust_reel/" for a voice
 // sample it could not even receive.) Embedded in BOTH chat prompts.
 const VOICE_SAVE_RULE = `VOICE/FILE SAVE NIJAYITHI (v71, hard rule): "voice save chesa / file save ayyindhi / setting save cheskunna" ani EPPUDU cheppaku — save anedi system STRUCTURE nunchi oka confirmation vachinappude nijam (chat lo alanti structural note lekapothe save jaragaledu). User save adigi, alanti note lekunda unte, save ayinattu natinchaku: "sample inka naa daggara save avvaledu — voice note leda audio file pampu" ani nijam cheppu. Folder peru, voice peru, file peru lanti details ni ASALU invent cheyyaku.`;
-const AMEND_RULE = `MID-FLIGHT AMENDMENTS (v72, hard rule): oka video tayaru avuthunnappudu user production instructions isthe (footage, b-roll, SFX, sound effects, transitions, animations, visual effects, music, captions, style, extra content points) — avi ANNI AA RUNNING VIDEO ke; system vaatini madhyalone aa video lone apply chesthundhi (Hark laaga). "Next video lo chestha / next video nunchi apply avthundhi" ani production gurinchi EPPUDU cheppaku — adhi tappu. Alanti messages system structural ga handle chesthundhi; okavela neeku vachinaa, running video ki instruction ga ne treat chesi chinna confirmation ivvu. (Voice/language marchalanna request matrame exception — adi ee video ki avvadu, preference ga save avthundhi.)`;
+const AMEND_RULE = `MID-FLIGHT AMENDMENTS (v72, hard rule): oka video tayaru avuthunnappudu user production instructions isthe (footage, b-roll, SFX, sound effects, transitions, animations, visual effects, music, captions, style, extra content points) — avi ANNI AA RUNNING VIDEO ke; system vaatini madhyalone aa video lone apply chesthundhi (Hark laaga). "Next video lo chestha / next video nunchi apply avthundhi" ani production gurinchi EPPUDU cheppaku — adhi tappu. Alanti messages system structural ga handle chesthundhi; okavela neeku vachinaa, running video ki instruction ga ne treat chesi chinna confirmation ivvu. (Voice/language marchalanna request matrame exception — adi ee video ki avvadu, preference ga save avthundhi.) KOTHA TOPIC matram ASALU amendment/preference kaadu: message lo kotha topic unte (topic: X, leda 'a to z cheyu / nee own ga cheyu' lanti order), adhi KOTHA video — vere video render avuthunna kuda VENTANE start avuthundhi; danini 'next video' preference ga save cheyyaku, user ni 'cancel and redo' lanti maata cheppamani adagaku.`;
 const PROMPT_CONTRACT_RULE = `PROMPT = CONTRACT (v79, Blind R-P1..R-P7 — hard rules for EVERY video order):
 R-P1: The user's prompt is a contract, not a suggestion. Every sentence of it is a requirement — not just the topic.
 R-P2: User requirements override ALL Julie defaults. Only safety rules rank above the prompt.
@@ -107,6 +107,7 @@ async function groq(env, messages, vision = false) {
   for (const k of keys) {
     const live = await liveModels(env, k);
     let order = vision ? VISION_MODELS : CHAT_MODELS;
+    if (!vision) { const sc = await scoutList(env, "groq"); if (sc.length) order = [...order, ...sc]; } // v91: scout-added models ride LAST
     if (live.length) {
       order = order.filter(m => live.includes(m));
       if (!order.length) order = live.filter(m => vision ? /llama-4|vision|scout|maverick/i.test(m) : !/whisper|guard|tts|playai|orpheus|compound|prompt/i.test(m)).slice(0, 4);
@@ -125,6 +126,7 @@ async function groq(env, messages, vision = false) {
         await new Promise(res => setTimeout(res, 1500));
         r = await call();
       }
+      if (r && r.status === 429) { try { env.__q429 = true; } catch {} } // v91: quota signal for the limit warning
       if (r && r.ok) {
         const out = stripReasoning(((await r.json()).choices[0].message.content || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim());
         if (out) return out;
@@ -621,7 +623,9 @@ async function handle(env, m) {
     const askOnly = /(gala(va|ra|vu)|cheya(gala|lava)|chesta(va|ra)|can you|could you|possible\s*a|avuthunda)\s*\??\s*$/i.test(text) && !/\b(chey(yi|i)?|create|make)\b\s*$/i.test(text);
     let go = !!mm && !askOnly;
     if (mm && askOnly) ans = "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
-    if (go && await env.KV.get(`busy:${user}`)) { ans = "Okka video already tayaru avuthondi. Adi vachaka next di start chestha."; go = false; }
+    // v51 (G1): a NEW-topic order starts even while another video
+    // renders — never deferred to "next di" (app path parity).
+    if (go && !isNewTopicOrder(text) && await env.KV.get(`busy:${user}`)) { ans = "Okka video already tayaru avuthondi. Adi vachaka next di start chestha."; go = false; }
     // v79 (FIX 4): an edit of the last finished video — structural
     // (the brain's [[CREATE:]] is not required for an edit to start);
     // it spends the ORIGINAL video's cost and suppresses the create.
@@ -783,7 +787,7 @@ function appSys(isOwner, lang) {
   if (lang === "en") s += "\nAPP LANGUAGE = ENGLISH: reply in simple English only (not Tenglish).";
   s += "\n\n" + VOICE_SAVE_RULE;
   s += "\n\n" + AMEND_RULE;
-  s += "\n\nCONVERSATION QUALITY (Ajju's standing order — reply like a sharp assistant, not a manual): (1) Answer FIRST, in 1-3 short lines. No preamble, no feature lists, no explaining how you work unless asked. (2) USE THE HISTORY: the messages above are this same conversation — refer to the topic, length, voice and language already decided; if the user says 'same topic / adhey topic / ade topic', take the topic from earlier in this conversation and proceed, never re-ask what was already told. (3) ONE reply only — never write the user's side of the chat, never continue the conversation yourself, never write that the user 'didn't respond'. (4) If a video is being made, questions about it ('ayindha?', 'ready na?') are about THAT video — answer from its topic and state, briefly. (5) When unsure, say so in one line and ask ONE clear question.";
+  s += "\n\nCONVERSATION QUALITY (Ajju's standing order — reply like a sharp assistant, not a manual): (1) Answer FIRST, in 1-3 short lines. No preamble, no feature lists, no explaining how you work unless asked. (2) USE THE HISTORY: the messages above are this same conversation — refer to the topic, length, voice and language already decided; if the user says 'same topic / adhey topic / ade topic', take the topic from earlier in this conversation and proceed, never re-ask what was already told. (3) ONE reply only — never write the user's side of the chat, never continue the conversation yourself, never write that the user 'didn't respond'. (4) If a video is being made, questions about it ('ayindha?', 'ready na?') are about THAT video — answer from its topic and state, briefly. (5) When unsure, say so in one line and ask ONE clear question. (6) NEVER defer work: no 'next video will…', no 'say X to…', no magic phrases, no 'I saved your preference' as a substitute for doing the thing — understand, act NOW, report in one line. A message with a NEW topic is a NEW video that starts at once, even while another renders.";
   return s;
 }
 async function appCode(env, n) {
@@ -1028,6 +1032,7 @@ async function appTalk(env, u, text, lang, voiceId) {
   // a video renders is saved as the next video's preference, said plainly.
   const busyNow = await env.KV.get(`busy:${u.n}`);
   const appjob = JSON.parse((await env.KV.get(`appjob:${u.n}`)) || "null");
+  const newOrder = isNewTopicOrder(cleanText); // v51 (G1): a NEW topic starts a NEW job — never an amendment, never a saved preference
   const isStatusQ = /(ayindha|ayyindha|ready|status|progress|ekkada\s*varaku|inka\s*(entha|emi)|ayipoyindha|vachindha|complete|done\s*ah|entha\s*dooram)/i.test(cleanText) && !isCreateOrder(cleanText);
   // v73: a status question first rescues any stuck job, so the answer
   // below can never call a dead job "still being made".
@@ -1054,7 +1059,7 @@ async function appTalk(env, u, text, lang, voiceId) {
   // language nextpref block below: production words win; a pure
   // voice/language change has no production vocabulary and still
   // falls through to nextpref exactly as in v67.
-  if (busyNow && isAmendment(cleanText)) {
+  if (busyNow && !newOrder && isAmendment(cleanText)) {
     const rj = await runningJob(env, u.n);
     if (rj) {
       await addAmendment(env, rj, cleanText);
@@ -1063,12 +1068,18 @@ async function appTalk(env, u, text, lang, voiceId) {
       return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
     }
   }
-  if (busyNow && !isCreateOrder(cleanText) && /(voice|male|female|telugu|hindi|english|language|sound)/i.test(cleanText)) {
+  if (busyNow && !newOrder && !isCreateOrder(cleanText) && /(voice|male|female|telugu|hindi|english|language|sound)/i.test(cleanText)) {
     const g = /female|aada/i.test(cleanText) ? "female" : /male|maga/i.test(cleanText) ? "male" : "";
     const lg2 = /telugu/i.test(cleanText) ? "Telugu" : /hindi/i.test(cleanText) ? "Hindi" : /english/i.test(cleanText) ? "English" : "";
     if (g || lg2) await env.KV.put(`nextpref:${u.n}`, JSON.stringify({ gender: g, langName: lg2, at: Date.now() }), { expirationTtl: 86400 });
+    // v51 (G2): the change is ALSO put on the running job itself (the
+    // runner reads amendments at its checkpoints) — Julie acts now and
+    // says so in one line. Never a deferral to a future video, never a
+    // phrase the user must recite.
+    const rj2 = await runningJob(env, u.n);
+    if (rj2) await addAmendment(env, rj2, cleanText);
     const what = [g, lg2].filter(Boolean).join(" ") || "that change";
-    const a2 = lang === "en" ? `This video is already rendering — its voice can't change midway. I've saved your preference (${what} voice); the NEXT video will use it. If you want this one redone instead, say "cancel and redo".` : `Ee video already tayaru avuthondi — madhyalo voice marchaledu. Nee preference (${what} voice) save chesa, NEXT video nunchi adhe vasthundhi. Idhe video malli cheyali ante "cancel chesi malli chey" ani cheppu.`;
+    const a2 = lang === "en" ? `Done — ${what} voice added to THIS video, and kept for your next ones too.` : `Done — ${what} voice ee video ki add chesa, next videos ki kuda adhe untundhi.`;
     h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
     return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
   }
@@ -1103,7 +1114,7 @@ async function appTalk(env, u, text, lang, voiceId) {
     // the user's side, or "User didn't respond yet..."). Cut everything
     // from the first fake turn — Julie sends ONE reply, hers only.
     ans = ans.split(/\n\s*(User|Nuvvu|Me|Customer)\s*:/i)[0].split(/user didn.t respond/i)[0].trim();
-    if (!mm && (forceCreate || isNoVideoEditOrder(text))) { mm = [null, cleanText]; ans = lang === "en" ? "Starting now — I'll make everything A to Z myself: script, visuals, voice, captions, edit." : "Sare, start chesa — script, visuals, voice, captions, edit, motham nene A to Z chestha. Ready ayyaka ikkade pampistha."; }
+    if (!mm && (forceCreate || newOrder || isNoVideoEditOrder(text))) { mm = [null, cleanText]; ans = lang === "en" ? "Starting now — I'll make everything A to Z myself: script, visuals, voice, captions, edit." : "Sare, start chesa — script, visuals, voice, captions, edit, motham nene A to Z chestha. Ready ayyaka ikkade pampistha."; }
     // R46 guard: if the reply still asks the user to attach/upload/send a video
     // and the user did not offer one, force a create instead — the rule holds
     // even if the model disobeys the prompt.
@@ -1115,13 +1126,19 @@ async function appTalk(env, u, text, lang, voiceId) {
   // plainly with the numbers — never start silently.
   let go = !!mm && !askOnly, started = false, sc = null;
   if (mm && askOnly) ans = lang === "en" ? "I can — shorts and long videos up to 60 min. Tell me topic, length and language and I'll start." : "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
+  // v51 (G1): a new-topic order starts NOW — the short/long question
+  // never stalls it; a sensible default length rides on the brief.
+  if (go && newOrder && !/(short|long|reel|9:16|16:9|30s|60s|\b3\s?min|\b10\s?min|documentary|face)/i.test(mm[1] || "")) mm = [mm[0], `${(mm[1] || cleanText).trim()} — short video (30s, 9:16), Julie voice-over, A to Z by Julie.`];
   // R40: a create order without short/long waits — ask ONCE, resume on the answer.
   if (go && !/(short|long|reel|9:16|16:9|30s|60s|\b3\s?min|\b10\s?min|documentary|face)/i.test(mm[1] || "")) {
     await env.KV.put(`crtpend:${u.n}`, JSON.stringify({ brief: mm[1], at: Date.now() }), { expirationTtl: 3600 });
     ans = lang === "en" ? "Short (30s, 9:16) or long (up to 60 min, 16:9)? Say short or long and I'll start." : "Short (30s, 9:16) na, long (60 min varaku, 16:9) na? Short/long ani cheppu, start chestha.";
     go = false;
   }
-  if (go && await env.KV.get(`busy:${u.n}`)) { ans = lang === "en" ? "One video is already being made. When it arrives, tell me and I'll start the next one." : "Okka video already tayaru avuthondi. Adi vachaka cheppu, next di start chestha."; go = false; }
+  // v51 (G1/G2): no busy refusal — a create order starts even while
+  // another video renders (each job is tracked by its own id and both
+  // deliver here). Julie never defers a job to "the next video" and
+  // never asks the user to recite a phrase to get work done.
   let premium_required = false;
   let tk = null, cost = 0;
   if (go) { cost = videoCost(parseMins(mm && mm[1])); tk = await tokSpend(env, u.n, cost); if (!tk.ok) { ans = tokMsg(lang, tk); go = false; } }
@@ -1148,7 +1165,17 @@ async function appTalk(env, u, text, lang, voiceId) {
     // A failed dispatch replaces it with an honest failure + token refund.
     else { await tokRefund(env, u.n, tk, cost); ans = lang === "en" ? "The video machine didn't start — try again in a few minutes. Your tokens were returned." : "Video machine start avvaledu — konchem sepu tarvatha malli try cheyyi. Nee tokens venakki ichesa."; }
   }
+  // v51 (G1/G2): started alongside an in-flight video — say exactly
+  // that, in one short line. Never "next video", never a magic phrase.
+  if (started && busyNow) { const tp = extractTopic(cleanText); ans = lang === "en" ? `Started your ${tp || "new"} video too — Julie voice, A to Z by me. The other one is still rendering; both will land here.` : `Nee ${tp || "kotha"} video kuda start chesa — Julie voice, motham A to Z nene chestha. Inko video inka render avuthondi; rendu ikkade vasthayi.`; }
   ans = await playbookGuard(env, ans, lang);
+  ans = busyWallGuard(ans, lang); // v51 (F2): a busy wall becomes one short line
+  { const prevA = [...h].reverse().find(m => m.role === "assistant"); if (ans && prevA && String(prevA.content || "") === ans) ans = antiRepeatLine(cleanText, lang); } // v51 (F3): never a verbatim repeat of the previous reply
+  // v91: proactive limit warning — appended to the reply itself (rides
+  // the chat path into the live response AND history), once per week,
+  // BEFORE the user hits the wall. Skipped when this very reply is the
+  // quota message (user already AT the wall) or the brain fully failed.
+  try { if (ans && !(tk && !tk.ok) && u.via !== "none") { const lw = await limitWarnMaybe(env, u, lang); if (lw) ans = ans + "\n\n" + lw; } } catch {}
   h.push({ role: "assistant", content: ans }); await remember(env, u.n, h);
   return { reply: ans, video_started: started, video_job: sc?.job || null, video_num: sc?.num || null, premium_required, brain: u.via || "shared" };
 }
@@ -1397,7 +1424,7 @@ async function appApi(req, env, url, ctx) {
   if (p === "me") { const a = u.acct; try { if (!(await env.KV.get(`joined:${u.n}`))) await env.KV.put(`joined:${u.n}`, String(Date.now())); } catch {} return appJson(req, { ok: true, number: a ? (a.phone || "") : u.n, owner: u.owner, premium: await isPremium(env, u.n), memory: JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null"), account: a ? { name: a.name, email: a.email, phone: a.phone || "", phone_pending: a.pphone || "" } : null }); }
   if (p.startsWith("account/") && req.method === "POST") return acctPrivate(req, env, u, p, body);
   if (p === "plan") { const bal = await tokBalance(env, u.n); const kt = await keyTierFor(env, u.n); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = PLANS[pid].voice; /* v37: voice assistant included in every plan (was a planvoice KV flag / ₹49 add-on) */ return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, period: "week", unlimited: bal.unlimited, brain: kt.tier, video_backend: "shared", pro: "soon" }); }
-  if (p === "assist" && req.method === "POST") return appJson(req, await appAssist(env, u, body, lang));
+  if (p === "assist" && req.method === "POST") { const r = await appAssist(env, u, body, lang); if (r && r.reply) r.reply = busyWallGuard(r.reply, lang); return appJson(req, r); }
   // v50 (Y3): per-user UI prefs, server-side (survive reinstall / new
   // phone). Today: lvMini — the floating mini message box over the live
   // view. Default ON when unset.
@@ -1424,6 +1451,12 @@ async function appApi(req, env, url, ctx) {
       const rec = parseRec(await env.KV.get(`vjob:${vid}`)); if (rec) { rec.state = "failed"; rec.error = "dispatch"; await env.KV.put(`vjob:${vid}`, JSON.stringify(rec), { expirationTtl: 3600 }); }
       return appJson(req, { ok: false, error: "house_engine_offline", detail: "Voice runner could not be started — tokens returned." }, 501);
     }
+    // v51 (V4 refund fix): record the spend against the job (same durable
+    // record video jobs use) so a TERMINAL runner failure can refund it
+    // exactly once via refundJobSpend. Recorded only after dispatch
+    // succeeded — the dispatch-failure path above already refunded from
+    // the in-memory receipt and leaves no record behind.
+    await recordSpend(env, vid, u.n, tk, TOK.COST.voice);
     return appJson(req, { ok: true, job: vid, state: "queued" });
   }
   if (p === "voice/status" && req.method === "GET") {
@@ -2444,12 +2477,14 @@ async function orChat(env, key, messages) {
     const r = await fetch("https://openrouter.ai/api/v1/models").catch(() => null);
     const ids = r && r.ok ? ((await r.json()).data || []).map(m => m.id).filter(id => id.endsWith(":free")) : [];
     const pref = ["openai/gpt-oss-120b:free", "deepseek/deepseek-chat-v3.1:free", "meta-llama/llama-3.3-70b-instruct:free", "qwen/qwen3-235b-a22b:free", "google/gemma-3-27b-it:free"];
-    free = [...pref.filter(m => ids.includes(m)), ...ids.filter(m => !pref.includes(m))].slice(0, 4);
+    const sc = await scoutList(env, "openrouter"); // v91: scout-added free models sit after the pref list, before the long tail
+    free = [...pref.filter(m => ids.includes(m)), ...sc.filter(m => ids.includes(m)), ...ids.filter(m => !pref.includes(m) && !sc.includes(m))].slice(0, 6);
     if (free.length) await env.KV.put("or:free", JSON.stringify(free), { expirationTtl: 3600 * 6 });
   }
   for (const model of free) {
     const r = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${key}`, "content-type": "application/json", "HTTP-Referer": "https://divya-app.n8n00101.workers.dev", "X-Title": "Julie" }, body: JSON.stringify({ model, messages, max_tokens: 900, temperature: 0.7 }) }).catch(() => null);
     if (r && r.ok) { const out = (((await r.json()).choices || [])[0]?.message?.content || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim(); if (out) return out; }
+    if (r && r.status === 429) { try { env.__q429 = true; } catch {} } // v91: quota signal
     if (r && r.status === 401) break;
   }
   return "";
@@ -2458,9 +2493,10 @@ async function geminiChat(env, key, messages) {
   // Text chat via Gemini generateContent (OpenAI-style messages -> Gemini contents).
   const sys = (messages.find(m => m.role === "system")?.content || "");
   const contents = messages.filter(m => m.role !== "system").map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: String(typeof m.content === "string" ? m.content : (m.content?.[0]?.text || "")) }] }));
-  for (const gm of ["gemini-2.5-flash", "gemini-2.0-flash"]) {
+  for (const gm of ["gemini-2.5-flash", "gemini-2.0-flash", ...(await scoutList(env, "gemini"))]) { // v91: scout models last
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${gm}:generateContent?key=${encodeURIComponent(key)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: 900, temperature: 0.7 } }), signal: AbortSignal.timeout(25000) }).catch(() => null);
     if (r && r.ok) { const out = ((await r.json()).candidates?.[0]?.content?.parts || []).map(x => x.text || "").join("").trim(); if (out) return out; }
+    if (r && r.status === 429) { try { env.__q429 = true; } catch {} } // v91: quota signal
     if (r && (r.status === 400 || r.status === 403)) break; // bad key / not enabled — don't retry the next model
   }
   return "";
@@ -2507,11 +2543,11 @@ async function chatWithFallback(env, u, messages) {
   // falls through to the next provider instead of aborting the chain,
   // exactly like the per-call .catch fallthrough below.
   try { const gk = await openKey(env, u.n, "groq");
-    if (gk) { const out = await groq({ ...env, GROQ_KEY: gk }, messages).catch(() => ""); if (out && !sorry.test(out)) { u.via = "own-groq"; return out; } } } catch {}
+    if (gk) { const genv = { ...env, GROQ_KEY: gk }; const out = await groq(genv, messages).catch(() => ""); if (genv.__q429 && !u.keyQuota) u.keyQuota = "groq"; if (out && !sorry.test(out)) { u.via = "own-groq"; return out; } } } catch {}
   try { const ok = await openKey(env, u.n, "openrouter");
-    if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (out) { u.via = "own-openrouter"; return out; } } } catch {}
+    if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "openrouter"; if (out) { u.via = "own-openrouter"; return out; } } } catch {}
   try { const gmk = await openKey(env, u.n, "gemini");
-    if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (out) { u.via = "own-gemini"; return out; } } } catch {}
+    if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "gemini"; if (out) { u.via = "own-gemini"; return out; } } } catch {}
   // v88 (F11): INVITER tier — own keys exhausted. A user who joined via a
   // referral code and still has FEWER than 5 own working models borrows
   // the INVITER's keys, in the same order as the own tier (custom model
@@ -2526,11 +2562,11 @@ async function chatWithFallback(env, u, messages) {
         try { const crec = JSON.parse((await env.KV.get(`umodel:${inv}`)) || "null");
           if (crec && crec.base && crec.model) { const ck = await openKey(env, inv, "custom"); if (ck) { const out = await customChat(ck, crec, messages).catch(() => ""); if (out) { u.via = "inviter-model"; return out; } } } } catch {}
         try { const gk = await openKey(env, inv, "groq");
-          if (gk) { const out = await groq({ ...env, GROQ_KEY: gk }, messages).catch(() => ""); if (out && !sorry.test(out)) { u.via = "inviter-groq"; return out; } } } catch {}
+          if (gk) { const genv = { ...env, GROQ_KEY: gk }; const out = await groq(genv, messages).catch(() => ""); if (genv.__q429 && !u.keyQuota) u.keyQuota = "groq"; if (out && !sorry.test(out)) { u.via = "inviter-groq"; return out; } } } catch {}
         try { const ok = await openKey(env, inv, "openrouter");
-          if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (out) { u.via = "inviter-openrouter"; return out; } } } catch {}
+          if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "openrouter"; if (out) { u.via = "inviter-openrouter"; return out; } } } catch {}
         try { const gmk = await openKey(env, inv, "gemini");
-          if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (out) { u.via = "inviter-gemini"; return out; } } } catch {}
+          if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "gemini"; if (out) { u.via = "inviter-gemini"; return out; } } } catch {}
       }
     }
   } catch {}
@@ -2561,6 +2597,43 @@ function setupGuideReply(lang) {
   // JULIE opens it herself; the user taps only inside Take Control.
   if (lang === "en") return "The shared AI is busy right now — its free limit is full, so it can't answer at the moment. It clears on its own in a bit; please try again shortly.";
   return "Shared AI ippudu busy ga undhi — free limit full ayyindhi, anduke ippudu answer ivvaledu. Konchem sepu lo thane clear avuthundi; appudu malli try cheyyi.";
+}
+// v51 (F2): a busy/limit answer in chat is ONE short line — never a
+// paragraph wall. The brain sometimes expands the setup pitch into a
+// multi-sentence wall ("give one allow in Setup... tap the verification
+// link..."); any reply that is recognisably that wall collapses back to
+// the short line. (That wall text also became a chat-tab title on the
+// user's phone — tab titles now come only from user messages, app.js.)
+function busyWallGuard(reply, lang) {
+  const r = String(reply || "");
+  if (/shared ai is busy|free limit is full|shared ai ippudu busy/i.test(r) && (r.length > 180 || /give one allow|#\/setup|tap the verification|sms code/i.test(r))) return setupGuideReply(lang);
+  return r;
+}
+// v51 (F3): never the same assistant reply twice back-to-back. When the
+// brain repeats its previous reply byte-for-byte (the double "Hello"
+// greeting Ajju hit), swap in a short varied line instead.
+function antiRepeatLine(text, lang) {
+  if (/^(hi+|hello|hey|helo|hai)\b/i.test(String(text || "").trim())) return lang === "en" ? "Hi again — tell me what to make and I'll start." : "Malli hi — em cheyalo cheppu, start chestha.";
+  return lang === "en" ? "Same as I just said above — tell me if you want me to go ahead." : "Paine cheppina answer ye — proceed avvala ante cheppu.";
+}
+// v51 (F3): edit-intent trigger, Romanized-Telugu + typo tolerant
+// ("Short videps okati edits chesi ivvu" routes like English "edit a
+// short video"). Song/play requests stay excluded.
+function editHintRoute(text) {
+  const t = String(text || "");
+  return /\b(edit|edits|video|videos|videps|reel|reels|short|shorts)\b|వీడియో|రీల్|ఎడిట్/i.test(t) && !/\b(play|song|paata|pata)\b/i.test(t);
+}
+// v51 (G1 — Ajju 2026-11-15): a message carrying a NEW topic (or an
+// A-to-Z self-do order) is a NEW create job that starts NOW, even while
+// another video renders. It is never a mid-flight amendment and never
+// a preference saved for "the next video". An amendment is only a
+// message pointing at the in-flight job itself ("ee video lo…",
+// "this one", "adhe video") with NO new topic in it.
+function isNewTopicOrder(text) {
+  const t = String(text || "").toLowerCase();
+  if (/\btopic\b\s*[:\-]?\s*[a-z0-9]/.test(t)) return true; // "topic loneliness", "topic: space"
+  if (/(a\s*to\s*z|nee\s*own\s*ga|anni\s+n(uv)?ve\s+chey|nuvve\s+chey|motham\s+n(uv)?ve)/.test(t) && /(video|reel|short|cheyu|cheyyi|chey|chesi|ivvu|create|make)/.test(t)) return true;
+  return false;
 }
 function isDidItText(t) {
   // v88 (G1): "I did it / login chesa / chesanu" in English or Romanized
@@ -2937,7 +3010,10 @@ async function vidCount(env, n) { const k = `vmon:${n}:${istMonth()}`; await env
 // no weekly count cap; the weekly grant is a token bucket, and tokSpend
 // already draws weekly -> pool -> plan (split) so a grant can never act
 // as a cap while the user holds pool/plan tokens.
-const editHint = lang => lang === "en" ? "Julie makes videos herself in chat — just tell me the topic. If you want your own video edited, attach it yourself with the attach button, say short, long or face video, and what to change — Julie edits it and tells you here when it's ready." : "Julie videos ni thane chat lo create chesthundi — topic cheppu chalu. Nee sontha video edit kavali ante, nuvve attach button tho video attach cheyyi, short, long leda face video ani cheppu, em marchalo cheppu — Julie edit chesi ready ayyaka ikkada chepthundi.";
+// v51 (F3): ONE short line when an edit is asked but no video is attached
+// yet — ask for the video (or offer to make one). Never the old paragraph,
+// never "attach it yourself" pushing the work back at the user.
+const editHint = lang => lang === "en" ? "Attach the video here and tell me what to change — I'll edit it. No video? Give me a topic and I'll make one." : "Video ikkade attach cheyyi, em marchalo cheppu — edit chestha. Video ledha? Topic cheppu, kotha video chestha.";
 async function appKeys(req, env, u, p, body, lang) {
   const en = lang === "en";
   if (p === "keys") {
@@ -3095,7 +3171,7 @@ async function appAssist(env, u, body, lang) {
     const hPrev = await history(env, u.n);
     if (hPrev.some(m => /video|reel|short|topic|CREATE/i.test(String(m.content || "")))) { const r = await appTalk(env, u, text, lang, body.voiceId); return { ok: true, intent: "chat", free: true, ...r }; }
   }
-  if (/\b(edit|video|videos|reel|reels|short|shorts)\b|వీడియో|రీల్|ఎడిట్/i.test(text) && !/\b(play|song|paata|pata)\b/i.test(text) && !isCreateOrder(text) && !isNoVideoEditOrder(text)) { const r = editHint(lang); const h = await history(env, u.n); h.push({ role: "user", content: text }, { role: "assistant", content: r }); await remember(env, u.n, h); return { ok: true, intent: "edit", free: true, reply: r }; }
+  if (editHintRoute(text) && !isCreateOrder(text) && !isNoVideoEditOrder(text)) { const r = editHint(lang); const h = await history(env, u.n); const lastA = [...h].reverse().find(m => m.role === "assistant"); if (!lastA || String(lastA.content || "") !== r) { h.push({ role: "user", content: text }, { role: "assistant", content: r }); await remember(env, u.n, h); return { ok: true, intent: "edit", free: true, reply: r }; } /* v51 (F3): the one-line ask was already the last reply — never repeat it verbatim; fall through and let the intent/brain flow answer instead. */ }
   let it = ruleIntent(text);
   if (!it && (ACTION_RX.test(text) || PREMIUM_RX.test(text))) it = await llmIntent(env, u.n, text);
   if (!it) it = { intent: "chat" };
@@ -3936,7 +4012,185 @@ async function autoCheckAll(env) {
       } catch {}
     }
   } catch {}
+  // v91: the model scout rides this same periodic path (globally
+  // throttled inside scoutSweep) — no separate cron exists today.
+  try { await scoutSweep(env, false); } catch {}
 }
+
+// ===== v91: MODEL SCOUT + PROACTIVE LIMIT WARNING (Ajju, 2026-11-15) =====
+// Scout: Julie keeps adding NEW free models to her own rotation. A
+// sweep (at most once per 24h, piggybacked on the v39 periodic paths —
+// autoCheckAll + the setup/status opportunistic check; NO cron trigger
+// is configured on this Worker) diffs the providers' live FREE model
+// lists against the rotation, ping-tests each new candidate with ONE
+// real chat call, and appends only the models that answer correctly —
+// always LAST in their provider's order. It never removes a model and
+// never adds a paid one. Every add/skip is logged to the owner's
+// auto-log (provider "scout") and to scout:log.
+const SCOUT_TOKEN = "SCOUT7OK";
+const SCOUT_MAX_ADD = 3, SCOUT_MAX_TEST = 6, SCOUT_MIN_MS = 24 * 60 * 60 * 1000;
+let _scoutCache = { at: 0, data: null };
+async function scoutModels(env) {
+  if (_scoutCache.data && Date.now() - _scoutCache.at < 300000) return _scoutCache.data;
+  let d = { groq: [], openrouter: [], gemini: [] };
+  try { const raw = JSON.parse((await env.KV.get("scout:models")) || "null"); if (raw) d = { groq: raw.groq || [], openrouter: raw.openrouter || [], gemini: raw.gemini || [] }; } catch {}
+  _scoutCache = { at: Date.now(), data: d };
+  return d;
+}
+async function scoutList(env, provider) { try { return (await scoutModels(env))[provider] || []; } catch { return []; } }
+async function scoutLog(env, entry) {
+  try { const log = JSON.parse((await env.KV.get("scout:log")) || "[]"); log.unshift({ at: Date.now(), ...entry }); await env.KV.put("scout:log", JSON.stringify(log.slice(0, 30)), { expirationTtl: 86400 * 30 }); } catch {}
+}
+function scoutOwnerNs(env) { return (env.OWNERS || "").split(",").map(s => s.trim()).filter(Boolean); }
+async function scoutTestKey(env, provider) {
+  // The scout's test calls ride an OWNER's sealed key (opened only here,
+  // inside the Worker — the same pattern chatWithFallback uses). Groq
+  // needs none: the shared env key is its test key.
+  for (const n of scoutOwnerNs(env)) { try { const k = await openKey(env, n, provider); if (k) return { n, key: k }; } catch {} }
+  return null;
+}
+const SCOUT_PING = [{ role: "user", content: `Reply with exactly this token and nothing else: ${SCOUT_TOKEN}` }];
+async function scoutPingGroq(key, model) {
+  try {
+    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify({ model, messages: SCOUT_PING, temperature: 0, max_tokens: 128, ...(model.startsWith("openai/gpt-oss") ? { reasoning_effort: "low" } : {}) }), signal: AbortSignal.timeout(20000) }).catch(() => null);
+    if (!r) return { pass: false, why: "no response" };
+    if (!r.ok) return { pass: false, why: `http ${r.status}` };
+    const out = (((await r.json()).choices || [])[0]?.message?.content || "");
+    return out.includes(SCOUT_TOKEN) ? { pass: true } : { pass: false, why: "wrong answer" };
+  } catch (e) { return { pass: false, why: String(e).slice(0, 80) }; }
+}
+async function scoutPingOpenRouter(key, model) {
+  try {
+    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${key}`, "content-type": "application/json", "HTTP-Referer": "https://divya-app.n8n00101.workers.dev", "X-Title": "Julie" }, body: JSON.stringify({ model, messages: SCOUT_PING, max_tokens: 256, temperature: 0 }), signal: AbortSignal.timeout(25000) }).catch(() => null);
+    if (!r) return { pass: false, why: "no response" };
+    if (!r.ok) return { pass: false, why: `http ${r.status}` };
+    const out = (((await r.json()).choices || [])[0]?.message?.content || "");
+    return out.includes(SCOUT_TOKEN) ? { pass: true } : { pass: false, why: "wrong answer" };
+  } catch (e) { return { pass: false, why: String(e).slice(0, 80) }; }
+}
+async function scoutPingGemini(key, model) {
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: SCOUT_PING[0].content }] }], generationConfig: { maxOutputTokens: 256, temperature: 0 } }), signal: AbortSignal.timeout(25000) }).catch(() => null);
+    if (!r) return { pass: false, why: "no response" };
+    if (!r.ok) return { pass: false, why: `http ${r.status}` };
+    const out = (((await r.json()).candidates?.[0]?.content?.parts) || []).map(x => x.text || "").join("");
+    return out.includes(SCOUT_TOKEN) ? { pass: true } : { pass: false, why: "wrong answer" };
+  } catch (e) { return { pass: false, why: String(e).slice(0, 80) }; }
+}
+async function scoutSweep(env, force) {
+  const now = Date.now();
+  const last = parseInt((await env.KV.get("scout:last")) || "0", 10) || 0;
+  if (!force && now - last < SCOUT_MIN_MS) return { ran: false, reason: "throttled" };
+  await env.KV.put("scout:last", String(now), { expirationTtl: 86400 * 8 });
+  const store = await scoutModels(env);
+  const summary = { ran: true, at: now, tested: [], added: [], skipped: [] };
+  let addBudget = SCOUT_MAX_ADD;
+  const logN = scoutOwnerNs(env)[0] || "";
+  const note = async (provider, model, action, why, result) => { if (logN) await autoLogAppend(env, logN, { provider: "scout", action, why: `${provider}/${model} — ${why}`, result }); };
+  const skip = async (provider, model, why) => { summary.skipped.push({ provider, model, why }); await note(provider, model, "model-skipped", why, "skipped"); await scoutLog(env, { provider, model, action: "skipped", why }); };
+  const add = async (provider, model) => { store[provider].push(model); summary.added.push({ provider, model }); addBudget--; await note(provider, model, "model-added", "passed the scout ping test — joined the rotation at the end", "added"); await scoutLog(env, { provider, model, action: "added" }); };
+  // ---- Groq: candidates = the shared key's live list, minus the rotation ----
+  try {
+    const gk = (env.GROQ_KEY || "").split(",").map(s => s.trim()).filter(Boolean)[0];
+    if (!gk) summary.skipped.push({ provider: "groq", model: "*", why: "no shared GROQ_KEY" });
+    else if (addBudget <= 0) await skip("groq", "*", "sweep add-cap reached");
+    else {
+      const live = await liveModels(env, gk);
+      const excl = /whisper|guard|tts|playai|orpheus|compound|prompt/i;
+      const cands = live.filter(id => !CHAT_MODELS.includes(id) && !VISION_MODELS.includes(id) && !store.groq.includes(id) && !excl.test(id)).slice(0, SCOUT_MAX_TEST);
+      if (!cands.length) summary.skipped.push({ provider: "groq", model: "*", why: "no new candidates" });
+      for (const m of cands) {
+        if (addBudget <= 0) { await skip("groq", "*", "sweep add-cap reached"); break; }
+        const t = await scoutPingGroq(gk, m); summary.tested.push({ provider: "groq", model: m, pass: t.pass });
+        if (t.pass) await add("groq", m); else await skip("groq", m, t.why);
+      }
+    }
+  } catch (e) { summary.skipped.push({ provider: "groq", model: "*", why: String(e).slice(0, 120) }); }
+  // ---- OpenRouter: candidates = the public :free list, minus the rotation ----
+  try {
+    const r = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(15000) }).catch(() => null);
+    const data = r && r.ok ? ((await r.json()).data || []) : [];
+    const pref = ["openai/gpt-oss-120b:free", "deepseek/deepseek-chat-v3.1:free", "meta-llama/llama-3.3-70b-instruct:free", "qwen/qwen3-235b-a22b:free", "google/gemma-3-27b-it:free"];
+    const curWin = JSON.parse((await env.KV.get("or:free")) || "[]");
+    const cands = data.filter(m => String(m.id).endsWith(":free") && ((m.architecture?.output_modalities || ["text"]).includes("text")) && !/image|audio|embed|rerank|moderation/i.test(m.id) && !pref.includes(m.id) && !curWin.includes(m.id) && !store.openrouter.includes(m.id)).map(m => m.id).slice(0, SCOUT_MAX_TEST);
+    if (!cands.length) summary.skipped.push({ provider: "openrouter", model: "*", why: "no new candidates" });
+    else if (addBudget <= 0) await skip("openrouter", "*", "sweep add-cap reached");
+    else {
+      const tk = await scoutTestKey(env, "openrouter");
+      if (!tk) { for (const m of cands) await skip("openrouter", m, "no owner test key"); }
+      else {
+        for (const m of cands) {
+          if (addBudget <= 0) { await skip("openrouter", "*", "sweep add-cap reached"); break; }
+          const t = await scoutPingOpenRouter(tk.key, m); summary.tested.push({ provider: "openrouter", model: m, pass: t.pass });
+          if (t.pass) await add("openrouter", m); else await skip("openrouter", m, t.why);
+        }
+        if (summary.added.some(a => a.provider === "openrouter")) await env.KV.delete("or:free").catch(() => {}); // rebuild the cached window with the new models in it
+      }
+    }
+  } catch (e) { summary.skipped.push({ provider: "openrouter", model: "*", why: String(e).slice(0, 120) }); }
+  // ---- Gemini: candidates = free-tier families only (flash / gemma) ----
+  try {
+    if (addBudget <= 0) await skip("gemini", "*", "sweep add-cap reached");
+    else {
+      const tk = await scoutTestKey(env, "gemini");
+      if (!tk) summary.skipped.push({ provider: "gemini", model: "*", why: "no owner test key" });
+      else {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(tk.key)}`, { signal: AbortSignal.timeout(15000) }).catch(() => null);
+        const data = r && r.ok ? ((await r.json()).models || []) : [];
+        const bad = /pro|imagen|veo|tts|audio|robotics|computer|deep-research|image/i;
+        const cands = data.filter(m => (m.supportedGenerationMethods || []).includes("generateContent")).map(m => String(m.name || "").replace(/^models\//, "")).filter(id => /(flash|gemma)/i.test(id) && !bad.test(id) && !["gemini-2.5-flash", "gemini-2.0-flash"].includes(id) && !store.gemini.includes(id)).slice(0, SCOUT_MAX_TEST);
+        if (!cands.length) summary.skipped.push({ provider: "gemini", model: "*", why: "no new candidates" });
+        for (const m of cands) {
+          if (addBudget <= 0) { await skip("gemini", "*", "sweep add-cap reached"); break; }
+          const t = await scoutPingGemini(tk.key, m); summary.tested.push({ provider: "gemini", model: m, pass: t.pass });
+          if (t.pass) await add("gemini", m); else await skip("gemini", m, t.why);
+        }
+      }
+    }
+  } catch (e) { summary.skipped.push({ provider: "gemini", model: "*", why: String(e).slice(0, 120) }); }
+  if (summary.added.length) { await env.KV.put("scout:models", JSON.stringify(store)); _scoutCache = { at: Date.now(), data: store }; }
+  await scoutLog(env, { action: "sweep", added: summary.added.length, tested: summary.tested.length, skipped: summary.skipped.length });
+  return summary;
+}
+// Part 2: the proactive limit warning. Fires (once per user per IST
+// week) when the weekly free tokens cross 80% used, or when the user's
+// own key just hit its provider's free limit (429 seen inside
+// chatWithFallback, recorded as u.keyQuota). Owners/friends are
+// unlimited and never warned. Text is Julie-short and conditional —
+// pool/referral lines appear only when they are true for this user.
+const LIMIT_WARN_PCT = 0.8;
+const LIMIT_PROV_NAME = { groq: "Groq", openrouter: "OpenRouter", gemini: "Gemini" };
+function limitWarnText(lang, bal, quotaProvider) {
+  const pct = Math.round((bal.weekSpent / TOK.WEEKLY_FREE) * 100);
+  const pname = quotaProvider ? (LIMIT_PROV_NAME[quotaProvider] || quotaProvider) : "";
+  if (quotaProvider && pct < 80) {
+    return lang === "en"
+      ? `Heads-up: your ${pname} key just hit its free limit, so I answered with a backup model. It resets on its own — nothing for you to do.`
+      : `Oka heads-up: nee ${pname} key ippude dhaani free limit ki cherindhi — anduke backup model tho answer icha. Adhi thane reset avuthundhi, nuvvu emi cheyyalsina pani ledhu.`;
+  }
+  const base = lang === "en"
+    ? `Heads-up: you've used ${pct}% of this week's free tokens (they reset Monday). If everything reaches zero, chat and videos pause until the reset.`
+    : `Oka heads-up: ee week free tokens lo ${pct}% ayipoyayi (Monday reset avuthayi). Anni zero ayithe, reset varaku chat/videos aagipothayi.`;
+  const poolLine = bal.pool > 0 ? (lang === "en" ? ` Your bonus pool has ${bal.pool.toLocaleString("en-IN")} tokens — they get used automatically after the weekly free.` : ` Nee bonus pool lo ${bal.pool.toLocaleString("en-IN")} tokens unnai — weekly free ayipoyaka avi automatic ga use avuthayi.`) : "";
+  const refLine = lang === "en" ? " Inviting a friend adds 1,000,000 bonus tokens to both of you." : " Friend ni invite cheste iddariki 1,000,000 bonus tokens vasthayi.";
+  const keyLine = quotaProvider ? (lang === "en" ? ` Also, your ${pname} key just hit its free limit — I used a backup model; it resets on its own.` : ` Mariyu nee ${pname} key kuda ippude free limit ki cherindhi — backup model use chesa; adhi thane reset avuthundhi.`) : "";
+  return base + poolLine + refLine + keyLine;
+}
+async function limitWarnMaybe(env, u, lang, opts = {}) {
+  try {
+    if (!opts.force && appAllowed(env, u.n).ok) return "";
+    const flag = `limitwarn:${u.n}:${istWeek()}`;
+    if (!opts.force && (await env.KV.get(flag))) return "";
+    const bal = await tokBalance(env, u.n);
+    const usageHit = bal.weekSpent >= LIMIT_WARN_PCT * TOK.WEEKLY_FREE;
+    const quotaHit = u.keyQuota || "";
+    if (!opts.force && !usageHit && !quotaHit) return "";
+    const text = limitWarnText(lang, bal, quotaHit);
+    await env.KV.put(flag, String(Date.now()), { expirationTtl: 86400 * 8 });
+    return text;
+  } catch { return ""; }
+}
+
 // ===== v40 (R19): Worker-side verification-mail reader =====
 // The setup runner pauses on an email verification (Groq/OpenRouter/
 // Cloudflare magic link). The agent's Gmail tool redacts sign-in links,
@@ -4253,6 +4507,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       // — a failure here never breaks setup/status.
       let auto = null;
       try { auto = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", false); } catch {}
+      try { await scoutSweep(env, false); } catch {} // v91: model scout piggyback (24h global throttle inside)
       const autoLog = await autoLogRead(env, u.n);
       return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(fin), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownCount, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
     }
@@ -4657,8 +4912,18 @@ async function appVoiceRunner(req, env, p, url, body) {
     return appJson(req, { ok: true });
   }
   if (p === "voice/runner/fail" && req.method === "POST") {
-    rec.state = "failed"; rec.error = String((body && body.error) || "runner").slice(0, 120);
-    await env.KV.put(`vjob:${job}`, JSON.stringify(rec), { expirationTtl: 3600 });
+    // v51 (V4 refund fix): a terminal failure refunds the speak charge
+    // exactly once — the spend was recorded against the job at dispatch
+    // (recordSpend in voice/speak) and refundJobSpend pays it back from
+    // that record, flagging it so a repeat fail callback can never pay
+    // twice. A job that already delivered audio (state done) is never
+    // flipped to failed and never refunded; an already-failed job is a
+    // no-op.
+    if (rec.state !== "done" && rec.state !== "failed") {
+      rec.state = "failed"; rec.error = String((body && body.error) || "runner").slice(0, 120);
+      await env.KV.put(`vjob:${job}`, JSON.stringify(rec), { expirationTtl: 3600 });
+      try { await refundJobSpend(env, job, rec.user); } catch {}
+    }
     return appJson(req, { ok: true });
   }
   return new Response("not found", { status: 404 });
@@ -5011,6 +5276,22 @@ export default {
       // only — the bytes travel via /api/runner/refvoice, job-scoped).
       const rvMeta = jrec.to ? await refVoiceMeta(env, jrec.to) : null;
       return Response.json({ ...jrec, WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: ownPexels || env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "", refvoice: rvMeta ? { present: true, wpm: rvMeta.wpm || 0, lang: rvMeta.lang || "" } : { present: false } });
+    }
+    // v91: internal triggers for the model scout + limit warning
+    // (RUNNER_KEY-guarded, same pattern as /job — test/proof only).
+    if (url.pathname === "/internal/scout" && req.method === "POST") {
+      if (req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
+      const s = await scoutSweep(env, true).catch(e => ({ ran: false, error: String(e).slice(0, 200) }));
+      return Response.json({ ok: true, sweep: s, models: await scoutModels(env) });
+    }
+    if (url.pathname === "/internal/limitwarn" && req.method === "POST") {
+      if (req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
+      const b = await req.json().catch(() => ({}));
+      if (!b.n) return Response.json({ ok: false, error: "n required" }, { status: 400 });
+      const uu = { n: String(b.n), keyQuota: b.quota ? String(b.quota) : "" };
+      const text = await limitWarnMaybe(env, uu, b.lang === "en" ? "en" : "te", { force: !!b.force });
+      if (text) { const hh = await history(env, uu.n); hh.push({ role: "assistant", content: text }); await remember(env, uu.n, hh); }
+      return Response.json({ ok: true, notice: text, balance: await tokBalance(env, uu.n) });
     }
     // Call media server fetches WA/Groq creds here (shared FORWARD_SECRET).
     if (url.pathname === "/callcreds" && req.method === "POST") {
