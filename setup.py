@@ -97,6 +97,7 @@ CHAIN_ORDER = ["groq", "openrouter", "gemini", "cloudflare",
                "pexels"]
 MAX_TRIES = 2
 CURRENT_PROVIDER = None
+_JOB_EMAIL = ""  # v94 (F7): the setup job's account email (test_key's Resend send-proof recipient)
 
 # v47 (R51): browser mode. "profile" = the persistent-profile real
 # browser (session restored/saved via the Worker, sealed in KV);
@@ -1072,6 +1073,25 @@ def test_key(provider, key):
             r = httpx.post("https://api.jina.ai/v1/embeddings", json={"model": "jina-embeddings-v3", "input": ["hi"]},
                            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, timeout=30)
             return r.status_code == 200
+        if provider == "resend":
+            # v94 (F7): a full-access key can list domains — the cheap
+            # auth check. A sending-only key cannot, so for those the
+            # real proof is ONE send from Resend's onboarding sender to
+            # the account's own inbox (the only recipient allowed before
+            # a domain is verified) — which is also exactly the mail
+            # channel this key exists for.
+            r = httpx.get("https://api.resend.com/domains",
+                          headers={"Authorization": f"Bearer {key}"}, timeout=20)
+            if r.status_code == 200:
+                return True
+            if not _JOB_EMAIL:
+                return False
+            r = httpx.post("https://api.resend.com/emails",
+                           json={"from": "Julie <onboarding@resend.dev>", "to": [_JOB_EMAIL],
+                                 "subject": "Julie mail channel check",
+                                 "text": "Julie created this Resend key herself and verified it with this send."},
+                           headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, timeout=20)
+            return r.status_code in (200, 201)
     except Exception as e:
         print(f"key test failed for {provider}:", e)
     return False
@@ -2375,6 +2395,54 @@ def flow_mistral(page, job, cfg):
     return _fail(f"{name} key kanipinchaledu — phone verification tarvatha kuda (step: key creation). Take Control tho try cheyyi.")
 
 
+def flow_resend(page, job, cfg):
+    """v94 (F7): Resend — signup + email verification are the generic
+    email flow (the server feeds the verification link; the runner
+    opens it). Only key creation differs: the API-keys page opens a
+    dialog that requires a key NAME and a second confirm click before
+    the key is shown — once. If the generic pass already extracted a
+    key, keep it; if it stopped at key creation, drive the dialog."""
+    res = flow_email_signup(page, job, cfg)
+    if res.get("status") != "failed" or "Key kanipinchaledu" not in str(res.get("error") or ""):
+        return res
+    name = cfg["name"]
+    progress("running", "api-key", f"{name} key dialog open chesthunna.", cfg["keys_url"])
+    goto(page, cfg["keys_url"])
+    page.wait_for_timeout(3000)
+    key = extract_key(page, cfg["key_patterns"])
+    if key:
+        return _ok(key=key)
+    click(page, ["button:has-text('Create API Key')", "button:has-text('Create')", "a:has-text('Create API Key')"])
+    page.wait_for_timeout(2500)
+    # The dialog's Name field is required — fill it if offered.
+    try:
+        fill(page, ["[role='dialog'] input[type='text']", "[role='dialog'] input:not([type])",
+                    "input[name='name']", "input[placeholder*='name' i]"], "julie-mail")
+    except Exception:
+        pass
+    page.wait_for_timeout(800)
+    click(page, ["[role='dialog'] button:has-text('Create API Key')", "[role='dialog'] button:has-text('Create')",
+                 "button:has-text('Create API Key')", "button:has-text('Create')", "button:has-text('Add')"])
+    page.wait_for_timeout(4000)
+    key = extract_key(page, cfg["key_patterns"])
+    if not key:
+        # The freshly shown key may live in a readonly input's value.
+        try:
+            for el in page.locator("input").all():
+                try:
+                    m = re.search(r"(re_[A-Za-z0-9_\-]{20,})", el.input_value() or "")
+                except Exception:
+                    continue
+                if m:
+                    key = m.group(1)
+                    break
+        except Exception:
+            pass
+    if key:
+        return _ok(key=key)
+    return _fail(f"{name} key kanipinchaledu — create dialog tarvatha kuda (step: key creation). Take Control tho try cheyyi.")
+
+
 def flow_jina(page, job, cfg):
     """v81 Jina: there is no signup form to fill — a fresh API key with
     10M free tokens is generated automatically on the product pages.
@@ -2524,6 +2592,13 @@ FLOWS = {
              "login_url": "https://jina.ai/",
              "keys_url": "https://jina.ai/embeddings", "flow": "jina",
              "key_patterns": [r"(jina_[A-Za-z0-9]{32,})"]},
+    # v94 (F7): the mail channel's own key — created ONCE under the
+    # project identity; the Worker mirrors it into the sys slot that
+    # sendMailChannel() reads. Never in CHAIN_ORDER (not a per-user key).
+    "resend": {"name": "Resend", "url": "https://resend.com/signup",
+               "login_url": "https://resend.com/login",
+               "keys_url": "https://resend.com/api-keys", "flow": "resend",
+               "key_patterns": [r"(re_[A-Za-z0-9_\-]{20,})"]},
 }
 
 
@@ -2560,7 +2635,7 @@ def run_flow(page, job, cfg):
         # and similar walls show on FIRST load. Give the page ~6s to
         # clear a managed challenge; if the wall persists, fail in
         # seconds (no_retry) instead of grinding through the whole flow.
-        if flow in ("cloudflare", "token", "email", "pexels", "mistral", "jina"):
+        if flow in ("cloudflare", "token", "email", "pexels", "mistral", "jina", "resend"):
             try:
                 page.goto(cfg["url"], wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(2500)
@@ -2583,6 +2658,8 @@ def run_flow(page, job, cfg):
             return flow_mistral(page, job, cfg)
         if flow == "jina":
             return flow_jina(page, job, cfg)
+        if flow == "resend":
+            return flow_resend(page, job, cfg)
         return flow_email_signup(page, job, cfg)
     except WallHit as w:
         return _fail(f"{cfg['name']} security wall ({w}) — Take Control tho nuvve okkasari sign in cheyyi, tarvatha Julie ne continue chesthundhi.", extra={"no_retry": True, "wall": str(w)})
@@ -2625,8 +2702,9 @@ def run_provider(browser, job, cfg, provider):
 def main():
     # v24: get_job() raises SystemExit(1) on any failure (loud + non-zero),
     # so a bad job fetch can never look like a successful run again.
-    global CURRENT_PROVIDER
+    global CURRENT_PROVIDER, _JOB_EMAIL
     job = get_job()
+    _JOB_EMAIL = job.get("email") or ""
     # v47: restore the user's saved browser session before any flow
     # runs (profile mode only; a no-op otherwise).
     fetch_profile()

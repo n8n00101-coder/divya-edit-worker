@@ -2596,12 +2596,42 @@ async function sendEmailCode(env, uid, email) {
   const code = String(100000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 900000));
   await env.KV.put(`eotp:${uid}`, JSON.stringify({ code, tries: 0 }), { expirationTtl: 600 });
   const sent = await sendMailChannel(env, { to: email, subject: "Julie password reset code", text: `Your Julie password reset code is ${code}. It expires in 10 minutes. If you did not ask for this, ignore this email.` });
-  if (!sent || !sent.ok) { await env.KV.delete(`eotp:${uid}`); return { ok: false, reason: "no-channel" }; }
+  if (!sent || !sent.ok) { await env.KV.delete(`eotp:${uid}`); return { ok: false, reason: (sent && sent.reason) || "no-channel" }; }
   return { ok: true };
 }
-// The ONE place an email provider gets wired in (Resend/Brevo free tier or
-// a Gmail app-password relay). Until then: honest no-channel.
-async function sendMailChannel(env, msg) { return { ok: false, reason: "no-channel" }; }
+// The ONE place an email provider gets wired in. v94 (F7): Resend first —
+// key from the RESEND_KEY Worker secret when set, else the sealed
+// sys:resend key Julie created herself through the setup chain (the
+// runner/key handler mirrors mail-channel keys into the "sys" slot).
+// Brevo is the fallback (BREVO_KEY secret or the sys:brevo slot).
+// Sender: MAIL_FROM when a domain is verified in Resend; until then
+// Resend's onboarding sender, which delivers to the Resend account's
+// own inbox — arbitrary-user delivery needs a verified domain (a DNS
+// step, recorded in the F7 plan entry, not a code step).
+async function sendMailChannel(env, msg) {
+  const to = String((msg && msg.to) || "").trim();
+  if (!to) return { ok: false, reason: "no-recipient" };
+  const subject = String((msg && msg.subject) || "Julie").slice(0, 200);
+  const text = String((msg && msg.text) || "").slice(0, 4000);
+  let fail = "";
+  const rk = String(env.RESEND_KEY || "").trim() || (await openKey(env, "sys", "resend"));
+  if (rk) {
+    try {
+      const r = await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${rk}`, "content-type": "application/json" }, body: JSON.stringify({ from: env.MAIL_FROM || "Julie <onboarding@resend.dev>", to: [to], subject, text }) });
+      if (r.ok) { const j = await r.json().catch(() => ({})); return { ok: true, via: "resend", id: j.id || "" }; }
+      fail = "resend-" + r.status;
+    } catch { fail = "resend-net"; }
+  }
+  const bk = String(env.BREVO_KEY || "").trim() || (await openKey(env, "sys", "brevo"));
+  if (bk) {
+    try {
+      const r = await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": bk, "content-type": "application/json", accept: "application/json" }, body: JSON.stringify({ sender: { name: "Julie", email: env.MAIL_FROM_EMAIL || "n8n00101@gmail.com" }, to: [{ email: to }], subject, textContent: text }) });
+      if (r.ok) return { ok: true, via: "brevo" };
+      fail = "brevo-" + r.status;
+    } catch { fail = "brevo-net"; }
+  }
+  return { ok: false, reason: fail || "no-channel" };
+}
 async function acctFind(env, ident) {
   const e = normEmail(ident); if (e) return acctGet(env, await env.KV.get(`em:${e}`));
   const n = normPhone(ident); if (n) return acctGet(env, await env.KV.get(`ph:${n}`)); // only VERIFIED phones are indexed
@@ -2694,7 +2724,7 @@ async function acctPublic(req, env, p, body) {
     const a = await acctFind(env, String(body.id || ""));
     if (!a) return appJson(req, { ok: false, error: en ? "No account found with that email." : "Aa email tho account ledu." }, 404);
     const r = await sendEmailCode(env, a.uid, a.email);
-    if (!r.ok) return appJson(req, { ok: false, no_channel: true, error: en ? "Email sending is not set up yet, so a code can't be emailed. Use WhatsApp reset if your phone is verified, or ask the Julie owner to finish the email setup." : "Email pampinche setup inka avvaledu, anduke code email cheyalenu. Phone verify ayyi unte WhatsApp reset vadandi, leda email setup finish cheyamani Julie owner ni adagandi." }, 501);
+    if (!r.ok) { const nc = r.reason === "no-channel"; return appJson(req, { ok: false, ...(nc ? { no_channel: true } : {}), error: nc ? (en ? "Email sending is not set up yet, so a code can't be emailed. Use WhatsApp reset if your phone is verified, or ask the Julie owner to finish the email setup." : "Email pampinche setup inka avvaledu, anduke code email cheyalenu. Phone verify ayyi unte WhatsApp reset vadandi, leda email setup finish cheyamani Julie owner ni adagandi.") : (en ? "The email could not be sent right now. Try again in a little while, or use WhatsApp reset if your phone is verified." : "Email ippudu pampaledu. Konchem aagi malli try cheyyi, leda phone verify ayyi unte WhatsApp reset vadandi.") }, 501); }
     return appJson(req, { ok: true, sent: true, to: a.email.replace(/^(.).*(@.*)$/, "$1...$2") });
   }
   if (p === "auth/reset-email" && req.method === "POST") {
@@ -3023,6 +3053,12 @@ const SETUP_PROVIDERS = {
   elevenlabs: { name: "ElevenLabs", site: "elevenlabs.io", url: "https://elevenlabs.io/app/sign-up", flow: "email" },
   stability: { name: "Stability AI", site: "platform.stability.ai", url: "https://platform.stability.ai/", flow: "email" },
   jina: { name: "Jina AI", site: "jina.ai", url: "https://jina.ai/embeddings", flow: "jina" },
+  // v94 (F7): the mail channel's own key. Created ONCE under the project
+  // identity through this same chain; setup/runner/key also mirrors it
+  // into the "sys" slot that sendMailChannel() reads, so password-reset
+  // mail works app-wide. Like Pexels: a capability key — never in
+  // AUTO_PROVIDERS, never counted by needsSetup, never in CHAIN_ORDER.
+  resend: { name: "Resend", site: "resend.com", url: "https://resend.com/signup", flow: "resend" },
 };
 function setupJobId() { return [...crypto.getRandomValues(new Uint8Array(10))].map(b => b.toString(16).padStart(2, "0")).join(""); }
 function setupPass() { const c = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#"; const r = crypto.getRandomValues(new Uint8Array(16)); return [...r].map(b => c[b % c.length]).join(""); }
@@ -3348,6 +3384,7 @@ const VERIFY_PROVIDERS = {
   groq: { domains: ["groq.com", "stytch"], from: ["groq.com"], subj: ["login request", "verify", "sign in", "sign-in", "login", "groq"], q: "from:groq.com", mode: "and" },
   openrouter: { domains: ["openrouter.ai", "clerk"], from: ["openrouter"], subj: ["openrouter", "verify"], q: "OpenRouter", mode: "or" },
   cloudflare: { domains: ["cloudflare.com"], from: ["cloudflare"], subj: ["verify", "confirm", "cloudflare"], q: "from:cloudflare", mode: "and" },
+  resend: { domains: ["resend.com"], from: ["resend.com"], subj: ["verify", "confirm", "resend", "welcome"], q: "from:resend.com", mode: "or" },
   generic: { domains: [], from: [], subj: ["verify", "confirm", "activate", "login"], q: "verify", mode: "or" },
 };
 function gmailHeader(msg, name) {
@@ -4193,6 +4230,12 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     if (!env.APP_KEK) return new Response("key storage not ready", { status: 503 });
     try { await storeKey(env, rec.user, rec.provider, key, { who: String(body.who || rec.provider || ""), source: "divya" }); }
     catch (e) { return new Response("key storage failed", { status: 500 }); }
+    // v94 (F7): a mail-channel key (Resend/Brevo) also mirrors into the
+    // "sys" slot — sendMailChannel() reads the channel key from there,
+    // so app-wide password-reset mail works for every user, not only
+    // for the identity that ran this setup. Best-effort: the owner's
+    // own slot above is already saved if this fails.
+    if (rec.provider === "resend" || rec.provider === "brevo") { try { await storeKey(env, "sys", rec.provider, key, { who: String(body.who || rec.provider || ""), source: "divya" }); } catch {} }
     return Response.json({ ok: true, provider: rec.provider, sealed: true });
   }
   if (p === "setup/runner/result" && req.method === "POST") {
