@@ -96,3 +96,131 @@ share actual words with the beat's line.)
   re-rendered — re-rendering the same plan reproduces the same failure.
 - Every applied change by the Editing Director is written as a diff.
   Authority is auditable or it does not exist.
+
+# ADDITIONS — Premiere Pro reel masterclass (merged 2026-11-15)
+Distilled from a 6-reel editing course; every rule below was checked against the laws above — where the course conflicted with this pack, the pack won.
+
+## Listen before you plan (the course's first law, all six reels)
+- No beat is planned from text alone. The planning pass listens to the
+  voice and leaves every line with a named visual idea. (Reels 3 & 6:
+  "listen 2–3 times until every line is imagined.")
+- Flag the lines a viewer cannot grasp from words alone — those beats
+  MUST explain visually, not decorate. (Reel 6 planning pass.)
+- Cut every silence and retake before any design decision. Design on a
+  dirty timeline is wasted design. (Reels 2 & 6 rough cut.)
+
+## Composition before animation
+- Build the finished still frame first; animate only an approved frame.
+  A beat whose still frame does not work will not be saved by motion.
+  (Reels 3 & 4: "the whole game is composition.")
+- The background is never dead: a slow drift, a subtle texture motion,
+  a breathing pattern. Static is a decision (held payoff), never a
+  default. (Reel 1 hook drift; Reel 5 living background.)
+- Blend, don't paste: a cutout's edges are feathered into its world and
+  its base may fade out entirely — the viewer must never be left asking
+  what is below or behind an element. (Reel 3 officers on paper.)
+- A fake shadow grounds every floating element; when the element
+  changes size, its shadow changes with it, or the lie shows. (Reels
+  4 & 5.)
+- Depth pass before delivery: grade the whole frame, blur what the eye
+  should leave, sharpen where it should land, vignette or falloff so
+  the frame has a focus point. A flat frame is an unfinished frame.
+  (Reel 6 ending pass.)
+
+## Colour is meaning
+- Headlines start ALL WHITE. Colour is then given only to the words
+  that earn it. (Reel 2.)
+- Assign colour by the emotion the line must cause: money green,
+  danger/threat red, the aspiration word highlighted yellow, a salary
+  figure red on purpose to make the viewer uneasy. If you cannot name
+  the emotion, the colour is decoration — remove it. (Reel 2.)
+- The key phrase changes colour exactly ON its spoken word, not before
+  the sentence and not after it. (Reel 1: the fear line turns red.)
+- For a brand/product topic, sample the palette from the product's own
+  packaging and world before inventing colours. (Reel 5: orange from
+  the box, brown map to harmonise.)
+- A topic's colour family is declared in the plan (finance = green)
+  and held for the whole video. (Reel 6.)
+
+## Show it in its real form — or build the metaphor
+- Evidence appears AS its real form: the document glows as a document,
+  the article keeps its masthead, and the camera travels INTO the row
+  or line that matters. Never describe evidence the frame could show.
+  (Reel 1.)
+- A familiar interface is shown as-is — recognition is the point and
+  the viewer reads it instantly. (Reel 6 stock screenshots.)
+- An abstract claim gets a BUILT metaphor, animated: profits vs returns
+  as a balance whose gap is filled level, a ratio as a seesaw tipping
+  on the spoken <, =, >. A metaphor that moves with the words beats a
+  screenshot that merely sits there. (Reels 3 & 6.)
+- Figure count carries meaning: one figure = one man; three figures =
+  an institution, the leader centre-front. Compose the semantics, not
+  just the scene. (Reel 3.)
+- A spoken enumeration is laid out as a visible list, in the line's
+  order, in the line's words. (Reel 5: the two reasons, two boxes.)
+
+## Numbers and anchors
+- A number the argument depends on is PINNED small on screen until the
+  argument is done — viewers forget a number the moment it leaves.
+  (Reel 2: the on-road price never leaves.)
+- Repeated data in one video uses ONE declared template (parameter +
+  label + amount), duplicated and re-typed. Consistency of data
+  presentation is professionalism, not template laziness. (Reel 2.)
+- A key term may MORPH: type it, erase it, retype it as its short form
+  (2510 → 25i) so the viewer watches the term being born. (Reel 2.)
+
+## Transitions are a vocabulary
+- Scene change → light leak or wipe. Topic change → pan. Emphasis →
+  zoom punch-in with motion blur. Era change → pan AND a new world kit
+  (paper, grain, vignette travel together). (Reels 4 & 5.)
+- A transition with no meaning is deleted; inside one idea, hard cut.
+  (Reel 4, stated outright — matches the pack's existing law.)
+
+## Sound placement (the course's taxonomy, Julie's discipline)
+- Three layers, three jobs: foley makes it real, ambience makes
+  silence alive (even silence has noise), music makes it felt. A beat
+  missing its layer is a plan defect. (Sound Design section.)
+- Match the effect to the EVENT's physics: whoosh only on real
+  movement, pop on a sudden size change, riser into a reveal, bell on
+  good news, hit on the emphasis word, small hard ticks as objects
+  land one by one. (Sound Design section; Reels 1 & 3.)
+- The per-sound test, asked at planning time: "what difference does
+  this sound make to the viewer?" No answer → no sound. A substitute
+  sound that fulfils the same need is acceptable. (Reel 2.)
+- If the scene's own sound already does the job, add nothing.
+  (Sound Design section.)
+- Placement is creative and per-event; LOUDNESS is a separate batch
+  pass over all placed effects at the end. Never mix the two jobs.
+  (Sound Design section.)
+- Music is briefed by MOOD words drawn from the story arc ("suspense,
+  mysterious, not dark"), never by genre name alone. (Sound Design
+  section.)
+
+## Moves with names (preset thinking)
+- Every reusable move declares its anchor: timed from the beat's start,
+  from its end, or proportional to its length — chosen when the move is
+  defined, not improvised per beat. (Presets section.)
+- Text that rises is masked at its baseline so it EMERGES from the
+  line it sits on; a slide without the mask reads as a sticker.
+  (Presets section: Curve Border's hidden second job.)
+- A glow is a shadow with no direction: one recipe, reused everywhere,
+  so every element lives under the same light. (Presets section;
+  Reel 1's single shadow recipe.)
+- Motion follows arcs, not straight lines, and lands slightly uneven —
+  perfectly even motion reads robotic. Overshoot belongs in pops
+  (0 → ~75% → 100%). (Reels 3 & 6.)
+- When a planned effect cannot be rendered, re-route the beat to the
+  nearest achievable equivalent and LOG the substitution in the plan.
+  The idea is never dropped silently. (Presets section: the
+  missing-effect workaround, generalised.)
+
+## Restraint (the minimal reel's lesson)
+- Shadow is given "just enough to be felt." The over-shadowed version
+  is shown in the course as the cheap-looking one. When in doubt,
+  halve it. (Reel 4.)
+- A small colour change that fixes contrast is worth more than a new
+  element. Before adding anything to a weak frame, try changing what
+  is already there. (Reel 4: the brown title.)
+- Minimal is a style chosen per topic, with the same rigour as maximal
+  — grain, vignette and one symbol watermark can carry a whole world.
+  (Reel 4.)
