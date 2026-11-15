@@ -2436,29 +2436,31 @@ def _resend_login(page, job, cfg):
     it can never complete this login — and Resend answers a duplicate
     signup by redirecting to /login instead of showing an "already
     exists" error, so the generic flow never even tries. Walk the two
-    steps here. Returns True when the keys page loads signed-in."""
+    steps here. Returns "ok" when the keys page loads signed-in,
+    "invalid" when Resend refused the job password (the caller then
+    repairs it via the forgot-password mail), else "fail"."""
     name = cfg["name"]
     progress("running", "signin", f"{name} sign-in chesthunna (email-first).", cfg.get("login_url") or cfg["url"])
     if not goto(page, cfg.get("login_url") or "https://resend.com/login"):
-        return False
+        return "fail"
     page.wait_for_timeout(2500)
     _resend_dbg(page, "login-start")
     if check_stop():
-        return False
+        return "fail"
     # Email step.
     if _visible(page, _AUTH_EMAIL):
         if not fill(page, _AUTH_EMAIL, job["email"]):
-            return False
+            return "fail"
         if not click_submit(page):
             click(page, ["button:has-text('Log In')", "button:has-text('Continue')", "button[type='submit']"])
         page.wait_for_timeout(3500)
     _resend_dbg(page, "login-after-email")
     if check_stop():
-        return False
+        return "fail"
     # Password step (the field only exists now).
     if _visible(page, _AUTH_PASS):
         if not fill(page, _AUTH_PASS, job["pass"]):
-            return False
+            return "fail"
         tick_consent(page)
         if not click_submit(page):
             click(page, ["button:has-text('Log In')", "button:has-text('Continue')", "button[type='submit']"])
@@ -2466,13 +2468,15 @@ def _resend_login(page, job, cfg):
         maybe_captcha(page)
     _resend_dbg(page, "login-after-pass")
     if check_stop():
-        return False
+        return "fail"
+    if _page_says(page, ["invalid credentials", "invalid email or password", "incorrect email or password"]):
+        return "invalid"
     # A verification wall (magic link / emailed code) is the server-fed
     # pause, never the user's job.
     if _page_says(page, VERIFY_NEEDLES) or _visible(page, ["input[name*='code' i]", "input[inputmode='numeric']"]):
         if not pause_for_email_verify(page, job, cfg):
-            return False
-    return _verify_signed_in(page, cfg, name)
+            return "fail"
+    return "ok" if _verify_signed_in(page, cfg, name) else "fail"
 
 
 def _resend_create_key(page, cfg):
@@ -2541,26 +2545,93 @@ def _resend_create_key(page, cfg):
     return key
 
 
-def flow_resend(page, job, cfg):
-    """v94 (F7): Resend — the mail channel's own key. Signup + email
-    verification ride the generic email flow (the server feeds the
-    verification link; the runner opens it). Two Resend shapes need
-    dedicated handling: the email-first LOGIN (returning runs) and the
-    key-creation DIALOG (name + confirm, key shown once)."""
+def _resend_reset_password(page, job, cfg):
+    """Forgot-password repair: ask Resend for a reset mail, let the
+    Worker feed the link from Gmail (the standard email pause — the
+    runner polls the job itself; no Take Control, no 12-minute magic-
+    link wait), open it here and set the job's password on the reset
+    form. True when the reset was submitted or the link signed us in
+    (the caller then logs in fresh)."""
     name = cfg["name"]
-    # Fast path: a live session may already be in the profile.
-    if _verify_signed_in(page, cfg, name):
-        key = _resend_create_key(page, cfg)
-        if key:
-            return _ok(key=key)
-    res = flow_email_signup(page, job, cfg)
-    if res.get("status") != "failed" or "Key kanipinchaledu" not in str(res.get("error") or ""):
-        return res
-    _resend_dbg(page, "after-generic-fail")
-    # Stranded on an auth page? (Duplicate signup redirects to the
-    # email-first /login; the generic recovery can't complete it.)
-    if "/login" in (page.url or "") or "/signup" in (page.url or "") or _page_says(page, ["log in to resend"]):
-        if not _resend_login(page, job, cfg):
+    if "/login" not in (page.url or ""):
+        if not goto(page, cfg.get("login_url") or "https://resend.com/login"):
+            return False
+        page.wait_for_timeout(2500)
+    # The Forgot link lives on the password step — walk the email step
+    # first when only the email field is showing.
+    if _visible(page, _AUTH_EMAIL) and not _visible(page, _AUTH_PASS):
+        fill(page, _AUTH_EMAIL, job["email"])
+        if not click_submit(page):
+            click(page, ["button:has-text('Log In')", "button:has-text('Continue')", "button[type='submit']"])
+        page.wait_for_timeout(3000)
+    _resend_dbg(page, "reset-start")
+    if not click(page, ["a:has-text('Forgot your password')", "a:has-text('Forgot')", "button:has-text('Forgot')"]):
+        return False
+    page.wait_for_timeout(2500)
+    _resend_dbg(page, "reset-form")
+    if _visible(page, _AUTH_EMAIL):
+        fill(page, _AUTH_EMAIL, job["email"])
+    # Register the email pause BEFORE triggering the mail, so the
+    # Worker's feed (cron sweep + this runner's own job polls) can find
+    # the fresh reset mail against this job's recency window.
+    progress("paused", "verify-email", MAGIC_LINK_PAUSE_MSG(name), page.url, reason="email", verify_wait=True)
+    if not click_submit(page):
+        click(page, ["button:has-text('Reset password')", "button:has-text('Reset')", "button:has-text('Send')", "button:has-text('Continue')", "button[type='submit']"])
+    page.wait_for_timeout(2000)
+    link = wait_for_fed_link(300)
+    if not link:
+        link = fed_verify_link(get_job())
+    if not link:
+        print("resend reset: no reset mail fed in 5 min", flush=True)
+        progress("running", "verify-email", f"{name} reset mail raledhu.", page.url)
+        return False
+    progress("running", "verify-link", f"{name} reset link open chesthunna.", link)
+    try:
+        goto(page, link, tries=2)
+    except Exception:
+        pass
+    page.wait_for_timeout(3000)
+    click_verify_button(page)
+    page.wait_for_timeout(1500)
+    _resend_dbg(page, "reset-landed")
+    # Set the job password on every visible password field (new +
+    # confirm), then submit.
+    filled = 0
+    try:
+        for el in page.locator("input[type='password']").all():
+            try:
+                if el.is_visible():
+                    el.fill(job["pass"])
+                    filled += 1
+            except Exception:
+                continue
+    except Exception:
+        pass
+    if not filled:
+        # The link may have signed us straight in instead.
+        return _verify_signed_in(page, cfg, name)
+    if not click_submit(page):
+        click(page, ["button:has-text('Reset password')", "button:has-text('Reset')", "button:has-text('Save')", "button:has-text('Set password')", "button:has-text('Continue')", "button[type='submit']"])
+    page.wait_for_timeout(4000)
+    _resend_dbg(page, "reset-done")
+    return True
+
+
+def _resend_after_auth(page, job, cfg):
+    """Reach the keys page signed-in (completing the email-first login
+    if needed, with the forgot-password repair when the job password
+    is refused), then create the key."""
+    name = cfg["name"]
+    if not _verify_signed_in(page, cfg, name):
+        r = _resend_login(page, job, cfg)
+        if r == "invalid":
+            # The account exists but the job password does not work
+            # (a first run's signup evidently set it differently).
+            # Repair it through Resend's own forgot-password mail.
+            if not _resend_reset_password(page, job, cfg):
+                return _fail(f"{name} password reset kuda avvaledu (step: password reset). Take Control tho try cheyyi.", extra={"no_retry": True})
+            r = _resend_login(page, job, cfg)
+        if r != "ok":
             _resend_dbg(page, "login-failed")
             return _fail(f"{name} sign-in complete avvaledu — email-first login step lo aagipoyindhi (step: sign-in). Take Control tho try cheyyi.", extra={"no_retry": True})
     progress("running", "api-key", f"{name} key create chesthunna.", cfg["keys_url"])
@@ -2568,6 +2639,74 @@ def flow_resend(page, job, cfg):
     if key:
         return _ok(key=key)
     return _fail(f"{name} key kanipinchaledu — create dialog tarvatha kuda (step: key creation). Take Control tho try cheyyi.")
+
+
+def flow_resend(page, job, cfg):
+    """v94 (F7): Resend — the mail channel's own key. Fully dedicated
+    flow (Resend breaks the generic email flow's assumptions twice:
+    the email-first login, and the duplicate-signup redirect to
+    /login). Stages: live-session fast path -> signup with the fed-
+    link verification pause -> _resend_after_auth (login / password
+    reset / key dialog)."""
+    name = cfg["name"]
+    # Fast path: a live session may already be in the profile.
+    if _verify_signed_in(page, cfg, name):
+        key = _resend_create_key(page, cfg)
+        if key:
+            return _ok(key=key)
+    progress("running", "signup", f"{name} account create chesthunna.", cfg["url"])
+    if not goto(page, cfg["url"]):
+        return _fail(f"{name} sign-in page load avvaledu — site open avvaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
+    page.wait_for_timeout(2500)
+    _resend_dbg(page, "signup-start")
+    if check_stop():
+        return _stopped()
+    maybe_captcha(page)
+    if "/login" in (page.url or ""):
+        return _resend_after_auth(page, job, cfg)
+    ctrls = wait_for_auth_form(page, cfg, timeout_s=45)
+    if ctrls is None:
+        if _verify_signed_in(page, cfg, name):
+            key = _resend_create_key(page, cfg)
+            if key:
+                return _ok(key=key)
+        return _fail(f"{name} sign-in page load avvaledu — form kanipinchaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
+    if ctrls.get("stopped"):
+        return _stopped()
+    if detect_auth_mode(ctrls) == "sso-only":
+        # The fetched signup page HAS an email form under the SSO
+        # buttons — a pure-SSO render means it did not load; surface
+        # the one human step like the generic flow does.
+        if not pause_for_signin(page, cfg):
+            return _stopped()
+        return _resend_after_auth(page, job, cfg)
+    _fill_identity_fields(page, job)
+    ok = fill(page, _AUTH_EMAIL, job["email"])
+    ok = fill(page, _AUTH_PASS, job["pass"]) and ok
+    if not ok:
+        return _fail(f"{name} signup form kanipinchaledu — site layout marindhi (step: signup form). Take Control tho try cheyyi.")
+    tick_consent(page)
+    if not click_submit(page):
+        click(page, ["button:has-text('Sign up')", "button:has-text('Create account')", "button[type='submit']"])
+    page.wait_for_timeout(4000)
+    maybe_captcha(page)
+    _resend_dbg(page, "signup-after-submit")
+    if check_stop():
+        return _stopped()
+    # Verification wall (link or code by email) — the server-fed pause.
+    if _page_says(page, VERIFY_NEEDLES) or _visible(page, ["input[name*='code' i]", "input[inputmode='numeric']"]):
+        if not pause_for_email_verify(page, job, cfg):
+            return _fail(_verify_fail_msg(name), extra={"no_retry": True})
+        key = _resend_create_key(page, cfg)
+        if key:
+            return _ok(key=key)
+        return _fail(f"{name} key kanipinchaledu — create dialog tarvatha kuda (step: key creation). Take Control tho try cheyyi.")
+    err = _submit_error(page)
+    if err and "already" not in err.lower():
+        return _fail(f"{name} signup error: {err} (step: signup form).")
+    # Dashboard straight away, or a redirect to /login (the account
+    # already exists) — either way, finish through the auth tail.
+    return _resend_after_auth(page, job, cfg)
 
 
 def flow_jina(page, job, cfg):
