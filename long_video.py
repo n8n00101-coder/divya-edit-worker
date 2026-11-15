@@ -942,7 +942,8 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                 _starts.append(_t)
                 _t += _d + CARD_SECONDS
             mchecks, minfo = _comp.audit_media(
-                final, cfg, spec, chapter_breaks=_starts[1:])
+                final, cfg, spec, chapter_breaks=_starts[1:],
+                designed_silences=_designed_silences(plans))
             checks += mchecks
             diffs = _comp.sample_frame_diffs(final)
             frozen = 0

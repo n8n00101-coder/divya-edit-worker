@@ -131,6 +131,34 @@ with tempfile.TemporaryDirectory() as td:
           and not any(c["status"] == "FAIL" for c in sil_des),
           f"{sil_des}")
 
+# ------------------------------------------------- compliance R11 (v88.1)
+import compliance as comp
+
+with tempfile.TemporaryDirectory() as td:
+    mp4 = os.path.join(td, "gap.mp4")
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+         "color=c=black:s=270x480:d=7.5", "-f", "lavfi", "-i",
+         "sine=frequency=440:duration=3", "-f", "lavfi", "-i",
+         "anullsrc=r=44100:cl=mono", "-f", "lavfi", "-i",
+         "sine=frequency=440:duration=3", "-filter_complex",
+         "[2:a]atrim=0:1.5[gap];[1:a][gap][3:a]concat=n=3:v=0:a=1[a]",
+         "-map", "0:v", "-map", "[a]", "-t", "7.5", "-c:v",
+         "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", mp4],
+        capture_output=True)
+
+    def _r11_silence(cks):
+        return [c for c in cks if c["rule"] == "R11"
+                and "silence(s)" in c["detail"]]
+
+    cks1, _ = comp.audit_media(mp4, {}, [])
+    check("compliance R11: an undesigned 1.5s gap FAILs",
+          len(_r11_silence(cks1)) == 1,
+          f"{[c['detail'][:50] for c in _r11_silence(cks1)]}")
+    cks2, _ = comp.audit_media(mp4, {}, [], designed_silences=[(3.0, 4.5)])
+    check("compliance R11: a director-designed gap is exempt",
+          len(_r11_silence(cks2)) == 0, "")
+
 # ---------------------------------------------------------------- taste
 import brain
 import visual_director as VD

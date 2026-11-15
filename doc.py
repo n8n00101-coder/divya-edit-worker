@@ -1914,14 +1914,22 @@ def _sceneimg_frame(p, idx, t):
         d = max(0.1, float(sc.get("d") or 6.0))
         q = eio(clamp(t / d))
         bw, bh = base.size
+        # v88.1: the first cut (5.5% push-in / 5% pan) was too gentle
+        # for treated backdrops — on a blurred, darkened silhouette
+        # photo the per-frame change fell under the freeze meter's
+        # noise floor and a held quote card shipped as a 2.3 s
+        # MQ-FREEZE. The motion is now ~2x: a 10% push-in, or a
+        # full-range pan at 0.90 crop (~1.4 px/frame of edge travel),
+        # which keeps every beat measurably alive while staying a
+        # backdrop drift, not a camera move on the content.
         if idx % 2 == 0:  # slow push-in
-            cw = int(bw * (1.0 - 0.055 * q))
-            chh = int(bh * (1.0 - 0.055 * q))
+            cw = int(bw * (1.0 - 0.10 * q))
+            chh = int(bh * (1.0 - 0.10 * q))
             x0 = (bw - cw) // 2
             y0 = (bh - chh) // 2
-        else:  # gentle pan at near-constant scale
-            cw = int(bw * 0.95)
-            chh = int(bh * 0.95)
+        else:  # gentle pan across the full crop range
+            cw = int(bw * 0.90)
+            chh = int(bh * 0.90)
             x0 = int((bw - cw) * q)
             y0 = (bh - chh) // 2
         frame = base.crop((x0, y0, x0 + cw, y0 + chh)).resize(
@@ -3477,7 +3485,18 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             _checks += _comp.audit_central_island(_islands)
         except Exception as _e:
             print("frame-fill audit failed:", str(_e)[:120])
-        _mchecks, _minfo = _comp.audit_media(out, cfg or {"kind": "short"}, spec or [])
+        # v88: this chapter's director-designed silence windows
+        # (chapter-local seconds) — sanctioned pauses are held
+        # beats, not dead air, for both media meters below.
+        _dsil = []
+        for _i, _sc in enumerate(p["scenes"]):
+            _sa = float(_sc.get("silence_after_s") or 0)
+            if _sa > 0 and _i < len(p["starts"]):
+                _w0 = p["starts"][_i] + float(_sc.get("d") or 0)
+                _dsil.append((_w0, _w0 + _sa))
+        _mchecks, _minfo = _comp.audit_media(
+            out, cfg or {"kind": "short"}, spec or [],
+            designed_silences=_dsil)
         _checks += _mchecks
         # v85: deterministic inspection of the ACTUAL rendered file
         # for the defects audit_media cannot see — black / frozen /
@@ -3489,7 +3508,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         # as an apparently successful video.
         try:
             import media_qc as _mq85
-            _mq_all, _mq_info = _mq85.inspect_file(out)
+            _mq_all, _mq_info = _mq85.inspect_file(
+                out, designed_silences=_dsil)
             _checks += [c for c in _mq_all if c["rule"] in (
                 "MQ-AVSYNC", "MQ-BLACK", "MQ-FREEZE", "MQ-BLANK",
                 "MQ-REPEAT", "MQ-CUTS")]

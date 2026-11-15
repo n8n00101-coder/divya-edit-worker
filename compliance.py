@@ -1252,9 +1252,13 @@ def sample_frame_diffs(path, every_s=4.0, still_thresh=2.0):
     return diffs
 
 
-def audit_media(path, cfg, spec, chapter_breaks=()):
+def audit_media(path, cfg, spec, chapter_breaks=(),
+                designed_silences=()):
     """Media-level checks on the rendered file. Returns checks +
-    the probe dict."""
+    the probe dict. v88: `designed_silences` are (start, end)
+    windows the director sanctioned in the plan (silence_after_s) —
+    a gap overlapping one is a held beat, not dead air, and does
+    not trip R11 (same courtesy chapter_breaks already get)."""
     checks = []
     info = probe_media(path)
     if not info["duration"]:
@@ -1281,7 +1285,9 @@ def audit_media(path, cfg, spec, chapter_breaks=()):
                            "detail": f"true peak {tp:.1f} dB (must be <= -1 dB)", "scene": None})
     gaps = silence_gaps(path)
     real_gaps = [(a, b) for a, b in gaps
-                 if not any(abs(a - cb) < 1.6 for cb in chapter_breaks)]
+                 if not any(abs(a - cb) < 1.6 for cb in chapter_breaks)
+                 and not any(a < we + 0.3 and b > ws - 0.3
+                             for ws, we in designed_silences)]
     if real_gaps:
         checks.append({"rule": "R11", "status": "FAIL",
                        "detail": f"{len(real_gaps)} silence(s) over 0.8 s outside chapter breaks (first at {real_gaps[0][0]:.1f}s)",
