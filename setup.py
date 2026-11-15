@@ -2429,25 +2429,61 @@ def _resend_dbg(page, tag):
         print(f"RESEND-DBG {tag}: failed: {e}", flush=True)
 
 
-def flow_resend(page, job, cfg):
-    """v94 (F7): Resend — signup + email verification are the generic
-    email flow (the server feeds the verification link; the runner
-    opens it). Only key creation differs: the API-keys page opens a
-    dialog that requires a key NAME and a second confirm click before
-    the key is shown — once. If the generic pass already extracted a
-    key, keep it; if it stopped at key creation, drive the dialog."""
-    res = flow_email_signup(page, job, cfg)
-    if res.get("status") != "failed" or "Key kanipinchaledu" not in str(res.get("error") or ""):
-        return res
+def _resend_login(page, job, cfg):
+    """Resend's login is EMAIL-FIRST (proven by the run-2 snapshots:
+    /login renders ONLY the email field; the password field appears
+    after the email step). try_login fills email+password together, so
+    it can never complete this login — and Resend answers a duplicate
+    signup by redirecting to /login instead of showing an "already
+    exists" error, so the generic flow never even tries. Walk the two
+    steps here. Returns True when the keys page loads signed-in."""
     name = cfg["name"]
-    progress("running", "api-key", f"{name} key dialog open chesthunna.", cfg["keys_url"])
-    _resend_dbg(page, "after-generic-fail")
+    progress("running", "signin", f"{name} sign-in chesthunna (email-first).", cfg.get("login_url") or cfg["url"])
+    if not goto(page, cfg.get("login_url") or "https://resend.com/login"):
+        return False
+    page.wait_for_timeout(2500)
+    _resend_dbg(page, "login-start")
+    if check_stop():
+        return False
+    # Email step.
+    if _visible(page, _AUTH_EMAIL):
+        if not fill(page, _AUTH_EMAIL, job["email"]):
+            return False
+        if not click_submit(page):
+            click(page, ["button:has-text('Log In')", "button:has-text('Continue')", "button[type='submit']"])
+        page.wait_for_timeout(3500)
+    _resend_dbg(page, "login-after-email")
+    if check_stop():
+        return False
+    # Password step (the field only exists now).
+    if _visible(page, _AUTH_PASS):
+        if not fill(page, _AUTH_PASS, job["pass"]):
+            return False
+        tick_consent(page)
+        if not click_submit(page):
+            click(page, ["button:has-text('Log In')", "button:has-text('Continue')", "button[type='submit']"])
+        page.wait_for_timeout(4000)
+        maybe_captcha(page)
+    _resend_dbg(page, "login-after-pass")
+    if check_stop():
+        return False
+    # A verification wall (magic link / emailed code) is the server-fed
+    # pause, never the user's job.
+    if _page_says(page, VERIFY_NEEDLES) or _visible(page, ["input[name*='code' i]", "input[inputmode='numeric']"]):
+        if not pause_for_email_verify(page, job, cfg):
+            return False
+    return _verify_signed_in(page, cfg, name)
+
+
+def _resend_create_key(page, cfg):
+    """Drive Resend's API-key creation dialog (Name required, second
+    confirm click, key shown once). Returns the key or None."""
     goto(page, cfg["keys_url"])
     page.wait_for_timeout(3000)
     _resend_dbg(page, "keys-page")
     key = extract_key(page, cfg["key_patterns"])
     if key:
-        return _ok(key=key)
+        return key
     click(page, ["button:has-text('Create API Key')", "button:has-text('Create')", "a:has-text('Create API Key')"])
     # Wait for the dialog to actually appear (up to 10s).
     for _ in range(10):
@@ -2502,6 +2538,33 @@ def flow_resend(page, job, cfg):
                     break
         except Exception:
             pass
+    return key
+
+
+def flow_resend(page, job, cfg):
+    """v94 (F7): Resend — the mail channel's own key. Signup + email
+    verification ride the generic email flow (the server feeds the
+    verification link; the runner opens it). Two Resend shapes need
+    dedicated handling: the email-first LOGIN (returning runs) and the
+    key-creation DIALOG (name + confirm, key shown once)."""
+    name = cfg["name"]
+    # Fast path: a live session may already be in the profile.
+    if _verify_signed_in(page, cfg, name):
+        key = _resend_create_key(page, cfg)
+        if key:
+            return _ok(key=key)
+    res = flow_email_signup(page, job, cfg)
+    if res.get("status") != "failed" or "Key kanipinchaledu" not in str(res.get("error") or ""):
+        return res
+    _resend_dbg(page, "after-generic-fail")
+    # Stranded on an auth page? (Duplicate signup redirects to the
+    # email-first /login; the generic recovery can't complete it.)
+    if "/login" in (page.url or "") or "/signup" in (page.url or "") or _page_says(page, ["log in to resend"]):
+        if not _resend_login(page, job, cfg):
+            _resend_dbg(page, "login-failed")
+            return _fail(f"{name} sign-in complete avvaledu — email-first login step lo aagipoyindhi (step: sign-in). Take Control tho try cheyyi.", extra={"no_retry": True})
+    progress("running", "api-key", f"{name} key create chesthunna.", cfg["keys_url"])
+    key = _resend_create_key(page, cfg)
     if key:
         return _ok(key=key)
     return _fail(f"{name} key kanipinchaledu — create dialog tarvatha kuda (step: key creation). Take Control tho try cheyyi.")
