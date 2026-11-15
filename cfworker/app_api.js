@@ -718,17 +718,50 @@ async function appApi(req, env, url, ctx) {
     const q = String(fd.get("q") || "").trim() || "Ee screenshot lo em undo cheppu, important vishayalu, emaina cheyyalsina pani unte cheppu.";
     const lg = fd.get("lang") === "en" ? "en" : "te";
     const mime = f.type || "image/jpeg", data = b64(await f.arrayBuffer());
-    let ans = "";
-    const gkey = (await openKey(env, u.n, "gemini")) || env.GEMINI_KEY;
-    for (const gm of gkey ? ["gemini-2.5-flash", "gemini-2.0-flash"] : []) {
-      if (ans) break;
-      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${gm}:generateContent?key=${gkey}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: appSys(u.owner, lg) }] }, contents: [{ parts: [{ text: q }, { inline_data: { mime_type: mime, data } }] }] }) }).catch(() => null);
-      if (r && r.ok) ans = ((await r.json()).candidates?.[0]?.content?.parts || []).map(x => x.text || "").join("").trim();
-    }
-    if (!ans) { const g = await groq(env, [{ role: "system", content: appSys(u.owner, lg) }, { role: "user", content: [{ type: "text", text: q }, { type: "image_url", image_url: { url: `data:${mime};base64,${data}` } }] }], true); if (!/^Sorry ra, naa AI brain/.test(g)) ans = g; }
-    if (!ans) return appJson(req, { ok: true, vision: false, reply: lg === "en" ? "Image reading (vision) isn't available yet. It's being set up." : "Image chadavadam (vision) inka ready ledu. Setup avthondi." });
+    // v90 (VISION FIX): the chain — first real answer wins, every leg
+    // isolated in try/catch: (1) the user's own Gemini key, (2) the
+    // INVITER's Gemini key (F11 tier, same gating as chatWithFallback:
+    // fewer than 5 own models; the key stays sealed — opened only
+    // inside this route, never returned), (3) shared env.GEMINI_KEY
+    // when set, (4) shared Workers AI vision
+    // (@cf/meta/llama-3.2-11b-vision-instruct via the AI binding) —
+    // the default path that makes image reading work for keyless
+    // users. REMOVED: the old Groq vision fallback — proven dead
+    // 2026-11-15 (both hard-coded models return 404 model_not_found
+    // and the shared Groq account's model list contains ZERO vision
+    // models), it only added latency before the inevitable
+    // vision:false. NOTE: the AI binding must ride every deploy
+    // (deploy_worker.py deploy-divya carries it) — without env.AI
+    // this leg silently skips and keyless users are back to
+    // vision:false (with refund). Full diagnosis: plan doc, VISION FIX.
+    const geminiVision = async key => {
+      if (!key) return "";
+      for (const gm of ["gemini-2.5-flash", "gemini-2.0-flash"]) {
+        try {
+          const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${gm}:generateContent?key=${key}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: appSys(u.owner, lg) }] }, contents: [{ parts: [{ text: q }, { inline_data: { mime_type: mime, data } }] }] }) }).catch(() => null);
+          if (r && r.ok) { const out = ((await r.json()).candidates?.[0]?.content?.parts || []).map(x => x.text || "").join("").trim(); if (out) return out; }
+        } catch {}
+      }
+      return "";
+    };
+    let ans = "", via = "";
+    try { const k = await openKey(env, u.n, "gemini"); if (k) { ans = await geminiVision(k); if (ans) via = "own-gemini"; } } catch {}
+    if (!ans) try {
+      const ownCount = (await setupKeyList(env, u.n)).count;
+      if (ownCount < 5) { const inv = await inviterOf(env, u.n); if (inv) { const k = await openKey(env, inv, "gemini"); if (k) { ans = await geminiVision(k); if (ans) via = "inviter-gemini"; } } }
+    } catch {}
+    if (!ans && env.GEMINI_KEY) try { ans = await geminiVision(env.GEMINI_KEY); if (ans) via = "shared-gemini"; } catch {}
+    if (!ans && env.AI) try {
+      const prompt = (lg === "en" ? "You are Julie, a helpful assistant. Look at the image carefully and answer the user's question. Read all text in the image exactly. Reply in English." : "You are Julie, a helpful assistant. Look at the image carefully and answer the user's question. Read all text in the image exactly. Reply in Romanized Telugu (Telugu written in Latin letters).") + "\n\n" + q;
+      const r = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", { image: Array.from(unb64(data)), prompt, max_tokens: 900 });
+      const out = String((r && r.response) || "").trim(); if (out) { ans = out; via = "workers-ai"; }
+    } catch {}
+    // v90: a failed reading NEVER keeps the charge — refund the exact
+    // spend (tokRefund reverses the bucket tokSpend used; this return
+    // is the only exit, so the refund lands exactly once).
+    if (!ans) { await tokRefund(env, u.n, tk, TOK.COST.image); return appJson(req, { ok: true, vision: false, refunded: true, reply: lg === "en" ? "I couldn't read that image this time. Your tokens were returned — please try again." : "Ee image ippudu chadavaleka poya. Nee tokens venakki ichesa — malli try cheyyi." }); }
     const h = await history(env, u.n); h.push({ role: "user", content: `[screenshot] ${q}` }, { role: "assistant", content: ans }); await remember(env, u.n, h);
-    return appJson(req, { ok: true, vision: true, reply: ans });
+    return appJson(req, { ok: true, vision: true, via, reply: ans });
   }
   if (p === "edit" && req.method === "POST") return appEdit(req, env, u, lang, body);
   if (p === "result") return appResult(req, env, u, url);
