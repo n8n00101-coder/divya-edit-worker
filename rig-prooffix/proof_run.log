@@ -1,0 +1,32 @@
+tts stand-in installed (gTTS — edge-tts is blocked on this VM; production uses real edge-tts)
+proof chat call: 841 chars (~2710 tok est)
+spec: 8 requirements, cfg 1920x1080
+proof chat call: 1128 chars (~2782 tok est)
+NOTIFY: Long video: Silk Road: Bridging Empires — 3 chapters, ~3 min. Chapters render chestunna.
+broll vision verification: ON (budget 80 calls)
+proof chat call: 9977 chars (~4994 tok est)
+pack slice [story]: 10894 chars, 11 sections (dropped: Narrative scenes: radio first, cut on the thought) — full pack is 55751 chars
+pack slice [visual]: 8077 chars, 9 sections (dropped: Kinetic type: hierarchy first, speed is arithmetic, Vertical is its own frame (shorts/reels), Finish: matching, type roles, honest charts, Maps and visual explanation (the Harris/Vox grammar)) — full pack is 55751 chars
+pack slice [editing]: 10618 chars, 10 sections (dropped: Loops and re-hooks, run as a ledger, Sound design: layers, palette, stacks, Moves with names (preset thinking), Restraint (the minimal reel's lesson), Beat craft: the track leads, Sound decisions) — full pack is 55751 chars
+proof chat call: 12811 chars (~5702 tok est)
+proof chat attempt 1 failed: RemoteDisconnected Remote end closed connection without response
+preflight [warn]: topic 'The Silk Road — how a trade route stitched two worlds togeth' — missing: sources_available, twist_or_payoff
+BRAIN-STAGE story-analyst: OK — 8 scenes, preflight warn, 3 hook variants
+story analyst v87: beat sheet — 8 scenes, turning points [6]
+proof chat call: 12682 chars (~5670 tok est)
+proof chat attempt 1 failed: IncompleteRead IncompleteRead(3373 bytes read, 2151 more expected)
+proof chat attempt 2 failed: RemoteDisconnected Remote end closed connection without response
+proof chat attempt 3 failed: RemoteDisconnected Remote end closed connection without response
+BRAIN-STAGE visual-director: OK — LLM chose 14/15 beat visuals
+visual director v87: LLM chose 14/15 beat visuals
+proof chat call: 12853 chars (~5713 tok est)
+BRAIN-STAGE editing-director: OK — LLM rhythm pass answered (0 adjustments proposed)
+editing director v87: 9 applied change(s), diff-logged
+director v86: directed plan — 15 beats, 15 visual decisions
+plan audit (director-led, no repair): 6 check(s) failing: R1 s13; R1 s14; R1 s15; R4 s6; R4 s9
+proof chat call: 1514 chars (~2878 tok est)
+proof chat call: 7768 chars (~4442 tok est)
+codegen failed: Expecting ',' delimiter: line 48 column 206 (char 4805)
+BRAIN-STAGE codegen: FALLBACK — codegen failed: Expecting ',' delimiter: line 48 column 206 (char 4805) — library functions carried the video
+NOTIFY: Script ready: HIDDEN THREADS (15 scenes, en). Voice, animation, music chestunna.
+NOTIFY: Voice ready. Scenes render chestunna (animation + music).

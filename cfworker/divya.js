@@ -251,6 +251,75 @@ function amendReplyLine(lang, text) {
   return lang === "en" ? `Adding it to THIS video — ${short}` : `Ee video lone add chesthunna — ${short}`;
 }
 
+// ---------- v99 (WA discipline): structural STOP ----------
+// 2026-11-16 incident: Ajju said "Stop" and "Just stop it" on WhatsApp
+// while a video he never ordered was rendering — and NOTHING happened:
+// no stop concept existed anywhere (the word fell through to the chat
+// brain, which was itself saturated, and the runner kept sending
+// progress and delivered the video). A stop is now STRUCTURAL, like
+// amendments: detected in code, executed in code, never the brain's
+// call. Cancelling writes the flag in two places the runner already
+// touches — cancelled on the job record (rides /job) and cancel:<job>
+// (rides the amendments poll + gates runner/state + runner/result) —
+// refunds the recorded spend via the v73 idempotent path, clears the
+// busy/curjob/appjob pointers, and settles the History entry as
+// "cancelled". The runner halts at its next progress send/checkpoint
+// and goes silent (runner.py v99 note gate).
+const STOP_PROD_RX = /(music|bgm|sfx|sound\s*effects?|captions?|subtitles?|footage|b[-\s]?roll|broll|transitions?|animations?|visual\s*effects?|\beffects?\b|zoom|background|graphics?|\bstyle\b|\blook\b)/i;
+function isStopIntent(text) {
+  const t = String(text || "").trim().toLowerCase();
+  if (!t || t.split(/\s+/).length > 6) return false;
+  if (!/\b(stop|aapu|aapey|aapandi|cancel|bandh|vaddu)\b/.test(t)) return false;
+  // "music aapu" names a production element — that is an AMENDMENT to
+  // the running video, not a stop (unless the whole video is named:
+  // "video aapu" / "anni aapu" stay stops).
+  if (STOP_PROD_RX.test(t) && !/\b(video|reel|short|anni|everything|mottham|motham)\b/.test(t)) return false;
+  return true;
+}
+// A stop strong enough to deserve the "nothing is running" answer even
+// when no job was found. A lone "vaddu" is NOT here: it is also the
+// natural "no" to other questions (upload confirms), so with no active
+// job it falls through to the normal flow.
+function isBareStop(text) {
+  const t = String(text || "").trim().toLowerCase();
+  return t.split(/\s+/).length <= 6 && /\b(stop|aapu|aapey|aapandi|cancel|bandh)\b/.test(t) && !STOP_PROD_RX.test(t);
+}
+async function cancelActiveJob(env, user) {
+  const job = await runningJob(env, user);
+  if (!job) return null;
+  const jr = parseRec(await env.KV.get(`job:${job}`)) || {};
+  jr.cancelled = true; jr.cancelledAt = Date.now();
+  await env.KV.put(`job:${job}`, JSON.stringify(jr), { expirationTtl: 86400 });
+  await env.KV.put(`cancel:${job}`, "1", { expirationTtl: 86400 });
+  await env.KV.delete(`busy:${user}`);
+  if ((await env.KV.get(`curjob:${user}`)) === job) await env.KV.delete(`curjob:${user}`);
+  const aj = parseRec(await env.KV.get(`appjob:${user}`));
+  if (aj && aj.job === job) await env.KV.delete(`appjob:${user}`);
+  // Delivered is terminal (v78): a job whose video already landed is
+  // reported honestly as delivered, never "cancelled" after the fact —
+  // and refundJobSpend itself refuses it, so the money rule holds
+  // whichever path asks first.
+  let delivered = false;
+  try {
+    const ref = await histNumForJob(env, job);
+    const e = ref ? await histGet(env, ref.n, ref.num) : null;
+    if (e && (e.has_result || e.doneAt || e.state === "done")) delivered = true;
+  } catch {}
+  if (delivered) return { job, delivered: true, refunded: false };
+  let refunded = false;
+  try { refunded = await refundJobSpend(env, job, user); } catch {}
+  try {
+    const ref = await histNumForJob(env, job);
+    if (ref) { const e = await histGet(env, ref.n, ref.num); if (e && !e.has_result && !e.doneAt && e.state !== "done") { e.state = "cancelled"; e.cancelledAt = Date.now(); e.note = refunded ? "User stop chepparu — cancel chesa, tokens refund chesa." : "User stop chepparu — cancel chesa."; await histPut(env, ref.n, e); } }
+  } catch {}
+  return { job, delivered: false, refunded };
+}
+function stopReply(cxl, redo) {
+  if (!cxl) return "Ippudu emi run avvatledhu — cancel cheyadaniki emi ledu.";
+  if (cxl.delivered) return "Aa video already ready ayyi deliver ayipoyindhi — ippudu cancel cheyyalenu.";
+  return "Aapesa — video cancel chesa. Inka progress messages raavu." + (cxl.refunded ? " Tokens venakki ichesa." : "") + (redo ? " Malli kavali ante topic cheppu, fresh ga start chestha." : "");
+}
+
 async function history(env, user) { return JSON.parse((await env.KV.get(`h:${user}`)) || "[]").filter(x => !(x.role === "assistant" && /can[’']t (share|help)|cannot share/i.test(String(x.content)))); }
 async function remember(env, user, h) {
   // v68 (Ajju — "Muse laga history gurthu pettukovali"): the recent 30
@@ -313,13 +382,21 @@ async function startEdit(env, user, mediaId, instruction) {
 // before we hear thunder?") IS a topic, not "no topic". Extract it from the
 // user's message so the runner never renders a random topic on a given one.
 // Returns null when there is genuinely no topic (AUTO stays, Julie picks).
+// PROOF-FIX 4 (2026-11-16): a greeting is not a topic. The proof
+// run's "Helo" job took a stale greeting from chat history as its
+// topic seed and the pipeline confabulated an entire fake-product
+// documentary around it. Any candidate seed that IS a greeting /
+// acknowledgement / test word is rejected here, at every return
+// point, so the AUTO path (R47) picks a real topic instead.
+const GREETING_SEED_RX = /^(h+i+|h+e+l+o+|helo|hey+|hai|namaste|good\s+(morning|afternoon|evening|night)|ok(ay)?|thanks?|thank\s+you|bye+|yes|no|test|hi\s+there|hello\s+there)[\s!.,]*$/i;
+const isGreetingSeed = s => GREETING_SEED_RX.test(String(s || "").trim());
 function extractTopic(text) {
   let t = String(text || "");
   // "make/create a video on X" / "about X" / "X gurinchi" -> X is the topic.
   let m = t.match(/\b(?:on|about)\s+([^.?!]+)/i);
-  if (m) { const s = m[1].trim().replace(/[?!.]+$/, "").trim(); if (s.length >= 4 && s.length <= 140) return s; }
+  if (m) { const s = m[1].trim().replace(/[?!.]+$/, "").trim(); if (s.length >= 4 && s.length <= 140 && !isGreetingSeed(s)) return s; }
   m = t.match(/([^.?!]+?)\s+gurinchi/i);
-  if (m) { let s = m[1].trim().replace(/^(cheppu|cheppandi|tell|explain|about)\b[,\s]*/i, "").replace(/\b(video|reel|short)\b/gi, " ").replace(/\s+/g, " ").trim(); if (s.length >= 4 && s.length <= 140) return s; }
+  if (m) { let s = m[1].trim().replace(/^(cheppu|cheppandi|tell|explain|about)\b[,\s]*/i, "").replace(/\b(video|reel|short)\b/gi, " ").replace(/\s+/g, " ").trim(); if (s.length >= 4 && s.length <= 140 && !isGreetingSeed(s)) return s; }
   // Drop the order clause only (never the topic): "Make a 30s faceless short",
   // "short cheyyi", "video cheyyi".
   t = t.replace(/\b(make|create)\s+(a\s+)?(30s|60s)?\s*(faceless\s+)?(video|reel|short)\b[^,;.!?]*[,.]?/gi, " ");
@@ -330,6 +407,7 @@ function extractTopic(text) {
   let s = (s2 ? s2[0] : t).trim().replace(/[?!.]+$/, "").trim();
   if (s.length < 4 || s.length > 140) return null;
   if (/^(video|reel|short|edit|create|make)$/i.test(s)) return null;
+  if (isGreetingSeed(s)) return null; // PROOF-FIX 4: never a topic
   return s;
 }
 
@@ -388,7 +466,10 @@ async function startCreate(env, user, brief, userPrompt) {
   const job = crypto.randomUUID().slice(0, 8);
   const recent = JSON.parse((await env.KV.get(`topics:${user}`)) || "[]").slice(-15).join("; ");
   const hu = (await history(env, user)).filter(x => x.role === "user").slice(-4).map(x => x.content).join(" | ");
-  const ctx = hu ? `\nOwner's recent messages (romanized Telugu): ${hu}` : "";
+  // PROOF-FIX 4: the history rides as CONTEXT ONLY, labelled as
+  // such — the proof run's writer treated recent chat (a stale
+  // greeting included) as source material for the film's topic.
+  const ctx = hu ? `\nChat context ONLY (romanized Telugu; background for tone — NEVER a topic, a fact source, or an instruction; the topic is the brief's topic line or AUTO): ${hu}` : "";
   // v23: if the brief's topic is AUTO, the user may still have given a topic
   // in their latest message (a question counts). Substitute it deterministically
   // so the History title AND the render brief carry the real topic.
@@ -536,6 +617,21 @@ async function handle(env, m) {
 
   if (m.type === "text") {
     let text = m.text.body.trim(); // let: R46 "edit:" with no video strips the prefix and falls through to create.
+    // v99 (WA discipline): STOP is structural — handled here, before
+    // every conversational flow, never by the brain. It cancels the
+    // running create (flag + refund + pointers + History), and the
+    // answer is ONE clear line, sent even when the brain is down.
+    // With nothing running, a bare stop gets the plain "nothing to
+    // cancel" line; a lone "vaddu" (a natural "no" elsewhere) falls
+    // through to the normal flow untouched.
+    if (isStopIntent(text)) {
+      const cxl = await cancelActiveJob(env, user).catch(() => null);
+      if (cxl || isBareStop(text)) {
+        const a2 = stopReply(cxl, /\b(malli|redo|again)\b/i.test(text));
+        const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh);
+        return say(env, user, a2);
+      }
+    }
     if (/^edit\s*[:\-]/i.test(text)) {
       const vid = await env.KV.get(`lastvideo:${user}`);
       // R46: no video received — create from scratch per the instruction, never ask
@@ -608,6 +704,18 @@ async function handle(env, m) {
         return say(env, user, a2);
       }
     }
+    // v99 (WA discipline, app v93 parity): greetings, small talk and
+    // quick math are CHAT — answered deterministically here, never by
+    // a brain that might continue an old video thread, and never by
+    // the busy fallback when the brain is saturated. (2026-11-16:
+    // "Hi" after a delivered alcohol video made the brain emit
+    // [[CREATE: ALCOHOL IMPACT]] — a whole video from a greeting,
+    // because the WA path had none of the app's v93 gates.)
+    if (/^\s*(hi+|hello|hey|helo|hai|namaste|hii+)[\s!.]*$/i.test(text) || /(em\s+chesthunnav|enti\s+chesthunnav|ela\s+unnav|how\s+are\s+you|what\s+are\s+you\s+doing)/i.test(text) || mathAnswer(text)) {
+      const a2 = mathAnswer(text) || parkedFallback(text, "te");
+      const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh);
+      return say(env, user, a2);
+    }
     const h = await history(env, user); h.push({ role: "user", content: text });
     let ans = await groq(env, [{ role: "system", content: SYS }, ...(await memContext(env, user)), ...h]);
     let mm = ans.match(/\[\[\s*CREATE\s*:\s*([^\]]*)\]\]/i);
@@ -616,10 +724,21 @@ async function handle(env, m) {
     // R46 guard: if the reply still asks the user to send/attach a video and the
     // user did not offer one, force a create instead.
     if (!mm && /(\battach\b|\bupload\b|\bsend\b|\bpampu\b).{0,30}\bvideo\b|\bvideo\b.{0,30}(\battach\b|\bupload\b|\bpampu\b)/i.test(ans) && !/(naa\s+video|nenu\s+(pampina|upload)|video\s+istha)/i.test(text)) { mm = [null, text]; ans = "Sare, start chesa — script, visuals, voice, captions, edit, motham nene A to Z chestha. Ready ayyaka ikkade pampistha."; }
+    // v99 (WA discipline): a [[CREATE]] marker is honoured ONLY when
+    // the user's own message carries an order — the Worker never lets
+    // the brain start a video off a greeting, a question or small
+    // talk, however the history reads (the app gates the same way).
+    // Structural force-creates above (reference flow / no-video edit
+    // orders) already carry their order signal in the message itself.
+    if (mm && !forceCreateWA && !isCreateOrder(text) && !isNewTopicOrder(text) && !isNoVideoEditOrder(text)) {
+      mm = null;
+      if (/start chesa/i.test(ans)) ans = parkedFallback(text, "te");
+    }
     // v37 (fix A): groq()'s total-failure sentinel is a dead end on WhatsApp
     // too — replace it with the R48 Setup reply (v38: says plainly when
     // setup finished but no working key was found, and offers a re-run).
     if (/^Sorry ra, naa AI brain/.test(ans)) ans = await setupFallbackReply(env, user, "te");
+    ans = busyWallGuard(ans, "te"); // v99: app parity (v51 F2) — a brain-written busy wall collapses to the one clear line
     const askOnly = /(gala(va|ra|vu)|cheya(gala|lava)|chesta(va|ra)|can you|could you|possible\s*a|avuthunda)\s*\??\s*$/i.test(text) && !/\b(chey(yi|i)?|create|make)\b\s*$/i.test(text);
     let go = !!mm && !askOnly;
     if (mm && askOnly) ans = "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
@@ -2142,6 +2261,8 @@ function resolveModelBase(name, key, baseOverride) {
   if (k.startsWith("AIza")) return { base: "https://generativelanguage.googleapis.com/v1beta/openai", who: "Gemini" };
   if (k.startsWith("sk-ant-")) return { base: "https://api.anthropic.com/v1", who: "Anthropic", anthropic: true };
   if (k.startsWith("hf_")) return { base: "https://router.huggingface.co/v1", who: "Hugging Face" };
+  if (k.startsWith("csk-")) return { base: "https://api.cerebras.ai/v1", who: "Cerebras" };
+  if (k.startsWith("xai-")) return { base: "https://api.x.ai/v1", who: "xAI" };
   if (/claude/.test(nm)) return { base: "https://api.anthropic.com/v1", who: "Anthropic", anthropic: true };
   if (/deepseek/.test(nm)) return { base: "https://api.deepseek.com/v1", who: "DeepSeek" };
   if (/gemini|gemma/.test(nm)) return { base: "https://generativelanguage.googleapis.com/v1beta/openai", who: "Gemini" };
@@ -2157,7 +2278,7 @@ function resolveModelBase(name, key, baseOverride) {
 }
 function modelHeaders(key, anthropic) {
   const h = { Authorization: `Bearer ${key}`, "content-type": "application/json" };
-  if (anthropic) h["x-api-key"] = key;
+  if (anthropic) { h["x-api-key"] = key; h["anthropic-version"] = "2023-06-01"; }
   return h;
 }
 async function modelChatProbe(base, key, model, anthropic) {
@@ -2186,6 +2307,131 @@ function pickAvailableModel(ids, want) {
   }
   return "";
 }
+// ---- v100 (R54 completed): PROVIDER intent — a bare provider NAME ----
+// ("cerebras", "groq", "together", …) is a complete order, not a dead
+// end. R54's promise is name + key is ENOUGH: Julie resolves the
+// provider's endpoint herself, enumerates the models the key can
+// actually use (GET /models), prefers FREE chat models, connects the
+// strongest one with ONE real minimal test call, seals + saves, and
+// reports exactly which model connected. The old resolver only knew
+// model-id patterns and key prefixes, so "cerebras" fell to the
+// "give me the base URL" bounce — the user's own work handed back to
+// him (Ajju, 2026-11-16, Cerebras key in hand). For a KNOWN provider
+// Julie NEVER asks the user for a base URL again.
+const MODEL_PROVIDERS = {
+  cerebras: { base: "https://api.cerebras.ai/v1", who: "Cerebras" },
+  groq: { base: "https://api.groq.com/openai/v1", who: "Groq" },
+  openrouter: { base: "https://openrouter.ai/api/v1", who: "OpenRouter" },
+  gemini: { base: "https://generativelanguage.googleapis.com/v1beta/openai", who: "Gemini" },
+  google: { base: "https://generativelanguage.googleapis.com/v1beta/openai", who: "Gemini" },
+  together: { base: "https://api.together.xyz/v1", who: "Together" },
+  fireworks: { base: "https://api.fireworks.ai/inference/v1", who: "Fireworks" },
+  sambanova: { base: "https://api.sambanova.ai/v1", who: "SambaNova" },
+  mistral: { base: "https://api.mistral.ai/v1", who: "Mistral" },
+  cohere: { base: "https://api.cohere.ai/compatibility/v1", who: "Cohere" },
+  deepseek: { base: "https://api.deepseek.com/v1", who: "DeepSeek" },
+  perplexity: { base: "https://api.perplexity.ai", who: "Perplexity", known: ["sonar-pro", "sonar", "sonar-reasoning-pro"] },
+  xai: { base: "https://api.x.ai/v1", who: "xAI" },
+  grok: { base: "https://api.x.ai/v1", who: "xAI" },
+  openai: { base: "https://api.openai.com/v1", who: "OpenAI" },
+  anthropic: { base: "https://api.anthropic.com/v1", who: "Anthropic", anthropic: true },
+  claude: { base: "https://api.anthropic.com/v1", who: "Anthropic", anthropic: true },
+  nvidia: { base: "https://integrate.api.nvidia.com/v1", who: "NVIDIA" },
+  hyperbolic: { base: "https://api.hyperbolic.xyz/v1", who: "Hyperbolic" },
+  siliconflow: { base: "https://api.siliconflow.cn/v1", who: "SiliconFlow" },
+  novita: { base: "https://api.novita.ai/v3/openai", who: "Novita" },
+  aimlapi: { base: "https://api.aimlapi.com/v1", who: "AIML API" },
+  moonshot: { base: "https://api.moonshot.ai/v1", who: "Moonshot" },
+  kimi: { base: "https://api.moonshot.ai/v1", who: "Moonshot" },
+  zhipu: { base: "https://open.bigmodel.cn/api/paas/v4", who: "Zhipu" },
+  huggingface: { base: "https://router.huggingface.co/v1", who: "Hugging Face" },
+};
+// Returns { prov, want } when the entered name IS a provider (exact
+// alias, ignoring case/spaces/dashes) or "provider<space|colon>model".
+// want is the model named alongside the provider, if any.
+function matchProviderName(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+  const flat = s.toLowerCase().replace(/[\s_\-]+/g, "");
+  if (MODEL_PROVIDERS[flat]) return { prov: MODEL_PROVIDERS[flat], want: "" };
+  const m = s.match(/^([A-Za-z][A-Za-z. ]{1,24}?)[\s:]+(.{2,})$/);
+  if (m) {
+    const head = m[1].toLowerCase().replace(/[\s_\-]+/g, "");
+    if (MODEL_PROVIDERS[head]) return { prov: MODEL_PROVIDERS[head], want: m[2].trim().replace(/^model\s+/i, "") };
+  }
+  return null;
+}
+// GET /models WITH its HTTP status — modelListIds() hides the status,
+// but the provider path must tell a rejected key (401/403) apart from
+// an empty list and from a network failure.
+async function modelListProbe(base, key, anthropic) {
+  const r = await fetch(base + "/models", { headers: modelHeaders(key, anthropic), signal: AbortSignal.timeout(20000) }).catch(() => null);
+  if (!r) return { status: 0, ids: [] };
+  if (!r.ok) return { status: r.status, ids: [] };
+  const j = await r.json().catch(() => ({}));
+  const arr = Array.isArray(j.data) ? j.data : (Array.isArray(j.models) ? j.models : []);
+  return { status: r.status, ids: arr.map(m => String((m && (m.id || m.name)) || "").replace(/^models\//, "")).filter(Boolean) };
+}
+// Chat-usable models, strongest first. Explicit free tiers win
+// (":free" ids), then parameter size, then flagship families; small /
+// fast variants rank below their flagship siblings.
+function rankChatModels(ids) {
+  const usable = (ids || []).filter(id => !/embed|whisper|tts|image|moderation|rerank|audio|ocr|safety|guard|dall|stable-diffusion/i.test(id));
+  const score = id => {
+    const s = id.toLowerCase(); let sc = 0;
+    if (/:free$|-free$/.test(s)) sc += 100;
+    if (/405b/.test(s)) sc += 60; else if (/120b/.test(s)) sc += 58; else if (/70b|72b/.test(s)) sc += 55;
+    else if (/32b|33b/.test(s)) sc += 45; else if (/27b/.test(s)) sc += 42; else if (/14b|17b/.test(s)) sc += 30;
+    else if (/8b|9b|7b/.test(s)) sc += 18;
+    if (/llama-?3\.[13]|llama-?4/.test(s)) sc += 25;
+    if (/gpt-oss/.test(s)) sc += 24;
+    if (/claude/.test(s)) sc += 26;
+    if (/gpt-5|gpt-4o/.test(s)) sc += 26; else if (/gpt/.test(s)) sc += 10;
+    if (/qwen-?3|qwen2\.5/.test(s)) sc += 22;
+    if (/gemini-2\.[05]/.test(s)) sc += 22; else if (/gemini|gemma/.test(s)) sc += 12;
+    if (/deepseek/.test(s)) sc += 20;
+    if (/grok/.test(s)) sc += 20;
+    if (/mistral-large|mistral-medium/.test(s)) sc += 18; else if (/mistral|mixtral/.test(s)) sc += 8;
+    if (/sonar/.test(s)) sc += 16;
+    if (/command/.test(s)) sc += 14;
+    if (/glm|kimi|moonshot/.test(s)) sc += 12;
+    if (/mini|nano|lite|small|tiny|flash|turbo|instant|air\b|haiku/.test(s)) sc -= 12;
+    if (/preview|experimental/.test(s)) sc -= 6;
+    return sc;
+  };
+  return usable.map(id => [score(id), id]).sort((a, b) => b[0] - a[0]).map(x => x[1]);
+}
+// Provider intent end-to-end: enumerate -> rank -> ONE real test call
+// per candidate (best first, up to 4) -> seal + save. Failures carry
+// the provider's name so the reply can say WHO rejected the key.
+async function connectProviderModel(env, n, prov, key, want, baseOverride) {
+  const base = String(baseOverride || prov.base || "").replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
+  const lp = await modelListProbe(base, key, prov.anthropic);
+  if (lp.status === 401 || lp.status === 403) return { ok: false, kind: "auth", status: lp.status, who: prov.who, msg: "" };
+  let ranked = rankChatModels(lp.ids);
+  if (!ranked.length && prov.known) ranked = prov.known.slice();
+  if (!ranked.length) {
+    if (lp.status === 0) return { ok: false, kind: "error", who: prov.who };
+    return { ok: false, kind: "model", status: lp.status, who: prov.who, msg: "", available: [] };
+  }
+  const tries = [];
+  if (want) { const p = pickAvailableModel(lp.ids, want) || (lp.ids.length ? "" : want); if (p && !tries.includes(p)) tries.push(p); }
+  for (const id of ranked) { if (!tries.includes(id)) tries.push(id); if (tries.length >= 4) break; }
+  let lastFail = null;
+  for (const cand of tries.slice(0, 4)) {
+    const t = await testUserModel(key, base, cand, prov.anthropic);
+    if (t.ok) {
+      await storeKey(env, n, "custom", key, { who: prov.who, source: "manual" });
+      const others = ranked.filter(id => id !== t.model).slice(0, 8);
+      const rec = { name: prov.who, model: t.model, base, who: prov.who, at: Date.now(), ok: true, source: "manual", also: others };
+      await env.KV.put(`umodel:${n}`, JSON.stringify(rec));
+      return { ok: true, ...rec, note: t.note || "" };
+    }
+    if (t.kind === "auth") return { ok: false, kind: "auth", status: t.status, who: prov.who, msg: t.msg };
+    lastFail = t;
+  }
+  return { ok: false, kind: lastFail && lastFail.kind === "error" ? "error" : "model", status: lastFail ? lastFail.status : 0, who: prov.who, msg: lastFail ? lastFail.msg : "", available: ranked.slice(0, 5) };
+}
 // Test = ONE real minimal chat call with the key. If the exact model id
 // is not available, resolve the provider's available version of the same
 // family from GET /models, test THAT, and report which version connected.
@@ -2209,16 +2455,21 @@ async function testUserModel(key, base, model, anthropic) {
 async function saveUserModel(env, n, inp) {
   const parsed = parseModelName(inp.name || "");
   const name = parsed.name;
-  const res = resolveModelBase(name, inp.key, String(inp.base || "") || parsed.base);
+  const baseIn = String(inp.base || "") || parsed.base;
+  // v100: provider intent — the name IS a provider ("cerebras"):
+  // Julie resolves the endpoint AND the model herself (R54). A base
+  // URL the user pasted anyway is honoured as the endpoint override.
+  const pm = matchProviderName(name);
+  if (pm) return connectProviderModel(env, n, pm.prov, inp.key, pm.want, baseIn);
+  const res = resolveModelBase(name, inp.key, baseIn);
   if (!res) return { ok: false, kind: "resolve" };
   let model = name, t = null;
   if (model) {
     t = await testUserModel(inp.key, res.base, model, res.anthropic);
   } else {
-    // Key only: pick the provider's available chat model from /models.
+    // Key only: connect the provider's strongest available chat model.
     const ids = await modelListIds(res.base, inp.key, res.anthropic);
-    const usable = ids.filter(id => !/embed|whisper|tts|image|moderation|rerank|audio/i.test(id));
-    model = pickAvailableModel(usable, "gpt") || usable[0] || "";
+    model = rankChatModels(ids)[0] || "";
     if (!model) return { ok: false, kind: "model", status: 0, msg: "", available: [] };
     t = await testUserModel(inp.key, res.base, model, res.anthropic);
   }
@@ -2230,9 +2481,9 @@ async function saveUserModel(env, n, inp) {
 }
 function modelErrText(r, lang) {
   const en = lang === "en";
-  if (r.kind === "resolve") return en ? "I couldn't tell which provider that model belongs to. Give the model name together with its API base URL (like https://…/v1 model-name) and try again." : "Aa model ye provider do nenu cheppalenu. Model name tho paatu API base URL kuda ivvu (https://…/v1 model-name laaga), malli try cheyyi.";
-  if (r.kind === "auth") return en ? `The key didn't work (HTTP ${r.status || "?"}${r.msg ? ": " + r.msg : ""}) — the provider rejected it. Check the key and try again. Nothing was saved.` : `Key pani cheyaledu (HTTP ${r.status || "?"}${r.msg ? ": " + r.msg : ""}) — provider reject chesindhi. Key check chesi malli ivvu. Emi save avvaledu.`;
-  if (r.kind === "model") return en ? `That model isn't available on this key${r.available && r.available.length ? " — available: " + r.available.join(", ") : ""}. Nothing was saved.` : `Aa model ee key tho available ledu${r.available && r.available.length ? " — available: " + r.available.join(", ") : ""}. Emi save avvaledu.`;
+  if (r.kind === "resolve") return en ? "I don't know that provider yet, so I couldn't connect it. Two ways: give the model name together with its API base URL (like https://…/v1 model-name), or just say 'setup cheyu' — I'll connect free models myself (Automate with Julie). Nothing was saved." : "Aa provider naku inka telidu, anduke connect cheyyalekapoya. Rendu ways: model name tho paatu API base URL ivvu (https://…/v1 model-name laaga), lekapothe 'setup cheyu' ani cheppu — free models nene connect chestha (Automate with Julie). Emi save avvaledu.";
+  if (r.kind === "auth") return en ? `The key didn't work (HTTP ${r.status || "?"}${r.msg ? ": " + r.msg : ""}) — ${r.who || "the provider"} rejected it. Check the key and try again. Nothing was saved.` : `Key pani cheyaledu (HTTP ${r.status || "?"}${r.msg ? ": " + r.msg : ""}) — ${r.who || "provider"} reject chesindhi. Key check chesi malli ivvu. Emi save avvaledu.`;
+  if (r.kind === "model") return en ? `${r.who ? r.who + " has no usable chat model for this key" : "That model isn't available on this key"}${r.available && r.available.length ? " — available: " + r.available.join(", ") : ""}. Nothing was saved.` : `${r.who ? r.who + " lo ee key ki use ayye chat model ledu" : "Aa model ee key tho available ledu"}${r.available && r.available.length ? " — available: " + r.available.join(", ") : ""}. Emi save avvaledu.`;
   return en ? "The test call failed (network). Try again. Nothing was saved." : "Test call fail ayyindhi (network). Malli try cheyyi. Emi save avvaledu.";
 }
 async function customChat(key, rec, messages) {
@@ -2257,7 +2508,7 @@ async function appModel(req, env, u, p, body, lang) {
     if (key.length < 16 || key.length > 400 || /\s/.test(key)) return appJson(req, { ok: false, error: en ? "That doesn't look like an API key." : "Idi API key laaga ledu." }, 400);
     const r = await saveUserModel(env, u.n, { name: String(body.name || ""), key, base: String(body.base || "") }).catch(() => ({ ok: false, kind: "error" }));
     if (!r.ok) return appJson(req, { ok: false, error: modelErrText(r, lang), kind: r.kind || "error" }, 400);
-    return appJson(req, { ok: true, name: r.name, model: r.model, who: r.who, note: r.note || "" });
+    return appJson(req, { ok: true, name: r.name, model: r.model, who: r.who, note: r.note || "", also: r.also || [] });
   }
   if (p === "model/test") {
     const rec = JSON.parse((await env.KV.get(`umodel:${u.n}`)) || "null");
@@ -2668,7 +2919,7 @@ async function deployChatReply(env, u, text, lang) {
 // chat is taken structurally — resolved, tested and saved right here —
 // and is NEVER sent to the model, echoed back, logged, or left in the
 // stored history (the caller redacts the history entry before writing).
-const CHAT_KEY_RX = /\b(gsk_[A-Za-z0-9]{20,}|sk-or-v1-[A-Za-z0-9\-_]{20,}|sk-ant-[A-Za-z0-9\-_]{20,}|AIza[A-Za-z0-9\-_]{20,}|hf_[A-Za-z0-9]{20,}|sk-(?:proj-)?[A-Za-z0-9\-_]{20,})\b/;
+const CHAT_KEY_RX = /\b(gsk_[A-Za-z0-9]{20,}|sk-or-v1-[A-Za-z0-9\-_]{20,}|sk-ant-[A-Za-z0-9\-_]{20,}|AIza[A-Za-z0-9\-_]{20,}|hf_[A-Za-z0-9]{20,}|csk-[A-Za-z0-9]{20,}|xai-[A-Za-z0-9\-_]{20,}|sk-(?:proj-)?[A-Za-z0-9\-_]{20,})\b/;
 function extractChatModelKey(text) {
   const s = String(text || "");
   const m = s.match(CHAT_KEY_RX);
@@ -2681,15 +2932,16 @@ function extractChatModelKey(text) {
   if (/^(key|api|is|my|the|name)$/i.test(name)) name = "";
   if (!name) {
     const toks = rest.split(/[^A-Za-z0-9.\-_\/]+/).filter(Boolean);
-    name = toks.find(t => t.length >= 3 && /(gpt|claude|llama|gemini|gemma|deepseek|qwen|kimi|moonshot|mistral|sonar|glm|mixtral|command)/i.test(t)) || toks.find(t => t.includes("/") && t.length >= 5) || "";
+    name = toks.find(t => t.length >= 3 && /(gpt|claude|llama|gemini|gemma|deepseek|qwen|kimi|moonshot|mistral|sonar|glm|mixtral|command)/i.test(t)) || toks.find(t => matchProviderName(t)) || toks.find(t => t.includes("/") && t.length >= 5) || "";
   }
   const bu = rest.match(/https?:\/\/[^\s"']+/);
   return { key, name: String(name || "").trim(), base: bu ? bu[0].replace(/\/+$/, "") : "" };
 }
 function modelSavedLine(r, lang) {
+  const more = r.also && r.also.length ? r.also.slice(0, 4).join(", ") : "";
   return lang === "en"
-    ? `Model connected ✓ — ${r.model} is now your Julie brain. Your key is saved sealed in your own storage — it is never shown, pooled or shared.`
-    : `Model connect ayyindhi ✓ — ${r.model} ipudu nee Julie brain. Nee key nee own storage lone sealed ga save ayyindhi — ekkada kanipinchadhu, evaritho share avvadhu.`;
+    ? `Model connected ✓ — ${r.model} is now your Julie brain.${more ? ` Also available on this key: ${more}.` : ""} Your key is saved sealed in your own storage — it is never shown, pooled or shared.`
+    : `Model connect ayyindhi ✓ — ${r.model} ipudu nee Julie brain.${more ? ` Ee key meedha inka available: ${more}.` : ""} Nee key nee own storage lone sealed ga save ayyindhi — ekkada kanipinchadhu, evaritho share avvadhu.`;
 }
 async function orChat(env, key, messages) {
   let free = JSON.parse((await env.KV.get("or:free")) || "null");
@@ -2811,12 +3063,19 @@ function isSetupQuestion(text) {
   return SETUP_Q_RX.test(t);
 }
 function setupGuideReply(lang) {
-  // v88 (G2): SHORT and honest — the busy truth + retry. Never a Setup
-  // sales pitch, and never the old tap-the-email-link line:
-  // the standing truth (F8) is the link goes to the user's email and
-  // JULIE opens it herself; the user taps only inside Take Control.
-  if (lang === "en") return "The shared AI is busy right now — its free limit is full, so it can't answer at the moment. It clears on its own in a bit; please try again shortly.";
-  return "Shared AI ippudu busy ga undhi — free limit full ayyindhi, anduke ippudu answer ivvaledu. Konchem sepu lo thane clear avuthundi; appudu malli try cheyyi.";
+  // v99 (WA discipline): this text is the brain-total-failure fallback
+  // ONLY — it fires when every chat provider actually failed (the groq
+  // "Sorry ra" sentinel / userBrain exhaustion), never as the answer
+  // to a command the Worker handles structurally (stop/cancel are
+  // structural since v99). It must say three things plainly: WHAT is
+  // busy, WHAT did not happen (nothing started, nothing changed), and
+  // WHEN to retry. The old text ("Shared AI ippudu busy ga undhi —
+  // free limit full ayyindhi, anduke ippudu answer ivvaledu…") fired
+  // at Ajju's "Stop" on 2026-11-16 while a runaway job kept rendering
+  // behind it — incomprehensible in context, and it claimed nothing
+  // about the job either way.
+  if (lang === "en") return "My AI brain is busy right now — the free limit is full, so I couldn't answer that message. I haven't started or changed anything. The limit clears on its own in a little while; please say it again then.";
+  return "Naa AI brain ippudu busy ga undhi — free limit full ayindhi, anduke nee message ki reply ivvalekapothunna. Nenu emi start cheyyaledu, emi change cheyyaledu. Konchem sepu lo limit thane clear avuthundi — appudu malli cheppu.";
 }
 // v51 (F2): a busy/limit answer in chat is ONE short line — never a
 // paragraph wall. The brain sometimes expands the setup pitch into a
@@ -2826,7 +3085,7 @@ function setupGuideReply(lang) {
 // user's phone — tab titles now come only from user messages, app.js.)
 function busyWallGuard(reply, lang) {
   const r = String(reply || "");
-  if (/shared ai is busy|free limit is full|shared ai ippudu busy/i.test(r) && (r.length > 180 || /give one allow|#\/setup|tap the verification|sms code/i.test(r))) return setupGuideReply(lang);
+  if (/shared ai is busy|free limit is full|shared ai ippudu busy|brain ippudu busy|brain is busy/i.test(r) && (r.length > 180 || /give one allow|#\/setup|tap the verification|sms code/i.test(r))) return setupGuideReply(lang);
   return r;
 }
 // v51 (F3): never the same assistant reply twice back-to-back. When the
@@ -3113,18 +3372,27 @@ const LEGACY_JOB_SPENDS = {
   // (60,000 left after). This table grows only by a verified entry.
   "a6421c3f": { via: "split", split: { weekly: 460000, pool: 940000, plan: 0 }, cost: 1400000 },
 };
-const STUCK_JOB_MS = 30 * 60 * 1000;
-// v74: a job that DID start reporting and then went silent — 45 min
-// without a state post means the runner is dead (Actions hard cap is
-// 60 min and every live stage posts), however far it had progressed.
-const STALE_PROGRESS_MS = 45 * 60 * 1000;
+// PROOF-FIX 3 (2026-11-16): the rescue thresholds must EXCEED the
+// pipeline's real budget. The long pipeline's soft budget is 3000 s
+// (50 min) and real long runtimes run 57-80 min (assembly, QC and
+// upload continue past the chapter deadline; the Actions workflow
+// allows 350 min). At 30/45 min the rescue fired on LIVE jobs: the
+// user was told "failed + refunded" for films that then finished
+// into a terminal job and vanished. 75 min clears the real budget
+// plus post-deadline slack; the runner now also heartbeats on every
+// progress note, so 75 min of silence genuinely means dead.
+const STUCK_JOB_MS = 75 * 60 * 1000;
+// v74: a job that DID start reporting and then went silent — 75 min
+// without a state post means the runner is dead (PROOF-FIX 3: was
+// 45 min, inside the long pipeline's real runtime), however far it
+// had progressed.
+const STALE_PROGRESS_MS = 75 * 60 * 1000;
 // v73: stuck-job rescue (lazy — mirrors the setup chain's stalled
 // derivation: no cron, the state is corrected on read). A create/edit
 // job still at "editing" with pct 0, no result and no runner contact
-// for over 30 minutes is dead: mark it failed with the reason, refund
-// its recorded spend exactly, and clear the pointers at it — it must
-// never present as "editing" forever. Jobs that reported "running" or
-// any pct > 0 are the runner's living jobs and are never touched.
+// past the threshold above is dead: mark it failed with the reason,
+// refund its recorded spend exactly, and clear the pointers at it —
+// it must never present as "editing" forever.
 // Runs on the read surfaces: /api/videos, /api/status, the app status
 // intent, and the runner polls (/job + /api/runner/*, excluding the
 // job being polled about).
@@ -3877,7 +4145,11 @@ async function appRunner(req, env, p, url, body) {
   // the runner actually applied, with the consuming stage — an item's
   // stage is set once, so the delivery report can never upgrade a
   // missed amendment into an applied one.
-  if (p === "runner/amendments" && req.method === "GET") { return Response.json({ ok: true, amendments: await amendList(env, job) }); }
+  // v99 (WA discipline): the amendments poll also carries the job's
+  // cancel flag — it is the runner's one regular Worker contact, so a
+  // user stop reaches the runner here (runner.py gates every progress
+  // send on it and halts at the next checkpoint).
+  if (p === "runner/amendments" && req.method === "GET") { return Response.json({ ok: true, cancelled: !!(await env.KV.get(`cancel:${job}`)), amendments: await amendList(env, job) }); }
   if (p === "runner/amendments" && req.method === "POST") {
     const list = await amendList(env, job);
     const ids = new Set((Array.isArray(body.ids) ? body.ids : []).map(Number));
@@ -3887,7 +4159,29 @@ async function appRunner(req, env, p, url, body) {
     return Response.json({ ok: true, amendments: list });
   }
   if (p === "runner/state" && req.method === "POST") {
-    const state = ["running", "done", "failed"].includes(body.state) ? body.state : "running";
+    const state = ["running", "done", "failed", "cancelled"].includes(body.state) ? body.state : "running";
+    // v99 (WA discipline): a user-cancelled job is TERMINAL. The cancel
+    // flag (cancel:<job>, set by the structural stop handler) beats
+    // every later runner post: a "running" post changes nothing, and a
+    // "cancelled" post — or a "failed" post that is really the runner
+    // unwinding a cancel — settles the entry as CANCELLED, never
+    // failed, with the pointers cleared and the v73 refund applied
+    // exactly once (refundJobSpend is idempotent and still refuses a
+    // delivered job). 2026-11-16: Ajju said stop twice on WhatsApp and
+    // the job rendered on and delivered — there was no cancel state
+    // anywhere in the system.
+    const cancelFlag = !!(await env.KV.get(`cancel:${job}`));
+    if (cancelFlag && state === "running") return Response.json({ ok: true, cancelled: true });
+    if (state === "cancelled" || (cancelFlag && state === "failed")) {
+      if (st && st.job === job && !st.has_result) await save({ state: "cancelled", note: String(body.note || "User stop chepparu — cancel chesa.").slice(0, 300) });
+      const refC = st?.num ? { n, num: st.num } : await histNumForJob(env, job);
+      if (refC) { const eC = await histGet(env, refC.n, refC.num); if (eC && !eC.has_result && !eC.doneAt && eC.state !== "done") { eC.state = "cancelled"; eC.cancelledAt = Date.now(); eC.note = "User stop chepparu — cancel chesa."; await histPut(env, refC.n, eC); } }
+      await env.KV.delete(`busy:${n}`); await env.KV.delete(`upl:${job}`);
+      if ((await env.KV.get(`curjob:${n}`)) === job) await env.KV.delete(`curjob:${n}`);
+      const ajC = JSON.parse((await env.KV.get(`appjob:${n}`)) || "null"); if (ajC && ajC.job === job) await env.KV.delete(`appjob:${n}`);
+      await refundJobSpend(env, job, n);
+      return Response.json({ ok: true, cancelled: true });
+    }
     const pct = Number.isFinite(body.pct) ? Math.max(0, Math.min(100, body.pct | 0)) : null;
     // v78: DELIVERED IS TERMINAL. Job 7aee5d2a (2026-11-13): the result
     // posted, the History entry got doneAt + has_result + the success
@@ -3917,12 +4211,41 @@ async function appRunner(req, env, p, url, body) {
     return Response.json({ ok: true });
   }
   if (p === "runner/result" && req.method === "POST") {
+    // v99 (WA discipline): a cancelled job's result is REFUSED — after
+    // the user stopped it, the video is never stored as done/delivered.
+    if (await env.KV.get(`cancel:${job}`)) return Response.json({ ok: false, cancelled: true }, { status: 409 });
     const b = await req.arrayBuffer(); if (b.byteLength > EDIT_MAX) return new Response("too big", { status: 413 });
     await env.KV.put(`res:${job}`, b, { expirationTtl: 86400 * 3 });
     await save({ state: "done", has_result: true, size: b.byteLength, note: String(url.searchParams.get("note") || "").slice(0, 300) });
     const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job);
     const e2 = ref ? await histGet(env, ref.n, ref.num) : null;
-    if (e2) { e2.state = "done"; e2.doneAt = Date.now(); /* v39 (D8): completion time, so "ready X ago" is honest */ e2.size = b.byteLength; e2.has_result = true; e2.note = String(url.searchParams.get("note") || "").slice(0, 300); await histPut(env, ref.n, e2); }
+    if (e2) {
+      // PROOF-FIX 3: a result that arrives AFTER the rescue failed
+      // the job (and refunded it) must still SURFACE — with an
+      // honest "took longer than expected" note — never vanish
+      // into a terminal entry. The refund stands (exact-once:
+      // refundJobSpend refuses delivered jobs, and a late film is
+      // never re-charged); the note says exactly that.
+      const _wasRescued = e2.state === "failed" && !!e2.rescued;
+      const _runnerNote = String(url.searchParams.get("note") || "").slice(0, 300);
+      e2.state = "done"; e2.doneAt = Date.now(); /* v39 (D8): completion time, so "ready X ago" is honest */ e2.size = b.byteLength; e2.has_result = true;
+      if (_wasRescued) {
+        e2.late_result = true;
+        e2.note = ("⏰ Video late ga ready ayyindhi — expected time kante ekkuva pattindhi. Mundu failed ani cheppesi tokens refund chesa; refund alaage untundhi, video kuda vachindhi. " + _runnerNote).slice(0, 300);
+      } else {
+        e2.note = _runnerNote;
+      }
+      await histPut(env, ref.n, e2);
+      if (_wasRescued) {
+        // Point the app back at the finished film when the slots
+        // are free, and tell the user on WhatsApp where reachable.
+        try {
+          if (!(await env.KV.get(`appjob:${n}`))) await env.KV.put(`appjob:${n}`, JSON.stringify({ job, at: Date.now(), state: "done", late: true }), { expirationTtl: 86400 * 7 });
+          if (!(await env.KV.get(`curjob:${n}`))) await env.KV.put(`curjob:${n}`, job, { expirationTtl: 86400 * 7 });
+        } catch {}
+        try { if (/^\d{7,15}$/.test(String(n))) await waSendText(env, String(n), "⏰ Nee video late ga ayina ready ayyindhi — app lo kanipisthundhi. Failed ani cheppina refund alaage untundhi, malli charge cheyyaledhu."); } catch {}
+      }
+    }
     // v79 (FIX 4): the user's most recent finished project — the
     // edit-mode detector ("change scene 2…") resolves its target
     // through this record.

@@ -561,6 +561,17 @@ def editing_director_pass(beats, records, chat=None, taste=""):
                  "just before the ending — closure")
 
     if chat is not None and beats:
+        # PROOF-FIX 1: the Editing Director reads the EDITING slice
+        # of the taste pack, never the whole 56K pack (the full pack
+        # 413'd on the free channel and the rhythm pass silently
+        # never ran). A caller that still hands a full pack gets
+        # the slice instead.
+        if len(taste or "") > 12000:
+            try:
+                import pack_slicer as _ps
+                taste = _ps.slice_for("editing")
+            except Exception:
+                pass
         try:
             import json as _json
             import re as _re
@@ -590,6 +601,13 @@ def editing_director_pass(beats, records, chat=None, taste=""):
             _m = _re.search(r"\{[\s\S]*\}", str(_raw or ""))
             _rows = (_json.loads(_m.group(0)) or {}).get(
                 "adjustments") if _m else None
+            try:
+                import brain_status as _bs
+                _bs.record("editing-director", True,
+                           f"LLM rhythm pass answered "
+                           f"({len(_rows or [])} adjustments proposed)")
+            except Exception:
+                pass
             for _r in _rows or []:
                 try:
                     _bi = int(_r.get("beat")) - 1
@@ -612,6 +630,13 @@ def editing_director_pass(beats, records, chat=None, taste=""):
         except Exception as _e:
             print("editing director v87: LLM rhythm pass failed "
                   "(arc curve kept):", str(_e)[:120])
+            try:
+                import brain_status as _bs
+                _bs.record("editing-director", False,
+                           f"LLM rhythm pass failed: {str(_e)[:80]} "
+                           f"— deterministic arc curve kept")
+            except Exception:
+                pass
     for i, rec in enumerate(records):
         if i < len(beats):
             rec["music_intensity"] = beats[i].get(
@@ -738,7 +763,8 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
                     "candidates": [{"template": _t, "asset_type": "",
                                     "why": ""} for _t in _tpls]})
             _vd_choices = _vd87.choose_visuals(
-                _menus, _brain["chat"], taste=_brain.get("taste", ""),
+                _menus, _brain["chat"],
+                taste=_brain.get("taste_visual") or _brain.get("taste", ""),
                 beat_sheet=_sheet87)
             if _vd_choices:
                 print(f"visual director v87: LLM chose "
@@ -1163,7 +1189,7 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
         try:
             _diffs87 = editing_director_pass(
                 beats, records, chat=_brain.get("chat"),
-                taste=_brain.get("taste", ""))
+                taste=_brain.get("taste_editing") or _brain.get("taste", ""))
             if _diffs87:
                 p["transitions"] = [bb.get("transition", "")
                                     for bb in beats[1:]]

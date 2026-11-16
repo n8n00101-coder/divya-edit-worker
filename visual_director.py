@@ -84,6 +84,17 @@ def choose_visuals(menus, chat, taste="", beat_sheet=None):
     """
     if not menus or chat is None:
         return {}
+    # PROOF-FIX 1: the Visual Director reads the VISUAL slice of
+    # the taste pack, never the whole 56K pack (the full pack 413'd
+    # on the free channel and directing silently degraded to the
+    # v86 deterministic order). A caller that still hands a full
+    # pack gets the slice instead.
+    if len(taste or "") > 12000:
+        try:
+            import pack_slicer as _ps
+            taste = _ps.slice_for("visual")
+        except Exception:
+            pass
     blocks = []
     for m in menus:
         an = m.get("analyst") or {}
@@ -116,11 +127,13 @@ def choose_visuals(menus, chat, taste="", beat_sheet=None):
     try:
         raw = chat([{"role": "system", "content": _SYSTEM},
                     {"role": "user", "content": prompt}])
-    except Exception:
+    except Exception as _e:
+        _note_stage(False, f"LLM failed: {str(_e)[:80]}")
         return {}
     data = _parse(raw)
     rows = (data or {}).get("choices")
     if not isinstance(rows, list):
+        _note_stage(False, "LLM reply unusable (no choices)")
         return {}
     valid = {m["beat"]: {c["template"] for c in m.get("candidates") or []}
              for m in menus}
@@ -139,7 +152,22 @@ def choose_visuals(menus, chat, taste="", beat_sheet=None):
                          "why": str(r.get("why") or "")[:220],
                          "footage_query": str(
                              r.get("footage_query") or "")[:80]}
+    if out:
+        _note_stage(True, f"LLM chose {len(out)}/{len(menus)} beat visuals")
+    else:
+        _note_stage(False, "LLM choices all failed validation — "
+                           "deterministic order kept")
     return out
+
+
+def _note_stage(ok, detail=""):
+    """PROOF-FIX 1: ledger entry for the Visual Director — see
+    story_analyst._note_stage."""
+    try:
+        import brain_status as _bs
+        _bs.record("visual-director", ok, detail)
+    except Exception:
+        pass
 
 
 def replan_choice(beat_no, line, failed_template, failure_note,

@@ -392,18 +392,47 @@ def score_candidate(cand, query):
     return match * 10.0 + min(2.0, (cand.get("duration") or 0) / 30.0)
 
 
-def filter_candidates(cands, needed_s, used_ids, last_uploader):
+def _min_height_for_canvas(canvas):
+    """PROOF-FIX 2: the footage height floor, RELATIVE to the
+    delivery canvas. The old absolute floor (1080) rejected 92% of
+    landscape stock for 16:9 longs — free landscape stock is mostly
+    720p — and the delivered "documentary" had ZERO photographs.
+
+    - landscape canvas: accept >= 2/3 of the canvas height (720p
+      for a 1920x1080 canvas), upscaled under GRADE_LOCK at render.
+    - portrait canvas / no canvas: the historical 1080 floor —
+      vertical stock is natively tall, portrait shorts unaffected.
+    """
+    if not canvas:
+        return 1080
+    w, h = int(canvas[0]), int(canvas[1])
+    if w >= h:
+        return max(480, round(h * 2 / 3))
+    return 1080
+
+
+def filter_candidates(cands, needed_s, used_ids, last_uploader,
+                      canvas=None):
     """Mail 1 Part 2 filters + the NO-REPEAT rule. Returns
     (kept, rejected) — every rejection carries its reason for
-    footage.json."""
+    footage.json.
+
+    PROOF-FIX 2: with a landscape `canvas`, a PORTRAIT clip is
+    rejected outright (cropping it into a landscape frame breaks
+    the frame-fill rule) and the height floor is canvas-relative
+    (see _min_height_for_canvas)."""
     kept, rejected = [], []
+    min_h = _min_height_for_canvas(canvas)
+    landscape = bool(canvas) and int(canvas[0]) >= int(canvas[1])
     for c in cands:
         if c["id"] in used_ids:
             rejected.append({**c, "reason": "already used in this video (NO-REPEAT)"})
         elif (c.get("duration") or 0) < needed_s + 1:
             rejected.append({**c, "reason": f"too short: {c.get('duration')}s < needed {needed_s + 1}s"})
-        elif (c.get("height") or 0) < 1080:
-            rejected.append({**c, "reason": f"height {c.get('height')} < 1080"})
+        elif landscape and (c.get("width") or 0) < (c.get("height") or 0):
+            rejected.append({**c, "reason": f"portrait clip {c.get('width')}x{c.get('height')} for a landscape {canvas[0]}x{canvas[1]} frame — would break frame-fill"})
+        elif (c.get("height") or 0) < min_h:
+            rejected.append({**c, "reason": f"height {c.get('height')} < {min_h}" + (f" (canvas {canvas[0]}x{canvas[1]} floor)" if canvas else "")})
         elif last_uploader and c.get("uploader") and c["uploader"] == last_uploader:
             rejected.append({**c, "reason": "same uploader as the previous clip"})
         else:
@@ -531,10 +560,12 @@ class FootagePool:
                 "clip_id": clip_id}
 
     def assign(self, scene_no, queries, needed_s, workdir,
-               orientation="portrait", line=""):
+               orientation="portrait", line="", canvas=None):
         """queries: the scene's shot-list queries (meaning, not the
         topic word). Returns {path, clip_id, provider, source_url,
-        query, keyword, start, static} or None."""
+        query, keyword, start, static} or None. `canvas` (w, h) is
+        the delivery frame — PROOF-FIX 2: the candidate gate is
+        canvas-relative, not an absolute 1080 floor."""
         if not self.available():
             self.rejected.append({"scene": scene_no,
                                   "reason": "no stock-footage provider configured"})
@@ -553,7 +584,8 @@ class FootagePool:
             if commons_enabled():
                 cands += _commons_candidates(query, orientation)
             kept, rejected = filter_candidates(cands, needed_s, used,
-                                               self.last_uploader)
+                                               self.last_uploader,
+                                               canvas=canvas)
             self.rejected.extend({**r, "scene": scene_no, "query": query}
                                  for r in rejected)
             kept.sort(key=lambda c: -score_candidate(c, query))

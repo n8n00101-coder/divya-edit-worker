@@ -58,6 +58,15 @@ its own and must make sense without the others.
 Owner request: """
 
 
+def _brain_status_summary_lv():
+    """PROOF-FIX 1: the brain ledger for the long result dict."""
+    try:
+        import brain_status as _bs
+        return _bs.summary()
+    except Exception:
+        return {}
+
+
 def _outline_prompt(target_minutes, chapters_wanted=None):
     """The outline prompt. target_minutes=None keeps the original 5-10 min
     shape; an explicit target (v69, up to 60) sizes the chapter count to
@@ -778,6 +787,19 @@ async def make_long_video(brief, chat, workdir, target_minutes,
         except Exception:
             _vision87 = None
         _taste87["vision"] = "live" if _vision87 else "unavailable"
+        # PROOF-FIX 1: taste QC's state is on the brain ledger too —
+        # with no vision route every beat is UNVERIFIED, and the job
+        # report must say the QC fell back, not imply it judged.
+        try:
+            import brain_status as _bs87lv
+            if _vision87:
+                _bs87lv.record("taste-qc", True, "vision route live")
+            else:
+                _bs87lv.record("taste-qc", False,
+                               "no vision route — every beat UNVERIFIED, "
+                               "chapters shipped as rendered")
+        except Exception:
+            pass
         for _ci in range(len(results)):
             _plan0 = results[_ci].get("plan") or {}
             _writer = _plan0.get("writer_scenes")
@@ -851,10 +873,14 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                     pass
                 _inp = _copy87.deepcopy(results[_ci].get("plan") or {})
                 _inp["scenes"] = _copy87.deepcopy(_writer)
+                import pack_slicer as _ps87lv
                 _new_plan, _new_recs = _dir87.direct_plan(
                     _inp, brief=_brief_i, chapter_index=_ci,
                     chapter_count=len(out["chapters"]),
-                    brain={"chat": chat, "taste": _vd87.taste_pack(),
+                    brain={"chat": chat,
+                           "taste_visual": _ps87lv.slice_for("qc"),
+                           "taste_editing": _ps87lv.slice_for("editing"),
+                           "taste": _ps87lv.slice_for("qc"),
                            "beat_sheet": _inp.get("beat_sheet"),
                            "exclude": _excl})
                 _new_plan["writer_scenes"] = _copy87.deepcopy(_writer)
@@ -928,6 +954,26 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     if broll_sources:
         summary += (f"; B-roll: {len(broll_sources)} stock clips "
                     f"({', '.join(sorted({s.get('provider', '') for s in broll_sources}))})")
+    # PROOF-FIX 2: the achieved footage share is in the delivery
+    # summary — a long with no photographs must say so in numbers.
+    _tot_sc = sum(len((r.get("plan") or {}).get("scenes") or [])
+                  for r in results)
+    _cov_sc = sum(1 for r in results
+                  for s in ((r.get("plan") or {}).get("scenes") or [])
+                  if s.get("has_footage"))
+    if _tot_sc:
+        summary += (f"; footage on {_cov_sc}/{_tot_sc} scenes "
+                    f"({_cov_sc / _tot_sc:.0%})")
+    # PROOF-FIX 1: the brain ledger line — any stage that fell back
+    # to a deterministic stand-in is labelled in the delivery
+    # summary itself, not buried in the run log.
+    try:
+        import brain_status as _bs_lv
+        _bsline = _bs_lv.line()
+        if _bsline:
+            summary += f"; {_bsline}"
+    except Exception:
+        pass
     # v71: honest voice label, aggregated from the chapter results.
     voice_note = next((r.get("voice_note") for r in results
                        if r.get("voice_note")), None)
@@ -1289,6 +1335,10 @@ async def make_long_video(brief, chat, workdir, target_minutes,
               "taste_qc": _taste87,
               "workdir": str(workdir),
               "footage": pool.footage_json() if pool else {},
+              # PROOF-FIX 1/2: brain ledger + achieved footage share.
+              "brain_status": _brain_status_summary_lv(),
+              "footage_share": (round(_cov_sc / _tot_sc, 3)
+                                if _tot_sc else 0.0),
               "partial": partial, "chapters_done": len(paths),
               "chapters_total": total_ch, "long": True}
     # v89: PACKAGING STEP (additive, delivery end) — 10 titles, 3
