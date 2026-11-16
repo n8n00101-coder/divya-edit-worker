@@ -853,6 +853,22 @@ async def create_job(j, wa, note):
              "long_pipeline": _kind == "long"}))
     except Exception:
         pass
+    # v98 (portrait trap-door fix): a LONG job ALWAYS carries a
+    # resolved render config into the long pipeline — even when spec
+    # extraction failed or produced no contract (the fallback above
+    # leaves _cfg None in exactly those cases). Before this, a
+    # no-spec long job ran config-less and its assembly silently
+    # used the historical portrait default: v87, v88 and the
+    # Compromise video all shipped 1080x1920. Resolve the long
+    # defaults (1920x1080) from whatever spec exists — possibly none.
+    if _kind == "long" and _cfg is None:
+        try:
+            import spec_engine as _se98
+            _cfg = _se98.resolve_render_config(_spec, "long")
+            print(f"v98 long cfg (no spec contract): "
+                  f"{_cfg['width']}x{_cfg['height']}")
+        except Exception as e:
+            print("v98 long cfg fallback failed:", str(e)[:200])
     try:
         res = None
         # v69 FIX (Ajju 2026-11-13): WhatsApp creates only ever made ~1-min
@@ -877,11 +893,12 @@ async def create_job(j, wa, note):
                 target_minutes=_target_min, notify=note,
                 deadline=_time.monotonic() + _budget,
                 ref_voice=_ref, amendments=amend,
-                # spec/cfg ride only when a real contract exists —
-                # the codebase's conditional-kwargs pattern (cf.
-                # ref_voice/amendments): an empty spec is no contract,
-                # and engine-shaped callers keep their old signature.
-                **({"spec": _spec, "cfg": _cfg} if _spec else {}))
+                # spec rides only when a real contract exists (an
+                # empty spec is no contract), but v98: the resolved
+                # cfg rides UNCONDITIONALLY for long jobs — a long
+                # job must never run config-less (portrait trap).
+                **({"spec": _spec} if _spec else {}),
+                **({"cfg": _cfg} if _cfg is not None else {}))
             print("long video", res["path"], res.get("duration"),
                   "partial" if res.get("partial") else "complete")
         else:

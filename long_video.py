@@ -320,7 +320,7 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                                            **({"spec": spec, "cfg": ch_cfg,
                                                "footage_pool": pool}
                                               if spec is not None or pool is not None
-                                              else {}))
+                                              or cfg is not None else {}))
                 break
             except Exception as e:
                 last_err = e
@@ -376,7 +376,7 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                     **({"amendments": amendments}
                        if amendments is not None else {}),
                     **({"spec": spec, "cfg": ch_cfg, "footage_pool": pool}
-                       if spec is not None else {}))
+                       if spec is not None or cfg is not None else {}))
                 joined = _join_clips([res["path"], ext["path"]],
                                      str(ch_dir / f"ch{i + 1:02d}_full.mp4"))
                 try:
@@ -461,7 +461,7 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
                              workdir, titles, size, notify=None,
                              deadline=None, ref_voice=None,
                              amendments=None, spec=None, cfg=None,
-                             pool=None, mq_cfg=None):
+                             pool=None, mq_cfg=None, size_explicit=False):
     """v85: the assembled-file correction loop, wired end-to-end.
 
     Inspect the ACTUAL assembled file with media_qc (deterministic
@@ -593,7 +593,8 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
                 **({"ref_voice": ref_voice} if ref_voice is not None else {}),
                 **({"amendments": amendments} if amendments is not None else {}),
                 **({"spec": spec, "cfg": ch_cfg, "footage_pool": pool}
-                   if spec is not None or pool is not None else {}))
+                   if spec is not None or pool is not None
+                   or cfg is not None else {}))
             state["paths"][i] = str(res2["path"])
             if i < len(results):
                 results[i] = {**results[i], "path": str(res2["path"]),
@@ -608,7 +609,8 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
                                   for c in file_level):
             state["final"] = assemble(
                 state["paths"], state["final"], titles,
-                size=size, card_bg_from=list(state["paths"]))
+                size=size, card_bg_from=list(state["paths"]),
+                size_explicit=size_explicit)
             state["dirty"] = False
             fixes.append(f"round {rnd}: re-assembled the documentary "
                          f"from its chapters")
@@ -635,14 +637,21 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     # parameters come FROM the spec — target length, chapter count,
     # size — never re-chosen here. A spec that cannot resolve raises
     # SpecImpossible and the job fails loudly BEFORE any render.
+    # v98 (portrait trap-door fix): the resolution is UNCONDITIONAL.
+    # A long job with no spec contract now resolves the long defaults
+    # (1920x1080 landscape) instead of running config-less — before
+    # this, cfg stayed None for no-spec jobs, the chapters rendered
+    # at the short engine's portrait default, and the assembly fell
+    # back to the historical 1080x1920: EVERY long video Julie ever
+    # delivered (v87, v88, the Compromise video) was portrait. Below
+    # this block, cfg is ALWAYS a resolved long render config.
+    import spec_engine as _se
+    if cfg is None:
+        cfg = _se.resolve_render_config(spec, "long")
     chapters_wanted = None
-    if spec is not None:
-        import spec_engine as _se
-        if cfg is None:
-            cfg = _se.resolve_render_config(spec, "long")
-        if cfg.get("duration_s"):
-            target_minutes = max(2, min(60, int(round(cfg["duration_s"] / 60))))
-        chapters_wanted = cfg.get("chapters")
+    if cfg.get("duration_s"):
+        target_minutes = max(2, min(60, int(round(cfg["duration_s"] / 60))))
+    chapters_wanted = cfg.get("chapters")
     out, last_err = None, None
     for attempt in range(2):
         try:
@@ -718,10 +727,10 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                 print(f"broll vision verification unavailable: "
                       f"{str(_e)[:120]}")
     results = []
-    # spec/cfg/pool are passed ONLY when a spec exists — the same
-    # conditional-kwargs contract the rest of the codebase keeps
-    # (engine-shaped callers/stubs without those parameters stay
-    # compatible; cf. v78test's render_chapters stub).
+    # v98: cfg is ALWAYS resolved by now (top of this function), so
+    # the render config rides into every long job's chapters — spec
+    # contract or not. (The conditional-kwargs shape remains only as
+    # a guard for callers that pass cfg=None explicitly.)
     # v88: a long documentary renders with ONE locked grade and the
     # full-frame composition rules (doc module flags — the runner
     # serves one job per process, and doc.plan stamps both onto the
@@ -734,7 +743,7 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                                   amendments=amendments,
                                   **({"spec": spec, "cfg": cfg, "pool": pool}
                                      if spec is not None or pool is not None
-                                     else {}))
+                                     or cfg is not None else {}))
     if not paths:
         raise RuntimeError("long video: no chapters rendered")
     # v87 (role 4): TASTE QC — sampled frames judged against the
@@ -858,7 +867,8 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                        if amendments is not None else {}),
                     **({"spec": spec, "cfg": _ch_cfg,
                         "footage_pool": pool}
-                       if spec is not None or pool is not None else {}))
+                       if spec is not None or pool is not None
+                       or cfg is not None else {}))
                 _res2["fix_rounds_used"] = int(
                     results[_ci].get("fix_rounds_used") or 0)
                 results[_ci] = _res2
@@ -875,12 +885,16 @@ async def make_long_video(brief, chat, workdir, target_minutes,
         print("taste QC v87 loop failed:", str(e)[:200])
         _taste87["error"] = str(e)[:200]
     titles = [ch["title"] for ch in out["chapters"]][:len(paths)]
-    if spec is not None and cfg:
-        _size = (int(cfg["width"]), int(cfg["height"]))
-        final = assemble(paths, str(Path(workdir) / "long_final.mp4"), titles,
-                         size=_size, card_bg_from=list(paths))
-    else:
-        final = assemble(paths, str(Path(workdir) / "long_final.mp4"), titles)
+    # v98 (portrait trap-door fix): the assembly size ALWAYS comes
+    # from the resolved render config — the config-less assemble
+    # call that silently produced portrait is gone. The size counts
+    # as explicit (so an explicitly-asked portrait long video stays
+    # possible) ONLY when the user's own spec stated the aspect/size.
+    _size = (int(cfg["width"]), int(cfg["height"]))
+    _size_explicit = "aspect_ratio" in (cfg.get("spec_ids") or {})
+    final = assemble(paths, str(Path(workdir) / "long_final.mp4"), titles,
+                     size=_size, card_bg_from=list(paths),
+                     size_explicit=_size_explicit)
     duration = _probe_duration(final)
     broll_sources = []
     for r in results:
@@ -1077,10 +1091,10 @@ async def make_long_video(brief, chat, workdir, target_minutes,
         (_mq_checks, _mq_rounds, _mq_fixes, final, paths) = \
             await _correct_assembled(
                 final, paths, results, out, chat, workdir, titles,
-                _size if (spec is not None and cfg) else None,
+                _size,
                 notify=notify, deadline=deadline, ref_voice=ref_voice,
                 amendments=amendments, spec=spec, cfg=cfg, pool=pool,
-                mq_cfg=_mq_cfg)
+                mq_cfg=_mq_cfg, size_explicit=_size_explicit)
         if report is not None:
             report["checks"] = [
                 c for c in report["checks"]
@@ -1345,7 +1359,7 @@ def _load_font(size, bold=True):
         ImageFont, "load_default") else ImageFont.load_default()
 
 
-def _title_card_image(number, title, out_png, size=(1080, 1920), bg_png=None):
+def _title_card_image(number, title, out_png, size=(1920, 1080), bg_png=None):
     """Chapter title card at the video's own size. v79 (R8): plain
     navy cards were one of the compromise mistakes — the card now
     sits ON the chapter's own footage (a frame of the chapter,
@@ -1391,7 +1405,7 @@ def _title_card_image(number, title, out_png, size=(1080, 1920), bg_png=None):
     return out_png
 
 
-def _make_card_clip(number, title, tmpdir, size=(1080, 1920), bg_from=None):
+def _make_card_clip(number, title, tmpdir, size=(1920, 1080), bg_from=None):
     """Render one title card as a 1.5 s mp4 with silent audio, matching
     the chapters' size (30 fps, 44100 Hz stereo) so the concat is
     clean. v79 (R8): with a chapter video to take a frame from, the
@@ -1453,7 +1467,8 @@ def _measure_loudness(path):
         return None
 
 
-def assemble(parts, out_path, chapter_titles, size=None, card_bg_from=None):
+def assemble(parts, out_path, chapter_titles, size=None, card_bg_from=None,
+             size_explicit=False):
     """Concatenate chapter mp4s with ffmpeg, inserting a 1.5 s title card
     before every chapter after the first, loudness-normalising the final
     audio (loudnorm I=-14, TP=-1.0, LRA=11 — dual-pass, so the target is
@@ -1461,13 +1476,31 @@ def assemble(parts, out_path, chapter_titles, size=None, card_bg_from=None):
     chapter start) next to the output. Returns the output path (str).
 
     v79: `size` is the video's own frame size (from prompt_spec via
-    the render config — 1920x1080 for long by R9); the old signature
-    without it keeps the historical 1080x1920. `card_bg_from` =
+    the render config — 1920x1080 for long by R9). `card_bg_from` =
     the chapter mp4 paths, for footage-backed chapter cards (R8).
+
+    v98 (portrait trap-door fix): the old no-`size` fallback was the
+    historical 1080x1920 — and every long job that reached assemble
+    without a size (any no-spec job: v87, v88, the Compromise video)
+    silently shipped PORTRAIT. That fallback is gone: no size now
+    resolves the LONG default, 1920x1080 landscape. A portrait size
+    is honoured ONLY when `size_explicit` says it came from the
+    user's own spec (an aspect_ratio requirement resolved by
+    spec_engine); any other portrait size raises SpecImpossible —
+    fail loudly, never silently portrait.
     """
     if size is None:
-        size = (1080, 1920)
+        size = (1920, 1080)
     W, H = int(size[0]), int(size[1])
+    if H > W and not size_explicit:
+        import spec_engine as _se
+        raise _se.SpecImpossible(
+            "", f"long-video assembly was handed a portrait size "
+            f"{W}x{H} that did not come from an explicit user spec — "
+            f"a long video is landscape unless the prompt itself "
+            f"asks for portrait",
+            "1920x1080 landscape, or a prompt that explicitly asks "
+            "for portrait / 9:16 / a portrait size")
     parts = [str(p) for p in parts]
     titles = [str(t) for t in chapter_titles]
     if not parts:
@@ -1498,7 +1531,15 @@ def assemble(parts, out_path, chapter_titles, size=None, card_bg_from=None):
         inputs, filt = [], []
         for j, seg in enumerate(segs):
             inputs += ["-i", seg]
-            filt.append(f"[{j}:v]fps=30,scale={W}:{H},format=yuv420p[v{j}];")
+            # v98: setsar=1 — scaling a chapter whose own size differs
+            # from the assembly size (a portrait chapter into a
+            # landscape long video, a re-rendered chapter at another
+            # size) leaves a non-1 SAR on the scaled stream, and the
+            # concat then refuses to join it with the title cards
+            # (SAR mismatch). Normalising SAR per segment makes the
+            # assembly size authoritative, whatever the chapters' own
+            # sizes are.
+            filt.append(f"[{j}:v]fps=30,scale={W}:{H},setsar=1,format=yuv420p[v{j}];")
             filt.append(f"[{j}:a]aresample=44100,aformat=channel_layouts=stereo[a{j}];")
         filt.append("".join(f"[v{j}][a{j}]" for j in range(len(segs))))
         filt.append(f"concat=n={len(segs)}:v=1:a=1[vout][aout]")

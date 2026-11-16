@@ -115,10 +115,14 @@ def main():
                    "-f", "lavfi", "-i", "sine=frequency=330:duration=4",
                    "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
                    "-shortest"], os.path.join(td, "ch2.mp4"))
+        # v98: the small portrait test size is a DELIBERATE test
+        # choice, declared explicit — assemble() now refuses a
+        # portrait size that did not come from an explicit spec.
         final = long_video.assemble([ch1, ch2],
                                     os.path.join(td, "final.mp4"),
                                     ["Alpha", "Beta"], size=(320, 568),
-                                    card_bg_from=[ch1, ch2])
+                                    card_bg_from=[ch1, ch2],
+                                    size_explicit=True)
         calls = []
 
         async def stub_make_video(brief, chat, notify=None, workdir=None,
@@ -141,7 +145,8 @@ def main():
             checks, rounds, fixes, final2, paths2 = \
                 await long_video._correct_assembled(
                     final, [ch1, ch2], [{}, {}], outline_data, None,
-                    td, ["Alpha", "Beta"], (320, 568))
+                    td, ["Alpha", "Beta"], (320, 568),
+                    size_explicit=True)
         finally:
             long_video.doc.make_video = orig
         return checks, rounds, fixes, calls
