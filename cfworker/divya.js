@@ -481,8 +481,16 @@ async function startCreate(env, user, brief, userPrompt) {
     if (tp) fixed = fixed === "AUTO" || /^AUTO\b/i.test(fixed) ? `topic: ${tp}, ` + fixed.replace(/^AUTO\b,?\s*/i, "") : fixed.replace(/\btopic\s*:?\s*AUTO\b/i, `topic: ${tp}`);
   }
   // v23: duration hard constraint — the runner made 0:44 for a 30s request.
-  const durS = (fixed.match(/\b(\d+)\s?s\b/i) || [])[1];
-  const durM = (fixed.match(/\b(\d+)\s?(?:minutes?|mins?|mints)\b/i) || [])[1];
+  // RENDERER PIVOT (Phase 3): ONE length authority — the USER's own
+  // prompt spec. The brief is the chat brain's rewrite and may carry
+  // OTHER numbers (the first film's brief held both "3 minutes" and
+  // "10 minutes": the first-match below targeted 3 min and pricing
+  // charged 3 min while the user's spec said 600s). When the user's
+  // own words name a duration, IT writes the FINAL VIDEO LENGTH
+  // line; brief numbers are only the fallback when they don't.
+  const _specS = specDurationS(userPrompt);
+  const durS = _specS ? (_specS % 60 && _specS < 3600 ? String(_specS) : undefined) : (fixed.match(/\b(\d+)\s?s\b/i) || [])[1];
+  const durM = _specS ? (_specS % 60 ? undefined : String(_specS / 60)) : (fixed.match(/\b(\d+)\s?(?:minutes?|mins?|mints)\b/i) || [])[1];
   const durLine = durS ? ` FINAL VIDEO LENGTH: exactly ${durS} seconds (±2s) — do not make it longer or shorter.` : durM ? ` FINAL VIDEO LENGTH: exactly ${durM} minutes (±30s) — do not make it longer or shorter.` : "";
   brief = fixed;
   // R44: tobacco/gutka/smoking = HEALTH, never tech — the render brief carries
@@ -502,7 +510,7 @@ async function startCreate(env, user, brief, userPrompt) {
   // so no false "started" is ever sent and a retry is not blocked for 20 min.
   // v72: kind follows the REQUESTED length too (a "5 minutes" brief is a
   // long video even when the brain forgot to write the word "long").
-  const kind = (/long|documentary|16:9/i.test(brief) || (durM && parseInt(durM, 10) >= 2)) ? "long" : "short";
+  const kind = (/long|documentary|16:9/i.test(brief) || (_specS ? _specS >= 120 : (durM && parseInt(durM, 10) >= 2))) ? "long" : "short";
   if (!r || r.status !== 204) {
     await env.KV.delete(`busy:${user}`);
     // v73: the failed start leaves a FAILED History entry, never silence —
@@ -768,7 +776,7 @@ async function handle(env, m) {
     // (the old line spent a second time and discarded the result — a WA
     // create was charged twice, and a failed second spend ate the first).
     let tk = null, cost = 0;
-    if (go) { cost = videoCost(parseMins(mm && mm[1])); tk = await tokSpend(env, user, cost); if (!tk.ok) { ans = tokMsg("te", tk); go = false; } }
+    if (go) { cost = videoCost(lengthMins(text, mm && mm[1])); tk = await tokSpend(env, user, cost); if (!tk.ok) { ans = tokMsg("te", tk); go = false; } }
     // v37 (fix F): enqueue FIRST, then tell the user — "start chesa" is only
     // sent when the job really queued; a failed dispatch gets an honest
     // failure message and the tokens back.
@@ -1428,7 +1436,7 @@ async function appTalk(env, u, text, lang, voiceId) {
   // never asks the user to recite a phrase to get work done.
   let premium_required = false;
   let tk = null, cost = 0;
-  if (go) { cost = videoCost(parseMins(mm && mm[1])); tk = await tokSpend(env, u.n, cost); if (!tk.ok) { ans = tokMsg(lang, tk); go = false; } }
+  if (go) { cost = videoCost(lengthMins(cleanText, mm && mm[1])); tk = await tokSpend(env, u.n, cost); if (!tk.ok) { ans = tokMsg(lang, tk); go = false; } }
   if (go) {
     let brief = (mm[1] || "AUTO").trim() || "AUTO";
     // v67: a preference saved during the previous render (voice/language)
@@ -3264,6 +3272,16 @@ const TOK = {
 const videoCost = mins => TOK.PER_MIN * Math.max(1, Math.ceil(mins || 1)); // 1 min = 100K (short), 10 min = 1M
 const lenToMins = len => ({ "30s": 1, "60s": 1, "3m": 3, "10m": 10, "15m": 15, "30m": 30, "60m": 60, full: 10, auto: 1 }[len] || 1); // "full" charged as 10 min (source duration unknown at order time)
 const parseMins = s => { const m = String(s || "").match(/(\d+)\s*(?:min|mins|mints|minute|minutes|nimisham|nimishalu|nims?)/i); return m ? parseInt(m[1], 10) : 1; };
+// RENDERER PIVOT (Phase 3): ONE length authority — the user's own
+// prompt. specDurationS mirrors spec_engine.extract_deterministic's
+// duration rule (a seconds pattern first, else minutes) over the
+// USER's exact words; lengthMins prices from it, falling back to
+// the brief's number only when the user named no duration. (The
+// first film was priced and targeted at 3 minutes because the chat
+// brain's brief contained "3 minutes" before "10 minutes", while
+// the user's own spec said 600s.)
+const specDurationS = t => { const s = String(t || "").toLowerCase(); let m = s.match(/\b(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b/); if (m) return Math.round(parseFloat(m[1])); m = s.match(/\b(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|mints)\b/); return m ? Math.round(parseFloat(m[1]) * 60) : null; };
+const lengthMins = (userText, briefText) => { const s = specDurationS(userText); return s ? Math.max(1, Math.ceil(s / 60)) : parseMins(briefText); };
 const PLANS = {
   free:    { name: "Free",    monthly: 0,   grant: 0,           voice: true },
   starter: { name: "Starter", monthly: 29,  grant: 2_000_000,   voice: true },
@@ -6253,7 +6271,16 @@ export default {
       // v71: the job owner's saved reference voice (flags + pace/lang
       // only — the bytes travel via /api/runner/refvoice, job-scoped).
       const rvMeta = jrec.to ? await refVoiceMeta(env, jrec.to) : null;
-      return Response.json({ ...jrec, WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: ownPexels || env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "", refvoice: rvMeta ? { present: true, wpm: rvMeta.wpm || 0, lang: rvMeta.lang || "" } : { present: false } });
+      // RENDERER PIVOT (Phase 1): the runner's channel layer rotates
+      // a film's ~40 LLM calls across EVERY free provider — so the
+      // job payload now also carries the shared alternate keys the
+      // Worker holds (whichever are set) and the scout's discovered
+      // model lists, the same pool the chat chain rotates over. A
+      // Groq-only payload left the runner nothing to fail over to
+      // when the free Groq quota died mid-film (429).
+      let scoutMdls = { groq: [], openrouter: [], gemini: [] };
+      try { scoutMdls = await scoutModels(env); } catch {}
+      return Response.json({ ...jrec, WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: ownPexels || env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "", OPENROUTER_KEY: env.OPENROUTER_KEY || "", GEMINI_KEY: env.GEMINI_KEY || "", CEREBRAS_KEY: env.CEREBRAS_KEY || "", SAMBANOVA_KEY: env.SAMBANOVA_KEY || "", NVIDIA_KEY: env.NVIDIA_KEY || "", MISTRAL_KEY: env.MISTRAL_KEY || "", COHERE_KEY: env.COHERE_KEY || "", ZAI_KEY: env.ZAI_KEY || "", SCOUT_MODELS: scoutMdls, refvoice: rvMeta ? { present: true, wpm: rvMeta.wpm || 0, lang: rvMeta.lang || "" } : { present: false } });
     }
     // v91: internal triggers for the model scout + limit warning
     // (RUNNER_KEY-guarded, same pattern as /job — test/proof only).

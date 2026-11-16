@@ -95,17 +95,69 @@ _NON_SEARCHABLE = (
 )
 
 
+# RENDERER PIVOT (Phase 2a): the first v89-brain film's queries
+# passed the v100 gate and still starved the pool — they were
+# VOICE-LINE FRAGMENTS, shards of the narration sentence ("ever
+# looked wondered who's", "nest hidden cracks sipping"), not
+# subjects. A stock library tags NOUN PHRASES ("honeybee on
+# rooftop hive"); a clause fragment matches nothing. Fragment
+# detection is therefore part of searchability now.
+_FRAGMENT_HEADS = {
+    "who", "what", "when", "where", "why", "how", "which", "whose",
+    "and", "but", "so", "if", "as", "while", "because", "then",
+    "ever", "just", "also", "even", "still",
+}
+_FRAGMENT_TAILS = {
+    "the", "a", "an", "of", "in", "on", "at", "to", "and", "or",
+    "for", "with", "from", "by", "is", "are", "was", "were", "be",
+    "been", "being", "has", "have", "had", "do", "does", "did",
+    "can", "could", "will", "would", "should", "may", "might",
+    "who", "what", "ever", "just", "very", "so", "too", "up",
+}
+_ING_NOUNS = {"morning", "evening", "building", "buildings",
+              "wedding", "lightning", "painting", "paintings",
+              "drawing", "drawings", "ceiling", "spring"}
+_CONTRACTION_RX = re.compile(r"\b\w+'(s|re|ve|ll|d|t)\b", re.I)
+
+
+def query_is_fragment(q):
+    """True when a query is a clause FRAGMENT rather than a
+    subject noun phrase: it carries a contraction shard ("who's"),
+    opens or trails on a function word, is mostly function words,
+    or trails off on a bare participle ("...sipping")."""
+    s = str(q or "").strip()
+    if not s:
+        return True
+    if "?" in s or _CONTRACTION_RX.search(s):
+        return True
+    words = [w.strip(".,;:!?\"'").lower() for w in s.split()
+             if w.strip(".,;:!?\"'")]
+    if not words:
+        return True
+    if words[0] in _FRAGMENT_HEADS or words[-1] in _FRAGMENT_TAILS:
+        return True
+    if words[-1].endswith("ing") and words[-1] not in _ING_NOUNS:
+        return True
+    fn = sum(1 for w in words
+             if w in _STOP or w in _FRAGMENT_TAILS
+             or w in _FRAGMENT_HEADS)
+    return len(words) > 0 and fn / len(words) > 0.5
+
+
 def query_is_searchable(q):
     """True when a footage query names a concrete, stock-searchable
     subject: at least 2 content words, no copyrighted-artefact
-    phrasing, and not dominated by capitalised name/title words
+    phrasing, not dominated by capitalised name/title words
     (a person's name, a film title — stock libraries tag visible
-    subjects, not names)."""
+    subjects, not names) — and, since the renderer pivot, not a
+    voice-line FRAGMENT (see query_is_fragment)."""
     s = str(q or "").strip()
     if len(s) < 3:
         return False
     low = s.lower()
     if any(p in low for p in _NON_SEARCHABLE):
+        return False
+    if query_is_fragment(s):
         return False
     words = [w.strip(".,;:!?\"'") for w in s.split() if w.strip(".,;:!?\"'")]
     content = [w for w in words if w.lower() not in _STOP and len(w) > 2]
@@ -128,16 +180,58 @@ def derive_query(line, label=""):
     return " ".join(words) if len(words) >= 2 else ""
 
 
-def searchable_queries(queries, line, label=""):
+def _nounish(word):
+    """A word that can anchor a stock query: a plural or a
+    noun-shaped ending (the deterministic stand-in for POS
+    tagging — the anchor of a subject phrase)."""
+    w = str(word or "").lower()
+    if "'" in w:
+        return False
+    return len(w) > 2 and (w.endswith("s") and not w.endswith(("ss", "us", "is"))
+                           or w.endswith(("tion", "ness", "ment", "ity")))
+
+
+def derive_subject_query(line, label="", topic=""):
+    """RENDERER PIVOT (Phase 2a): rewrite a fragment into a
+    SUBJECT query. Anchors on the topic's salient noun (its last
+    content word — "bees" in "The Hidden Life of Urban Bees"),
+    adds the line's noun-ish words and the scene label's content
+    words, and validates the result against the same quality
+    gate — a derivation that still reads as a fragment is not
+    returned (the caller then asks the re-plan hook instead)."""
+    anchor = ""
+    tc = content_words(topic)
+    if tc:
+        anchor = tc[-1]
+    words = []
+    for w in content_words(label) + content_words(line):
+        if _nounish(w) and w not in words:
+            words.append(w)
+    out = []
+    if anchor and anchor not in words[:3]:
+        out.append(anchor)
+    out += [w for w in words if w not in out][:3]
+    if len(out) < 2:
+        out = content_words(label)[:3] or out
+    q = " ".join(out[:4]).strip()
+    if len(out) >= 2 and query_is_searchable(q):
+        return q
+    return ""
+
+
+def searchable_queries(queries, line, label="", topic=""):
     """Filter a scene's footage queries down to stock-searchable
-    ones; when none survive, derive one from the line. Returns
-    (kept, dropped) — the drop is always reported, never silent."""
+    ones (fragments now drop too — Phase 2a); when none survive,
+    derive a SUBJECT query (topic-anchored), falling back to the
+    v100 line derivation. Returns (kept, dropped) — the drop is
+    always reported, never silent."""
     kept, dropped = [], []
     for q in queries or []:
         (kept if query_is_searchable(q) else dropped).append(str(q))
     if not kept:
-        d = derive_query(line, label)
-        if d:
+        d = derive_subject_query(line, label, topic) \
+            or derive_query(line, label)
+        if d and query_is_searchable(d):
             kept = [d]
     return kept[:2], dropped
 
@@ -188,21 +282,77 @@ _EVENT_PATTERNS = (
 )
 
 
-def scene_claims(scene):
+def _title_key(s):
+    return re.sub(r"[^a-z0-9 ]+", "", str(s or "").lower()).strip()
+
+
+def resolve_source(scene, research):
+    """RENDERER PIVOT (Phase 4 — FACT GATE v2): the research-record
+    entry backing this scene, or None. The scene points at the
+    record via `source_ref` (or a `source` string that IS a record
+    title); a free-text invention ("Nature 2022") matches no
+    retrieved entry and resolves to nothing."""
+    if not research:
+        return None
+    ref = _title_key((scene or {}).get("source_ref")
+                     or (scene or {}).get("source"))
+    if not ref:
+        return None
+    for e in research:
+        t = _title_key(e.get("title"))
+        if not t:
+            continue
+        if t == ref:
+            return e
+        # containment only for substantial titles — a 3-letter
+        # title ("Bee") must not "match" inside a longer word
+        if min(len(t), len(ref)) >= 4 and (t in ref or ref in t):
+            return e
+    return None
+
+
+def resolved_source_title(scene, research):
+    """The ONLY source title a stamp may print for this scene:
+    the title of the retrieved record entry backing it ('' when
+    nothing backs it — the stamp then prints nothing)."""
+    e = resolve_source(scene, research)
+    return str(e.get("title") or "") if e else ""
+
+
+def _num_in_snippet(v, u, snippet):
+    """Does the retrieved text actually carry this number? Accepts
+    the plain form, a .0 form, thousands separators, and the
+    spelled-out unit ('30 percent')."""
+    text = str(snippet or "").replace(",", "")
+    forms = {f"{v:g}", f"{v:.1f}".rstrip("0").rstrip("."),
+             f"{int(v)}" if float(v) == int(v) else f"{v:g}"}
+    for f in forms:
+        if not f:
+            continue
+        if u == "%":
+            if re.search(rf"(?<![\d.]){re.escape(f)}\s*(%|percent|per cent)",
+                         text):
+                return True
+        elif re.search(rf"(?<![\d.]){re.escape(f)}(?![\d.])", text):
+            return True
+    return False
+
+
+def scene_claims(scene, research=None):
     """The factual claims one scene makes, each judged:
     {kind: 'stat'|'event', text, sourced, hedged}.
 
-    A claim is SOURCED when the scene carries its own citation
-    (the `source` field the writer fills only for a source it is
-    actually citing — compliance R5 polices stamping) or the line
-    attributes in-line ("according to ..."). A claim is HEDGED
-    when the line itself softens it (roughly / reportedly /
-    estimates suggest ...). Unsourced + unhedged = invented
-    until proven otherwise."""
+    v1 sourcing: the scene carries its own citation (the `source`
+    field) or the line attributes in-line ("according to ...").
+    FACT GATE v2 (research given): a free-text source NO LONGER
+    counts — the claim is sourced only when resolve_source finds
+    the retrieved record entry backing the scene AND, for a stat,
+    the entry's retrieved text actually carries the claim's
+    number. A claim is HEDGED when the line itself softens it
+    (roughly / reportedly / estimates suggest ...). Unsourced +
+    unhedged = invented until proven otherwise."""
     vo = str((scene or {}).get("vo") or "")
     low = " " + vo.lower() + " "
-    sourced = bool(str((scene or {}).get("source") or "").strip()) \
-        or "according to" in low
     hedged = any(h in low for h in _HEDGES)
     claims = []
     import compliance as _comp
@@ -214,11 +364,20 @@ def scene_claims(scene):
     # scripts sentence by sentence.
     nums = [(v, u) for v, u in _comp.spoken_numbers(vo)
             if u in ("%", "x", "ratio") or v >= 10]
+    if research is None:
+        sourced = bool(str((scene or {}).get("source") or "").strip()) \
+            or "according to" in low
+        stat_sourced = sourced
+    else:
+        entry = resolve_source(scene, research)
+        stat_sourced = bool(entry) and bool(nums) and all(
+            _num_in_snippet(v, u, entry.get("snippet")) for v, u in nums)
+        sourced = bool(entry)
     if nums:
         claims.append({"kind": "stat",
                        "text": ", ".join(
                            f"{v:g}{u}" for v, u in nums[:3]),
-                       "sourced": sourced, "hedged": hedged})
+                       "sourced": stat_sourced, "hedged": hedged})
     for pat in _EVENT_PATTERNS:
         m = pat.search(vo)
         if m:
@@ -228,12 +387,13 @@ def scene_claims(scene):
     return claims
 
 
-def audit_claims(scenes):
+def audit_claims(scenes, research=None):
     """FG-FACT checks: one FAIL per scene whose claim is neither
-    sourced nor hedged."""
+    sourced nor hedged (v2: sourced = resolved against the
+    research record when one is given)."""
     checks = []
     for i, sc in enumerate(scenes or []):
-        for c in scene_claims(sc):
+        for c in scene_claims(sc, research):
             if not c["sourced"] and not c["hedged"]:
                 checks.append({
                     "rule": "FG-FACT", "status": "FAIL",
@@ -249,22 +409,25 @@ def _sentences(vo):
     return [p for p in parts if p.strip()]
 
 
-def strip_claim_sentences(vo):
+def strip_claim_sentences(vo, research=None, scene=None):
     """Remove the sentences of `vo` that carry an unsourced,
     unhedged claim. Returns (new_vo, removed_sentences). The
     deterministic half of the fact gate: what the rewrite round
-    could not fix honestly does not ship."""
+    could not fix honestly does not ship. Under v2 the probe
+    carries the scene's own source pointers, judged against the
+    research record."""
     kept, removed = [], []
-    probe = {"source": ""}
+    probe = {"source": (scene or {}).get("source", ""),
+             "source_ref": (scene or {}).get("source_ref", "")}
     for sent in _sentences(vo):
         probe["vo"] = sent
         bad = any(not c["sourced"] and not c["hedged"]
-                  for c in scene_claims(probe))
+                  for c in scene_claims(probe, research))
         (removed if bad else kept).append(sent)
     return " ".join(kept).strip(), removed
 
 
-def fact_gate(scenes, chat=None, min_scenes=4):
+def fact_gate(scenes, chat=None, min_scenes=4, research=None):
     """Run the fact gate over a writer's scenes BEFORE directing.
 
     Round 1 (only when FAILs exist and a chat is injected): the
@@ -275,33 +438,67 @@ def fact_gate(scenes, chat=None, min_scenes=4):
     `min_scenes` scenes — below that the FAIL is left standing
     in the returned checks instead of gutting the chapter).
 
+    FACT GATE v2 (research given — a list of RETRIEVED sources
+    from research.build_research_record): a claim counts as
+    sourced ONLY when it resolves against the record (see
+    scene_claims); the rewrite round may cite ONLY record titles
+    (in "source_ref") — a citation the writer invents is
+    discarded by validation, and the claim then faces the same
+    hedge-or-cut mechanics. An EMPTY record is a valid, strict
+    input: nothing resolves, everything must hedge or cut.
+
     Returns {"scenes": [...], "log": {...}, "checks": [...]} —
     checks is the POST-gate audit (what still fails, honestly)."""
     scenes = [dict(s) for s in scenes or []]
-    log = {"claims": sum(len(scene_claims(s)) for s in scenes),
+    log = {"claims": sum(len(scene_claims(s, research)) for s in scenes),
            "rewrite_round": False, "removed": [], "dropped_scenes": [],
            "waived_below_min": []}
-    fails = [c for c in audit_claims(scenes) if c["status"] == "FAIL"]
+    if research is not None:
+        log["research"] = {"entries": len(research)}
+    fails = [c for c in audit_claims(scenes, research)
+             if c["status"] == "FAIL"]
     if fails and chat is not None:
         bad = sorted({c["scene"] for c in fails if c.get("scene")})
         lines = []
         for n in bad:
             sc = scenes[n - 1]
             claims = "; ".join(
-                f"{c['kind']} '{c['text']}'" for c in scene_claims(sc)
+                f"{c['kind']} '{c['text']}'"
+                for c in scene_claims(sc, research)
                 if not c["sourced"] and not c["hedged"])
             lines.append(f"Scene {n}: \"{sc.get('vo', '')}\" "
                          f"[unsourced: {claims}]")
-        prompt = (
-            "You wrote documentary narration with claims you did "
-            "not source. Rewrite ONLY these scenes. For every "
-            "statistic or event claim: either name a REAL source "
-            "you actually know in the source field, or hedge the "
-            "line (roughly / reportedly / estimates suggest), or "
-            "remove the claim. NEVER invent a source, a movement, "
-            "an event or a number. Return strict JSON only: "
-            "{\"scenes\": [{\"scene\": <number>, \"vo\": \"...\", "
-            "\"source\": \"...\"}]}\n" + "\n".join(lines))
+        if research is not None:
+            rec_lines = "\n".join(
+                f"- {e.get('title', '')} ({e.get('url', '')})"
+                for e in research) or "(no sources were retrieved)"
+            prompt = (
+                "You wrote documentary narration with claims no "
+                "retrieved source backs. Rewrite ONLY these scenes. "
+                "For every statistic or event claim: either cite "
+                "one of the RETRIEVED sources below — copy its "
+                "title EXACTLY into source_ref, and only when that "
+                "source's subject actually covers the claim — or "
+                "hedge the line (roughly / reportedly / estimates "
+                "suggest), or remove the claim. A source you name "
+                "that is not in this list is discarded and the "
+                "claim is cut. NEVER invent a source, a movement, "
+                "an event or a number. RETRIEVED SOURCES:\n"
+                + rec_lines
+                + "\nReturn strict JSON only: {\"scenes\": "
+                "[{\"scene\": <number>, \"vo\": \"...\", "
+                "\"source_ref\": \"...\"}]}\n" + "\n".join(lines))
+        else:
+            prompt = (
+                "You wrote documentary narration with claims you did "
+                "not source. Rewrite ONLY these scenes. For every "
+                "statistic or event claim: either name a REAL source "
+                "you actually know in the source field, or hedge the "
+                "line (roughly / reportedly / estimates suggest), or "
+                "remove the claim. NEVER invent a source, a movement, "
+                "an event or a number. Return strict JSON only: "
+                "{\"scenes\": [{\"scene\": <number>, \"vo\": \"...\", "
+                "\"source\": \"...\"}]}\n" + "\n".join(lines))
         try:
             raw = chat([{"role": "system",
                          "content": "You output strict JSON only."},
@@ -316,8 +513,28 @@ def fact_gate(scenes, chat=None, min_scenes=4):
                 if 1 <= n <= len(scenes) and str(item.get("vo") or "").strip():
                     scenes[n - 1]["vo"] = re.sub(
                         r"[#*_`]", "", str(item["vo"])).strip()
-                    scenes[n - 1]["source"] = str(
-                        item.get("source") or "")[:40]
+                    if research is not None:
+                        # v2: the citation is validated against the
+                        # record — an invented one is discarded, and
+                        # the display source becomes the RETRIEVED
+                        # title, never the writer's string.
+                        probe = {"source_ref": str(
+                            item.get("source_ref")
+                            or item.get("source") or "")}
+                        entry = resolve_source(probe, research)
+                        if entry:
+                            scenes[n - 1]["source_ref"] = entry["title"]
+                            scenes[n - 1]["source"] = entry["title"]
+                            # the retrieved text itself — the only
+                            # words a document visual may show
+                            scenes[n - 1]["source_text"] = \
+                                str(entry.get("snippet") or "")[:400]
+                        else:
+                            scenes[n - 1].pop("source_ref", None)
+                            scenes[n - 1]["source"] = ""
+                    else:
+                        scenes[n - 1]["source"] = str(
+                            item.get("source") or "")[:40]
                     # a rewritten line may no longer speak the
                     # scene's number — the value must not outlive it
                     import compliance as _comp
@@ -328,14 +545,16 @@ def fact_gate(scenes, chat=None, min_scenes=4):
         except Exception as e:
             log["rewrite_error"] = str(e)[:120]
     # deterministic removal for whatever still fails
-    fails = [c for c in audit_claims(scenes) if c["status"] == "FAIL"]
+    fails = [c for c in audit_claims(scenes, research)
+             if c["status"] == "FAIL"]
     drop = set()
     for c in fails:
         i = (c.get("scene") or 0) - 1
         if not (0 <= i < len(scenes)) or i in drop:
             continue
         sc = scenes[i]
-        new_vo, removed = strip_claim_sentences(sc.get("vo", ""))
+        new_vo, removed = strip_claim_sentences(
+            sc.get("vo", ""), research, sc)
         if not removed:
             continue
         if len(new_vo.split()) >= 4:
@@ -355,8 +574,12 @@ def fact_gate(scenes, chat=None, min_scenes=4):
             log["waived_below_min"].append(i + 1)
     if drop:
         scenes = [s for i, s in enumerate(scenes) if i not in drop]
+    if research is not None:
+        log["research"]["resolved_claims"] = sum(
+            1 for s in scenes for c in scene_claims(s, research)
+            if c["sourced"])
     return {"scenes": scenes, "log": log,
-            "checks": audit_claims(scenes)}
+            "checks": audit_claims(scenes, research)}
 
 
 def audit_teases(chapter_texts, chapter_count, end_question="",

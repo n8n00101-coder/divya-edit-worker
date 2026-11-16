@@ -365,23 +365,41 @@ def compose_visual(scene, name=None, topic=""):
                if str(q).strip()]
 
     if name == "document":
-        lines = []
-        for q in queries[:3]:
-            lines.append(q[:1].upper() + q[1:].rstrip(".") + ".")
-        if not lines and vo_latin:
-            lines = [vo_latin]
-        if source:
-            lines.append(f"Source: {source}")
-        if not lines and label:
-            lines = [label.title()]
+        # RENDERER PIVOT (Phase 4/5): FAKE DOCUMENTS ARE BANNED.
+        # The old composition rendered the plan's own search
+        # queries/descriptions as a document's text ("Graph showing
+        # temperature vs bee activity.") with an invented
+        # "Source: ..." line — fabricated evidence. A document
+        # visual now requires a REAL retrieved source: the scene
+        # must carry source_ref + source_text (the retrieved
+        # source's own words, attached from the research record),
+        # and the document shows THOSE. Anything else declines —
+        # the director picks another visual for the beat.
+        ref = str(scene.get("source_ref") or "").strip()
+        stext = str(scene.get("source_text") or "").strip()
+        if not ref or not stext:
+            return None, ""
+        words = stext.split()
+        lines, cur = [], ""
+        for w in words:
+            if len(cur) + len(w) + 1 > 52 and cur:
+                lines.append(cur)
+                cur = w
+            else:
+                cur = (cur + " " + w).strip()
+            if len(lines) >= 4:
+                break
+        if cur and len(lines) < 4:
+            lines.append(cur)
         if not lines:
             return None, ""
+        lines.append(f"Source: {ref}")
         stamp = ""
         if str(scene.get("fact_type") or "") == "ban" or \
                 re.search(r"\b(banned|ban|prohibited|illegal)\b", vo.lower()):
             stamp = "BANNED"
-        args = {"title": label.title() if label else "Report",
-                "lines": tuple(lines), "stamp": stamp}
+        args = {"title": ref[:44], "lines": tuple(lines),
+                "stamp": stamp}
         return args, " ".join([args["title"]] + list(lines))
     if name == "receipt":
         pairs = []

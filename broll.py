@@ -385,29 +385,45 @@ def _tokens(text):
 
 def score_candidate(cand, query):
     """Query match (from tags/slug) dominates; a clip that comfortably
-    covers the needed length beats a barely-long-enough one."""
+    covers the needed length beats a barely-long-enough one.
+    RENDERER PIVOT (Phase 2b): among matches, HD sources win —
+    a 1080p+ clip outranks a 540p one, 720p sits between, and
+    Pexels edges out other providers at equal quality (its
+    renditions are the most reliable downloads)."""
     qt = _tokens(query)
     ct = _tokens(cand.get("slug", "")) | _tokens(cand.get("page", ""))
     match = len(qt & ct) / max(1, len(qt)) if qt else 0.0
-    return match * 10.0 + min(2.0, (cand.get("duration") or 0) / 30.0)
+    score = match * 10.0 + min(2.0, (cand.get("duration") or 0) / 30.0)
+    h = cand.get("height") or 0
+    if h >= 1080:
+        score += 1.5
+    elif h >= 720:
+        score += 0.75
+    if cand.get("provider") == "pexels":
+        score += 0.25
+    return score
 
 
 def _min_height_for_canvas(canvas):
-    """PROOF-FIX 2: the footage height floor, RELATIVE to the
-    delivery canvas. The old absolute floor (1080) rejected 92% of
-    landscape stock for 16:9 longs — free landscape stock is mostly
-    720p — and the delivered "documentary" had ZERO photographs.
+    """The footage height floor, RELATIVE to the delivery canvas.
+    History: the old absolute floor (1080) rejected 92% of
+    landscape stock for 16:9 longs; PROOF-FIX 2 relaxed landscape
+    to 2/3 of canvas height (720p for 1080) — and the first film
+    STILL lost 789 of 849 candidates under it (540p/506p/464p
+    stock reality).
 
-    - landscape canvas: accept >= 2/3 of the canvas height (720p
-      for a 1920x1080 canvas), upscaled under GRADE_LOCK at render.
-    - portrait canvas / no canvas: the historical 1080 floor —
-      vertical stock is natively tall, portrait shorts unaffected.
+    RENDERER PIVOT (Phase 2b): landscape canvases now accept
+    >= 540p landscape footage, upscaled to the canvas under
+    GRADE_LOCK at render (footage beats only — generated/data
+    beats are unaffected). Portrait canvas / no canvas: the
+    historical 1080 floor — vertical stock is natively tall,
+    portrait shorts unaffected.
     """
     if not canvas:
         return 1080
     w, h = int(canvas[0]), int(canvas[1])
     if w >= h:
-        return max(480, round(h * 2 / 3))
+        return min(540, h)
     return 1080
 
 

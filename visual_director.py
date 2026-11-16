@@ -116,10 +116,13 @@ def choose_visuals(menus, chat, taste="", beat_sheet=None):
         "share actual words with the beat's line. When the line names "
         "something filmable and you would prefer real footage over "
         "every drawn candidate, still pick the best candidate AND add "
-        "\"footage_query\": a 3-6 word stock-footage search for the "
-        "line's subject. Never pick the same template for two "
-        "neighbouring beats unless every alternative is wrong for the "
-        "line.\n"
+        "\"footage_query\": a 3-6 word stock-footage search naming "
+        "the line's VISUAL SUBJECT as a noun phrase (\"honeybee on "
+        "rooftop hive\") — never a fragment of the narration "
+        "sentence; fragments match nothing a stock library tags "
+        "and are rejected before the search. Never pick the same "
+        "template for two neighbouring beats unless every alternative "
+        "is wrong for the line.\n"
         'Reply with strict JSON: {"choices": [{"beat": <n>, '
         '"template": "<candidate template name>", "why": "<one '
         'sentence, sharing words with the line>", "footage_query": '

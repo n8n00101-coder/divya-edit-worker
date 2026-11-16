@@ -154,8 +154,10 @@ T("1080p landscape accepted for a 1080 canvas",
   any(c["id"] == "d" for c in kept))
 T("portrait rejected for a landscape canvas",
   any(c["id"] == "b" and "portrait" in c["reason"] for c in rej))
-T("360p rejected for a 1080 canvas (floor 720)",
-  any(c["id"] == "c" and "720" in c["reason"] for c in rej))
+T("360p rejected for a 1080 canvas (floor 540 — renderer pivot "
+  "Phase 2b lowered the PROOF-FIX 2 720 floor: 789/849 candidates "
+  "died under it; >=540p landscape is now accepted + upscaled)",
+  any(c["id"] == "c" and "540" in c["reason"] for c in rej))
 kept, rej = broll.filter_candidates(
     [cand("a", 1280, 720), cand("e", 1080, 1920)], 5, set(), "")
 T("no canvas: legacy floor keeps 1080p portrait",
@@ -168,7 +170,7 @@ kept, rej = broll.filter_candidates(
 T("portrait canvas: legacy floor (720p landscape rejected)",
   any(c["id"] == "a" for c in rej)
   and any(c["id"] == "e" for c in kept))
-T("canvas floor helper", broll._min_height_for_canvas((1920, 1080)) == 720
+T("canvas floor helper", broll._min_height_for_canvas((1920, 1080)) == 540
   and broll._min_height_for_canvas(None) == 1080
   and broll._min_height_for_canvas((1080, 1920)) == 1080)
 
