@@ -74,6 +74,24 @@ instead of "Setup running…" forever. Every pause re-posts a heartbeat
 while waiting (so the Worker's staleness watchdog can tell "waiting on
 the user" from "runner dead"), and every progress post carries the pause
 `reason` the Worker stores.
+
+v103 (account creation stage — Ajju 2026-11-16: "Julie tho cheyinchu";
+see ACCOUNT_CREATION.md): the chain gains a CREATE-ACCOUNT stage. A
+creation driver (first: flow_kaggle) signs the user up in their OWN
+identity (profile name/email/phone from the job record — never invented;
+the legacy "Julie" name-fill in _fill_identity_fields is NOT used by
+creation drivers), with the chain-generated password from the job
+record. The only user micro-steps are the legally/technically-user
+ones — an OTP code and a captcha — and they are asked IN CHAT:
+await_user_input() posts a structured `awaiting` block on the job
+(provider, kind: otp|captcha|field, prompt, expiry, attempts); the
+Worker surfaces it as a normal Julie chat message and routes the
+user's reply back onto the job record as `userInput`; the runner
+polls for it and resumes. A wrong code is re-asked ONCE in chat, then
+the provider fails labelled and the chain continues. Captchas are
+never solved silently and never by a third party: audio alternative
+first (existing maybe_captcha), otherwise the chat ask offers Take
+Control; no user-completable path = a labelled wall.
 """
 import os, sys, time, json, re, base64
 import httpx
@@ -94,7 +112,7 @@ CHAIN_ORDER = ["groq", "openrouter", "gemini", "cloudflare",
                "nvidia", "mistral", "ai21", "voyage",
                "tavily", "serper", "exa",
                "deepgram", "assemblyai", "elevenlabs", "stability", "jina",
-               "pexels"]
+               "kaggle", "pexels"]
 MAX_TRIES = 2
 CURRENT_PROVIDER = None
 _JOB_EMAIL = ""  # v94 (F7): the setup job's account email (test_key's Resend send-proof recipient)
@@ -133,7 +151,7 @@ def SIGNIN_PAUSE_MSG(name):
 # v39: last progress payload, re-posted as a heartbeat while the runner
 # waits on a pause — so the Worker's staleness watchdog sees a live
 # runner (fresh upd) and never mistakes "waiting on the user" for dead.
-LAST_PROGRESS = {"state": "running", "step": "", "note": "", "url": "", "reason": None}
+LAST_PROGRESS = {"state": "running", "step": "", "note": "", "url": "", "reason": None, "awaiting": None}
 
 CF_API = "https://api.cloudflare.com/client/v4"
 CF_SCRIPT_NAME = "divya"
@@ -148,6 +166,12 @@ def _pause_status(step):
         return "paused-sms"
     if step == "google-signin":
         return "paused-signin"
+    if step in ("field", "await-field"):
+        return "paused-field"
+    if step == "await-otp":
+        return "paused-sms"
+    if step == "await-captcha":
+        return "paused-captcha"
     return "paused"
 
 
@@ -161,6 +185,12 @@ def _pause_reason(step):
         return "sms"
     if step in ("google-signin", "signin"):
         return "signin"
+    if step in ("field", "await-field"):
+        return "field"
+    if step == "await-otp":
+        return "sms"
+    if step == "await-captcha":
+        return "captcha"
     return None
 
 
@@ -215,7 +245,7 @@ CURSOR_JS = r"""
 })();
 """
 
-def progress(state, step="", note="", url="", status=None, reason=None, tc=False, verify_wait=False):
+def progress(state, step="", note="", url="", status=None, reason=None, tc=False, verify_wait=False, awaiting=None):
     """POST progress to the Worker (best-effort: never fails the setup).
 
     Payload carries BOTH shapes: the legacy {state, step, note, url} the
@@ -225,6 +255,10 @@ def progress(state, step="", note="", url="", status=None, reason=None, tc=False
     v39: `reason` is sent explicitly on pauses (email/sms/captcha/signin)
     — the Worker stores it as pauseReason, so the app shows the right
     user step instead of defaulting every pause to the email line.
+    v103: `awaiting` carries the structured in-chat ask (see
+    await_user_input) — the Worker stores it on the job record and
+    surfaces the prompt as a Julie chat message; a running/terminal
+    progress post clears it.
     """
     st = status or (state if state != "paused" else _pause_status(step))
     rsn = reason or (st[len("paused-"):] if st.startswith("paused-") else _pause_reason(step))
@@ -242,7 +276,9 @@ def progress(state, step="", note="", url="", status=None, reason=None, tc=False
         # stamps verifyWait on the job so the Gmail feed + cron sweep
         # keep feeding it even if the pause later flips to Take Control.
         payload["verifyWait"] = True
-    LAST_PROGRESS.update({"state": state, "step": step, "note": note, "url": url, "reason": rsn, "tc": bool(tc)})
+    if awaiting is not None:
+        payload["awaiting"] = awaiting
+    LAST_PROGRESS.update({"state": state, "step": step, "note": note, "url": url, "reason": rsn, "tc": bool(tc), "awaiting": awaiting})
     try:
         httpx.post(f"{WORKER}/api/setup/runner/progress", params={"job": JOB},
                    json=payload, headers=H, timeout=20)
@@ -289,6 +325,11 @@ def heartbeat():
                    "reason": LAST_PROGRESS["reason"]}
         if LAST_PROGRESS.get("tc"):
             payload["tc"] = True
+        if LAST_PROGRESS.get("awaiting") is not None:
+            # v103: keep the in-chat ask alive across heartbeats — the
+            # Worker only appends the chat message on a NEW ask, so
+            # re-sending the same block is free of duplicates.
+            payload["awaiting"] = LAST_PROGRESS["awaiting"]
         httpx.post(f"{WORKER}/api/setup/runner/progress", params={"job": JOB},
                    json=payload, headers=H, timeout=20)
     except Exception:
@@ -513,6 +554,122 @@ def check_stop():
 def wait_pause():
     """Block until the job is running again (user tapped Continue) or stopped."""
     return check_stop()
+
+
+# ---------- v103: in-chat user asks (the account-creation core) -------
+# A creation flow that reaches a step only the user can do — an OTP
+# code, a captcha, a missing identity field — does NOT hand the whole
+# browser over. It posts a structured AWAITING_USER block on the job
+# record (via progress): {id, provider, kind, field?, prompt, at,
+# expires, attempts}. The Worker surfaces `prompt` as a normal Julie
+# chat message; the user's next chat reply is routed back onto the job
+# as `userInput` {value, askId, at} (appTalk's setup-ask intercept, or
+# the setup/answer endpoint). This loop polls the job until the input
+# for THIS ask id lands, the job is stopped, or the ask expires.
+# Contract (ACCOUNT_CREATION.md): one active ask per job; a code is
+# re-asked at most ONCE (attempt 2) after the provider rejects it;
+# expiry or a second rejection fails the provider LABELLED — the
+# chain always continues. The value is never printed or logged.
+ASK_TTL = {"otp": 600, "field": 900, "captcha": 1500}
+ASK_MAX_ATTEMPTS = 2
+
+
+def await_user_input(page, kind, prompt, field=None, ttl_s=None, attempt=1):
+    """Ask the user one thing in chat and wait for the reply.
+
+    kind: "otp" (a code the provider sent the user), "field" (a missing
+    identity field — `field` names it: name/phone/email/…), "captcha"
+    (informational: the resume signal for a captcha is the existing
+    Take Control / Continue path, so this returns via wait_pause
+    semantics — see await_captcha_gate).
+    Returns {"value": str} | {"timeout": True} | {"stopped": True}.
+    Raises ValueError on attempt > ASK_MAX_ATTEMPTS (a flow bug — the
+    re-ask-once contract is enforced here, not by callers' discipline).
+    """
+    if attempt > ASK_MAX_ATTEMPTS:
+        raise ValueError(f"ask attempt {attempt} exceeds the re-ask-once contract")
+    if kind not in ASK_TTL:
+        raise ValueError(f"unknown ask kind {kind!r}")
+    ttl = int(ttl_s or ASK_TTL[kind])
+    provider = CURRENT_PROVIDER or PROVIDER
+    ask_id = f"{provider}-{kind}-{int(time.time())}-{attempt}"
+    awaiting = {"id": ask_id, "provider": provider, "kind": kind,
+                "prompt": str(prompt)[:300], "at": int(time.time() * 1000),
+                "expires": int((time.time() + ttl) * 1000), "attempts": attempt}
+    if field:
+        awaiting["field"] = str(field)[:40]
+    step = {"otp": "await-otp", "field": "await-field", "captcha": "await-captcha"}[kind]
+    progress("paused", step, str(prompt)[:300], (page.url if page is not None else "") or "",
+             awaiting=awaiting)
+    deadline = time.time() + ttl
+    while True:
+        j = get_job()
+        if str(j.get("state") or "") == "stopped":
+            return {"stopped": True}
+        ui = j.get("userInput") or {}
+        if ui.get("askId") == ask_id and str(ui.get("value") or "").strip():
+            value = str(ui["value"]).strip()
+            progress("running", "user-input",
+                     f"{provider} — code/input vachindhi, continue chesthunna.", "")
+            return {"value": value}
+        if time.time() >= deadline:
+            return {"timeout": True}
+        heartbeat()
+        time.sleep(10)
+
+
+def await_captcha_gate(page, job, cfg, prompt):
+    """Captcha with no audio alternative: ask in chat (kind=captcha)
+    and hand the browser to the user via the existing Take Control
+    wait. The captcha is NEVER solved by the runner and never by a
+    third party — the user completes it in Julie's own browser, and
+    the session lands in the sealed profile. Returns True when the
+    user finished (job back to running), False on stop/timeout."""
+    provider = CURRENT_PROVIDER or PROVIDER
+    ask_id = f"{provider}-captcha-{int(time.time())}-1"
+    awaiting = {"id": ask_id, "provider": provider, "kind": "captcha",
+                "prompt": str(prompt)[:300], "at": int(time.time() * 1000),
+                "expires": int((time.time() + ASK_TTL["captcha"]) * 1000), "attempts": 1}
+    progress("paused", "await-captcha", str(prompt)[:300], page.url or "",
+             reason="captcha", tc=True, awaiting=awaiting)
+    return take_control(page, job, cfg)
+
+
+def creation_identity(page, job):
+    """The user's OWN identity for a creation flow — never invented.
+
+    email: the job's account email (the user gave it at setup/start).
+    name / phone: the account profile fields the Worker put on the job
+    record (userName / userPhone). A missing field is ASKED in chat
+    (kind=field) — never filled with a placeholder. (The legacy
+    _fill_identity_fields "Julie" convention predates creation and is
+    deliberately not used here.)
+    Returns {"name","email","phone"} | {"stopped": True} |
+    {"missing": field} when an ask timed out.
+    """
+    email = str(job.get("email") or "").strip()
+    name = str(job.get("userName") or "").strip()
+    phone = str(job.get("userPhone") or "").strip()
+    prov = (CURRENT_PROVIDER or PROVIDER or "provider")
+    if not name:
+        r = await_user_input(page, "field",
+                             f"{prov} account kosam nee peru kavali — chat lo nee peru cheppu, nene enter chestha.",
+                             field="name")
+        if r.get("stopped"):
+            return {"stopped": True}
+        if not r.get("value"):
+            return {"missing": "name"}
+        name = r["value"][:80]
+    if not phone:
+        r = await_user_input(page, "field",
+                             f"{prov} phone verification kosam nee phone number kavali — chat lo number cheppu, nene enter chestha.",
+                             field="phone")
+        if r.get("stopped"):
+            return {"stopped": True}
+        if not r.get("value"):
+            return {"missing": "phone"}
+        phone = re.sub(r"[^\d+]", "", r["value"])[:20]
+    return {"name": name, "email": email, "phone": phone}
 
 
 def fed_verify_link(job):
@@ -1152,6 +1309,21 @@ def test_key(provider, key):
             return r.status_code == 200
         if provider == "cloudflare":
             return cf_verify_token(key)
+        if provider == "kaggle":
+            # v103: the "key" is the kaggle.json payload as ONE JSON
+            # string {"user","key"} — the same shape the Worker seals
+            # (KEYPROV.kaggle) and the pair test there runs: one cheap
+            # authenticated list call with HTTP Basic user:key.
+            try:
+                creds = json.loads(key)
+                ku, kk = str(creds.get("user") or ""), str(creds.get("key") or "")
+            except Exception:
+                return False
+            if not ku or not kk:
+                return False
+            r = httpx.get("https://www.kaggle.com/api/v1/datasets/list",
+                          auth=(ku, kk), timeout=20)
+            return r.status_code == 200
         # ---- v81 providers -------------------------------------------
         if provider == "cohere":
             # Trial key, auto-issued at signup (free evaluation quota).
@@ -3209,6 +3381,273 @@ def flow_brevo(page, job, cfg):
     return _fail(f"{name} key kanipinchaledu — create dialog tarvatha kuda (step: key creation). Take Control tho try cheyyi.")
 
 
+# ---------- v103: CREATE-ACCOUNT drivers (ACCOUNT_CREATION.md) -------
+# A creation driver implements the per-provider contract: signup steps
+# in the user's own identity, the verification kinds it can hit
+# (email-link via the self-heal feed / otp via the in-chat ask /
+# captcha via the chat ask + Take Control), the token-creation path,
+# and the self-test (test_key). It returns the standard result dict;
+# _ok's key is sealed by submit_provider_result ONLY after test_key
+# passes. Every failure names its exact step/wall.
+
+_KAGGLE_OTP_INPUTS = ["input[name*='otp' i]", "input[name*='code' i]",
+                      "input[autocomplete='one-time-code']",
+                      "input[inputmode='numeric']", "input[type='tel']"]
+_KAGGLE_PHONE_INPUTS = ["input[type='tel']", "input[name*='phone' i]",
+                        "input[placeholder*='phone' i]"]
+
+
+def _kaggle_signed_in(page):
+    """Cheap signed-in probe: the account menu / avatar exists and the
+    login-register form does not."""
+    try:
+        if _visible(page, ["input[type='password']"]):
+            return False
+        return _any_visible(page, ["[data-testid='avatar']", "img[alt*='avatar' i]",
+                                   "a[href*='/settings']", "button[aria-label*='account' i]"])
+    except Exception:
+        return False
+
+
+def _kaggle_capture_token(page, cfg):
+    """Settings -> API -> Create New Token. Kaggle downloads kaggle.json
+    ({username, key}) instead of showing the key — capture the download.
+    Returns the sealed-payload JSON string, or None."""
+    import tempfile
+    if not goto(page, cfg["keys_url"]):
+        return None
+    page.wait_for_timeout(2500)
+    click(page, ["button:has-text('API')", "a:has-text('API')",
+                 "[role='tab']:has-text('API')"])
+    page.wait_for_timeout(1500)
+    try:
+        with page.expect_download(timeout=30000) as dl_info:
+            clicked = click(page, ["button:has-text('Create New Token')",
+                                   "button:has-text('Create New API Token')",
+                                   "a:has-text('Create New Token')"])
+            if not clicked:
+                return None
+        dl = dl_info.value
+        path = os.path.join(tempfile.mkdtemp(prefix="kaggle-"), "kaggle.json")
+        dl.save_as(path)
+        with open(path, "r", encoding="utf-8") as f:
+            creds = json.load(f)
+        user = str(creds.get("username") or "").strip()
+        key = str(creds.get("key") or "").strip()
+        if user and key:
+            return json.dumps({"user": user, "key": key})
+    except Exception as e:
+        print("kaggle token capture failed:", e, flush=True)
+    return None
+
+
+def flow_kaggle(page, job, cfg):
+    """Kaggle CREATE-ACCOUNT driver (v103, ACCOUNT_CREATION.md).
+
+    Steps: identity (profile, asked in chat when missing) -> Google
+    OAuth door when a profile session exists -> email registration
+    (email + chain password + a username derived from the user's own
+    email) -> captcha (audio first; image-only goes to the chat ask +
+    Take Control, never solved) -> email verification (server-fed link
+    via the self-heal feed; a code form goes to the chat OTP ask) ->
+    phone verification (number from the profile/ask, code via the chat
+    OTP ask, re-ask once) -> API token (kaggle.json download) -> the
+    caller seals it after test_key's pair test. An account that
+    already exists is signed into instead and the same token path
+    runs. Every failure names the exact step.
+    """
+    name = cfg["name"]
+    ident = creation_identity(page, job)
+    if ident.get("stopped"):
+        return _stopped()
+    if ident.get("missing"):
+        return _fail(f"Kaggle account create avvaledu — nee {ident['missing']} dorakaledhu (chat lo adigina appudu reply raaledhu). Malli try cheyyi.",
+                     extra={"no_retry": True, "wall": f"identity-missing:{ident['missing']}"})
+    email = ident["email"]
+    fullname = ident["name"]
+    phone = ident["phone"]
+    password = job.get("pass") or ""
+    if not email or not password:
+        return _fail("Kaggle — job record lo email/password ledu. Setup malli start cheyyi.",
+                     extra={"no_retry": True, "wall": "identity-missing:credentials"})
+    username = re.sub(r"[^a-z0-9_]", "", email.split("@")[0].lower())[:30] or "user"
+
+    # 1) OAuth door first (profile mode): a live Google session in the
+    # sealed profile completes sign-in with no human step at all.
+    signed_in = False
+    if PROFILE_MODE:
+        door = _oauth_door(page, job, cfg)
+        signed_in = door == "ok"
+
+    # 2) Email door: register (or sign in when the account exists).
+    if not signed_in:
+        progress("running", "signup", "Kaggle account create chesthunna — nee identity tho ne.", cfg["url"])
+        if not goto(page, cfg["url"]):
+            return _fail("Kaggle page open avvaledu — network/site wall. Konchem sepu aagi malli try cheyyi.",
+                         extra={"no_retry": True, "wall": "site-unreachable"})
+        page.wait_for_timeout(2500)
+        dismiss_cookie_banner(page)
+        # The auth page is a combined login/register shell; pick the
+        # register side when it is offered as a tab/link.
+        click(page, ["button:has-text('Register')", "a:has-text('Register')",
+                     "button:has-text('Create account')", "a:has-text('Create account')",
+                     "button:has-text('Sign up')", "a:has-text('Sign up')"])
+        page.wait_for_timeout(2000)
+        has_pass = _visible(page, _AUTH_PASS)
+        has_email = _visible(page, _AUTH_EMAIL)
+        if not (has_pass and has_email):
+            # SSO-only shell: the Google door is the only way in and it
+            # needs the user's own sign-in in this browser.
+            if _any_visible(page, _AUTH_SSO):
+                progress("paused", "signin", SIGNIN_PAUSE_MSG(name), page.url, reason="signin")
+                if wait_pause():
+                    return _stopped()
+                signed_in = _kaggle_signed_in(page)
+            if not signed_in:
+                return _fail("Kaggle signup form kanipinchaledhu — site layout marindhi (step: register form). Take Control tho try cheyyi.")
+        if not signed_in:
+            fill(page, _AUTH_EMAIL, email)
+            # Username/name fields, when the register form asks: the
+            # handle derives from the user's own email; the name is the
+            # user's real profile name. Never a placeholder identity.
+            fill(page, ["input[name*='username' i]", "input[placeholder*='username' i]"], username)
+            fill(page, ["input[name*='name' i]", "input[autocomplete='name']",
+                        "input[placeholder*='full name' i]"], fullname)
+            fill(page, _AUTH_PASS, password)
+            # A second password box (confirm) gets the same password.
+            try:
+                pw = page.locator("input[type='password']")
+                for i in range(min(pw.count(), 3)):
+                    el = pw.nth(i)
+                    if el.is_visible() and not (el.input_value() or ""):
+                        el.fill(password)
+            except Exception:
+                pass
+            tick_consent(page)
+            if check_stop():
+                return _stopped()
+            click_submit(page)
+            page.wait_for_timeout(4000)
+            # 3) Captcha: audio alternative first (existing consent
+            # path); an image-only challenge goes to the chat ask +
+            # Take Control — never solved, never outsourced.
+            if not maybe_captcha(page):
+                return _stopped()
+            if wall_hit(page):
+                w = wall_hit(page)
+                return _fail(f"Kaggle security wall ({w}) — bot check ni Julie daataledu. Take Control tho nuvve okkasari complete cheyyi.",
+                             extra={"no_retry": True, "wall": w})
+            # An image captcha that survived maybe_captcha's audio path
+            # shows as a visible challenge with the form unsubmitted.
+            if _visible(page, ["iframe[src*='recaptcha']", "iframe[src*='hcaptcha']"]) \
+                    and _visible(page, _AUTH_PASS):
+                ok = await_captcha_gate(page, job, cfg,
+                                        "Kaggle registration lo image captcha vachindhi — chat lo cheppina: Take Control tho Julie browser lone adhi complete cheyyi, tarvatha Continue nokku. Migilina anni nene chestha.")
+                if not ok:
+                    return _fail("Kaggle captcha complete avvaledu — Take Control step aagipoyindhi (step: register captcha).",
+                                 extra={"no_retry": True, "wall": "captcha:take-control-incomplete"})
+                click_submit(page)
+                page.wait_for_timeout(4000)
+            signed_in = _kaggle_signed_in(page)
+
+    # 4) Email verification / existing-account fork.
+    if not signed_in:
+        if _page_says(page, ["already exists", "already registered", "already in use", "account with this email"]):
+            # The account already exists (e.g. an earlier partial run):
+            # sign in with the same credentials and continue to the
+            # token step — never create a duplicate.
+            progress("running", "login", "Kaggle account already undhi — sign in ayyi token create chesthunna.", page.url)
+            fill(page, _AUTH_EMAIL, email)
+            fill(page, _AUTH_PASS, password)
+            click_submit(page)
+            page.wait_for_timeout(4000)
+            if not maybe_captcha(page):
+                return _stopped()
+            signed_in = _kaggle_signed_in(page)
+        elif _page_says(page, ["verify your email", "check your email", "verification"]):
+            # A code form -> the in-chat OTP ask; a link mail -> the
+            # self-heal feed opens it in this browser (pause_for_email_verify).
+            if _any_visible(page, _KAGGLE_OTP_INPUTS):
+                r = await_user_input(page, "otp",
+                                     "Kaggle nee email ki verification code pampindhi — code vachindha? Chat lo code cheppu, nene enter chestha.",
+                                     attempt=1)
+                if r.get("stopped"):
+                    return _stopped()
+                if r.get("timeout"):
+                    return _fail("Kaggle email verification code kosam wait chesa — reply raaledhu (step: email verify). Malli try cheyyi.",
+                                 extra={"no_retry": True, "wall": "otp-timeout:email"})
+                fill(page, _KAGGLE_OTP_INPUTS, r["value"])
+                click(page, ["button:has-text('Verify')", "button:has-text('Continue')",
+                             "button[type='submit']"])
+                page.wait_for_timeout(3500)
+                signed_in = _kaggle_signed_in(page)
+                if not signed_in and _any_visible(page, _KAGGLE_OTP_INPUTS):
+                    r2 = await_user_input(page, "otp",
+                                          "Aa code Kaggle accept cheyyaledhu — malli check chesi correct code cheppu, last chance.",
+                                          attempt=2)
+                    if r2.get("stopped"):
+                        return _stopped()
+                    if r2.get("timeout"):
+                        return _fail("Kaggle email verification code kosam wait chesa — reply raaledhu (step: email verify).",
+                                     extra={"no_retry": True, "wall": "otp-timeout:email"})
+                    fill(page, _KAGGLE_OTP_INPUTS, r2["value"])
+                    click(page, ["button:has-text('Verify')", "button:has-text('Continue')",
+                                 "button[type='submit']"])
+                    page.wait_for_timeout(3500)
+                    signed_in = _kaggle_signed_in(page)
+                    if not signed_in:
+                        return _fail("Kaggle email verification code rendu sarlu pani cheyyaledhu (step: email verify) — provider code ni reject chesindhi.",
+                                     extra={"no_retry": True, "wall": "otp-rejected:email"})
+            else:
+                if not pause_for_email_verify(page, job, cfg):
+                    return _fail("Kaggle email verification complete avvaledu — link feed avvaledu (step: email verify). Take Control tho try cheyyi.",
+                                 extra={"no_retry": True, "wall": "email-verify-unfed"})
+                signed_in = True
+    if not signed_in and not _kaggle_signed_in(page):
+        return _fail("Kaggle sign-in complete avvaledu — account state confirm avvaledu (step: post-register). Take Control tho try cheyyi.")
+
+    # 5) Phone verification — Kaggle requires it before API/GPU use.
+    progress("running", "phone-verify", "Kaggle phone verification chesthunna — code chat lo adugutha.", cfg["keys_url"])
+    if goto(page, cfg["keys_url"]):
+        page.wait_for_timeout(2500)
+        phone_prompt = _page_says(page, ["verify your phone", "phone verification", "add phone"])
+        if phone_prompt or _any_visible(page, _KAGGLE_PHONE_INPUTS):
+            fill(page, _KAGGLE_PHONE_INPUTS, phone)
+            click(page, ["button:has-text('Send code')", "button:has-text('Verify')",
+                         "button:has-text('Send')", "button[type='submit']"])
+            page.wait_for_timeout(3000)
+            if _any_visible(page, _KAGGLE_OTP_INPUTS) or _page_says(page, ["code sent", "enter the code", "verification code"]):
+                for attempt in (1, 2):
+                    r = await_user_input(page, "otp",
+                                         "Kaggle nee phone ki SMS code pampindhi — code vachindha? Chat lo code cheppu, nene enter chesi verification complete chestha."
+                                         if attempt == 1 else
+                                         "Aa code Kaggle accept cheyyaledhu — phone lo vachina correct code malli cheppu, last chance.",
+                                         attempt=attempt)
+                    if r.get("stopped"):
+                        return _stopped()
+                    if r.get("timeout"):
+                        return _fail("Kaggle phone verification code kosam wait chesa — reply raaledhu (step: phone verify). Malli try cheyyi.",
+                                     extra={"no_retry": True, "wall": "otp-timeout:phone"})
+                    fill(page, _KAGGLE_OTP_INPUTS, r["value"])
+                    click(page, ["button:has-text('Verify')", "button:has-text('Submit')",
+                                 "button:has-text('Continue')", "button[type='submit']"])
+                    page.wait_for_timeout(3500)
+                    if not _any_visible(page, _KAGGLE_OTP_INPUTS) or _page_says(page, ["verified", "phone verified"]):
+                        break
+                    if attempt == 2:
+                        return _fail("Kaggle phone verification code rendu sarlu pani cheyyaledhu (step: phone verify) — provider code ni reject chesindhi.",
+                                     extra={"no_retry": True, "wall": "otp-rejected:phone"})
+            else:
+                print("kaggle: phone fields filled but no code step appeared — continuing to token (verification may already be done)", flush=True)
+
+    # 6) API token -> kaggle.json -> sealed payload (caller tests+seals).
+    progress("running", "api-key", "Kaggle API token create chesthunna.", cfg["keys_url"])
+    payload = _kaggle_capture_token(page, cfg)
+    if not payload:
+        return _fail("Kaggle API token create avvaledu — Settings > API step lo download raaledhu (step: token creation). Take Control tho try cheyyi.")
+    return _ok(key=payload, extra={"created": True})
+
+
 def flow_jina(page, job, cfg):
     """v81 Jina: there is no signup form to fill — a fresh API key with
     10M free tokens is generated automatically on the product pages.
@@ -3373,6 +3812,15 @@ FLOWS = {
               "login_url": "https://app.brevo.com/account/login",
               "keys_url": "https://app.brevo.com/settings/keys/api", "flow": "brevo",
               "key_patterns": [r"(xkeysib-[A-Za-z0-9\-]{20,})"]},
+    # v103: Kaggle — the first CREATE-ACCOUNT driver (ACCOUNT_CREATION.md).
+    # Unlike the mail keys above this IS a per-user chain provider: Julie
+    # creates the user's own Kaggle account (their identity, OTP/captcha
+    # via the in-chat ask), completes phone verification, creates the API
+    # token and seals the kaggle.json payload {"user","key"} as the key.
+    "kaggle": {"name": "Kaggle", "url": "https://www.kaggle.com/account/login",
+               "login_url": "https://www.kaggle.com/account/login",
+               "keys_url": "https://www.kaggle.com/settings", "flow": "kaggle",
+               "key_patterns": [r"\b([0-9a-f]{32})\b"]},
 }
 
 
@@ -3409,7 +3857,7 @@ def run_flow(page, job, cfg):
         # and similar walls show on FIRST load. Give the page ~6s to
         # clear a managed challenge; if the wall persists, fail in
         # seconds (no_retry) instead of grinding through the whole flow.
-        if flow in ("cloudflare", "token", "email", "pexels", "mistral", "jina", "resend", "brevo"):
+        if flow in ("cloudflare", "token", "email", "pexels", "mistral", "jina", "resend", "brevo", "kaggle"):
             try:
                 page.goto(cfg["url"], wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(2500)
@@ -3436,6 +3884,8 @@ def run_flow(page, job, cfg):
             return flow_resend(page, job, cfg)
         if flow == "brevo":
             return flow_brevo(page, job, cfg)
+        if flow == "kaggle":
+            return flow_kaggle(page, job, cfg)
         return flow_email_signup(page, job, cfg)
     except WallHit as w:
         return _fail(f"{cfg['name']} security wall ({w}) — Take Control tho nuvve okkasari sign in cheyyi, tarvatha Julie ne continue chesthundhi.", extra={"no_retry": True, "wall": str(w)})

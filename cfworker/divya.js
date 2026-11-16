@@ -1162,6 +1162,83 @@ async function playbookGuard(env, ans, lang) {
   }
   return ans;
 }
+// v103 (account creation): deliver a user-supplied value to the setup
+// job's active in-chat ask. Shared by appTalk's setup-ask intercept
+// and the setup/answer endpoint. Validation is by ask kind (the code
+// is never echoed back by any caller, never logged; it lands only on
+// the job record, runner-only like smsCode — setup/status strips it
+// via stripJobSecrets). One active ask per job: the value must carry
+// the CURRENT ask's id, inside its TTL, and an ask accepts one value.
+async function setupDeliverUserInput(env, n, rawValue) {
+  const chain = parseRec(await env.KV.get(`setupchain:${n}`));
+  if (!chain || !chain.current) return { ok: false, error: "no-ask" };
+  const j = parseRec(await env.KV.get(`setupjob:${chain.current}`));
+  if (!j || !j.awaiting) return { ok: false, error: "no-ask" };
+  const aw = j.awaiting;
+  if (!aw.expires || Date.now() > aw.expires) return { ok: false, error: "expired" };
+  if (j.userInput && j.userInput.askId === aw.id) return { ok: false, error: "already" };
+  const v = String(rawValue || "").trim();
+  let value = "";
+  if (aw.kind === "otp") {
+    const digits = v.replace(/\D/g, "");
+    if (!/^[0-9][0-9\s-]{2,12}$/.test(v) || digits.length < 4 || digits.length > 8) return { ok: false, error: "bad-value" };
+    value = digits;
+  } else if (aw.kind === "field") {
+    if (aw.field === "phone") {
+      const digits = v.replace(/[^\d]/g, "");
+      if (digits.length < 10 || digits.length > 15) return { ok: false, error: "bad-value" };
+      value = (v.startsWith("+") ? "+" : "") + digits;
+    } else if (aw.field === "email") {
+      if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(v) || v.length > 120) return { ok: false, error: "bad-value" };
+      value = v;
+    } else {
+      if (v.length < 2 || v.length > 120) return { ok: false, error: "bad-value" };
+      value = v;
+    }
+  } else {
+    // captcha asks resume via Take Control / Continue — never a value.
+    return { ok: false, error: "no-ask" };
+  }
+  j.userInput = { value, askId: aw.id, at: Date.now() };
+  j.upd = Date.now();
+  await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
+  return { ok: true, provider: aw.provider || j.provider || "", kind: aw.kind };
+}
+// v103: is this chat message the answer to the waiting setup ask?
+// Returns Julie's reply when it is (or when it fails the ask's
+// validation — she re-asks in chat and the ask stays open); null when
+// the message is not an answer, so it flows on untouched. Stop words
+// and (for OTP) anything not code-shaped are never consumed.
+async function setupAwaitingReply(env, u, text, lang) {
+  const t = String(text || "").trim();
+  if (!t || isStopIntent(t)) return null;
+  const chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
+  if (!chain || !chain.current) return null;
+  const j = parseRec(await env.KV.get(`setupjob:${chain.current}`));
+  if (!j || !j.awaiting || j.state !== "paused") return null;
+  const aw = j.awaiting;
+  if (!aw.expires || Date.now() > aw.expires) return null;
+  if (j.userInput && j.userInput.askId === aw.id) return null; // delivered; the runner is resuming
+  const en = lang === "en";
+  const provName = (SETUP_PROVIDERS[aw.provider] || {}).name || aw.provider || "Setup";
+  if (aw.kind === "otp") {
+    if (!/^[0-9][0-9\s-]{2,12}$/.test(t)) return null;
+    const r = await setupDeliverUserInput(env, u.n, t);
+    if (r.ok) return en ? `Got it — entering it for ${provName} and continuing.` : `Theeskunna — ${provName} lo enter chesi continue chesthunna.`;
+    if (r.error === "bad-value") return en ? `That doesn't look like the code — ${provName} sent a 4–8 digit code. Check once and send the correct code.` : `Adhi code laaga ledu — ${provName} 4–8 digits code pampindhi. Okkasari check chesi correct code pampu.`;
+    return null;
+  }
+  if (aw.kind === "field") {
+    // A field answer is a short plain value. Questions, orders and
+    // bare approvals are not answers — they flow on normally.
+    if (t.length > 120 || /\?/.test(t) || /^(ok|sare|avunu|haa|yes|cheyu|cheyyi)\s*[.!?]*$/i.test(t) || isCreateOrder(t) || isBrowseOrder(t)) return null;
+    const r = await setupDeliverUserInput(env, u.n, t);
+    if (r.ok) return en ? `Got it — entering it for ${provName} and continuing.` : `Theeskunna — ${provName} lo enter chesi continue chesthunna.`;
+    if (r.error === "bad-value") return en ? `That doesn't look right for the ${aw.field || "detail"} — send it once more, exactly as it should be entered.` : `Adhi sarigga ledu — ${aw.field || "detail"} malli okkasari correct ga pampu.`;
+    return null;
+  }
+  return null; // captcha: the resume signal is Take Control / Continue
+}
 async function appTalk(env, u, text, lang, voiceId) {
   // R40: chat markers ([[EDITVIDEO:]]) are routing, not conversation —
   // strip them from history and handle them here first. (R47: [[TPL:]] removed.)
@@ -1182,6 +1259,12 @@ async function appTalk(env, u, text, lang, voiceId) {
     h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
     return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
   }
+  // v103: an in-chat setup ask (an OTP code / a missing identity field
+  // for an account Julie is creating) outranks every other reading of
+  // this message — the user is answering Julie's question, not
+  // starting something new. Non-answers return null and flow on.
+  const awReply = await setupAwaitingReply(env, u, cleanText || text, lang).catch(() => null);
+  if (awReply) { h.push({ role: "assistant", content: awReply }); await remember(env, u.n, h); return { reply: awReply, video_started: false, premium_required: false, brain: u.via || "shared" }; }
   // v68: durable user facts — name, always-voice, always-language and
   // explicit "gurthu pettuko / remember ..." notes are saved to umem:
   // and injected into EVERY future conversation (memContext), not just
@@ -3347,6 +3430,9 @@ function setupPauseLine(reason, lang) {
   // One plain line each — the user does this one tap, Julie does the rest.
   if (reason === "captcha") return en ? "An image challenge came up that I can't solve — take a quick look once, and I'll do the rest." : "Image challenge vachindhi, nenu solve cheyalenu — okkasari chusi continue cheyu, migilina anni nene chestha.";
   if (reason === "signin") return en ? "A sign-in is needed once — tap 'Take control' and sign in inside Julie's browser, and I'll do the rest." : "Sign-in okkasari kavali — 'Take control' tho Julie browser lo sign in cheyu, migilina anni nene chestha.";
+  // v103: a creation flow needs one identity field the profile lacks —
+  // the ask itself rides the chat; this line is the Setup-card summary.
+  if (reason === "field") return en ? "One detail is needed — I asked for it in chat; reply there and I'll enter it myself." : "Oka detail kavali — chat lo adiga, akkada reply cheyyi, nene enter chestha.";
   // v87 F8: ONE truthful line, same as the runner's pause message — the
   // link is opened by Julie herself (server-fed from Gmail); the user must
   // NOT tap it (the session has to land in Julie's browser).
@@ -4551,6 +4637,14 @@ const SETUP_PROVIDERS = {
   // only, so its sys slot could never be filled by Julie herself).
   // Same capability-key status as Resend (mirrored into sys).
   brevo: { name: "Brevo", site: "app.brevo.com", url: "https://app.brevo.com/account/register", flow: "brevo" },
+  // v103: Kaggle — the first CREATE-ACCOUNT provider (ACCOUNT_CREATION.md).
+  // Unlike the capability keys above it IS in the per-user chain: the
+  // runner's flow_kaggle creates the user's own account in their own
+  // identity (OTP/captcha via the in-chat ask), completes phone
+  // verification, creates the API token and seals the kaggle.json
+  // payload into ukey:<n>:kaggle — the same slot the manual Kaggle
+  // card (keys/kaggle) uses. Never counted by needsSetup.
+  kaggle: { name: "Kaggle (GPU compute)", site: "kaggle.com", url: "https://www.kaggle.com/account/login", flow: "kaggle" },
 };
 function setupJobId() { return [...crypto.getRandomValues(new Uint8Array(10))].map(b => b.toString(16).padStart(2, "0")).join(""); }
 function setupPass() { const c = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#"; const r = crypto.getRandomValues(new Uint8Array(16)); const out = [...r].map(b => c[b % c.length]); const D = "23456789", S = "!@#"; const p1 = r[0] % 16, p2 = (p1 + 1 + (r[1] % 15)) % 16; out[p1] = D[r[2] % D.length]; out[p2] = S[r[3] % S.length]; return out.join(""); } // v94 (F7): force one digit + one symbol at two distinct positions — signup checklists (Resend: letters+numbers+symbols) silently rejected symbol-less draws
@@ -4582,10 +4676,35 @@ async function browseDispatch(env, job) {
   const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/browse.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs: { job } }) }).catch(() => null);
   return !!r && r.status === 204;
 }
+// v103 (profile-serialization guard): ONE sealed browser profile per
+// identity (uprofile:<n>). Profile-mode jobs fetch it at start and push
+// it back at end with NO lock and NO version check — last-writer-wins.
+// Two profile jobs at once therefore silently erase each other's
+// captured sessions (the 2026-11-16 supervised Kaggle run collided
+// with a running chain exactly this way). The guard: a profile-mode
+// job of EITHER kind — a setup chain (profile by default since v92)
+// or a browse job (hardcoded profile) — may start only when NO other
+// profile-mode job for the identity is active. Returns the active
+// blocker {kind, job, provider} or null. An ephemeral chain never
+// touches the profile, so it neither blocks nor is blocked.
+async function profileJobActive(env, n) {
+  const chain = parseRec(await env.KV.get(`setupchain:${n}`));
+  if (chain && chain.current && (chain.browser || "profile") === "profile") {
+    const j = parseRec(await env.KV.get(`setupjob:${chain.current}`));
+    if (j && ["queued", "running", "paused"].includes(j.state)) return { kind: "chain", job: j.job, provider: j.provider };
+  }
+  const bj = await browseJobFor(env, n).catch(() => null);
+  if (bj && ["queued", "running", "paused"].includes(bj.state)) return { kind: "browse", job: bj.job, provider: "browse" };
+  return null;
+}
 async function startBrowseJob(env, n, task, startUrl) {
   if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: "machine" };
   const prev = await browseJobFor(env, n);
   if (prev && ["queued", "running", "paused"].includes(prev.state)) return { ok: false, error: "busy", job: prev.job, state: prev.state, note: prev.note || "" };
+  // v103 guard: a browse is a profile job — it must not run while a
+  // profile-mode setup chain holds the same sealed profile.
+  const prof = await profileJobActive(env, n).catch(() => null);
+  if (prof && prof.kind === "chain") return { ok: false, error: "busy", job: prof.job, state: "setup-chain", note: `Setup (${(SETUP_PROVIDERS[prof.provider] || {}).name || prof.provider}) nadusthundhi — profile okkate, rendu okesari vellavu. Setup ayyaka browse cheyyi.` };
   const job = setupJobId();
   const rec = { job, user: n, provider: "browse", flow: "browse", task: String(task || "").slice(0, 600), startUrl: String(startUrl || "").slice(0, 500), state: "queued", step: "starting", note: "", url: String(startUrl || ""), at: Date.now(), upd: Date.now() };
   await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
@@ -4835,6 +4954,13 @@ async function maybeAutoCheck(env, n, email, force) {
   }
   const chain = parseRec(await env.KV.get(`setupchain:${n}`));
   if (chain) return { checked: true, action: "already-running" };
+  // v103 guard: the auto-provision chain runs in profile mode — never
+  // start it over an active browse job (same sealed profile).
+  const bjActive = await browseJobFor(env, n).catch(() => null);
+  if (bjActive && ["queued", "running", "paused"].includes(bjActive.state)) {
+    await autoLogAppend(env, n, { provider: "", action: "skipped", why: "browse job active — profile okkate, chain ippudu start avvaledu", result: "profile-busy" });
+    return { checked: true, action: "profile-busy" };
+  }
   const health = await keyHealthCheck(env, n);
   const usage = await usageAnalysis(env, n, health);
   const log = await autoLogRead(env, n);
@@ -5196,6 +5322,7 @@ const VERIFY_PROVIDERS = {
   cloudflare: { domains: ["cloudflare.com"], from: ["cloudflare"], subj: ["verify", "confirm", "cloudflare"], q: "from:cloudflare", mode: "and" },
   resend: { domains: ["resend.com"], from: ["resend.com"], subj: ["verify", "confirm", "resend", "welcome"], q: "from:resend.com", mode: "or" },
   brevo: { domains: ["brevo.com", "sendinblue.com"], from: ["brevo.com", "sendinblue.com"], subj: ["confirm", "validate", "verify", "brevo", "welcome"], q: "from:brevo.com OR from:sendinblue.com", mode: "or" },
+  kaggle: { domains: ["kaggle.com"], from: ["kaggle.com"], subj: ["verify", "confirm", "welcome", "kaggle"], q: "from:kaggle.com", mode: "or" },
   generic: { domains: [], from: [], subj: ["verify", "confirm", "activate", "login"], q: "verify", mode: "or" },
 };
 function gmailHeader(msg, name) {
@@ -5460,7 +5587,7 @@ function stripJobSecrets(j) {
   // v41: the generated provider-account password (pass) must never
   // travel there either.
   if (!j) return j;
-  const { verifyLink, verifyCode, smsCode, pass, password, ...rest } = j;
+  const { verifyLink, verifyCode, smsCode, pass, password, userInput, ...rest } = j;
   return rest;
 }
 function stripChainSecrets(c) {
@@ -5485,8 +5612,8 @@ const KEYLIST_PROVIDERS = [["groq", "Groq"], ["openrouter", "OpenRouter"], ["gem
   // runner has created + verified the user's own key ("Divya added").
   ["cohere", "Cohere"], ["together", "Together AI"], ["sambanova", "SambaNova"], ["fireworks", "Fireworks AI"], ["cerebras", "Cerebras"], ["nvidia", "NVIDIA NIM"], ["mistral", "Mistral AI"], ["ai21", "AI21"], ["voyage", "Voyage AI"],
   ["tavily", "Tavily"], ["serper", "Serper"], ["exa", "Exa"], ["deepgram", "Deepgram"], ["assemblyai", "AssemblyAI"], ["elevenlabs", "ElevenLabs"], ["stability", "Stability AI"], ["jina", "Jina AI"],
-  // v84: Kaggle = the user's own GPU compute (connected manually via
-  // the Kaggle card, never part of the automate chain).
+  // v84/v103: Kaggle = the user's own GPU compute — connected manually
+  // via the Kaggle card, or CREATED by the automate chain (flow_kaggle).
   ["kaggle", "Kaggle (GPU compute)"]];
 async function setupKeyList(env, n) {
   const rows = [];
@@ -5600,7 +5727,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
     const email = String(body.email || (u.acct && u.acct.email) || "").trim().slice(0, 120);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false, error: en ? "Give an email for the new accounts." : "Kotha accounts kosam oka email ivvu." };
-    const ids = (Array.isArray(body.providers) ? body.providers : ["groq", "openrouter", "gemini", "cloudflare", "cohere", "together", "sambanova", "fireworks", "cerebras", "nvidia", "mistral", "ai21", "voyage", "tavily", "serper", "exa", "deepgram", "assemblyai", "elevenlabs", "stability", "jina", "pexels"]).filter(id => SETUP_PROVIDERS[id]);
+    const ids = (Array.isArray(body.providers) ? body.providers : ["groq", "openrouter", "gemini", "cloudflare", "cohere", "together", "sambanova", "fireworks", "cerebras", "nvidia", "mistral", "ai21", "voyage", "tavily", "serper", "exa", "deepgram", "assemblyai", "elevenlabs", "stability", "jina", "kaggle", "pexels"]).filter(id => SETUP_PROVIDERS[id]);
     if (!ids.length) return { ok: false, error: "no provider" };
     // v39: never silently orphan a live run. A fresh active chain means a
     // runner is working right now — say so instead of starting a second
@@ -5612,6 +5739,15 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (prev) {
       const stalled = await setupWatchdog(env, u.n, prev);
       if (!stalled) return { ok: false, error: en ? "Setup is already running — wait for it to finish." : "Setup already nadusthondhi — ayye varaku wait cheyu.", alreadyRunning: true };
+    }
+    // v103 guard (profile serialization): a profile-mode chain must
+    // not start over an active browse job — both drive the ONE sealed
+    // browser profile (uprofile:<n>) and would erase each other's
+    // captured sessions, last-writer-wins. An explicitly ephemeral
+    // chain never touches the profile and is exempt.
+    if (body.browser !== "ephemeral") {
+      const prof = await profileJobActive(env, u.n).catch(() => null);
+      if (prof && prof.kind === "browse") return { ok: false, error: en ? "A browse is running in my browser right now — setup uses the same browser profile, so it waits. Stop the browse or let it finish, then start setup." : "Naa browser lo oka browse nadusthundhi — setup kuda ade profile vaduthundhi, andhuke wait cheyyali. Browse ni aapeyyi leda ayye varaku aagu, tarvatha setup start cheyyi.", profileBusy: true };
     }
     // One allow: the user tapped "set up everything" — consent covers accounts,
     // API keys, captchas and the server step for this whole run.
@@ -5629,7 +5765,11 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // email-verification pause blocks on the user's Continue tap
     // instead of waiting for the server-fed link. Ephemeral now only
     // when explicitly requested.
-    const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: body.browser === "ephemeral" ? "ephemeral" : "profile" };
+    // v103: the user's own identity rides the chain — creation drivers
+    // (flow_kaggle first) sign up as THIS person: profile name + the
+    // verified phone from the account record, never invented data.
+    // A missing field is asked in chat by the runner (kind=field).
+    const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: body.browser === "ephemeral" ? "ephemeral" : "profile", userName: (u.acct && u.acct.name) || "", userPhone: (u.acct && u.acct.phone) || "" };
     // v39 Phase 2: seal the generated provider-account password so a later
     // autonomous run can sign back in to the accounts this run creates
     // (replacement keys). Sealed with the app KEK, never returned by any API.
@@ -5659,7 +5799,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // no audio alternative). The old code rejected both and the app's Take
     // Control button silently recorded an "email" pause instead.
     const reason = String(body.reason || "email").trim().toLowerCase();
-    if (!["email", "sms", "signin", "captcha"].includes(reason)) return { ok: false, error: en ? "Setup pauses only for the email link, the SMS code, a sign-in, or a captcha." : "Setup email link, SMS code, sign-in leda captcha kosam matrame aaguthundi." };
+    if (!["email", "sms", "signin", "captcha", "field"].includes(reason)) return { ok: false, error: en ? "Setup pauses only for the email link, the SMS code, a sign-in, or a captcha." : "Setup email link, SMS code, sign-in leda captcha kosam matrame aaguthundi." };
     const chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     let targetJob = (chain && chain.current) || "";
     if (!targetJob) { const bj = await browseJobFor(env, u.n).catch(() => null); if (bj) targetJob = bj.job; } // v101: Take Control pauses a browse the same way
@@ -5674,6 +5814,14 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (!wasPaused) j.pausedAt = Date.now();
     await env.KV.put(`setupjob:${targetJob}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
     return { ok: true, reason, message: j.note };
+  }
+  if (p === "setup/answer" && req.method === "POST") {
+    // v103: the Setup card's answer box for an in-chat ask — the same
+    // delivery appTalk's intercept performs (kind validation, TTL,
+    // one value per ask). The value lands only on the job record.
+    const r = await setupDeliverUserInput(env, u.n, String(body.value || ""));
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, provider: r.provider, kind: r.kind };
   }
   if (p === "setup/continue" && req.method === "POST") {
     // Resume after a pause (Julie opened the fed link / SMS code entered /
@@ -5897,6 +6045,15 @@ async function setupStartNext(env, n) {
     await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
     return setupStartNext(env, n);
   }
+  // v103: Kaggle is one-account-per-person — when a key is already
+  // sealed, the account exists; re-running the creation flow could
+  // only duplicate or break it. Count it done and move on (same
+  // shape as the Pexels skip above).
+  if (nextId === "kaggle" && (await env.KV.get(`ukey:${n}:kaggle`))) {
+    chain.done.push("kaggle");
+    await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+    return setupStartNext(env, n);
+  }
   // v42: double-advance guard — the runner's result + terminal progress
   // events can both trigger an advance (now deferred via waitUntil, so
   // they may overlap). If the current job already targets nextId and is
@@ -5906,7 +6063,7 @@ async function setupStartNext(env, n) {
     if (cur0 && cur0.provider === nextId && ["queued", "running", "paused"].includes(cur0.state)) return { ok: true, already: true, job: chain.current, provider: nextId };
   }
   const job = setupJobId();
-  const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, browser: chain.browser || "ephemeral", state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
+  const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, browser: chain.browser || "ephemeral", userName: chain.userName || "", userPhone: chain.userPhone || "", state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
   await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
   chain.current = job;
   await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
@@ -6115,13 +6272,41 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // Gemini Google sign-in). Store the reason as-is — never coerce a
     // captcha/signin pause into an email pause (that would tell the user
     // to tap an email link that does not exist).
-    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); if (prevState !== "paused") rec.pausedAt = Date.now(); /* v40: job.upd at pause, for the mail recency guard */ rec.tc = !!body.tc; /* v48: Take Control live-view active for this pause */ if (body.verifyWait) rec.verifyWait = true; /* v92: this pause began as an email verification — the Gmail feed + cron sweep keep working even if the pause later flips to a Take Control sign-in */ if ((rec.verifyWait || rec.pauseReason === "email") && (prevState !== "paused" || prevPr !== rec.pauseReason || (!prevVw && rec.verifyWait))) { try { await env.KV.put("verify:awaiting", "1"); } catch {} } /* v95 (DO-burn): arm the cron sweep's skip-marker on the TRANSITION into an email wait only — never on every heartbeat, or the marker put itself would burn the budget it saves */ }
+    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin", "field"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); if (prevState !== "paused") rec.pausedAt = Date.now(); /* v40: job.upd at pause, for the mail recency guard */ rec.tc = !!body.tc; /* v48: Take Control live-view active for this pause */ if (body.verifyWait) rec.verifyWait = true; /* v92: this pause began as an email verification — the Gmail feed + cron sweep keep working even if the pause later flips to a Take Control sign-in */ if ((rec.verifyWait || rec.pauseReason === "email") && (prevState !== "paused" || prevPr !== rec.pauseReason || (!prevVw && rec.verifyWait))) { try { await env.KV.put("verify:awaiting", "1"); } catch {} } /* v95 (DO-burn): arm the cron sweep's skip-marker on the TRANSITION into an email wait only — never on every heartbeat, or the marker put itself would burn the budget it saves */ }
     else if (state === "running") { rec.pauseReason = ""; rec.tc = false; rec.verifyWait = false; delete rec.pausedAt; }
+    // v103: the structured in-chat ask (account creation — see
+    // ACCOUNT_CREATION.md). The runner posts `awaiting` on the pause
+    // that needs the user; the Worker stores it on the job and
+    // surfaces the prompt as a normal Julie chat message — ONCE per
+    // (ask id, attempts): heartbeat re-posts of the same ask never
+    // duplicate the message; a re-ask (attempt 2) appends a fresh
+    // one. A paused post WITHOUT an awaiting block keeps the current
+    // ask (other pause kinds interleave); running/terminal posts
+    // clear it, together with any delivered userInput.
+    let askChanged = false;
+    if (state === "paused" && body.awaiting && typeof body.awaiting === "object") {
+      const aw = body.awaiting;
+      const kind = ["otp", "captcha", "field"].includes(String(aw.kind || "")) ? String(aw.kind) : "";
+      if (kind) {
+        const clean = { id: String(aw.id || "").slice(0, 64), provider: String(aw.provider || rec.provider || "").slice(0, 40), kind, prompt: String(aw.prompt || "").slice(0, 300), at: +aw.at || Date.now(), expires: Math.min(+aw.expires || 0, Date.now() + 35 * 60 * 1000), attempts: Math.max(1, Math.min(2, +aw.attempts || 1)) };
+        if (aw.field) clean.field = String(aw.field).slice(0, 40);
+        const prevAw = rec.awaiting || {};
+        if (clean.id && prevAw.id !== clean.id || clean.id && prevAw.attempts !== clean.attempts) {
+          rec.awaiting = clean; askChanged = true;
+          try { const h = await history(env, rec.user); h.push({ role: "assistant", content: clean.prompt }); await remember(env, rec.user, h); } catch {}
+        } else if (clean.id) {
+          rec.awaiting = clean; // same ask re-posted — refresh only, no new chat line
+        }
+      }
+    } else if (state !== "paused") {
+      if (rec.awaiting) { delete rec.awaiting; askChanged = true; }
+      if (rec.userInput) delete rec.userInput;
+    }
     // v64 WRITE-BUDGET (Ajju: server error must never come back): the runner
     // posts progress on every small step; identical heartbeats used to burn
     // one KV write each and eat the free daily budget. Write only when the
     // meaningful state changed, on terminal states, or at most every 20s.
-    const meaningful = state !== prevState || rec.step !== prevStep || rec.note !== prevNote || state === "done" || state === "failed" || state === "stopped";
+    const meaningful = state !== prevState || rec.step !== prevStep || rec.note !== prevNote || askChanged || state === "done" || state === "failed" || state === "stopped";
     if (meaningful || Date.now() - prevUpd > 20000) await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     // Chain: provider done → auto-start the next one with the same consent.
     if (state === "done") {
