@@ -365,7 +365,10 @@ metadata only: it is never drawn into the video unless the user explicitly asked
 SHOT LIST RULE (v79, Blind mail 1 Part 2 + R2/R10): choose every visual from the MEANING of the line — ask "what would a
 person actually picture?" — never from the scene's type. Every scene carries "why" (one sentence tied to a word in the
 line) and 2 footage "queries" that SHOW the meaning (for a liver line: "doctor holding liver scan", "hospital corridor
-night" — never just the topic word). A clock only when the line is about time. A graphic only when the line has a real
+night" — never just the topic word). QUERY RULE (v100, Gate 1): queries must be GENERIC stock subjects a footage library
+tags — visible people, places, objects and actions ("woman looking into a mirror", "cinema audience in the dark") —
+NEVER a film or programme title, a film still, a screenshot, or a person's name: stock libraries carry none of those,
+the search can only miss, and the beat then ships without footage. A clock only when the line is about time. A graphic only when the line has a real
 number or a real list. Numbers: the "value" must be the exact number the vo line says, with its unit, and never 0.
 Each visual must literally show the line's idea (battery=energy, chat=messages/people, graph=growth or fall,
 clock=time, calendar=days, warning=danger/mistake, check=right way, versus=comparison, counter=a number, list=steps, heart=love/health,
@@ -491,9 +494,55 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
         s["why"] = str(s.get("why", "") or "")[:200]
         _q = s.get("queries") or []
         s["queries"] = [str(q)[:80] for q in _q if str(q).strip()][:2]
+        # v100 (Gate 1 — footage-first): a query that names a film
+        # title, a film still or a person can NEVER match stock —
+        # it is dropped here and replaced from the line itself, so
+        # the footage search downstream only ever runs searchable
+        # subjects (the Male Gaze writer's "Psycho film still"
+        # queries missed 26/26 and the film shipped 0% footage).
+        try:
+            import anti_boring as _ab100
+            _kept100, _dropped100 = _ab100.searchable_queries(
+                s["queries"], s["vo"], str(s.get("label") or ""))
+            if _dropped100:
+                print(f"plan v100: scene query {_dropped100} not "
+                      f"stock-searchable — replaced with {_kept100}")
+            s["queries"] = _kept100
+        except Exception as _e100:
+            print("plan v100 query hygiene failed:", str(_e100)[:100])
         _f = s.get("fulfils") or []
         s["fulfils"] = [str(x)[:8] for x in _f if str(x).strip()][:6]
     p["scenes"] = sc
+    # v100 (Gate 2 — FACT GATE): documentary scripts pass a claims
+    # check BEFORE directing. Every statistic / event claim must
+    # carry a source or be hedged; an invented one (the Male Gaze
+    # film's "#ViewersUnite" movement, its "30% rise") goes back
+    # for ONE rewrite round, and a claim that still fails is
+    # removed from the line deterministically. Runs in documentary
+    # contexts (long cfg / director-led briefs) — the same
+    # contexts that get directed below. The gate's log + residual
+    # checks ride on the plan into the compliance report.
+    try:
+        import anti_boring as _ab100g
+        _doc_ctx100 = bool(cfg and cfg.get("kind") == "long")
+        if not _doc_ctx100:
+            try:
+                import director as _dir100g
+                _doc_ctx100 = bool(_dir100g.should_direct(brief, cfg))
+            except Exception:
+                _doc_ctx100 = False
+        if _doc_ctx100:
+            _fg100 = _ab100g.fact_gate(sc, chat)
+            sc = _fg100["scenes"]
+            p["scenes"] = sc
+            p["fact_gate"] = _fg100["log"]
+            if _fg100["log"].get("removed") or _fg100["log"].get("dropped_scenes"):
+                print(f"fact gate v100: {_fg100['log']['claims']} claims, "
+                      f"rewrite={_fg100['log']['rewrite_round']}, "
+                      f"removed={len(_fg100['log']['removed'])}, "
+                      f"dropped={len(_fg100['log']['dropped_scenes'])}")
+    except Exception as _e100g:
+        print("fact gate v100 failed (script ungated):", str(_e100g)[:120])
     p["lang"] = p.get("lang") if p.get("lang") in ("en", "te", "hi") else "te"
     # v32 (Blind): the title is NOT truncated to 26 chars any more — header()
     # wraps it on word boundaries into 2 lines instead (a mid-word cut was a
@@ -662,11 +711,69 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
                 p["writer_scenes"] = _copy87.deepcopy(p["scenes"])
             except Exception as _e87a:
                 print("story analyst v87 failed:", str(_e87a)[:120])
+            import copy as _cp100
+            _writer_plan100 = _cp100.deepcopy(p)
             p, _vplan86 = _dir86.direct_plan(p, brief=brief, cfg=cfg,
                                              brain=_brain87)
             _directed86 = True
             print(f"director v86: directed plan — {len(p['scenes'])} "
                   f"beats, {len(_vplan86)} visual decisions")
+            # v100 (Gate 4 — DIRECTOR VARIETY CAP): the directed
+            # plan's visual-type histogram is computed NOW, before
+            # anything renders. A type over the 25% cap means the
+            # director flattened the writer's varied proposals
+            # onto one template — the plan is RE-PLANNED once with
+            # the dominant template excluded from the over-cap
+            # beats. A violation that survives the re-plan stays
+            # on the plan as VHIST checks and FAILs in QC (Gate 3
+            # fix rounds then re-render the chapter).
+            try:
+                import anti_boring as _ab100v
+                from collections import Counter as _Ctr100
+                _hist100 = _ab100v.visual_histogram(_vplan86)
+                p["visual_histogram"] = _hist100
+                _vc100 = _ab100v.audit_variety(_vplan86)
+                _replanned100 = False
+                if _vc100:
+                    _capn100 = int(_ab100v.VARIETY_CAP
+                                   * len(_vplan86))
+                    _seen100 = _Ctr100()
+                    _excl100 = {}
+                    for _r100 in _vplan86:
+                        _t100 = _r100.get("visual_concept")
+                        _seen100[_t100] += 1
+                        if _seen100[_t100] > _capn100 \
+                                and (_r100.get("beat") or 0) > 1:
+                            _excl100.setdefault(
+                                _r100["beat"], []).append(_t100)
+                    if _excl100:
+                        _brain100 = dict(_brain87)
+                        _mex100 = {k: list(v) for k, v in
+                                   (_brain87.get("exclude")
+                                    or {}).items()}
+                        for _bno100, _ts100 in _excl100.items():
+                            _mex100.setdefault(_bno100, []).extend(
+                                _ts100)
+                        _brain100["exclude"] = _mex100
+                        p, _vplan86 = _dir86.direct_plan(
+                            _writer_plan100, brief=brief, cfg=cfg,
+                            brain=_brain100)
+                        _replanned100 = True
+                        _hist100 = _ab100v.visual_histogram(_vplan86)
+                        p["visual_histogram"] = _hist100
+                        _vc100 = _ab100v.audit_variety(_vplan86)
+                        print(f"variety v100: histogram violated the "
+                              f"25% cap — re-planned with exclusions "
+                              f"on {len(_excl100)} beat(s); "
+                              f"post-replan violations: "
+                              f"{len(_vc100)}")
+                p["variety"] = {"cap": _ab100v.VARIETY_CAP,
+                                "histogram": _hist100,
+                                "replanned": _replanned100,
+                                "ok": not _vc100,
+                                "checks": _vc100}
+            except Exception as _e100v:
+                print("variety gate v100 failed:", str(_e100v)[:120])
     except Exception as _e86:
         print("director v86 failed (plan undirected):", str(_e86)[:150])
     # a directed plan is audited but NOT repair-swapped (see
@@ -1731,7 +1838,8 @@ def _extract_broll_frames(clip_path, outdir, dur_s, start_s=1.0, static=False, b
         return 0
 
 
-def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None):
+def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
+                  replan=None):
     """v79: attach stock footage by Blind's METHOD (mail 1 Part 2 +
     mail 3 R10), replacing the v69 "~half the scenes, topic-word
     query" heuristic:
@@ -1824,6 +1932,58 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None):
         if rec is None:
             rec = pool.assign(i + 1, queries, dur_s, dl,
                               orientation=orientation, line=str(sc.get("vo") or ""))
+        if not rec and every:
+            # v100 (Gate 1 — FOOTAGE-FIRST): a beat with NO footage
+            # match is RE-PLANNED, never silently islanded. First a
+            # deterministic broadening (the line's own content
+            # words as a generic subject query), then — when the
+            # caller injected one — the re-plan hook asks for a NEW
+            # visual decision for this beat. A beat that still has
+            # no footage carries a logged WAIVER on the plan: the
+            # drawn visual becomes the justified, counted
+            # exception (FG-SHARE audits the share in QC).
+            _tried100 = list(queries)
+            try:
+                import anti_boring as _ab100b
+                _broad100 = _ab100b.derive_query(
+                    str(sc.get("vo") or ""), str(sc.get("label") or ""))
+                if _broad100 and _broad100 not in _tried100:
+                    _tried100.append(_broad100)
+                    rec = pool.assign(
+                        i + 1, [_broad100], dur_s, dl,
+                        orientation=orientation,
+                        line=str(sc.get("vo") or ""))
+                if not rec and replan is not None:
+                    _newq100 = replan(sc, i + 1) or []
+                    _newq100, _dropq100 = _ab100b.searchable_queries(
+                        _newq100, str(sc.get("vo") or ""),
+                        str(sc.get("label") or ""))
+                    _newq100 = [q for q in _newq100
+                                if q not in _tried100]
+                    if _newq100:
+                        _tried100 += _newq100
+                        rec = pool.assign(
+                            i + 1, _newq100, dur_s, dl,
+                            orientation=orientation,
+                            line=str(sc.get("vo") or ""))
+                        if rec:
+                            sc["queries"] = _newq100
+                            print(f"broll scene {i + 1}: footage "
+                                  f"re-plan landed a clip "
+                                  f"({_newq100})")
+            except Exception as _e100b:
+                print(f"broll scene {i + 1}: footage re-plan "
+                      f"failed: {str(_e100b)[:100]}")
+            if not rec:
+                sc["footage_waived"] = (
+                    "no stock footage matched after re-planning "
+                    f"(tried: {', '.join(_tried100)[:140]}) — the "
+                    "drawn visual is the logged exception, counted "
+                    "by FG-SHARE")
+                p.setdefault("footage_waivers", []).append(
+                    {"scene": i + 1, "reason": sc["footage_waived"]})
+                print(f"broll scene {i + 1}: NO footage after "
+                      f"re-plan — waiver logged")
         if not rec:
             continue
         fdir = os.path.join(wd, "broll_frames", f"sc{i}")
@@ -3298,8 +3458,43 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         print("amendments: B-roll OFF — attach skipped")
     else:
         try:
+            # v100 (Gate 1): the footage re-plan hook — when a
+            # beat's stock search misses, ONE small writer call
+            # re-decides the beat's visual as a different
+            # stock-searchable subject (capped per chapter; the
+            # deterministic broadening in _attach_broll runs
+            # first and costs nothing).
+            _replan_state100 = {"n": 0}
+
+            def _replan100(sc, _no):
+                if _replan_state100["n"] >= 6:
+                    return None
+                _replan_state100["n"] += 1
+                _raw = chat([
+                    {"role": "system",
+                     "content": "You output strict JSON only."},
+                    {"role": "user", "content": (
+                        "A stock-footage search found NO clip for "
+                        "this documentary line: \""
+                        + str(sc.get("vo") or "")[:200]
+                        + "\". The searches already tried: "
+                        + ", ".join(sc.get("queries") or [])
+                        + ". Give TWO NEW stock-searchable queries "
+                        "for the SAME line: concrete visible "
+                        "subjects (people, places, objects, "
+                        "actions) a stock library would tag — "
+                        "never film titles, film stills, "
+                        "screenshots or people's names. Return "
+                        "strict JSON {\"queries\": [\"...\", "
+                        "\"...\"]}.")}])
+                _data = json.loads(
+                    re.search(r"\{[\s\S]*\}", _raw).group(0))
+                return [str(q) for q in (_data.get("queries") or [])
+                        if str(q).strip()][:2]
+
             _attach_broll(p, wd, all_scenes=(aflags.get("broll") == "on"),
-                          cfg=cfg, pool=footage_pool)
+                          cfg=cfg, pool=footage_pool,
+                          replan=_replan100)
         except Exception as e:
             print("broll attach failed:", str(e)[:150])
     if p.get("broll_sources") and notify:
@@ -3501,6 +3696,22 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                                    measure=lambda txt, size: _label_width(ImageDraw.Draw(Image.new("RGB", (8, 8))), txt) if txt else 0,
                                    have_timing=True)
         _checks += _comp.audit_footage(p["scenes"], cfg or {"kind": "short"})
+        # v100 (the anti-boring gates, in QC): the achieved
+        # real-footage share (FG-SHARE), the fact gate's residual
+        # audit on the scenes that actually rendered (FG-FACT),
+        # and the director variety histogram cap (VHIST). These
+        # FAILs are boring-critical: on the long path they trigger
+        # real fix rounds (long_video), not a log line.
+        try:
+            import anti_boring as _ab100q
+            _checks += _ab100q.audit_footage_share(
+                p["scenes"], cfg or {"kind": "short"})
+            if p.get("directed") or (cfg or {}).get("kind") == "long":
+                _checks += _ab100q.audit_claims(p["scenes"])
+                _checks += _ab100q.audit_variety(
+                    p.get("visual_plan") or p["scenes"])
+        except Exception as _e100q:
+            print("v100 gate checks failed:", str(_e100q)[:120])
         # v79 (A1): the frame-fill gate — one mid-scene frame per
         # scene, measured for content coverage. A graphic scene that
         # is mostly empty background FAILS (Ajju's red marks).

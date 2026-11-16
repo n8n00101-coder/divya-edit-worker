@@ -104,15 +104,26 @@ def main():
           set(dm) == {2, None} and len(dm[2]) == 1 and len(dm[None]) == 1)
 
     # ---- assembled correction loop ---------------------------------
+    # v100 (Gate 6): the chapter audio alternates loud/quiet 2 s
+    # blocks — a DYNAMIC mix. A constant sine is a genuinely flat
+    # mix (LRA ~0) and now FAILs MQ-LRA on long films, which would
+    # send this loop's rounds to the sound floor instead of the
+    # black-chapter defect this section isolates. The sound floor
+    # itself is proven in v100test.py.
+    _dyn440 = ("aevalsrc='sin(2*PI*440*t)*"
+               "(0.25+0.75*lt(mod(t,4),2))':d=4")
+    _dyn330 = ("aevalsrc='sin(2*PI*330*t)*"
+               "(0.25+0.75*lt(mod(t,4),2))':d=4")
+
     async def _loop():
         ch1 = _ff(["-f", "lavfi", "-i",
                    "testsrc2=size=320x568:rate=10:duration=4",
-                   "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+                   "-f", "lavfi", "-i", _dyn440,
                    "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
                    "-shortest"], os.path.join(td, "ch1.mp4"))
         ch2 = _ff(["-f", "lavfi", "-i",
                    "color=c=black:size=320x568:rate=10:duration=4",
-                   "-f", "lavfi", "-i", "sine=frequency=330:duration=4",
+                   "-f", "lavfi", "-i", _dyn330,
                    "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
                    "-shortest"], os.path.join(td, "ch2.mp4"))
         # v98: the small portrait test size is a DELIBERATE test
@@ -131,7 +142,7 @@ def main():
             out = os.path.join(workdir, "stub.mp4")
             _ff(["-f", "lavfi", "-i",
                  "testsrc2=size=320x568:rate=10:duration=4",
-                 "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+                 "-f", "lavfi", "-i", _dyn440,
                  "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
                  "-shortest"], out)
             return {"path": out, "duration": 4.0}
