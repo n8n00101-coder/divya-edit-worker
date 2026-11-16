@@ -329,14 +329,20 @@ def fetch_source(j) -> str:
 
 
 def fit_size(path, limit_mb):
-    """Re-encode so the file is under limit_mb (keeps resolution up to 1080p)."""
+    """Re-encode so the file is under limit_mb — by BITRATE ONLY.
+
+    PROOF-FIX (partial-render canvas): the old filter
+    `scale='min(1080,iw)':-2` silently downscaled every 1920x1080
+    film over the size cap to 1080x608 (the proof audit's delivered
+    copies). The fitted copy now keeps the job's native canvas —
+    a size fit must never change the frame the job was made at."""
     import subprocess, json as _j
     if os.path.getsize(path) / 1e6 <= limit_mb:
         return path
     dur = float(_j.loads(subprocess.run(["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path], capture_output=True, text=True).stdout)["format"]["duration"])
     kbps = max(250, int(limit_mb * 8000 * 0.92 / max(dur, 1)) - 96)
     out = path.replace(".mp4", f"_{int(limit_mb)}mb.mp4")
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", path, "-vf", "scale='min(1080,iw)':-2", "-c:v", "libx264", "-preset", "veryfast",
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", path, "-c:v", "libx264", "-preset", "veryfast",
                     "-b:v", f"{kbps}k", "-maxrate", f"{int(kbps*1.2)}k", "-bufsize", f"{kbps*2}k", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", out], check=True)
     return out
 
@@ -664,6 +670,15 @@ def _chat_sweep(messages):
                 transient = True
                 continue
             last = f"{m} {r.status_code}"
+            if r.status_code == 413:
+                # PROOF-FIX 1: a 413 is the PAYLOAD, not the weather —
+                # the identical bytes will 413 on every model and
+                # every retry (the audit's 5/15/45 s retry storms
+                # burned chapter budgets on exactly this). Stop the
+                # sweep now and let the caller fall back at once;
+                # per-stage pack slicing keeps prompts under the cap
+                # so this stays the rare path.
+                return None, last, False
             if r.status_code == 429 or r.status_code >= 500:
                 transient = True
     return None, last, transient
@@ -675,6 +690,12 @@ def groq_chat(messages):
     # plan() on a single Groq 429 — a rate limit must never kill a
     # job outright. Non-transient failures (e.g. every model 400s)
     # raise immediately, exactly as before.
+    # PROOF-FIX 1: every call logs its prompt size — the proof that
+    # a stage's prompt fits the free channel is a number in the log,
+    # not a hope. (The audit's dying calls were ~59K chars.)
+    _n_chars = sum(len(str(m.get("content", ""))) for m in messages)
+    print(f"groq_chat: prompt {_n_chars} chars "
+          f"(~{_n_chars // 4} tok est) + 2500 max_tokens")
     last = ""
     for attempt in range(len(_CHAT_BACKOFF_S) + 1):
         out, last, transient = _chat_sweep(messages)
@@ -859,10 +880,62 @@ class Amendments:
             print("amendments mark failed", str(e)[:120])
 
 
+# PROOF-FIX 4 (runner half): topic seeds that are greetings, empty,
+# or off-history junk must never become a documentary. The Worker
+# gates this at intake; this is the defense-in-depth net for any
+# seed that still arrives — it is rewritten to AUTO so the R47
+# path picks a real topic from the user's actual request.
+_GREETING_SEED_RX = re.compile(
+    r"^(h+i+|h+e+l+o+|helo|hey+|hai|namaste|good\s+(morning|afternoon|"
+    r"evening|night)|ok(ay)?|thanks?|thank\s+you|bye+|yes|no|test|"
+    r"hi\s+there|hello\s+there)[\s!.,]*$", re.I)
+
+
+def _sanitize_topic_seed(brief):
+    """Rewrite a junk `topic: X` seed line in the brief to
+    `topic: AUTO`. Returns the (possibly rewritten) brief."""
+    m = re.search(r"^topic:\s*(.+)$", str(brief or ""), re.M | re.I)
+    if not m:
+        return brief
+    seed = m.group(1).strip()
+    if len(seed) < 3 or _GREETING_SEED_RX.match(seed):
+        print(f"topic tripwire: seed {seed!r} is a greeting/empty — "
+              f"rewritten to AUTO (R47 picks a real topic)")
+        return (brief[:m.start(1)] + "AUTO" + brief[m.end(1):])
+    return brief
+
+
 async def create_job(j, wa, note):
     import create as _engines
     create = _engines.engine_module()  # DIVYA_ENGINE=v3 -> doc3, default doc (v2)
     to = j["to"]
+    # PROOF-FIX 4: sanitize the topic seed before anything reads it.
+    if j.get("brief"):
+        j["brief"] = _sanitize_topic_seed(j["brief"])
+    # PROOF-FIX 3 (runner half): every progress note ALSO posts an
+    # app_state("running") heartbeat. Before this, a create posted
+    # NOTHING to runner/state for the whole run — the app history
+    # sat at "editing, 0%" from dispatch, and the Worker's stuck-job
+    # rescue fired on LIVE 57-80 min longs at 30 min, telling users
+    # "failed + refunded" for films that then finished into a
+    # terminal job. The engines call notify() at every chapter /
+    # phase, so the heartbeat now tracks real progress.
+    _wa_note = note
+
+    async def note(t):
+        try:
+            app_state("running", str(t)[:290])
+        except Exception:
+            pass
+        try:
+            await _wa_note(t)
+        except Exception:
+            pass
+
+    try:
+        app_state("running", "Job start ayyindi — pani modalu.")
+    except Exception:
+        pass
     # v72: mid-flight amendments provider for this job (see Amendments).
     amend = Amendments()
     # v71: the owner's saved reference voice (flagged in the job by the
@@ -991,6 +1064,8 @@ async def create_job(j, wa, note):
             print("long video", res["path"], res.get("duration"),
                   "partial" if res.get("partial") else "complete")
         else:
+            _brief_run = j.get("brief", "")
+            _DOE = getattr(create, "DurationOverrunError", None)
             for attempt in range(2):
                 try:
                     # v28: the last 5 looks (from KV, via the job) so the look never
@@ -1009,51 +1084,51 @@ async def create_job(j, wa, note):
                     if _cfg is not None and _spec:
                         kw["spec"] = _spec
                         kw["cfg"] = _cfg
-                    res = await create.make_video(j.get("brief", ""), groq_chat, notify=note, **kw)
+                    res = await create.make_video(_brief_run, groq_chat, notify=note, **kw)
                     print("look", res.get("plan", {}).get("look"), res.get("plan", {}).get("accent"))
                     break
                 except (ValueError, KeyError) as e:  # bad plan JSON -> retry once
                     if attempt:
                         raise
+                except Exception as e:
+                    # PROOF-FIX 5: the engine's duration gate fired —
+                    # re-plan ONCE with a hard word budget in the
+                    # brief; a second overrun fails the job honestly
+                    # (refund) instead of delivering a film whose
+                    # ending was trimmed off.
+                    if _DOE is not None and isinstance(e, _DOE) \
+                            and not attempt:
+                        print("duration gate: re-planning with a "
+                              "shorter script:", str(e)[:150])
+                        _brief_run = (_brief_run +
+                                      "\nHARD LENGTH NOTE: the previous "
+                                      "script's voice overran the ordered "
+                                      "length. Write noticeably FEWER "
+                                      "words per scene so the total voice "
+                                      "fits the ordered length.")
+                        continue
+                    raise
         size = os.path.getsize(res["path"]) / 1e6
         print("video", res["path"], round(size, 2), "MB", res.get("duration"))
-        # v24 duration backstop: the brief's hard length was ignored (video 5 =
-        # 44.46s for a 30s request). Trim to the target so the delivered video
-        # is never longer than asked (±2s).
+        # Duration backstop — PROOF-FIX 5 REPLACES the v24 hard trim.
+        # The v24 rule cut any over-length film to the target with
+        # ffmpeg -t: on the proof short (38.5 s of voice for a 30 s
+        # order) that amputated the CTA scene and the end question
+        # off the delivered video. Duration is now enforced at the
+        # script stage and at the engine's post-TTS gate (doc.py);
+        # this backstop only refuses: within the ±2 s spec tolerance
+        # the film delivers as rendered, beyond it the job fails
+        # honestly (refund) — an ending is never trimmed off again.
         try:
             _bm = re.search(r"FINAL VIDEO LENGTH:\s*exactly\s*(\d+)\s*seconds", j.get("brief", "") or "")
             _target = int(_bm.group(1)) if _bm else None
         except Exception:
             _target = None
         if _target and float(res.get("duration") or 0) > _target + 2:
-            _pre_dur = float(res.get("duration") or 0)
-            _trim = res["path"].replace(".mp4", "_trim.mp4")
-            subprocess_run(["ffmpeg", "-y", "-loglevel", "error", "-i", res["path"], "-t", str(_target), "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-c:a", "aac", "-b:a", "128k", _trim])
-            res["path"] = _trim
-            res["duration"] = _target
-            size = os.path.getsize(res["path"]) / 1e6
-            print("trimmed to", _target, "s")
-            # v79.2 (defect 2): the compliance report was built inside
-            # make_video on the PRE-TRIM master (it recorded a 37.2 s
-            # duration FAIL for a video delivered at exactly 30.0 s).
-            # The report must describe the FINAL delivered file:
-            # re-measure the trimmed file, record the trim in
-            # fixes_applied, and rewrite the artifact next to it.
-            if res.get("compliance"):
-                try:
-                    import compliance as _comp_trim
-                    res["compliance"] = _comp_trim.refresh_report_for_final_file(
-                        res["compliance"], res.get("render_config") or {},
-                        res["path"],
-                        extra_fixes=[f"duration trimmed {_pre_dur:.1f}s → {_target:.1f}s to meet R1"])
-                    if res.get("plan") is not None:
-                        res["plan"]["compliance"] = res["compliance"]
-                    if res.get("workdir"):
-                        with open(os.path.join(res["workdir"], "compliance_report.json"),
-                                  "w", encoding="utf-8") as _cf:
-                            json.dump(res["compliance"], _cf, indent=1)
-                except Exception as _te:
-                    print("compliance refresh after trim failed:", str(_te)[:150])
+            raise RuntimeError(
+                f"duration overrun: rendered {float(res.get('duration') or 0):.1f}s "
+                f"against the {_target}s ordered length — refusing to "
+                f"hard-trim the ending off the film")
         # v78: no pre-emptive WhatsApp re-encode here any more. The old
         # fixed-1900k _wa2 swap produced ~109 MB for a 460 s video (the
         # bitrate never accounted for duration), so the WA send was
@@ -1120,6 +1195,21 @@ async def create_job(j, wa, note):
                 _note = (_note + " B-roll sources: " + ", ".join(s.get("source_url", "") for s in _broll_used[:3]))[:290]
             if _am_note:
                 _note = (_note + " " + _am_note)[:290]
+            # PROOF-FIX 1: if any brain stage fell back, the delivery
+            # note SAYS SO — a deterministic stand-in is never
+            # presented as brain work in the job's own report.
+            _bsum = res.get("brain_status") or {}
+            _bfb = [k for k, v in _bsum.items()
+                    if isinstance(v, dict) and v.get("status") == "FALLBACK"]
+            if _bfb:
+                _note = (_note + " Brain: " + "; ".join(
+                    f"{k} FALLBACK" for k in _bfb))[:290]
+            # PROOF-FIX 3: one last heartbeat before the upload, so
+            # the app's progress stamp is fresh at the finish line.
+            try:
+                app_state("running", "Video ready — upload chestunna…")
+            except Exception:
+                pass
             rr = httpx.post(f"{WORKER}/api/runner/result", params={"job": JOB, "note": _note,
                             "look": str(_pl.get("look", "")), "motion": str(_pl.get("motion_personality", "")),
                             "transition": str(_pl.get("transition_family", ""))}, content=open(up, "rb").read(), headers={"x-runner-key": KEY, "content-type": "video/mp4"}, timeout=300)

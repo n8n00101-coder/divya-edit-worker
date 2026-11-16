@@ -2518,18 +2518,27 @@ const LEGACY_JOB_SPENDS = {
   // (60,000 left after). This table grows only by a verified entry.
   "a6421c3f": { via: "split", split: { weekly: 460000, pool: 940000, plan: 0 }, cost: 1400000 },
 };
-const STUCK_JOB_MS = 30 * 60 * 1000;
-// v74: a job that DID start reporting and then went silent — 45 min
-// without a state post means the runner is dead (Actions hard cap is
-// 60 min and every live stage posts), however far it had progressed.
-const STALE_PROGRESS_MS = 45 * 60 * 1000;
+// PROOF-FIX 3 (2026-11-16): the rescue thresholds must EXCEED the
+// pipeline's real budget. The long pipeline's soft budget is 3000 s
+// (50 min) and real long runtimes run 57-80 min (assembly, QC and
+// upload continue past the chapter deadline; the Actions workflow
+// allows 350 min). At 30/45 min the rescue fired on LIVE jobs: the
+// user was told "failed + refunded" for films that then finished
+// into a terminal job and vanished. 75 min clears the real budget
+// plus post-deadline slack; the runner now also heartbeats on every
+// progress note, so 75 min of silence genuinely means dead.
+const STUCK_JOB_MS = 75 * 60 * 1000;
+// v74: a job that DID start reporting and then went silent — 75 min
+// without a state post means the runner is dead (PROOF-FIX 3: was
+// 45 min, inside the long pipeline's real runtime), however far it
+// had progressed.
+const STALE_PROGRESS_MS = 75 * 60 * 1000;
 // v73: stuck-job rescue (lazy — mirrors the setup chain's stalled
 // derivation: no cron, the state is corrected on read). A create/edit
 // job still at "editing" with pct 0, no result and no runner contact
-// for over 30 minutes is dead: mark it failed with the reason, refund
-// its recorded spend exactly, and clear the pointers at it — it must
-// never present as "editing" forever. Jobs that reported "running" or
-// any pct > 0 are the runner's living jobs and are never touched.
+// past the threshold above is dead: mark it failed with the reason,
+// refund its recorded spend exactly, and clear the pointers at it —
+// it must never present as "editing" forever.
 // Runs on the read surfaces: /api/videos, /api/status, the app status
 // intent, and the runner polls (/job + /api/runner/*, excluding the
 // job being polled about).
@@ -3363,7 +3372,33 @@ async function appRunner(req, env, p, url, body) {
     await save({ state: "done", has_result: true, size: b.byteLength, note: String(url.searchParams.get("note") || "").slice(0, 300) });
     const ref = st?.num ? { n, num: st.num } : await histNumForJob(env, job);
     const e2 = ref ? await histGet(env, ref.n, ref.num) : null;
-    if (e2) { e2.state = "done"; e2.doneAt = Date.now(); /* v39 (D8): completion time, so "ready X ago" is honest */ e2.size = b.byteLength; e2.has_result = true; e2.note = String(url.searchParams.get("note") || "").slice(0, 300); await histPut(env, ref.n, e2); }
+    if (e2) {
+      // PROOF-FIX 3: a result that arrives AFTER the rescue failed
+      // the job (and refunded it) must still SURFACE — with an
+      // honest "took longer than expected" note — never vanish
+      // into a terminal entry. The refund stands (exact-once:
+      // refundJobSpend refuses delivered jobs, and a late film is
+      // never re-charged); the note says exactly that.
+      const _wasRescued = e2.state === "failed" && !!e2.rescued;
+      const _runnerNote = String(url.searchParams.get("note") || "").slice(0, 300);
+      e2.state = "done"; e2.doneAt = Date.now(); /* v39 (D8): completion time, so "ready X ago" is honest */ e2.size = b.byteLength; e2.has_result = true;
+      if (_wasRescued) {
+        e2.late_result = true;
+        e2.note = ("⏰ Video late ga ready ayyindhi — expected time kante ekkuva pattindhi. Mundu failed ani cheppesi tokens refund chesa; refund alaage untundhi, video kuda vachindhi. " + _runnerNote).slice(0, 300);
+      } else {
+        e2.note = _runnerNote;
+      }
+      await histPut(env, ref.n, e2);
+      if (_wasRescued) {
+        // Point the app back at the finished film when the slots
+        // are free, and tell the user on WhatsApp where reachable.
+        try {
+          if (!(await env.KV.get(`appjob:${n}`))) await env.KV.put(`appjob:${n}`, JSON.stringify({ job, at: Date.now(), state: "done", late: true }), { expirationTtl: 86400 * 7 });
+          if (!(await env.KV.get(`curjob:${n}`))) await env.KV.put(`curjob:${n}`, job, { expirationTtl: 86400 * 7 });
+        } catch {}
+        try { if (/^\d{7,15}$/.test(String(n))) await waSendText(env, String(n), "⏰ Nee video late ga ayina ready ayyindhi — app lo kanipisthundhi. Failed ani cheppina refund alaage untundhi, malli charge cheyyaledhu."); } catch {}
+      }
+    }
     // v79 (FIX 4): the user's most recent finished project — the
     // edit-mode detector ("change scene 2…") resolves its target
     // through this record.

@@ -439,6 +439,165 @@ def _spec_block(spec):
     return "\n".join(lines) + "\n"
 
 
+class DurationOverrunError(Exception):
+    """PROOF-FIX 5: the rendered voice overran the ordered duration.
+    Raised BEFORE the expensive scene render so the runner can
+    re-plan with a shorter script — the ending is never amputated
+    by a hard trim again (proof audit: a 30 s short rendered 38.5 s
+    of voice and the trimmer cut the CTA scene off the film)."""
+
+
+# The PLAN prompt's own speaking rates (words per second) — the
+# estimator the writer is told to size by, now enforced in code.
+WORDS_PER_SEC = {"en": 2.5, "te": 1.8, "hi": 2.3}
+
+
+def _estimate_script_s(scenes, lang):
+    """Estimated delivered seconds for a script: the make_video
+    timing formula (0.4 s pre-roll, per-scene voice + 0.45 s gap,
+    1 s outro) with voice duration estimated from word counts at
+    the language's speaking rate."""
+    wps = WORDS_PER_SEC.get(lang or "te", 1.8)
+    t = 0.4
+    for s in scenes or []:
+        words = len(str(s.get("vo", "")).split())
+        t += words / wps + 0.45
+    return t + OUTRO
+
+
+def _duration_target_s(brief, cfg=None, spec=None):
+    """The ordered duration for a SHORT, from the resolved cfg, the
+    spec, or the brief's FINAL VIDEO LENGTH line. None when the
+    order set no duration (the writer's default length rules)."""
+    if cfg and cfg.get("duration_s"):
+        return float(cfg["duration_s"])
+    try:
+        import spec_engine as _se
+        d = _se.spec_duration_s(spec or [])
+        if d:
+            return float(d)
+    except Exception:
+        pass
+    b = str(brief or "")
+    m = re.search(r"FINAL VIDEO LENGTH:\s*exactly\s*(\d+)\s*seconds", b, re.I)
+    if m:
+        return float(m.group(1))
+    m = re.search(r"FINAL VIDEO LENGTH:\s*exactly\s*(\d+)\s*minutes", b, re.I)
+    if m:
+        return float(m.group(1)) * 60
+    return None
+
+
+def _fit_script_to_duration(p, brief, chat, cfg=None, spec=None):
+    """PROOF-FIX 5: enforce the duration at the SCRIPT stage — trim
+    words, not film. When the writer's script estimates over the
+    ordered duration: ONE rewrite round with an explicit word
+    budget (hook + final CTA scene untouchable), then a
+    deterministic trim of middle scenes at sentence boundaries.
+    The outcome rides on p["duration_fit"] and is printed — an
+    over-length script never reaches TTS unnoticed again.
+    Long jobs are exempt: chapter budgets own their lengths."""
+    target = _duration_target_s(brief, cfg, spec)
+    if not target or chat is None or (cfg or {}).get("kind") == "long":
+        return
+    scenes = p.get("scenes") or []
+    if len(scenes) < 3:
+        return
+    lang = p.get("lang") or "te"
+    wps = WORDS_PER_SEC.get(lang, 1.8)
+    est = _estimate_script_s(scenes, lang)
+    fit = {"target_s": target, "estimated_s": round(est, 1),
+           "action": "none"}
+    if est <= target * 1.02:
+        p["duration_fit"] = fit
+        return
+    budget_words = max(10, int((target - 0.4 - OUTRO
+                                 - 0.45 * len(scenes)) * wps))
+    total_words = sum(len(str(s.get("vo", "")).split()) for s in scenes)
+    # --- round 1: the writer rewrites to the budget
+    try:
+        lines = "\n".join(f"{i + 1}. {s.get('vo', '')}"
+                          for i, s in enumerate(scenes))
+        raw = chat([
+            {"role": "system", "content": "You output strict JSON only."},
+            {"role": "user", "content":
+             f"This video script runs too long: it estimates {est:.0f}s "
+             f"but the ordered length is {target:.0f}s. Rewrite the "
+             f"voice lines so the TOTAL across all scenes is at most "
+             f"{budget_words} words (now {total_words}). Keep scene 1 "
+             f"(the hook) and the LAST scene (the call to action) "
+             f"intact in meaning; shorten the middle scenes. Same "
+             f"scene count, same order, same language.\n"
+             'Reply with strict JSON: {"scenes": [{"vo": "..."}, ...]}'
+             f" — one object per scene.\n\nSCRIPT:\n{lines}"}])
+        data = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
+        rows = data.get("scenes") or []
+        if len(rows) == len(scenes):
+            for s, r in zip(scenes, rows):
+                vo = re.sub(r"[*#_`]", "", str(r.get("vo", ""))).strip()
+                if vo:
+                    s["vo"] = vo
+            est = _estimate_script_s(scenes, lang)
+            fit["action"] = "writer-rewrite"
+            fit["estimated_s"] = round(est, 1)
+    except Exception as e:
+        print("duration fit: rewrite round failed:", str(e)[:120])
+    # --- round 2: deterministic trim of middle scenes only
+    if est > target * 1.02:
+        trimmed = 0
+        guard = 0
+        while est > target * 1.02 and guard < 60:
+            guard += 1
+            mid = [(len(str(s.get("vo", "")).split()), i)
+                   for i, s in enumerate(scenes)
+                   if 0 < i < len(scenes) - 1
+                   and len(str(s.get("vo", "")).split()) > 5]
+            if not mid:
+                break
+            mid.sort(reverse=True)
+            _, i = mid[0]
+            vo = str(scenes[i].get("vo", ""))
+            sents = re.split(r"(?<=[.!?])\s+", vo)
+            if len(sents) > 1:
+                new = " ".join(sents[:-1]).strip()
+            else:
+                words = vo.split()
+                new = " ".join(words[:max(5, len(words) - 4)]).strip()
+            if len(new.split()) < len(vo.split()):
+                trimmed += len(vo.split()) - len(new.split())
+                scenes[i]["vo"] = new
+                est = _estimate_script_s(scenes, lang)
+        fit["action"] = (fit["action"] + "+trim").strip("+") \
+            if fit["action"] != "none" else "trim"
+        fit["trimmed_words"] = trimmed
+        fit["estimated_s"] = round(est, 1)
+    p["duration_fit"] = fit
+    print(f"duration fit: target {target:.0f}s, script estimated "
+          f"{fit['estimated_s']}s after {fit['action']} "
+          f"(was {total_words} words)")
+
+
+def _check_duration_gate(total_s, target_s):
+    """PROOF-FIX 5, the rendered-side gate: voice is synthesised and
+    measured — an overrun beyond the ±2 s tolerance raises instead
+    of rendering a film whose ending will be cut off."""
+    if total_s > target_s + 2:
+        raise DurationOverrunError(
+            f"voice ran {total_s:.1f}s against the {target_s:.0f}s "
+            f"ordered length — re-plan with a shorter script; the "
+            f"ending is never hard-trimmed")
+
+
+def _brain_status_summary():
+    """PROOF-FIX 1: the brain ledger for the result dict ({} when
+    the ledger is unavailable — it must never break a delivery)."""
+    try:
+        import brain_status as _bs
+        return _bs.summary()
+    except Exception:
+        return {}
+
+
 def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=None, cfg=None):
     # v25: the TOPIC MOOD picks the design system (A/B/C/D) FIRST, so the LLM
     # designs every scene for that look — never one fixed style.
@@ -544,6 +703,9 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
     except Exception as _e100g:
         print("fact gate v100 failed (script ungated):", str(_e100g)[:120])
     p["lang"] = p.get("lang") if p.get("lang") in ("en", "te", "hi") else "te"
+    # PROOF-FIX 5: the script must FIT the ordered duration before
+    # anything downstream spends on it (see _fit_script_to_duration).
+    _fit_script_to_duration(p, brief, chat, cfg=cfg, spec=spec)
     # v32 (Blind): the title is NOT truncated to 26 chars any more — header()
     # wraps it on word boundaries into 2 lines instead (a mid-word cut was a
     # defect Blind flagged: "PHANTOM VIBRAT").
@@ -683,7 +845,8 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
         if _dir86.should_direct(brief, cfg):
             # v87 (the Editing Brain): the Story Analyst reads the
             # writer's finished script FIRST and its beat sheet +
-            # the full taste pack ride into the Director as `brain` —
+            # per-stage taste-pack slices ride into the Director as
+            # `brain` (PROOF-FIX 1: slices, not the full pack) —
             # the Visual Director (LLM) chooses visuals from the
             # sheet, the Editing Director pass applies its rhythm
             # decisions with a diff log. Any analyst failure degrades
@@ -691,11 +854,19 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
             _brain87 = {"chat": chat}
             try:
                 import copy as _copy87
+                import pack_slicer as _ps87
                 import story_analyst as _sa87
-                import visual_director as _vd87
-                _brain87["taste"] = _vd87.taste_pack()
+                # PROOF-FIX 1: per-stage pack SLICES, never the whole
+                # 56K pack — the full pack 413'd on the free Groq
+                # channel and every v89 stage silently fell back to
+                # the deterministic director (proof audit, 2026-11-16).
+                # "taste" keeps the visual slice for legacy readers.
+                _brain87["taste_story"] = _ps87.slice_for("story")
+                _brain87["taste_visual"] = _ps87.slice_for("visual")
+                _brain87["taste_editing"] = _ps87.slice_for("editing")
+                _brain87["taste"] = _brain87["taste_visual"]
                 _sheet87 = _sa87.analyse_script(
-                    p["scenes"], chat, taste=_brain87["taste"],
+                    p["scenes"], chat, taste=_brain87["taste_story"],
                     topic=str(p.get("topic") or ""))
                 if _sheet87:
                     _brain87["beat_sheet"] = _sheet87
@@ -1888,6 +2059,12 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
     if pool is None:
         pool = _br.FootagePool(state_path=os.path.join(wd, "footage_state.json"))
     p["_footage_pool"] = pool
+    # PROOF-FIX 2: the candidate gate is relative to THIS video's
+    # delivery canvas (a 1920x1080 long accepts 720p landscape
+    # stock; the old absolute 1080 floor rejected 92% of it).
+    _canvas = None
+    if cfg.get("width") and cfg.get("height"):
+        _canvas = (int(cfg["width"]), int(cfg["height"]))
     attached, sources = {}, []
     dl = os.path.join(wd, "broll_dl")
     for i in targets:
@@ -1931,7 +2108,8 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
                 print(f"broll scene {i + 1}: saved clip reused ({rec['clip_id']})")
         if rec is None:
             rec = pool.assign(i + 1, queries, dur_s, dl,
-                              orientation=orientation, line=str(sc.get("vo") or ""))
+                              orientation=orientation, line=str(sc.get("vo") or ""),
+                              canvas=_canvas)
         if not rec and every:
             # v100 (Gate 1 — FOOTAGE-FIRST): a beat with NO footage
             # match is RE-PLANNED, never silently islanded. First a
@@ -1952,7 +2130,7 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
                     rec = pool.assign(
                         i + 1, [_broad100], dur_s, dl,
                         orientation=orientation,
-                        line=str(sc.get("vo") or ""))
+                        line=str(sc.get("vo") or ""), canvas=_canvas)
                 if not rec and replan is not None:
                     _newq100 = replan(sc, i + 1) or []
                     _newq100, _dropq100 = _ab100b.searchable_queries(
@@ -1965,7 +2143,7 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
                         rec = pool.assign(
                             i + 1, _newq100, dur_s, dl,
                             orientation=orientation,
-                            line=str(sc.get("vo") or ""))
+                            line=str(sc.get("vo") or ""), canvas=_canvas)
                         if rec:
                             sc["queries"] = _newq100
                             print(f"broll scene {i + 1}: footage "
@@ -1999,7 +2177,8 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
         entry = {"dir": fdir, "frames": nframes}
         if dur_s > 4.0:
             rec2 = pool.assign(i + 1, queries, dur_s / 2, dl,
-                               orientation=orientation, line=str(sc.get("vo") or ""))
+                               orientation=orientation, line=str(sc.get("vo") or ""),
+                               canvas=_canvas)
             if rec2:
                 fdir2 = os.path.join(wd, "broll_frames", f"sc{i}b")
                 _push2 = bool(rec2.get("static")) and "zoom" not in (cfg.get("excludes") or [])
@@ -2023,6 +2202,11 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
         p["broll_sources"] = sources
         print(f"broll: footage on {len(attached)}/{n} scenes "
               f"({', '.join(s['provider'] for s in sources)})")
+    # PROOF-FIX 2: the achieved footage share is REPORTED per film
+    # (the audit's long had 0 photographs and nothing said so in
+    # the delivery numbers). The QC gate on the share is v100's;
+    # the number itself is pipeline truth from here on.
+    p["footage_share"] = round(len(attached) / n, 3) if n else 0.0
     p["footage"] = pool.footage_json()
 
 
@@ -3327,8 +3511,22 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             fut_cg.result()
             p["team_qc"] = fut_qc.result()
         n_custom, n_fb = load_video_fx(p, wd)
+        try:
+            import brain_status as _bs
+            _bs.record("codegen", True,
+                       f"{n_custom} custom functions + {n_fb} library "
+                       f"fallbacks")
+        except Exception:
+            pass
     except Exception as e:
         print("codegen failed:", str(e)[:200])
+        try:
+            import brain_status as _bs
+            _bs.record("codegen", False,
+                       f"codegen failed: {str(e)[:80]} — library "
+                       f"functions carried the video")
+        except Exception:
+            pass
     if notify and (n_custom or n_fb):
         await notify(f"Codegen: {n_custom} custom functions + {n_fb} library fallbacks for this video.")
     # v34 (Hark PREV, item 3): preview mode — render a contact sheet (2 frames
@@ -3446,6 +3644,15 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         starts.append(t)
         t += s["d"] + float(s.get("silence_after_s") or 0)
     p["starts"] = starts; p["voice_end"] = t; total = t + OUTRO
+    # PROOF-FIX 5: the rendered-side duration gate. The voice is
+    # real now, not estimated — a short that overruns its ordered
+    # length beyond tolerance stops HERE (before the scene render)
+    # and the runner re-plans with a shorter script. The old path
+    # rendered everything and let the runner's backstop trimmer
+    # amputate the ending (the CTA scene) off the delivered film.
+    _dur_t = _duration_target_s(brief, cfg, spec)
+    if _dur_t and not plan_override and (cfg or {}).get("kind") != "long":
+        _check_duration_gate(total, _dur_t)
     if notify: await notify("Voice ready. Scenes render chestunna (animation + music).")
     # v69: stock B-roll for ~half the scenes (see _attach_broll). Runs
     # BEFORE the pre-render geometry QC so the QC renders the real
@@ -3833,6 +4040,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     return {"path": out, "delivery_path": delivery, "topic": p.get("topic", brief), "title": p["title"], "lang": p["lang"],
             "script": "\n".join(s["vo"] for s in p["scenes"]), "caption": p.get("caption", ""), "plan": p, "duration": total,
             "broll": p.get("broll_sources", []),
+            # PROOF-FIX 2: achieved footage share, reported per film.
+            "footage_share": p.get("footage_share"),
             # v71: honest label of what the voice actually is — set ONLY
             # when a reference sample drove the synth (pace + closest
             # voice). Never worded as a clone.
@@ -3852,6 +4061,10 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             # (FIX 4) + the compliance report for the delivery line.
             "spec": spec or [], "render_config": cfg or {},
             "compliance": _report, "workdir": wd,
+            # PROOF-FIX 1: the brain ledger rides on the result — a
+            # stage that fell back is labelled FALLBACK in the job's
+            # report, never presented as brain work.
+            "brain_status": _brain_status_summary(),
             "frame_qc": _fq, "qc_passed": _fq["passed"]}
 
 

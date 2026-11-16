@@ -27,6 +27,17 @@ try:
 except Exception:  # hooks are additive — the analyst must still run
     _hooks = None
 
+
+def _note_stage(ok, detail=""):
+    """PROOF-FIX 1: the stage's outcome goes on the brain ledger —
+    a fallback is labelled FALLBACK in the job report, never passed
+    off as brain work. Guarded: the ledger must never break a stage."""
+    try:
+        import brain_status as _bs
+        _bs.record("story-analyst", ok, detail)
+    except Exception:
+        pass
+
 OPPORTUNITIES = ("footage", "document", "number", "quote", "contrast",
                  "term", "scene")
 
@@ -149,15 +160,27 @@ def analyse_script(scenes, chat, taste="", topic="", angle="",
     scenes = [s for s in (scenes or []) if str(s.get("vo", "")).strip()]
     if not scenes or chat is None:
         return None
+    # PROOF-FIX 1: the analyst reads the STORY slice of the taste
+    # pack, never the whole 56K pack (the full pack 413'd on the
+    # free channel and the analyst silently never ran). A caller
+    # that still hands a full pack gets the slice instead.
+    if len(taste or "") > 12000:
+        try:
+            import pack_slicer as _ps
+            taste = _ps.slice_for("story")
+        except Exception:
+            pass
     try:
         raw = chat([{"role": "system", "content": _SYSTEM},
                     {"role": "user",
                      "content": _prompt(scenes, topic, taste)}])
-    except Exception:
+    except Exception as _e:
+        _note_stage(False, f"LLM failed: {str(_e)[:80]}")
         return None
     data = _parse(raw)
     rows = (data or {}).get("scenes")
     if not isinstance(rows, list) or not rows:
+        _note_stage(False, "LLM reply unusable (no scene rows)")
         return None
     out = []
     for i, s in enumerate(scenes):
@@ -179,6 +202,7 @@ def analyse_script(scenes, chat, taste="", topic="", angle="",
             "analysed": bool(r),
         })
     if not any(r["analysed"] for r in out):
+        _note_stage(False, "LLM reply carried no usable scene analysis")
         return None
     sheet = {"version": "v87-story-analyst-1", "topic": topic,
              "scenes": out,
@@ -193,6 +217,9 @@ def analyse_script(scenes, chat, taste="", topic="", angle="",
     except Exception as e:
         print(f"story_analyst v89 hooks/preflight failed: "
               f"{str(e)[:120]}")
+    _note_stage(True, f"{len(out)} scenes, preflight "
+                      f"{(sheet.get('preflight') or {}).get('verdict', '?')}, "
+                      f"{len(sheet.get('hook_variants') or [])} hook variants")
     return sheet
 
 

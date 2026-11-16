@@ -83,7 +83,7 @@ class _StubPool:
         self.calls = []
 
     def assign(self, scene_no, queries, dur_s, dl, orientation=None,
-               line=""):
+               line="", canvas=None):
         self.calls.append(list(queries))
         if any(any(k in q for k in self.land_on) for q in queries):
             return {"path": "/tmp/clip.mp4", "clip_id": "stub:1",
