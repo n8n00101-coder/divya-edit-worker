@@ -1,0 +1,17 @@
+{
+ "provider": "mailjet-submit-probe",
+ "steps": [
+  {
+   "step": "loaded",
+   "url": "https://app.mailjet.com/signup"
+  }
+ ],
+ "first": "input[name*='first' i]",
+ "last": "input[name*='last' i]",
+ "email": "input[name='email']",
+ "password": "input[type='password']",
+ "clicked": null,
+ "after_url": "https://app.mailjet.com/signup",
+ "captcha_visible_after": true,
+ "after_text": "A great place to start\n\nQuick and easy core features that help you ramp up your email marketing\n\nAPIs, SMTP relay, web hooks\nAdvanced Email Editor\nFree email templates\nFree sign-up forms\nBasic statistics\n\nCopyright \u00a9 2026 Mailjet. All rights reserved\n\n|\n|\nSign Up For Free\n\nNo commitment. No hidden fees.\n\nFirst name\n\nLast name\n\nEmail\n\nSign up with a work email to avoid sending limitations.\n\nPassword\n\nMin. 8 characters, 1 letter, 1 number and 1 special character\n\nAlready have an account? \n\nBy clicking the \"Create account\" button, I expressly agree to the Mailjet  and understand that my account information will be used according to Mailjet \n\nManage cookies\nWe use cookies and similar technologies to operate our site. We also use performance, analytics and advertising cookies to improve your experience. You can manage your preferences, including your right to opt-out of the sale or sharing of"
+}

@@ -4383,6 +4383,11 @@ const SETUP_PROVIDERS = {
   // mail works app-wide. Like Pexels: a capability key — never in
   // AUTO_PROVIDERS, never counted by needsSetup, never in CHAIN_ORDER.
   resend: { name: "Resend", site: "resend.com", url: "https://resend.com/signup", flow: "resend" },
+  // F7 self-create: Brevo is sendMailChannel's fallback — it finally
+  // gets a creation chain of its own (before this it was send-side
+  // only, so its sys slot could never be filled by Julie herself).
+  // Same capability-key status as Resend (mirrored into sys).
+  brevo: { name: "Brevo", site: "app.brevo.com", url: "https://app.brevo.com/account/register", flow: "brevo" },
 };
 function setupJobId() { return [...crypto.getRandomValues(new Uint8Array(10))].map(b => b.toString(16).padStart(2, "0")).join(""); }
 function setupPass() { const c = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789!@#"; const r = crypto.getRandomValues(new Uint8Array(16)); const out = [...r].map(b => c[b % c.length]); const D = "23456789", S = "!@#"; const p1 = r[0] % 16, p2 = (p1 + 1 + (r[1] % 15)) % 16; out[p1] = D[r[2] % D.length]; out[p2] = S[r[3] % S.length]; return out.join(""); } // v94 (F7): force one digit + one symbol at two distinct positions — signup checklists (Resend: letters+numbers+symbols) silently rejected symbol-less draws
@@ -5027,6 +5032,7 @@ const VERIFY_PROVIDERS = {
   openrouter: { domains: ["openrouter.ai", "clerk"], from: ["openrouter"], subj: ["openrouter", "verify"], q: "OpenRouter", mode: "or" },
   cloudflare: { domains: ["cloudflare.com"], from: ["cloudflare"], subj: ["verify", "confirm", "cloudflare"], q: "from:cloudflare", mode: "and" },
   resend: { domains: ["resend.com"], from: ["resend.com"], subj: ["verify", "confirm", "resend", "welcome"], q: "from:resend.com", mode: "or" },
+  brevo: { domains: ["brevo.com", "sendinblue.com"], from: ["brevo.com", "sendinblue.com"], subj: ["confirm", "validate", "verify", "brevo", "welcome"], q: "from:brevo.com OR from:sendinblue.com", mode: "or" },
   generic: { domains: [], from: [], subj: ["verify", "confirm", "activate", "login"], q: "verify", mode: "or" },
 };
 function gmailHeader(msg, name) {

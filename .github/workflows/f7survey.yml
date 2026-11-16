@@ -1,0 +1,27 @@
+name: f7-survey
+on:
+  workflow_dispatch:
+jobs:
+  survey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install browser + deps
+        run: |
+          pip install -q playwright
+          playwright install --with-deps chromium
+      - name: Run signup-door survey
+        run: python f7_survey.py
+      - name: Upload survey evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: f7-survey
+          path: |
+            survey.json
+            survey-shots/
+          if-no-files-found: warn
