@@ -17,7 +17,11 @@ import httpx
 
 from config import DATA
 
-GROQ_MODELS = ["meta-llama/llama-4-scout-17b-16e-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct"]
+# v87: Groq's vision models are DEAD — both returned 404 model_not_found
+# when probed server-side on 2026-11-15 (the /api/image diagnosis). The
+# leg stays in OPENAI_STYLE for when Groq ships vision again, with an
+# empty model list so it is never called in the meantime.
+GROQ_MODELS = []
 GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]
 OPENROUTER_MODELS = ["meta-llama/llama-4-scout:free", "google/gemma-3-27b-it:free",
                      "qwen/qwen2.5-vl-72b-instruct:free"]
@@ -29,7 +33,7 @@ OPENAI_STYLE = {
     "openrouter": ("OPENROUTER_KEY", "https://openrouter.ai/api/v1", OPENROUTER_MODELS, 5),
     "mistral": ("MISTRAL_KEY", "https://api.mistral.ai/v1", MISTRAL_MODELS, 8),
 }
-ORDER = ["groq", "gemini", "openrouter", "mistral"]
+ORDER = ["gemini", "openrouter", "mistral", "groq"]  # v87: Gemini first (the surviving leg)
 COOLDOWN: dict[str, float] = {}
 
 

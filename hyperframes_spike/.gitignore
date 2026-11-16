@@ -1,0 +1,5 @@
+assets/*.webm
+assets/*.mp4
+renders/
+.hyperframes/
+node_modules/

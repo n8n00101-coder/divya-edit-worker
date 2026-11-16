@@ -841,6 +841,18 @@ async def create_job(j, wa, note):
             print("v79 spec extraction failed (continuing without spec):",
                   str(e)[:200])
             _spec, _cfg = [], None
+    # v84 (Stage 1): routing observability — one greppable line per
+    # job: engine, job type, spec engaged or not, QC mode. A spec
+    # failure no longer silently changes what the job gets: long jobs
+    # now run unconditional QC (qc_core) when no spec exists.
+    try:
+        import qc_core as _qc84
+        print(_qc84.routing_log_line(
+            getattr(create, "__name__", "?"), _kind, bool(_spec),
+            {"spec_qc": bool(_spec), "unconditional_qc": True,
+             "long_pipeline": _kind == "long"}))
+    except Exception:
+        pass
     try:
         res = None
         # v69 FIX (Ajju 2026-11-13): WhatsApp creates only ever made ~1-min

@@ -1,0 +1,110 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: #000;
+    }
+    #s1-video {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 1080px;
+      object-fit: cover;
+    }
+    #s1-scrim {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 680px;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.84), rgba(0, 0, 0, 0));
+    }
+    #s1-vignette {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.38) 100%);
+    }
+    #s1-titleblock {
+      position: absolute;
+      left: 110px;
+      bottom: 190px;
+      width: 1500px;
+    }
+    #s1-kicker-row {
+      display: flex;
+      align-items: center;
+      gap: 26px;
+    }
+    #s1-rule {
+      width: 120px;
+      height: 5px;
+      background: #ffb340;
+      transform-origin: left center;
+    }
+    #s1-kicker {
+      font-family: Inter, sans-serif;
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: 12px;
+      color: #ffb340;
+      text-shadow: 0 2px 14px rgba(0, 0, 0, 0.8);
+    }
+    .s1-mask {
+      overflow: hidden;
+    }
+    .s1-line {
+      font-family: Oswald, sans-serif;
+      font-weight: 700;
+      font-size: 158px;
+      line-height: 1.04;
+      letter-spacing: 1px;
+      color: #ffffff;
+      text-transform: uppercase;
+    }
+    #s1-sub {
+      margin-top: 26px;
+      font-family: Inter, sans-serif;
+      font-size: 41px;
+      font-weight: 400;
+      color: rgba(255, 255, 255, 0.92);
+      text-shadow: 0 2px 14px rgba(0, 0, 0, 0.8);
+    }
+  </style>
+  <div id="root" data-composition-id="scene1" data-width="1920" data-height="1080">
+    <video
+      id="s1-video"
+      class="clip"
+      data-start="0"
+      data-duration="15"
+      data-media-start="0"
+      data-track-index="0"
+      src="assets/footage.webm"
+      muted
+      playsinline
+    ></video>
+    <div id="s1-scrim" class="clip" data-start="0" data-duration="15" data-track-index="1"></div>
+    <div id="s1-vignette" class="clip" data-start="0" data-duration="15" data-track-index="1"></div>
+    <div id="s1-titleblock" class="clip" data-start="0" data-duration="15" data-track-index="2">
+      <div id="s1-kicker-row">
+        <div id="s1-rule"></div>
+        <div id="s1-kicker">THE PACIFIC NORTHWEST</div>
+      </div>
+      <div class="s1-mask"><div class="s1-line" id="s1-line1">The Vanishing</div></div>
+      <div class="s1-mask"><div class="s1-line" id="s1-line2">Coast</div></div>
+      <div id="s1-sub">How the Pacific is redrawing Oregon&rsquo;s shore</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#s1-rule", { scaleX: 0 }, { scaleX: 1, duration: 0.7, ease: "power3.out" }, 0.7);
+    tl.fromTo("#s1-kicker", { opacity: 0, x: -24 }, { opacity: 1, x: 0, duration: 0.6, ease: "power3.out" }, 0.85);
+    tl.fromTo("#s1-line1", { yPercent: 110 }, { yPercent: 0, duration: 0.85, ease: "power4.out" }, 1.0);
+    tl.fromTo("#s1-line2", { yPercent: 110 }, { yPercent: 0, duration: 0.85, ease: "power4.out" }, 1.18);
+    tl.fromTo("#s1-sub", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.7, ease: "power3.out" }, 2.1);
+    tl.fromTo("#s1-titleblock", { scale: 1 }, { scale: 1.025, duration: 11.5, ease: "none" }, 3.0);
+    window.__timelines["scene1"] = tl;
+  </script>
+</template>

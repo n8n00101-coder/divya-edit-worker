@@ -1,0 +1,74 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+    }
+    .cap {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 58px;
+      display: flex;
+      justify-content: center;
+    }
+    .cap-inner {
+      max-width: 1240px;
+      padding: 16px 34px;
+      background: rgba(0, 0, 0, 0.58);
+      border-radius: 14px;
+      font-family: Inter, sans-serif;
+      font-size: 40px;
+      font-weight: 600;
+      line-height: 1.3;
+      color: #ffffff;
+      text-align: center;
+    }
+    .cap-inner .accent {
+      color: #ffb340;
+    }
+  </style>
+  <div id="root" data-composition-id="captions" data-width="1920" data-height="1080">
+    <div class="cap clip" id="capw1" data-start="0.5" data-duration="4.5" data-track-index="0">
+      <div class="cap-inner" id="cap1">The Pacific is <span class="accent">eating</span> this coastline &mdash; one storm at a time.</div>
+    </div>
+    <div class="cap clip" id="capw2" data-start="5" data-duration="5" data-track-index="0">
+      <div class="cap-inner" id="cap2">Along Oregon&rsquo;s shore, the cliffs are retreating every year.</div>
+    </div>
+    <div class="cap clip" id="capw3" data-start="10" data-duration="5" data-track-index="0">
+      <div class="cap-inner" id="cap3">And the rate is not slowing down. It is <span class="accent">speeding up</span>.</div>
+    </div>
+    <div class="cap clip" id="capw4" data-start="15.2" data-duration="4.8" data-track-index="0">
+      <div class="cap-inner" id="cap4">Since 1993, global sea level has risen by more than ten centimetres.</div>
+    </div>
+    <div class="cap clip" id="capw5" data-start="20" data-duration="5" data-track-index="0">
+      <div class="cap-inner" id="cap5">The rise is accelerating &mdash; from 2.1 millimetres a year, to <span class="accent">4.5</span>.</div>
+    </div>
+    <div class="cap clip" id="capw6" data-start="25" data-duration="4.8" data-track-index="0">
+      <div class="cap-inner" id="cap6">Every extra millimetre pushes the surf higher up the cliff.</div>
+    </div>
+    <div class="cap clip" id="capw7" data-start="30.2" data-duration="4.8" data-track-index="0">
+      <div class="cap-inner" id="cap7">At <span class="accent">Neskowin</span>, the beach narrows a little more each winter.</div>
+    </div>
+    <div class="cap clip" id="capw8" data-start="35" data-duration="5" data-track-index="0">
+      <div class="cap-inner" id="cap8">Homes that stood for a century now sit metres from the edge.</div>
+    </div>
+    <div class="cap clip" id="capw9" data-start="40.2" data-duration="4.6" data-track-index="0">
+      <div class="cap-inner" id="cap9">The question is no longer if the coast will change &mdash; but <span class="accent">how fast</span>.</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    const starts = [0.5, 5, 10, 15.2, 20, 25, 30.2, 35, 40.2];
+    starts.forEach(function (s, i) {
+      tl.fromTo(
+        "#cap" + (i + 1),
+        { opacity: 0, y: 20 },
+        { opacity: 1, y: 0, duration: 0.32, ease: "power3.out" },
+        s,
+      );
+    });
+    window.__timelines["captions"] = tl;
+  </script>
+</template>

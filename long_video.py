@@ -277,6 +277,16 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
         # vo0.mp3 write both died with ENOENT (run 43373013930).
         ch_dir.mkdir(parents=True, exist_ok=True)
         ch_brief = chapter_brief(outline_data, i, spec=spec)
+        # v84 (Stage 4 / P2): every chapter brief now carries the
+        # WHOLE-documentary structure — its arc role, the full chapter
+        # list, and the rule that only the final chapter may close
+        # the story. This is what stops chapters rendering as
+        # independent shorts with their own hooks and endings.
+        try:
+            import doc_structure as _ds
+            ch_brief += _ds.arc_context_block(outline_data, i)
+        except Exception as _e:
+            print(f"render_chapters: arc context failed ({str(_e)[:100]})")
         if amendments is not None:
             ch_brief = _fold_chapter_amendments(amendments, ch_brief, i + 1)
         # v79: footage-pool mark at this chapter's start — a compliance
@@ -309,7 +319,8 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                                               if amendments is not None else {}),
                                            **({"spec": spec, "cfg": ch_cfg,
                                                "footage_pool": pool}
-                                              if spec is not None else {}))
+                                              if spec is not None or pool is not None
+                                              else {}))
                 break
             except Exception as e:
                 last_err = e
@@ -386,6 +397,7 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
         # FAILs is re-rendered with the failures named in its brief —
         # fix only that chapter, max 2 rounds, keep the best attempt.
         # A passed deadline skips retries (partial semantics win).
+        _fix_rounds_used = 0
         if spec is not None:
             for _round in range(2):
                 rep = res.get("compliance") or {}
@@ -393,6 +405,7 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                           if c.get("status") == "FAIL"]
                 if not failed:
                     break
+                _fix_rounds_used += 1
                 if deadline is not None and time.monotonic() > deadline:
                     break
                 fix_lines = "; ".join(
@@ -432,6 +445,9 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                         pool._save()
                 if not failed2:
                     break
+        # v84 (Stage 2): record the TRUE correction rounds this
+        # chapter consumed — the long report used to hard-code 0.
+        res["fix_rounds_used"] = _fix_rounds_used
         paths.append(res["path"])
         if results_out is not None:
             results_out.append(res)
@@ -439,6 +455,168 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
         # MB per chapter) are dead weight on the runner disk from here.
         shutil.rmtree(ch_dir / "broll_frames", ignore_errors=True)
     return paths
+
+
+async def _correct_assembled(final, paths, results, outline_data, chat,
+                             workdir, titles, size, notify=None,
+                             deadline=None, ref_voice=None,
+                             amendments=None, spec=None, cfg=None,
+                             pool=None, mq_cfg=None):
+    """v85: the assembled-file correction loop, wired end-to-end.
+
+    Inspect the ACTUAL assembled file with media_qc (deterministic
+    ffmpeg/ffprobe measurement: black / frozen / blank frames, A/V
+    mismatch, loudness, silence, colour drift, repeated visuals) ->
+    map each defect to its chapter -> correct at CHAPTER level
+    (re-render only the defective chapters, or fix the file-level
+    audio in place) -> re-assemble -> inspect again. Maximum 2
+    rounds (qc_core.bounded_correct_async); the TRUE round count
+    and fixes are returned for the compliance report. Defects that
+    cannot be corrected safely stay FAIL in the returned checks —
+    warn-and-deliver, never a false PASS.
+    Returns (mq_checks, rounds_used, fixes, final_path, paths)."""
+    import media_qc as _mq
+    import qc_core as _qcx
+    state = {"final": str(final), "paths": [str(p) for p in paths],
+             "dirty": False}
+
+    def _starts():
+        durs = []
+        for p in state["paths"]:
+            try:
+                durs.append(_probe_duration(p))
+            except Exception:
+                durs.append(0.0)
+        st, t = [], 0.0
+        for i, d in enumerate(durs):
+            st.append(t)
+            t += d + (CARD_SECONDS if i < len(durs) - 1 else 0.0)
+        return st
+
+    expected = None
+    if size:
+        expected = (int(size[0]), int(size[1]))
+    elif state["paths"]:
+        _inf = _mq.probe(state["paths"][0])
+        if _inf.get("video"):
+            expected = (_inf["video"].get("width"),
+                        _inf["video"].get("height"))
+
+    def _designed_silences():
+        """v88: the Editing Director's sanctioned silence windows
+        (silence_after_s on the chapter plans), mapped to absolute
+        time in the assembled file. media_qc reports gaps inside
+        these as DESIGNED instead of failing them as dead air —
+        v87 shipped 5 such false FAILs and the correction loop
+        re-rendered chapters over pauses the director had chosen."""
+        wins = []
+        starts = _starts()
+        for ci, r in enumerate(results or []):
+            plan = (r or {}).get("plan") or {}
+            scs = plan.get("scenes") or []
+            st = plan.get("starts") or []
+            base = starts[ci] if ci < len(starts) else 0.0
+            for j, s in enumerate(scs):
+                sil = float(s.get("silence_after_s") or 0)
+                if sil > 0 and j < len(st):
+                    a = base + float(st[j]) + float(s.get("d") or 0)
+                    wins.append((round(a, 2), round(a + sil, 2)))
+        return wins
+
+    def check_fn():
+        ch, _info = _mq.inspect_file(
+            state["final"], cfg=mq_cfg, chapter_starts=_starts(),
+            workdir=str(workdir), expected_size=expected,
+            designed_silences=_designed_silences())
+        return ch
+
+    async def correct_fn(failed, rnd):
+        fixes = []
+        by_ch = _mq.chapter_defect_map(failed)
+        file_level = by_ch.get(None) or []
+        # --- file-level: loudness fixed in place (no re-render)
+        if any(c["rule"] == "MQ-LOUD" for c in file_level):
+            tmp = state["final"] + ".loud.mp4"
+            measured = _measure_loudness(state["final"])
+            if measured is not None:
+                p = _loudnorm_params(measured)
+                af = ("loudnorm=I=-14:TP=-1.0:LRA=11"
+                      f":measured_I={p['measured_I']}"
+                      f":measured_TP={p['measured_TP']}"
+                      f":measured_LRA={p['measured_LRA']}"
+                      f":measured_thresh={p['measured_thresh']}"
+                      f":offset={p['offset']}:linear={p['linear']}")
+            else:
+                af = "loudnorm=I=-14:TP=-1.0:LRA=11"
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
+                            "-i", state["final"], "-af", af,
+                            "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
+                            "-movflags", "+faststart", tmp], check=True)
+            os.replace(tmp, state["final"])
+            fixes.append(f"round {rnd}: re-applied dual-pass loudnorm "
+                         f"to the assembled file (no re-render)")
+        # --- chapter-level: re-render only defective chapters
+        done = 0
+        for chno in sorted(k for k in by_ch if k is not None):
+            if done >= 2:
+                break
+            rules = sorted({c["rule"] for c in by_ch[chno]})
+            if not set(rules) & {"MQ-BLACK", "MQ-FREEZE", "MQ-BLANK",
+                                 "MQ-SILENCE", "MQ-REPEAT"}:
+                continue
+            if deadline is not None and time.monotonic() > deadline:
+                fixes.append(f"round {rnd}: chapter {chno} fix skipped "
+                             f"— job deadline passed")
+                break
+            i = int(chno) - 1
+            fix_dir = Path(workdir) / f"ch{chno:02d}" / f"mqfix{rnd}"
+            fix_dir.mkdir(parents=True, exist_ok=True)
+            brief_i = chapter_brief(outline_data, i, spec=spec)
+            try:
+                import doc_structure as _ds
+                brief_i += _ds.arc_context_block(outline_data, i)
+            except Exception:
+                pass
+            brief_i += (
+                "\nQUALITY FIX — the previous render of this chapter "
+                f"had these measured defects in the ASSEMBLED video: "
+                f"{', '.join(rules)}. Regenerate the chapter with "
+                "complete, varied visuals: no black, frozen or blank "
+                "frames, no repeated footage, no unexplained silence.")
+            ch_cfg = None
+            if cfg is not None:
+                ch_cfg = dict(cfg)
+                ch_cfg["allow_cta"] = (
+                    i == len(outline_data["chapters"]) - 1)
+            res2 = await doc.make_video(
+                brief_i, chat, notify=notify, workdir=str(fix_dir),
+                **({"ref_voice": ref_voice} if ref_voice is not None else {}),
+                **({"amendments": amendments} if amendments is not None else {}),
+                **({"spec": spec, "cfg": ch_cfg, "footage_pool": pool}
+                   if spec is not None or pool is not None else {}))
+            state["paths"][i] = str(res2["path"])
+            if i < len(results):
+                results[i] = {**results[i], "path": str(res2["path"]),
+                              "duration": res2.get("duration"),
+                              "mq_fixed_round": rnd}
+            state["dirty"] = True
+            done += 1
+            fixes.append(f"round {rnd}: re-rendered chapter {chno} "
+                         f"({', '.join(rules)})")
+        # --- A/V mismatch or chapter changes: re-assemble once
+        if state["dirty"] or any(c["rule"] == "MQ-AVSYNC"
+                                  for c in file_level):
+            state["final"] = assemble(
+                state["paths"], state["final"], titles,
+                size=size, card_bg_from=list(state["paths"]))
+            state["dirty"] = False
+            fixes.append(f"round {rnd}: re-assembled the documentary "
+                         f"from its chapters")
+        return fixes
+
+    checks, rounds, fixes, _ok = await _qcx.bounded_correct_async(
+        check_fn, correct_fn, max_rounds=2)
+    return checks, rounds, fixes, state["final"], state["paths"]
 
 
 async def make_long_video(brief, chat, workdir, target_minutes,
@@ -483,26 +661,219 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     if notify:
         await notify(f"Long video: {out['title']} — {total_ch} chapters, "
                      f"~{target_minutes} min. Chapters render chestunna.")
+    # v85: editing memory exists for EVERY long job — not only spec
+    # jobs with vision verification on. Selections, rejections, QC
+    # failures, corrections and the final result are recorded at the
+    # end of the job (see the v85 block before the return), and the
+    # verifier below reads the SAME database. Guarded: a memory
+    # failure must never take the render down with it.
+    _mem84 = None
+    _job84 = str(Path(workdir).name)
+    try:
+        import edit_memory as _em85
+        _mem84 = _em85.EditMemory(
+            os.environ.get("JULIE_EDIT_MEMORY") or
+            str(Path(workdir) / "edit_memory.db"))
+        try:
+            _em85.seed_knowledge_base(_mem84)
+        except Exception:
+            pass
+    except Exception as _e:
+        print(f"edit memory unavailable: {str(_e)[:120]}")
     # v79 (mail 1 Part 2): ONE footage pool for the whole video — the
     # NO-REPEAT used_ids rule spans chapters, not just scenes.
+    # v88: the pool is also built when NO spec exists but a footage
+    # route is available (a stock key, or the keyless Commons
+    # provider) — v85-v87's spec-less runs silently had no pool at
+    # all, so footage could never attach even where a route existed.
     pool = None
+    import broll as _broll88
+    if spec is not None or _broll88.providers_available():
+        pool = _broll88.FootagePool(
+            state_path=str(Path(workdir) / "footage_state.json"))
     if spec is not None:
         import broll as _broll
-        pool = _broll.FootagePool(
-            state_path=str(Path(workdir) / "footage_state.json"))
+        # v84 (Stage 3 / P1): vision verification on the long path —
+        # sampled frames vs narration, hash-cached verdicts, strict
+        # call budget (default 80/job from edit_memory config; the
+        # 60-90 s acceptance test passes 18). Vision unavailable ->
+        # UNVERIFIED verdicts, never a silent pass. Disable with
+        # JULIE_BROLL_VERIFY=0.
+        if os.environ.get("JULIE_BROLL_VERIFY", "1") != "0":
+            try:
+                import broll_verify as _bv
+                import edit_memory as _em
+                _mem = _mem84 or _em.EditMemory(
+                    os.environ.get("JULIE_EDIT_MEMORY") or
+                    str(Path(workdir) / "edit_memory.db"))
+                pool.verifier = _bv.BrollVerifier(
+                    call_budget=int(os.environ.get(
+                        "JULIE_VISION_BUDGET",
+                        str(int(_mem.config("vision_max_calls_per_job"))))),
+                    cache_path=str(Path(workdir) / "vision_cache.json"),
+                    memory=_mem, job_id=str(Path(workdir).name))
+                print(f"broll vision verification: ON "
+                      f"(budget {pool.verifier.budget} calls)")
+            except Exception as _e:
+                print(f"broll vision verification unavailable: "
+                      f"{str(_e)[:120]}")
     results = []
     # spec/cfg/pool are passed ONLY when a spec exists — the same
     # conditional-kwargs contract the rest of the codebase keeps
     # (engine-shaped callers/stubs without those parameters stay
     # compatible; cf. v78test's render_chapters stub).
+    # v88: a long documentary renders with ONE locked grade and the
+    # full-frame composition rules (doc module flags — the runner
+    # serves one job per process, and doc.plan stamps both onto the
+    # plan so a later short in the same process is unaffected).
+    doc.GRADE_LOCK = True
+    doc.FULL_FRAME = True
     paths = await render_chapters(out, chat, workdir, notify=notify,
                                   deadline=deadline, results_out=results,
                                   ref_voice=ref_voice,
                                   amendments=amendments,
                                   **({"spec": spec, "cfg": cfg, "pool": pool}
-                                     if spec is not None else {}))
+                                     if spec is not None or pool is not None
+                                     else {}))
     if not paths:
         raise RuntimeError("long video: no chapters rendered")
+    # v87 (role 4): TASTE QC — sampled frames judged against the
+    # visual plan's own promises. FAIL beats are RE-PLANNED (the
+    # Visual Director directs again with the failed templates
+    # excluded) and the chapter is re-rendered from the corrected
+    # plan; max 2 re-plan rounds per chapter. With no vision route,
+    # every beat stays UNVERIFIED and chapters ship as rendered —
+    # never a fake PASS.
+    _taste87 = {"version": "v87-frame-taste-qc-1", "rounds": 0,
+                "vision": "unavailable", "chapters": []}
+    try:
+        import copy as _copy87
+        import director as _dir87
+        import frame_taste_qc as _tq87
+        import visual_director as _vd87
+        _vision87 = None
+        try:
+            import vision as _vis87
+            if _vis87.available():
+                _vision87 = _vis87.describe_images
+        except Exception:
+            _vision87 = None
+        _taste87["vision"] = "live" if _vision87 else "unavailable"
+        for _ci in range(len(results)):
+            _plan0 = results[_ci].get("plan") or {}
+            _writer = _plan0.get("writer_scenes")
+            if not _plan0.get("visual_plan") or not _writer:
+                continue
+            _entry = {"chapter": _ci + 1, "rounds": []}
+            _taste87["chapters"].append(_entry)
+            _excl = {}
+            for _round in range(3):  # audit + up to 2 re-plan rounds
+                _plan = results[_ci].get("plan") or {}
+                _recs = _plan.get("visual_plan") or []
+                _starts = _plan.get("starts") or []
+                _scenes = _plan.get("scenes") or []
+                _beats = []
+                for _bi, _rec in enumerate(_recs):
+                    _st = _starts[_bi] if _bi < len(_starts) else 0.0
+                    _d = 3.0
+                    if _bi < len(_scenes):
+                        _d = float(_scenes[_bi].get("d")
+                                   or _rec.get("duration_est_s") or 3)
+                    _beats.append({"beat": _rec["beat"],
+                                   "line": _rec["heard"],
+                                   "promise": _rec["see"],
+                                   "why": _rec.get("why", ""),
+                                   "start": _st, "duration": _d})
+                _rep = await _tq87.audit_beats(
+                    results[_ci]["path"], _beats,
+                    str(Path(workdir) / f"ch{_ci + 1:02d}" / "taste"),
+                    vision=_vision87)
+                _entry["rounds"].append(
+                    {"round": _round, "vision": _rep["vision"],
+                     "counts": _rep["counts"],
+                     "beats": [{"beat": b["beat"],
+                                "status": b["status"],
+                                "note": b["note"]}
+                               for b in _rep["beats"]]})
+                print(f"taste QC v87: chapter {_ci + 1} round "
+                      f"{_round} — {_rep['counts']}")
+                if _mem84 is not None:
+                    try:
+                        for _b in _rep["beats"]:
+                            _tpl = ""
+                            _line = ""
+                            if 0 < _b["beat"] <= len(_recs):
+                                _tpl = _recs[_b["beat"] - 1].get(
+                                    "visual_concept", "")
+                            if 0 < _b["beat"] <= len(_beats):
+                                _line = _beats[_b["beat"] - 1]["line"]
+                            _mem84.record_taste_outcome(
+                                _job84,
+                                f"ch{_ci + 1} beat {_b['beat']}",
+                                _tpl, _line, _b["status"], _b["note"])
+                    except Exception:
+                        pass
+                _failed = [b for b in _rep["beats"]
+                           if b["status"] == "FAIL"]
+                if not _failed or _round >= 2 or _vision87 is None:
+                    break
+                for _b in _failed:
+                    if 0 < _b["beat"] <= len(_recs):
+                        _tpl = _recs[_b["beat"] - 1].get(
+                            "visual_concept", "")
+                        if _tpl:
+                            _excl.setdefault(
+                                _b["beat"], []).append(_tpl)
+                _brief_i = chapter_brief(out, _ci, spec=spec)
+                try:
+                    import doc_structure as _ds87
+                    _brief_i += _ds87.arc_context_block(out, _ci)
+                except Exception:
+                    pass
+                _inp = _copy87.deepcopy(results[_ci].get("plan") or {})
+                _inp["scenes"] = _copy87.deepcopy(_writer)
+                _new_plan, _new_recs = _dir87.direct_plan(
+                    _inp, brief=_brief_i, chapter_index=_ci,
+                    chapter_count=len(out["chapters"]),
+                    brain={"chat": chat, "taste": _vd87.taste_pack(),
+                           "beat_sheet": _inp.get("beat_sheet"),
+                           "exclude": _excl})
+                _new_plan["writer_scenes"] = _copy87.deepcopy(_writer)
+                if _inp.get("beat_sheet"):
+                    _new_plan["beat_sheet"] = _inp["beat_sheet"]
+                _tdir = Path(workdir) / f"ch{_ci + 1:02d}" / \
+                    f"taste{_round + 1}"
+                _tdir.mkdir(parents=True, exist_ok=True)
+                _ch_cfg = None
+                if cfg is not None:
+                    _ch_cfg = dict(cfg)
+                    _ch_cfg["allow_cta"] = (
+                        _ci == len(out["chapters"]) - 1)
+                _res2 = await doc.make_video(
+                    _brief_i, chat, notify=notify, workdir=str(_tdir),
+                    plan_override=_new_plan,
+                    **({"ref_voice": ref_voice}
+                       if ref_voice is not None else {}),
+                    **({"amendments": amendments}
+                       if amendments is not None else {}),
+                    **({"spec": spec, "cfg": _ch_cfg,
+                        "footage_pool": pool}
+                       if spec is not None or pool is not None else {}))
+                _res2["fix_rounds_used"] = int(
+                    results[_ci].get("fix_rounds_used") or 0)
+                results[_ci] = _res2
+                paths[_ci] = _res2["path"]
+                _taste87["rounds"] += 1
+                _entry["replanned"] = {str(k): v
+                                       for k, v in _excl.items()}
+                print(f"taste QC v87: chapter {_ci + 1} re-planned "
+                      f"(excluded {_excl}) and re-rendered")
+        with open(Path(workdir) / "taste_qc.json", "w",
+                  encoding="utf-8") as _f:
+            json.dump(_taste87, _f, indent=1)
+    except Exception as e:
+        print("taste QC v87 loop failed:", str(e)[:200])
+        _taste87["error"] = str(e)[:200]
     titles = [ch["title"] for ch in out["chapters"]][:len(paths)]
     if spec is not None and cfg:
         _size = (int(cfg["width"]), int(cfg["height"]))
@@ -571,7 +942,8 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                 _starts.append(_t)
                 _t += _d + CARD_SECONDS
             mchecks, minfo = _comp.audit_media(
-                final, cfg, spec, chapter_breaks=_starts[1:])
+                final, cfg, spec, chapter_breaks=_starts[1:],
+                designed_silences=_designed_silences(plans))
             checks += mchecks
             diffs = _comp.sample_frame_diffs(final)
             frozen = 0
@@ -609,9 +981,23 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                 "chapters_done": len(paths),
             }
             verdicts = _comp.requirement_verdicts(spec, cfg, plan_info, minfo)
-            _rounds = sum(1 for r in results if (r.get("workdir") or "").find("fix") >= 0)
+            # v84 (Stage 2 / P0-D): structural documentary QC — one
+            # opening, one ending, no repeated hooks/CTAs/intros.
+            try:
+                import doc_structure as _ds
+                checks += _ds.structure_lints(
+                    [((r.get("plan") or {}).get("scenes") or [])
+                     for r in results])
+            except Exception as _e:
+                checks.append({"rule": "ST-1", "status": "UNVERIFIED",
+                               "detail": f"structure lint failed: {str(_e)[:100]}",
+                               "scene": None})
+            # v84 (Stage 2): the TRUE correction-round count (was
+            # hard-coded rounds=0 here as well).
+            _rounds = sum(int(r.get("fix_rounds_used") or 0)
+                          for r in results)
             report = _comp.build_report(spec, cfg, checks, verdicts,
-                                        rounds=0,
+                                        rounds=_rounds,
                                         fixes=[f for r in results
                                                for f in ((r.get("compliance") or {}).get("fixes_applied") or [])])
             for _name, _data in (("prompt_spec.json", spec),
@@ -626,20 +1012,302 @@ async def make_long_video(brief, chat, workdir, target_minutes,
             print(f"long compliance: {'PASS' if not _nf else f'{len(_nf)} FAIL'}")
         except Exception as e:
             print("long compliance run failed:", str(e)[:200])
-    return {"path": final, "title": out["title"], "duration": duration,
-            "lang": first.get("lang", "te"),
-            "caption": first.get("caption", ""),
-            "topic": first.get("topic", brief),
-            "plan": first.get("plan", {}),
-            "broll": broll_sources, "summary": summary,
-            "voice_note": voice_note,
-            "amendments_applied": amend_applied,
-            # v79: contract artifacts (FIX 1/5) for the runner upload.
-            "spec": spec or [], "render_config": cfg or {},
-            "compliance": report, "workdir": str(workdir),
-            "footage": pool.footage_json() if pool else {},
-            "partial": partial, "chapters_done": len(paths),
-            "chapters_total": total_ch, "long": True}
+    # v84 (Stage 1 / P0-A): UNCONDITIONAL QC. If the spec path did
+    # not produce a report — no spec, or the spec run itself crashed
+    # — the job STILL gets a truthful compliance_report.json: media
+    # audit + structural lints + whatever chapter checks exist.
+    # Checks that could not run are UNVERIFIED, never PASS (Q8:
+    # warn-and-deliver; the video above is delivered regardless).
+    if report is None:
+        try:
+            import qc_core as _qc84
+            _ch_checks = []
+            for _ci, _r in enumerate(results):
+                for _c in ((_r.get("compliance") or {}).get("checks") or []):
+                    _ch_checks.append({**_c, "chapter": _ci + 1})
+            _durs84 = []
+            for _pth in paths:
+                try:
+                    _durs84.append(_probe_duration(_pth))
+                except Exception:
+                    _durs84.append(0.0)
+            _starts84, _t84 = [], 0.0
+            for _d in _durs84:
+                _starts84.append(_t84)
+                _t84 += _d + CARD_SECONDS
+            report = _qc84.unconditional_long_report(
+                final, {"kind": "long"}, _ch_checks,
+                [((r.get("plan") or {}).get("scenes") or [])
+                 for r in results],
+                rounds=sum(int(r.get("fix_rounds_used") or 0)
+                           for r in results),
+                fixes=[f for r in results
+                       for f in ((r.get("compliance") or {}).get("fixes_applied") or [])],
+                workdir=str(Path(workdir)),
+                chapter_breaks=_starts84[1:])
+            _nf = [c for c in report["checks"] if c["status"] == "FAIL"]
+            print(f"long compliance (unconditional, no spec): "
+                  f"{'PASS' if not _nf else f'{len(_nf)} FAIL'}")
+        except Exception as e:
+            print("unconditional long compliance failed:", str(e)[:200])
+    # v85: ASSEMBLED-FILE correction loop. The rendered documentary
+    # itself is measured (media_qc: black/frozen/blank frames, A/V
+    # mismatch, loudness, silence, colour drift, repeated visuals);
+    # defects are corrected at chapter level and the file is
+    # re-inspected, max 2 rounds, with the TRUE round count merged
+    # into the compliance report. Uncorrectable defects stay FAIL —
+    # warn-and-deliver (Q8), never a false PASS.
+    _mq_rounds = 0
+    _mq_fixes = []
+    try:
+        _mq_cfg = None
+        if _mem84 is not None:
+            try:
+                _mq_cfg = {
+                    "loud_target_lufs": float(
+                        _mem84.config("loudness_lufs_target")),
+                    "loud_tol_lufs": float(
+                        _mem84.config("loudness_tolerance")),
+                    "silence_min_s": float(
+                        _mem84.config("silence_gap_max_s")),
+                    "freeze_min_s": 2.0,
+                }
+            except Exception:
+                _mq_cfg = None
+        (_mq_checks, _mq_rounds, _mq_fixes, final, paths) = \
+            await _correct_assembled(
+                final, paths, results, out, chat, workdir, titles,
+                _size if (spec is not None and cfg) else None,
+                notify=notify, deadline=deadline, ref_voice=ref_voice,
+                amendments=amendments, spec=spec, cfg=cfg, pool=pool,
+                mq_cfg=_mq_cfg)
+        if report is not None:
+            report["checks"] = [
+                c for c in report["checks"]
+                if not str(c.get("rule", "")).startswith("MQ-")
+            ] + _mq_checks
+            report["fix_rounds"] = int(report.get("fix_rounds") or 0) \
+                + _mq_rounds
+            report["fixes_applied"] = list(
+                report.get("fixes_applied") or []) + _mq_fixes
+            _failed85 = [c for c in report["checks"]
+                         if c["status"] == "FAIL"]
+            report["checks_failed"] = len(_failed85)
+            report["passed"] = not _failed85 and not [
+                v for v in (report.get("requirements") or [])
+                if v["status"] == "FAIL"]
+            try:
+                with open(Path(workdir) / "compliance_report.json",
+                          "w", encoding="utf-8") as _f:
+                    json.dump(report, _f, indent=1)
+            except OSError:
+                pass
+        try:
+            duration = _probe_duration(final)
+        except Exception:
+            pass
+        if _mq_rounds:
+            summary += (f"; assembled-file QC corrections: "
+                        f"{_mq_rounds} round(s)")
+        _mq_left = [c for c in _mq_checks if c["status"] == "FAIL"]
+        print(f"assembled media QC: {_mq_rounds} correction round(s), "
+              f"{len(_mq_left)} defect(s) remaining")
+    except Exception as e:
+        print("assembled correction loop failed:", str(e)[:200])
+    # v84 (Stage 5 / P3): Editing Director, LOG-ONLY. Reads the
+    # chapter plans, writes director_log.json, changes NOTHING.
+    _director_log = None
+    try:
+        import director as _dir84
+        import doc_structure as _ds84
+        _roles = _ds84.assign_arc(len(results))
+        # v87: the arc follows the analyst's reading, not only the
+        # arithmetic — a chapter whose script turns is the turning
+        # point, wherever it sits.
+        try:
+            _roles, _arc_notes87 = _ds84.validate_arc_with_analyst(
+                _roles, [(_r.get("plan") or {}).get("beat_sheet")
+                         for _r in results])
+            for _n87 in _arc_notes87:
+                print("arc validation v87:", _n87)
+        except Exception:
+            pass
+        _all_scenes = []
+        for _ci, _r in enumerate(results):
+            for _s in ((_r.get("plan") or {}).get("scenes") or []):
+                _all_scenes.append({**_s, "arc_role": _roles[_ci]})
+        _director_log = _dir84.analyse_plan(
+            _all_scenes, job_id=str(Path(workdir).name))
+        with open(Path(workdir) / "director_log.json", "w",
+                  encoding="utf-8") as _f:
+            json.dump(_director_log, _f, indent=1)
+        print(f"director (log-only): "
+              f"{len(_director_log['recommendations'])} recommendations")
+    except Exception as e:
+        print("director log failed:", str(e)[:150])
+    # v86: aggregate the Director's VISUAL PLANS (decided inside
+    # doc.plan, before rendering) across chapters: visual_plan.json +
+    # VISUAL_PLAN.md in the workdir, and on the result dict.
+    _visual_plan86 = []
+    try:
+        import director as _dir86b
+        for _ci, _r in enumerate(results):
+            for _rec in ((_r.get("plan") or {}).get("visual_plan") or []):
+                _visual_plan86.append({**_rec, "chapter": _ci + 1})
+        if _visual_plan86:
+            with open(Path(workdir) / "visual_plan.json", "w",
+                      encoding="utf-8") as _f:
+                json.dump(_visual_plan86, _f, indent=1)
+            with open(Path(workdir) / "VISUAL_PLAN.md", "w",
+                      encoding="utf-8") as _f:
+                _f.write(_dir86b.visual_plan_markdown(
+                    _visual_plan86, title=out["title"]))
+            print(f"director v86: visual plan — "
+                  f"{len(_visual_plan86)} beats across "
+                  f"{len(results)} chapter(s)")
+        # v87: the Story Analyst's BEAT SHEETS ride with the delivery
+        # (BEAT_SHEET.md + beat_sheet.json) — the readable structure
+        # the whole brain planned from.
+        import story_analyst as _sa87b
+        _sheets87 = []
+        _md87 = []
+        for _ci, _r in enumerate(results):
+            _sh = (_r.get("plan") or {}).get("beat_sheet")
+            if _sh:
+                _sheets87.append({**_sh, "chapter": _ci + 1})
+                _md87.append(_sa87b.beat_sheet_markdown(
+                    _sh, title=f"Chapter {_ci + 1}"))
+        if _sheets87:
+            with open(Path(workdir) / "beat_sheet.json", "w",
+                      encoding="utf-8") as _f:
+                json.dump(_sheets87, _f, indent=1)
+            with open(Path(workdir) / "BEAT_SHEET.md", "w",
+                      encoding="utf-8") as _f:
+                _f.write("\n\n".join(_md87))
+            print(f"story analyst v87: beat sheets for "
+                  f"{len(_sheets87)} chapter(s)")
+    except Exception as e:
+        print("visual plan aggregation failed:", str(e)[:150])
+    # v85: Director vs the ACTUAL render — the comparison the v84
+    # design promised (recommendations counted against the defects
+    # QC really found). Still log-only: nothing is mutated.
+    if _director_log is not None and report is not None:
+        try:
+            import director as _dir85
+            _director_log["render_comparison"] = \
+                _dir85.compare_with_render(_director_log, report)
+            with open(Path(workdir) / "director_log.json", "w",
+                      encoding="utf-8") as _f:
+                json.dump(_director_log, _f, indent=1)
+        except Exception as e:
+            print("director comparison failed:", str(e)[:120])
+    # v85: editing memory writes for THIS real job + the learning
+    # digest. Selections/rejections come from the footage pool, QC
+    # failures and corrections from the final report. The digest
+    # only PROPOSES rule changes — activation stays approval-gated
+    # (learning_loop.activate refuses unapproved proposals).
+    if _mem84 is not None:
+        try:
+            if pool is not None:
+                for _a in pool.assignments:
+                    _mem84.record_selection(
+                        _job84, str(_a.get("scene", "")),
+                        str(_a.get("clip_id", "")),
+                        str(_a.get("query", "")),
+                        detail={"provider": _a.get("provider"),
+                                "verify": _a.get("verify")})
+                for _r in pool.rejected:
+                    _mem84.record_rejection(
+                        _job84, str(_r.get("scene", "")),
+                        str(_r.get("clip_id") or _r.get("id") or ""),
+                        str(_r.get("query", "")),
+                        str(_r.get("reason", ""))[:300])
+            if report is not None:
+                for _c in report.get("checks") or []:
+                    if _c.get("status") == "FAIL":
+                        _mem84.record_qc_failure(
+                            _job84, str(_c.get("rule", "")),
+                            str(_c.get("detail", ""))[:300],
+                            str(_c.get("scene") or ""))
+                for _fx in report.get("fixes_applied") or []:
+                    _mem84.record_correction(_job84, "", str(_fx)[:200],
+                                             "applied")
+            _mem84.record_result(
+                _job84,
+                "partial" if partial else "delivered",
+                detail={"duration_s": round(float(duration or 0), 1),
+                        "chapters": f"{len(paths)}/{total_ch}",
+                        "checks_failed": (report or {}).get(
+                            "checks_failed")})
+            import learning_loop as _ll85
+            _digest = _ll85.build_digest(_mem84)
+            with open(Path(workdir) / "learning_digest.json", "w",
+                      encoding="utf-8") as _f:
+                json.dump(_digest, _f, indent=1, default=str)
+            print(f"edit memory: job {_job84} recorded; learning "
+                  f"digest: {len(_digest.get('new_proposals') or [])} "
+                  f"new proposal(s) (approval-gated)")
+        except Exception as e:
+            print("edit memory write failed:", str(e)[:150])
+    result = {"path": final, "title": out["title"], "duration": duration,
+              "lang": first.get("lang", "te"),
+              "caption": first.get("caption", ""),
+              "topic": first.get("topic", brief),
+              "plan": first.get("plan", {}),
+              "broll": broll_sources, "summary": summary,
+              "voice_note": voice_note,
+              "amendments_applied": amend_applied,
+              # v79: contract artifacts (FIX 1/5) for the runner upload.
+              "spec": spec or [], "render_config": cfg or {},
+              "compliance": report, "director": _director_log,
+              "visual_plan": _visual_plan86,
+              "taste_qc": _taste87,
+              "workdir": str(workdir),
+              "footage": pool.footage_json() if pool else {},
+              "partial": partial, "chapters_done": len(paths),
+              "chapters_total": total_ch, "long": True}
+    # v89: PACKAGING STEP (additive, delivery end) — 10 titles, 3
+    # thumbnail concepts, a validated title<->thumbnail pair, the
+    # description, 3 Shorts cut points and a debate-question first
+    # comment, written to packaging.json and attached to the result.
+    # Wrapped: a packaging failure NEVER changes delivery behaviour.
+    try:
+        import packaging as _pkg89
+        _chs89, _t89 = [], 0.0
+        for _i89, _ttl89 in enumerate(titles):
+            try:
+                _d89 = _probe_duration(paths[_i89])
+            except Exception:
+                _d89 = 60.0
+            _chs89.append({"title": _ttl89, "start_s": _t89,
+                           "end_s": _t89 + _d89})
+            _t89 += _d89 + (CARD_SECONDS if _i89 < len(titles) - 1
+                            else 0.0)
+        _srcs89 = []
+        for _r89 in results:
+            for _s89 in ((_r89.get("plan") or {}).get("scenes") or []):
+                if _s89.get("source"):
+                    _srcs89.append(str(_s89["source"]))
+        for _b89 in broll_sources:
+            if isinstance(_b89, dict) and _b89.get("url"):
+                _srcs89.append(str(_b89["url"]))
+        _pkg = _pkg89.build_packaging(
+            first.get("topic", brief), out["title"], _chs89,
+            sources=_srcs89,
+            claims=[c["title"] for c in out["chapters"]][:3],
+            duration=duration)
+        result["packaging"] = _pkg
+        with open(Path(workdir) / "packaging.json", "w",
+                  encoding="utf-8") as _f:
+            json.dump(_pkg, _f, indent=1)
+        print(f"packaging v89: pair "
+              f"{'PASS' if _pkg['pair_check']['passes'] else 'FLAGGED'} "
+              f"— '{_pkg['chosen_pair']['title']}' x "
+              f"'{_pkg['chosen_pair']['thumbnail_text']}'")
+    except Exception as e:
+        print("packaging v89 failed (delivery unchanged):",
+              str(e)[:200])
+    return result
 
 
 # ---------------------------------------------------------------- assemble

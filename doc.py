@@ -27,6 +27,26 @@ VIDEO_FX = None
 
 
 W, H, FPS = 1080, 1920, 30
+# v88 (Hark-like picture): the long-documentary path sets these two
+# module flags before rendering chapters (long_video.make_long_video)
+# and plan() stamps them onto the plan dict, so every frame of the
+# film shares them while shorts in another process never see them.
+# GRADE_LOCK: one colour grade for the whole film — the per-section
+# palette swaps that made v85-v87 chapters drift teal->green->brown
+# are ignored. FULL_FRAME: every beat must be a full-frame
+# composition (the _fit_above_label fill rule + richer backdrop).
+GRADE_LOCK = False
+FULL_FRAME = False
+# v88: optional scene-image generator hook, set by a caller (test
+# rigs / a future image route) as fn(prompt, dest_path) -> bool.
+# When set, scenes that wanted footage but got none receive a
+# generated full-frame photographic backdrop with a slow push-in
+# (photo-motion) instead of the bare gradient. Production default
+# None = off: real footage (Pexels) is the production route and
+# this hook never fabricates a backdrop silently — the plan records
+# every scene that used one (sc["has_sceneimg"]).
+_SCENE_IMG_GEN = None
+_FF_ACTIVE = False  # set per-plan in scene_frame; read by _fit_above_label
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONTS = os.path.join(HERE, "fonts")
 TR = 0.36  # transition length (s)
@@ -597,14 +617,79 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
             p["end_question"] = cfg["end_card"]
         if "zoom" in (cfg.get("excludes") or []):
             p["no_zoom"] = True
-    _enforce_plan(p, brief)
+    # v86 (Ajju 2026-11-14): the Documentary Director directs the plan
+    # for long-form chapters — beat-splitting, per-beat visual
+    # decisions, varied backgrounds, a written visual plan — BEFORE
+    # anything renders, and BEFORE plan enforcement, so enforcement
+    # audits the beats that will actually render (and so the
+    # enforcement repair pass cannot first swap the writer's visuals
+    # for abstract fallbacks, the v85 filmstrip-for-a-contrast-line
+    # defect). Activation is director.should_direct (chapter briefs /
+    # cfg / env); ordinary short briefs are never directed. A
+    # directing failure keeps the writer's plan, logged — it must
+    # never take the render down.
+    _directed86 = False
+    try:
+        import director as _dir86
+        if _dir86.should_direct(brief, cfg):
+            # v87 (the Editing Brain): the Story Analyst reads the
+            # writer's finished script FIRST and its beat sheet +
+            # the full taste pack ride into the Director as `brain` —
+            # the Visual Director (LLM) chooses visuals from the
+            # sheet, the Editing Director pass applies its rhythm
+            # decisions with a diff log. Any analyst failure degrades
+            # to v86 directing, logged — never a silent fake sheet.
+            _brain87 = {"chat": chat}
+            try:
+                import copy as _copy87
+                import story_analyst as _sa87
+                import visual_director as _vd87
+                _brain87["taste"] = _vd87.taste_pack()
+                _sheet87 = _sa87.analyse_script(
+                    p["scenes"], chat, taste=_brain87["taste"],
+                    topic=str(p.get("topic") or ""))
+                if _sheet87:
+                    _brain87["beat_sheet"] = _sheet87
+                    p["beat_sheet"] = _sheet87
+                    print(f"story analyst v87: beat sheet — "
+                          f"{len(_sheet87['scenes'])} scenes, "
+                          f"turning points {_sheet87['turning_points']}")
+                else:
+                    print("story analyst v87: unavailable — directing "
+                          "without a beat sheet")
+                # the writer's scenes ride along so Taste-QC failures
+                # can be RE-PLANNED from the original script (v87).
+                p["writer_scenes"] = _copy87.deepcopy(p["scenes"])
+            except Exception as _e87a:
+                print("story analyst v87 failed:", str(_e87a)[:120])
+            p, _vplan86 = _dir86.direct_plan(p, brief=brief, cfg=cfg,
+                                             brain=_brain87)
+            _directed86 = True
+            print(f"director v86: directed plan — {len(p['scenes'])} "
+                  f"beats, {len(_vplan86)} visual decisions")
+    except Exception as _e86:
+        print("director v86 failed (plan undirected):", str(_e86)[:150])
+    # a directed plan is audited but NOT repair-swapped (see
+    # _enforce_plan's repair=False contract)
+    _enforce_plan(p, brief, repair=not _directed86)
+    # v88: stamp the caller's composition flags onto the plan (set by
+    # the long path via the module globals above).
+    p["grade_lock"] = bool(GRADE_LOCK)
+    p["full_frame"] = bool(FULL_FRAME)
     return p
 
 
-def _enforce_plan(p, brief=""):
+def _enforce_plan(p, brief="", repair=True):
     """v79 plan enforcement: compliance.audit_plan + repair_plan,
     max 2 rounds. Repairs touch plan fields only (visual / title /
-    transition / sfx / bg kind) — never the voice line."""
+    transition / sfx / bg kind) — never the voice line.
+
+    v86: with repair=False the audit still runs and is recorded,
+    but NO repair swaps are applied. That is the mode for a
+    Director-led plan: the v79 repair pass optimises for its own
+    rule set and demonstrably undoes editorial decisions (it is
+    what swapped the v85 sample's contrast visual for a filmstrip);
+    on a directed plan, QC reports and the Director decides."""
     import compliance as _comp
     cfg = p.get("render_config") or {"kind": "short"}
     pools = {"visuals": list(C.VISUALS),
@@ -612,8 +697,25 @@ def _enforce_plan(p, brief=""):
              "sfx": sorted(set(SCENE_SFX.values())),
              "bg_kinds": list(VL.SCENE_BG),
              "pattern_bg": "paper"}
+    if not repair:
+        _checks = _comp.audit_plan(
+            p["scenes"], cfg,
+            topic_text=str(p.get("topic") or "") + " " + str(brief or ""),
+            measure=lambda txt, size: _label_width(
+                ImageDraw.Draw(Image.new("RGB", (8, 8))), txt) if txt else 0)
+        p["plan_checks"] = _checks
+        p["plan_fixes"] = []
+        p["plan_fix_rounds"] = 0
+        _bad = [c for c in _checks if c["status"] == "FAIL"]
+        if _bad:
+            print(f"plan audit (director-led, no repair): {len(_bad)} "
+                  f"check(s) failing: "
+                  + "; ".join(f"{c['rule']} s{c.get('scene')}"
+                              for c in _bad[:5]))
+        return
     fixes_all = []
     checks = []
+    _fix_rounds = 0
     for _round in range(3):  # audit, repair, audit, repair, audit
         checks = _comp.audit_plan(p["scenes"], cfg,
                                   topic_text=str(p.get("topic") or "") + " " + str(brief or ""),
@@ -625,8 +727,12 @@ def _enforce_plan(p, brief=""):
         if not fixes:
             break
         fixes_all += fixes
+        _fix_rounds += 1
     p["plan_checks"] = checks
     p["plan_fixes"] = fixes_all
+    # v84 (Stage 2): the TRUE number of correction rounds attempted —
+    # build_report used to hard-code rounds=0 and lie about this.
+    p["plan_fix_rounds"] = _fix_rounds
     _bad = [c for c in checks if c["status"] == "FAIL"]
     if _bad:
         print(f"plan enforcement: {len(_bad)} check(s) still failing after repairs: "
@@ -1174,6 +1280,35 @@ _VIS_NAME_MAP = {
 _SBG = {}
 
 
+def _ff_fill(lay, lo, hi):
+    """v88 FULL-FRAME FILL: crop the visual layer to its content and
+    scale the content so it FILLS the visual band — height ~94% of
+    the band or width ~92% of the frame, whichever binds, capped at
+    2.4x (bold flat graphics survive this upscale; the width-bound
+    case stops text-bearing visuals well before it). This is the
+    direct kill for the 'centred island on empty dark' look Ajju
+    rejected in v85-v87: the band fit below only ever scaled DOWN,
+    so a small clock/battery/scale drawing stayed small in a 930px
+    band no matter how the QC complained afterwards. Only active
+    for plans stamped full_frame (the long path)."""
+    bb = lay.getbbox()
+    if not bb:
+        return lay
+    x0, y0, x1, y1 = bb
+    cw, ch = max(1, x1 - x0), max(1, y1 - y0)
+    span = hi - lo
+    f = min(0.94 * span / ch, 0.92 * W / cw)
+    f = max(1.0, min(2.4, f))
+    if f <= 1.01:
+        return lay
+    content = lay.crop(bb).resize((int(cw * f), int(ch * f)),
+                                  Image.BICUBIC)
+    out = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    out.alpha_composite(content, ((W - content.width) // 2,
+                                  lo + (span - content.height) // 2))
+    return out
+
+
 def _fit_above_label(lay, extra_scale=1.0):
     # v36 (Blind A1 — fixed zones, 720-layer coords x1.5): a 1080x1920 visual
     # layer's CONTENT fits the VISUAL band y 480-1410 (below the title zone
@@ -1203,7 +1338,7 @@ def _fit_above_label(lay, extra_scale=1.0):
             return lay
         top, bot = bb[1], bb[3]
     elif top >= lo and bot <= hi:
-        return lay
+        return _ff_fill(lay, lo, hi) if _FF_ACTIVE else lay
     bh = bot - top
     span = hi - lo
     s = min(1.0, span / max(1, bh))
@@ -1219,7 +1354,7 @@ def _fit_above_label(lay, extra_scale=1.0):
     dy = lo + (span - bh) // 2 - top
     dx = (W - lay.size[0]) // 2
     out.alpha_composite(lay, (dx, dy))
-    return out
+    return _ff_fill(out, lo, hi) if _FF_ACTIVE else out
 
 
 def _call_lib_vis(name, t, st, d, acc, words=None, extra=None):
@@ -1699,11 +1834,119 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None):
     p["footage"] = pool.footage_json()
 
 
+# ---------------- v88: generated photographic backdrops ------------
+# When a caller installs _SCENE_IMG_GEN (a test rig or a future image
+# route), scenes that asked for footage but received none get a
+# generated full-frame photographic backdrop instead of the bare
+# gradient: the photo fills the frame, the drawn graphic is treated
+# over it exactly like the v79 footage treatment (blurred + darkened
+# when the graphic must own the frame), and a SLOW backdrop-only
+# push-in/pan keeps the frame alive — the content layer's camera
+# stays static per the v33 rule; this is the still's own motion,
+# alternating direction per scene so it never reads as one constant
+# zoom. Production default: hook unset, feature off, Pexels footage
+# is the real route. Every use is recorded on the plan
+# (sc["has_sceneimg"], p["sceneimg"]) — never silent.
+
+_SIMG = {}
+
+
+def _attach_scene_images(p, wd):
+    gen = _SCENE_IMG_GEN
+    if gen is None:
+        return
+    import compliance as _comp_si
+    sdir = os.path.join(wd, "sceneimg")
+    os.makedirs(sdir, exist_ok=True)
+    out = {}
+    for i, sc in enumerate(p["scenes"]):
+        if sc.get("has_footage"):
+            continue
+        queries = [q for q in (sc.get("queries") or [])
+                   if str(q).strip()]
+        if not queries:
+            continue
+        dest = os.path.join(sdir, f"sc{i}.jpg")
+        ok = os.path.exists(dest) and os.path.getsize(dest) > 20_000
+        if not ok:
+            prompt = (str(queries[0]) +
+                      ", cinematic documentary photograph, moody "
+                      "natural light, rich texture and depth, "
+                      "no text, no words, no watermark")
+            try:
+                ok = bool(gen(prompt, dest))
+            except Exception as e:
+                print(f"scene image scene {i + 1} failed: "
+                      f"{str(e)[:100]}")
+                ok = False
+        if ok:
+            blur = bool(_comp_si.needs_blur_treatment(sc)) or \
+                str(sc.get("visual") or "") not in ("primary",)
+            out[i] = {"path": dest, "blur": blur,
+                      "query": str(queries[0])}
+            sc["has_sceneimg"] = True
+    if out:
+        p["sceneimg"] = out
+        print(f"scene images: photographic backdrops on "
+              f"{len(out)}/{len(p['scenes'])} scenes")
+
+
+def _sceneimg_frame(p, idx, t):
+    """The scene's photographic backdrop at scene-local time t, with
+    its slow push-in/pan applied, or None. Treated (blurred +
+    darkened) variants are cached alongside the clean one."""
+    info = (p.get("sceneimg") or {}).get(idx)
+    if not info:
+        return None
+    path = info["path"]
+    key = (path, bool(info.get("blur")))
+    try:
+        if key not in _SIMG:
+            im = Image.open(path).convert("RGB")
+            tw, th = int(W * 1.12), int(H * 1.12)
+            im = im.resize((tw, th), Image.BICUBIC)
+            if info.get("blur"):
+                im = im.filter(ImageFilter.GaussianBlur(7))
+                im = Image.eval(im, lambda v: int(v * 0.6))
+            _SIMG[key] = im
+        base = _SIMG[key]
+        sc = p["scenes"][idx]
+        d = max(0.1, float(sc.get("d") or 6.0))
+        q = eio(clamp(t / d))
+        bw, bh = base.size
+        # v88.1: the first cut (5.5% push-in / 5% pan) was too gentle
+        # for treated backdrops — on a blurred, darkened silhouette
+        # photo the per-frame change fell under the freeze meter's
+        # noise floor and a held quote card shipped as a 2.3 s
+        # MQ-FREEZE. The motion is now ~2x: a 10% push-in, or a
+        # full-range pan at 0.90 crop (~1.4 px/frame of edge travel),
+        # which keeps every beat measurably alive while staying a
+        # backdrop drift, not a camera move on the content.
+        if idx % 2 == 0:  # slow push-in
+            cw = int(bw * (1.0 - 0.10 * q))
+            chh = int(bh * (1.0 - 0.10 * q))
+            x0 = (bw - cw) // 2
+            y0 = (bh - chh) // 2
+        else:  # gentle pan across the full crop range
+            cw = int(bw * 0.90)
+            chh = int(bh * 0.90)
+            x0 = int((bw - cw) * q)
+            y0 = (bh - chh) // 2
+        frame = base.crop((x0, y0, x0 + cw, y0 + chh)).resize(
+            (W, H), Image.BICUBIC).convert("RGBA")
+        frame.alpha_composite(_broll_shade())
+        return frame
+    except Exception:
+        return None
+
+
 def scene_frame(p, idx, t, return_layers=False):
     # return_layers (v35 frame-QC): also return the visual/label layer alpha
     # bboxes + the effect choice, so the QC can check geometry (overlap,
     # cutoff, collisions) on the actual layers instead of guessing from a
     # flat composited frame. Returns (rgb, vlay_bbox, llay_bbox, choice).
+    global _FF_ACTIVE
+    _FF_ACTIVE = bool(p.get("full_frame"))
     sc = p["scenes"][idx]; n = len(p["scenes"]); mood = sc["mood"]
     # v25: the look + title seed drive the palette, chapter card, layout and move.
     look = p.get("look", "A"); seed = p.get("seed", 0)
@@ -1722,11 +1965,19 @@ def scene_frame(p, idx, t, return_layers=False):
     # labels readable on bright footage. No clip -> the code-drawn
     # background below, byte-for-byte the old behaviour.
     _fb = _broll_frame(p, idx, t)
+    _sib = None if _fb is not None else _sceneimg_frame(p, idx, t)
     if _fb is not None:
         bg = _fb.convert("RGBA")
         bg.alpha_composite(_broll_shade())
+    elif _sib is not None:
+        bg = _sib
     else:
-        bg = background(mood, look, sc.get("section")).convert("RGBA")
+        # v88 GRADE_LOCK: one grade for the whole film — the section
+        # palette (which recoloured every section teal/green/brown in
+        # v85-v87) is ignored; mood glow + the look still carry it.
+        bg = background(mood, look,
+                        None if p.get("grade_lock")
+                        else sc.get("section")).convert("RGBA")
         # v36 (Blind C3): the FAR layer — two soft shape layers drifting at
         # 2 px/s and 6 px/s (different speeds), tiled so they wrap. The camera
         # stays static — only the background layers drift. (Bokeh = mid, dust = near.)
@@ -1740,11 +1991,16 @@ def scene_frame(p, idx, t, return_layers=False):
         # look bg, cached per kind in _SBG.
         _bk = sc.get("bg_kind")
         if _bk and _bk in VL.SCENE_BG:
-            if _bk not in _SBG:
+            # v88: full-frame plans get a more present scene layer
+            # (0.35 -> 0.55 alpha) — the backdrop must read as a
+            # place with depth, not a tint on a void.
+            _ffk = (_bk, "ff") if p.get("full_frame") else _bk
+            if _ffk not in _SBG:
                 _sb = VL.scene_bg(_bk).resize((W, H), Image.BICUBIC).convert("RGBA")
-                _sb.putalpha(_sb.split()[3].point(lambda v: int(v * 0.35)))
-                _SBG[_bk] = _sb
-            bg.alpha_composite(_SBG[_bk])
+                _alpha = 0.55 if p.get("full_frame") else 0.35
+                _sb.putalpha(_sb.split()[3].point(lambda v: int(v * _alpha)))
+                _SBG[_ffk] = _sb
+            bg.alpha_composite(_SBG[_ffk])
     lay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     for (x, y, r, sp) in PART:
         yy = (y - t * sp - idx * 140) % (H + 200) - 100
@@ -1813,6 +2069,15 @@ def scene_frame(p, idx, t, return_layers=False):
     else:  # standard
         draw_scene_visual(vd, vlay, p, idx, sc, pt, 945, acc)
         label(ld, sc["label"], label_t, acc, idx, look, keyword=_kw, scale=float(p.get("title_scale") or 1.0)) if not nolabel else None
+    # v88 FULL-FRAME: the drawn visual is scaled to fill the visual
+    # band BEFORE its one motion effect is applied (so enter/emphasis
+    # animations still play on the filled composition). Layout 1 is
+    # already full-bleed by design; layouts 0/2 — including the old
+    # "compact" — are filled. This, with the _fit_above_label fill,
+    # is what makes the A1 frame-fill rule pass by construction
+    # instead of by post-hoc QC enlargement.
+    if p.get("full_frame") and layout != 1:
+        vlay = _ff_fill(vlay, 480, 1410)
     # v35: ONE motion effect on the visual layer — the choice made above by
     # pick_one_effect(). "build_in" means the visual animates itself (word-
     # timed / draw-on) and NO layer transform is applied on top of it; that
@@ -2011,7 +2276,8 @@ def _payoff_idx(p):
     return best
 
 
-def music(total, starts, moods, path, hits=None, payoff=None):
+def music(total, starts, moods, path, hits=None, payoff=None,
+          intensity=None, silences=None):
     n = int(SR * total); out = np.zeros(n); rng = np.random.RandomState(7)
     dark = sum(m in ("tense", "sad", "mystery") for m in moods) >= len(moods) / 2
     prog = [[50, 57, 62, 65], [46, 53, 58, 62], [48, 55, 60, 64], [45, 52, 57, 61]] if dark else \
@@ -2069,6 +2335,33 @@ def music(total, starts, moods, path, hits=None, payoff=None):
         tick = rng.randn(_tl) * np.exp(-np.arange(_tl) / SR * 200) * 0.6
         for (ht, kind) in hits:
             add(hit if kind == "hit" else pop if kind == "pop" else tick, ht)
+    # v87: the Editing Director's per-beat intensity curve, EXECUTED.
+    # Each scene segment is gained toward its planned intensity,
+    # smoothed across boundaries so the curve breathes instead of
+    # stepping. v85/v86 planned this curve and never rendered it —
+    # the identical flat ~2.5 LU loudness range on both was the
+    # receipt. Sanctioned silences stop the music (and SFX) for real.
+    if intensity:
+        _g = np.ones(n)
+        _bounds = [float(x) for x in starts] + [float(total)]
+        for _i in range(min(len(intensity), len(starts))):
+            if intensity[_i] is None:
+                continue
+            _a = int(max(0.0, _bounds[_i]) * SR)
+            _b = int(min(_bounds[_i + 1], total) * SR)
+            if _b > _a:
+                _g[_a:_b] = 0.45 + 0.85 * float(intensity[_i])
+        _k = max(1, int(0.35 * SR))
+        _ker = np.ones(_k) / _k
+        _g = np.convolve(np.pad(_g, (_k, _k), mode="edge"),
+                         _ker, mode="same")[_k:-_k]
+        out = out * _g[:n]
+    if silences:
+        for (_t0, _dur) in silences:
+            _a = int(float(_t0) * SR)
+            _e = min(n, int((float(_t0) + float(_dur)) * SR))
+            if 0 <= _a < n and _e > _a:
+                out[_a:_e] = 0; sfx[_a:_e] = 0
     fade = np.minimum(1, (total - np.arange(n) / SR) / 2.0); out = out / (np.abs(out).max() + 1e-6) * 0.6 * fade
     for arr, pth in ((out, path), (sfx / (np.abs(sfx).max() + 1e-6) * 0.7, path.replace(".wav", "_sfx.wav"))):
         w = wave.open(pth, "w"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
@@ -2947,7 +3240,12 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                     hit = o; break
         s["pop_t"] = max(0.0, float(hit or 0.0) - 0.08)
     starts, t = [], 0.4  # 0.4 s pre-roll for the boom
-    for s in p["scenes"]: starts.append(t); t += s["d"]
+    # v87: a scene's silence_after_s (Editing Director, sanctioned
+    # spots only) becomes a REAL gap: the next scene starts later, so
+    # the narration itself pauses and the previous visual holds.
+    for s in p["scenes"]:
+        starts.append(t)
+        t += s["d"] + float(s.get("silence_after_s") or 0)
     p["starts"] = starts; p["voice_end"] = t; total = t + OUTRO
     if notify: await notify("Voice ready. Scenes render chestunna (animation + music).")
     # v69: stock B-roll for ~half the scenes (see _attach_broll). Runs
@@ -2968,6 +3266,14 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     if p.get("broll_sources") and notify:
         await notify(f"B-roll: {len(p['broll_sources'])} stock footage clips "
                      f"({', '.join(sorted({s['provider'] for s in p['broll_sources']}))}).")
+    # v88: photographic backdrops for the scenes footage did not
+    # reach — only when a caller installed the generator hook
+    # (_SCENE_IMG_GEN); production default off. Any failure leaves
+    # the plan untouched, exactly like the B-roll attach above.
+    try:
+        _attach_scene_images(p, wd)
+    except Exception as e:
+        print("scene image attach failed:", str(e)[:150])
     # v36 (Blind E6 — pre-render geometry QC + auto-fix): BEFORE the chunk
     # render, check every scene's layer geometry at mid-scene. If two layers
     # intersect, scale the visual to 80% and re-check; still hitting, drop
@@ -3042,7 +3348,12 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # the mix. "off" silences the finished track afterwards, so the
     # mix graph (and the loudness design) stays exactly as built.
     aflags.update(_amend_checkpoint(abox, p, "audio"))
-    music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff)
+    _inten87 = [s.get("music_intensity") for s in p["scenes"]]
+    _sil87 = [(starts[_i] + float(_s.get("d") or 0),
+               float(_s["silence_after_s"]))
+              for _i, _s in enumerate(p["scenes"])
+              if _s.get("silence_after_s")]
+    music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff, intensity=_inten87, silences=_sil87)
     # v79 (FIX 2): a spec switch ("no music" / "no SFX" in the prompt)
     # outranks the engine default AND a mid-flight amendment — the
     # requirement wins, the default is switched off.
@@ -3057,7 +3368,7 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # (mood + track) is recorded on the plan -> project.json.
     _music_on = not (aflags.get("music") == "off" or cfg.get("music") is False)
     if _music_on and _wav_rms(f"{wd}/music.wav") < 0.005:
-        music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff)
+        music(total, starts, [s["mood"] for s in p["scenes"]], f"{wd}/music.wav", hits=_hits, payoff=_payoff, intensity=_inten87, silences=_sil87)
         if aflags.get("sfx") == "off" or cfg.get("sfx") is False:
             _silence_wav(f"{wd}/music_sfx.wav", total)  # the regen rewrote it
         p.setdefault("plan_fixes", []).append(
@@ -3163,8 +3474,10 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                 if _i == len(p["scenes"]) - 1 and _s.get("visual") == "stamp_cta":
                     continue
                 _lay = scene_frame(p, _i, max(0.6, float(_s.get("d") or 4) / 2), return_layers=True)
-                _frames.append((_i + 1, _lay[0], bool(_s.get("has_footage"))))
-                _islands.append((_i + 1, _lay[1], bool(_s.get("has_footage"))))
+                _ff88 = bool(_s.get("has_footage")
+                             or _s.get("has_sceneimg"))
+                _frames.append((_i + 1, _lay[0], _ff88))
+                _islands.append((_i + 1, _lay[1], _ff88))
             _checks += _comp.audit_frame_fill(_frames)
             # v79.2 (item 8): full-screen compositions — a main
             # visual that is a small central island FAILs (A6); a
@@ -3172,8 +3485,39 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             _checks += _comp.audit_central_island(_islands)
         except Exception as _e:
             print("frame-fill audit failed:", str(_e)[:120])
-        _mchecks, _minfo = _comp.audit_media(out, cfg or {"kind": "short"}, spec or [])
+        # v88: this chapter's director-designed silence windows
+        # (chapter-local seconds) — sanctioned pauses are held
+        # beats, not dead air, for both media meters below.
+        _dsil = []
+        for _i, _sc in enumerate(p["scenes"]):
+            _sa = float(_sc.get("silence_after_s") or 0)
+            if _sa > 0 and _i < len(p["starts"]):
+                _w0 = p["starts"][_i] + float(_sc.get("d") or 0)
+                _dsil.append((_w0, _w0 + _sa))
+        _mchecks, _minfo = _comp.audit_media(
+            out, cfg or {"kind": "short"}, spec or [],
+            designed_silences=_dsil)
         _checks += _mchecks
+        # v85: deterministic inspection of the ACTUAL rendered file
+        # for the defects audit_media cannot see — black / frozen /
+        # blank (solid, incl. blank-blue) frames, A/V duration
+        # mismatch, repeated visual stretches, held-shot density.
+        # Loudness/silence/aspect are already covered by audit_media
+        # above, so those MQ rules are not duplicated here. A defect
+        # FAILs this report (warn-and-deliver) instead of shipping
+        # as an apparently successful video.
+        try:
+            import media_qc as _mq85
+            _mq_all, _mq_info = _mq85.inspect_file(
+                out, designed_silences=_dsil)
+            _checks += [c for c in _mq_all if c["rule"] in (
+                "MQ-AVSYNC", "MQ-BLACK", "MQ-FREEZE", "MQ-BLANK",
+                "MQ-REPEAT", "MQ-CUTS")]
+        except Exception as _e:
+            _checks.append({"rule": "MQ-BLANK", "status": "UNVERIFIED",
+                            "detail": f"media inspection could not run: "
+                                      f"{str(_e)[:80]}",
+                            "scene": None})
         _plan_info = {
             "lang": p.get("lang"), "topic": p.get("topic", brief),
             "voice_used": p.get("_voice_used", voice),
@@ -3188,6 +3532,9 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             "sources_shown": bool(cfg.get("show_sources")) and any(_s.get("source") for _s in p["scenes"]),
             "camera_moves": False,  # v33: the engine's camera is static
             "footage_coverage": (sum(1 for s in p["scenes"] if s.get("has_footage")) / max(1, len(p["scenes"]))),
+            # v88: generated photographic backdrops are reported as
+            # their OWN coverage — never folded into footage.
+            "sceneimg_coverage": (sum(1 for s in p["scenes"] if s.get("has_sceneimg")) / max(1, len(p["scenes"]))),
             "end_card_text": p.get("end_question", ""),
             "chapters_done": None,
         }
@@ -3197,7 +3544,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         _checks += _comp.audit_music_default(spec or [], cfg or {}, _plan_info)
         _verdicts = _comp.requirement_verdicts(spec or [], cfg or {}, _plan_info, _minfo)
         _report = _comp.build_report(spec or [], cfg or {}, _checks, _verdicts,
-                                     rounds=0, fixes=p.get("plan_fixes") or [])
+                                     rounds=int(p.get("plan_fix_rounds") or 0),
+                                     fixes=p.get("plan_fixes") or [])
         p["compliance"] = _report
         for _name, _data in (("prompt_spec.json", spec or []),
                              ("footage.json", p.get("footage") or {}),
