@@ -2852,20 +2852,39 @@ def _oauth_door(page, job, cfg):
         return None
     name = cfg["name"]
     progress("running", "oauth", f"{name} — OAuth door (Google/GitHub) try chesthunna; profile session unte human step lekunda complete avthundhi.", cfg["url"])
+    # F7 round 2: try EVERY door the page offers — a Google no-session
+    # must not hide a live GitHub session (and vice versa).
+    outcomes = []
+    for door in ("google", "github"):
+        outcome = _oauth_try_door(page, job, cfg, door)
+        if outcome == "ok":
+            return "ok"
+        if outcome is not None:
+            outcomes.append(outcome)
+    if "blocked" in outcomes:
+        return "blocked"
+    if "no-session" in outcomes:
+        return "no-session"
+    print(f"oauth door: no Google/GitHub button on the {name} signup page", flush=True)
+    return None
+
+
+def _oauth_try_door(page, job, cfg, door):
+    """One OAuth door attempt. Returns "ok" / "no-session" /
+    "blocked", or None when the page offers no such door."""
+    name = cfg["name"]
     if not goto(page, cfg["url"]):
         return None
     page.wait_for_timeout(2500)
-    door = None
-    if click(page, ["button:has-text('Log in with Google')", "button:has-text('Continue with Google')",
-                    "button:has-text('Sign up with Google')", "a:has-text('Log in with Google')",
-                    "a:has-text('Continue with Google')", "a:has-text('Sign up with Google')"]):
-        door = "google"
-    elif click(page, ["button:has-text('Log in with GitHub')", "button:has-text('Continue with GitHub')",
-                      "button:has-text('Sign up with GitHub')", "a:has-text('GitHub')",
-                      "button:has-text('GitHub')"]):
-        door = "github"
-    if not door:
-        print(f"oauth door: no Google/GitHub button on the {name} signup page", flush=True)
+    if door == "google":
+        clicked = click(page, ["button:has-text('Log in with Google')", "button:has-text('Continue with Google')",
+                               "button:has-text('Sign up with Google')", "a:has-text('Log in with Google')",
+                               "a:has-text('Continue with Google')", "a:has-text('Sign up with Google')"])
+    else:
+        clicked = click(page, ["button:has-text('Log in with GitHub')", "button:has-text('Continue with GitHub')",
+                               "button:has-text('Sign up with GitHub')", "a:has-text('GitHub')",
+                               "button:has-text('GitHub')"])
+    if not clicked:
         return None
     page.wait_for_timeout(4000)
     _dbg(page, f"oauth-{door}-landed")

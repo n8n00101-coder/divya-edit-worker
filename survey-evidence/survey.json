@@ -1,0 +1,767 @@
+{
+ "at": "2026-11-16T14:30:03Z",
+ "env": "github-actions-runner (f7survey.yml)",
+ "results": [
+  {
+   "provider": "resend",
+   "url": "https://resend.com/signup",
+   "http": 200,
+   "final_url": "https://resend.com/signup",
+   "title": "Sign up \u00b7 Resend",
+   "oauth_buttons": [
+    "Log in with Google",
+    "Log in with GitHub"
+   ],
+   "inputs": [
+    {
+     "type": "email",
+     "name": "email",
+     "ph": "alan.turing@example.com",
+     "id": "email"
+    },
+    {
+     "type": "password",
+     "name": "password",
+     "ph": "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022",
+     "id": "password"
+    },
+    {
+     "type": "checkbox",
+     "name": "",
+     "ph": "",
+     "id": ""
+    }
+   ],
+   "captcha_signals": [
+    "hcaptcha"
+   ],
+   "phone_signals": false,
+   "card_signals": false,
+   "text_excerpt": "Home Create a Resend account Already have an account? Log in. Log in with Google Log in with GitHub or Email Password At least 12 characters \u2014 not satisfied Mix of letters, numbers, and symbols \u2014 not satisfied Send me occasional updates, guides, and promotions. Create account By signing up, you agree to our Terms, Acceptable Use, and Privacy Policy.",
+   "screenshot": "survey-shots/resend.png"
+  },
+  {
+   "provider": "brevo",
+   "url": "https://app.brevo.com/account/register",
+   "http": 200,
+   "final_url": "https://onboarding.brevo.com/account/register",
+   "title": "Marketing made simple - Brevo",
+   "oauth_buttons": [
+    "Sign up with Google",
+    "Sign up with Apple"
+   ],
+   "inputs": [
+    {
+     "type": "hidden",
+     "name": "talon",
+     "ph": "",
+     "id": "talon"
+    },
+    {
+     "type": "text",
+     "name": "email",
+     "ph": "",
+     "id": "email"
+    },
+    {
+     "type": "password",
+     "name": "password",
+     "ph": "",
+     "id": "password"
+    },
+    {
+     "type": "checkbox",
+     "name": "ot-group-id-C0002",
+     "ph": "",
+     "id": "ot-group-id-C0002"
+    },
+    {
+     "type": "checkbox",
+     "name": "ot-group-id-C0003",
+     "ph": "",
+     "id": "ot-group-id-C0003"
+    },
+    {
+     "type": "checkbox",
+     "name": "ot-group-id-C0004",
+     "ph": "",
+     "id": "ot-group-id-C0004"
+    },
+    {
+     "type": "text",
+     "name": "vendor-search-handler",
+     "ph": "Search\u2026",
+     "id": "vendor-search-handler"
+    },
+    {
+     "type": "checkbox",
+     "name": "",
+     "ph": "",
+     "id": "chkbox-id"
+    },
+    {
+     "type": "checkbox",
+     "name": "",
+     "ph": "",
+     "id": "select-all-hosts-groups-handler"
+    },
+    {
+     "type": "checkbox",
+     "name": "",
+     "ph": "",
+     "id": "select-all-vendor-groups-handler"
+    },
+    {
+     "type": "checkbox",
+     "name": "",
+     "ph": "",
+     "id": "select-all-vendor-leg-handler"
+    }
+   ],
+   "captcha_signals": [
+    "recaptcha"
+   ],
+   "phone_signals": false,
+   "card_signals": true,
+   "text_excerpt": "Marketing made simple Free to use \u2013 no credit card required. Sign up with Google Sign up with Apple OR Email address* Create your password* Create your account By signing up, you are creating a Brevo account, and you agree to Brevo's Terms of Use and Privacy Policy Already have an account? Sign in By clicking \u201cAccept All Cookies\u201d, you agree to the storing of cookies in your browser to enhance site navigation, analyze site usage, and provide our ad partners with information for ad personalization and measurement.Cookie Details Cookies Settings Reject All Accept All Cookies",
+   "screenshot": "survey-shots/brevo.png"
+  },
+  {
+   "provider": "mailersend",
+   "url": "https://app.mailersend.com/register",
+   "http": 403,
+   "final_url": "https://www.mailersend.com/signup",
+   "title": "Just a moment...",
+   "oauth_buttons": [],
+   "inputs": [
+    {
+     "type": "hidden",
+     "name": "cf-turnstile-response",
+     "ph": "",
+     "id": "cf-chl-widget-uq3lx_response"
+    }
+   ],
+   "captcha_signals": [],
+   "phone_signals": false,
+   "card_signals": false,
+   "text_excerpt": "www.mailersend.com Performing security verification This website uses a security service to protect against malicious bots. This page is displayed while the website verifies you are not a bot. Ray ID: a5b73166893d4605 Performance and Security by Cloudflare Privacy",
+   "screenshot": "survey-shots/mailersend.png"
+  },
+  {
+   "provider": "mailjet",
+   "url": "https://app.mailjet.com/signup",
+   "http": 200,
+   "final_url": "https://app.mailjet.com/signup",
+   "title": "Mailjet",
+   "oauth_buttons": [],
+   "inputs": [
+    {
+     "type": "text",
+     "name": "firstName",
+     "ph": "",
+     "id": "firstName"
+    },
+    {
+     "type": "text",
+     "name": "lastName",
+     "ph": "",
+     "id": "lastName"
+    },
+    {
+     "type": "text",
+     "name": "email",
+     "ph": "ex: firstname@example.com",
+     "id": "email"
+    },
+    {
+     "type": "password",
+     "name": "password",
+     "ph": "",
+     "id": "password"
+    },
+    {
+     "type": "checkbox",
+     "name": "ot-group-id-SSPD_BG",
+     "ph": "",
+     "id": "ot-group-id-SSPD_BG"
+    },
+    {
+     "type": "checkbox",
+     "name": "switch",
+     "ph": "",
+     "id": "ot-sub-group-id-C0002"
+    },
+    {
+     "type": "checkbox",
+     "name": "switch",
+     "ph": "",
+     "id": "ot-sub-group-id-C0004"
+    },
+    {
+     "type": "checkbox",
+     "name": "switch",
+     "ph": "",
+     "id": "ot-sub-group-id-C0005"
+    },
+    {
+     "type": "text",
+     "name": "vendor-search-handler",
+     "ph": "Search\u2026",
+     "id": "vendor-search-handler"
+    },
+    {
+     "type": "checkbox",
+     "name": "",
+     "ph": "",
+     "id": "chkbox-id"
+    },
+    {
+     "type": "checkbox",
+     "name": "",
+     "ph": "",
+     "id": "select-all-hosts-groups-handler"
+    },
+    {
+     "type": "checkbox",
+     "name": "",
+     "ph": "",
+     "id": "select-all-vendor-groups-handler"
+    },
+    {
+     "type": "checkbox",
+     "name": "",
+     "ph": "",
+     "id": "select-all-vendor-leg-handler"
+    }
+   ],
+   "captcha_signals": [
+    "recaptcha"
+   ],
+   "phone_signals": false,
+   "card_signals": false,
+   "text_excerpt": "A great place to start Quick and easy core features that help you ramp up your email marketing APIs, SMTP relay, web hooks Advanced Email Editor Free email templates Free sign-up forms Basic statistics Copyright \u00a9 2026 Mailjet. All rights reserved | | Sign Up For Free No commitment. No hidden fees. First name Last name Email Password Min. 8 characters, 1 letter, 1 number and 1 special character Already have an account? By clicking the \"Create account\" button, I expressly agree to the Mailjet and understand that my account information will be used according to Mailjet Manage cookies We use cookies and similar technologies to operate our site. We also use performance, analytics and advertising cookies to improve your experience. You can manage your preferences, including your right to opt-out of the sale or sharing of your personal information by changing Cookie Settings. For more information, please see our Cookie policy. Do Not Sell or Share My Personal Information Accept Cookies",
+   "screenshot": "survey-shots/mailjet.png"
+  },
+  {
+   "provider": "smtp2go",
+   "url": "https://app.smtp2go.com/register",
+   "http": 200,
+   "final_url": "https://www.smtp2go.com/?loc=app",
+   "title": "Reliable & Scalable Email Delivery Service & API | SMTP2GO",
+   "oauth_buttons": [],
+   "inputs": [
+    {
+     "type": "radio",
+     "name": "rate",
+     "ph": "",
+     "id": "radio-monthly"
+    },
+    {
+     "type": "radio",
+     "name": "rate",
+     "ph": "",
+     "id": "radio-annual"
+    },
+    {
+     "type": "email",
+     "name": "email",
+     "ph": "name@company.com",
+     "id": "input-email"
+    },
+    {
+     "type": "text",
+     "name": "fullname",
+     "ph": "John Smith",
+     "id": "input-name"
+    },
+    {
+     "type": "text",
+     "name": "company",
+     "ph": "My Company",
+     "id": "input-company"
+    },
+    {
+     "type": "password",
+     "name": "password",
+     "ph": "Password",
+     "id": "signup-password"
+    },
+    {
+     "type": "tel",
+     "name": "phone",
+     "ph": "(123) 456-7890",
+     "id": "input-phone"
+    },
+    {
+     "type": "hidden",
+     "name": "countryName",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "hidden",
+     "name": "countryCode",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "number",
+     "name": "verification-number-1",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "number",
+     "name": "verification-number-2",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "number",
+     "name": "verification-number-3",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "number",
+     "name": "verification-number-4",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "number",
+     "name": "verification-number-5",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "hidden",
+     "name": "plan-id",
+     "ph": "",
+     "id": "plan-id"
+    },
+    {
+     "type": "hidden",
+     "name": "plan-type",
+     "ph": "",
+     "id": "plan-type"
+    },
+    {
+     "type": "hidden",
+     "name": "signup",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "hidden",
+     "name": "affiliate",
+     "ph": "",
+     "id": "affiliate"
+    },
+    {
+     "type": "hidden",
+     "name": "hiddenRecaptchaSignup",
+     "ph": "",
+     "id": "hiddenRecaptchaSignup"
+    },
+    {
+     "type": "hidden",
+     "name": "g-recaptcha-response",
+     "ph": "",
+     "id": "g-recaptcha-response"
+    },
+    {
+     "type": "submit",
+     "name": "",
+     "ph": "",
+     "id": "signup-step-1"
+    },
+    {
+     "type": "submit",
+     "name": "",
+     "ph": "",
+     "id": "signup-step-sms"
+    },
+    {
+     "type": "submit",
+     "name": "",
+     "ph": "",
+     "id": "signup-submit"
+    },
+    {
+     "type": "submit",
+     "name": "",
+     "ph": "",
+     "id": "signup-submit-sms"
+    },
+    {
+     "type": "submit",
+     "name": "",
+     "ph": "",
+     "id": "signup-resend-email"
+    },
+    {
+     "type": "hidden",
+     "name": "captcha_response",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "text",
+     "name": "fullname",
+     "ph": "Your Name",
+     "id": ""
+    },
+    {
+     "type": "password",
+     "name": "password",
+     "ph": "Enter Password",
+     "id": ""
+    },
+    {
+     "type": "submit",
+     "name": "",
+     "ph": "",
+     "id": ""
+    }
+   ],
+   "captcha_signals": [
+    "recaptcha"
+   ],
+   "phone_signals": true,
+   "card_signals": false,
+   "text_excerpt": "SMTP2GO Email delivery done right. Pricing Product Tour Customers Resources Sign In Sign Up Deliverability Blog Tips and insights on email deliverability Setup Guides Step-by-step guides to get started FAQ Answers to your questions API resources SMTP2GO API documentation WORLDWIDE SMTP DELIVERY Like a first-class courier, for email. Easily send and track all of your emails, and forget headaches with email delivery. See Plans & Pricing Try SMTP2GO Free Proudly serving companies like Deloitte Fast500 5 years in a row SMTP2GO means rock solid reliability. An outgoing email service needs to be carefully set up and properly maintained to be capable of performing. No more downtime Our redundant, multi data center infrastructure means emails will still be sent even during a major internet outage. Get alerted about problems Find out immediately if a potential problem exists with your account, such as a sudden increase in your bounce rate. Avoid arbitrary throttling Avoid the low hourly or daily limits put in place by ISP or webhost SMTP services, which are often only run as an afterthought. See what happens to the emails you send. Get a visual on all of your sent emails, spam complaints, b",
+   "screenshot": "survey-shots/smtp2go.png"
+  },
+  {
+   "provider": "elasticemail",
+   "url": "https://elasticemail.com/account#/create-account",
+   "http": 200,
+   "final_url": "https://elasticemail.com/select-product",
+   "title": "Pick the best product for you | Elastic Email",
+   "oauth_buttons": [],
+   "inputs": [],
+   "captcha_signals": [],
+   "phone_signals": false,
+   "card_signals": false,
+   "text_excerpt": "Log in Choose your product Email sending Email Marketing Grow your audience, send newsletters, and monetize content with professional tools Email campaigns Growing your audience Contact list management Try Email Marketing Email API Integrate your software and send emails via a RESTful API or SMTP relay. API Keys & SMTP relay Suppressions Inboud Email Routing Try Email API Compare Email Marketing and Email API link Customer Service & Chat Inbox Communicate with colleagues and clients through one integrated platform. Help desk Team chat Live chat Try Inbox",
+   "screenshot": "survey-shots/elasticemail.png"
+  },
+  {
+   "provider": "postmark",
+   "url": "https://account.postmarkapp.com/sign_up",
+   "http": 200,
+   "final_url": "https://account.postmarkapp.com/sign_up",
+   "title": "Sign Up for Postmark",
+   "oauth_buttons": [],
+   "inputs": [
+    {
+     "type": "hidden",
+     "name": "authenticity_token",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "hidden",
+     "name": "account[sign_up_attributes][browser_analytics_id]",
+     "ph": "",
+     "id": "account_sign_up_attributes_browser_analytics_id"
+    },
+    {
+     "type": "hidden",
+     "name": "account[sign_up_attributes][referrer_url]",
+     "ph": "",
+     "id": "account_sign_up_attributes_referrer_url"
+    },
+    {
+     "type": "hidden",
+     "name": "account[sign_up_attributes][from_activecampaign]",
+     "ph": "",
+     "id": "account_sign_up_attributes_from_activecampaign"
+    },
+    {
+     "type": "text",
+     "name": "",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "password",
+     "name": "",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "text",
+     "name": "user[name]",
+     "ph": "John Doe",
+     "id": "user_name"
+    },
+    {
+     "type": "email",
+     "name": "user[email]",
+     "ph": "john@xyzwidgets.com",
+     "id": "user_email"
+    },
+    {
+     "type": "text",
+     "name": "user[login]",
+     "ph": "john",
+     "id": "user_login"
+    },
+    {
+     "type": "password",
+     "name": "user[password]",
+     "ph": "",
+     "id": "user_password"
+    },
+    {
+     "type": "hidden",
+     "name": "user[time_zone]",
+     "ph": "",
+     "id": "user_time_zone"
+    },
+    {
+     "type": "hidden",
+     "name": "user[talon6]",
+     "ph": "",
+     "id": "talon6"
+    },
+    {
+     "type": "hidden",
+     "name": "user[terms_of_service]",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "checkbox",
+     "name": "user[terms_of_service]",
+     "ph": "",
+     "id": "user_terms_of_service"
+    }
+   ],
+   "captcha_signals": [
+    "recaptcha"
+   ],
+   "phone_signals": false,
+   "card_signals": false,
+   "text_excerpt": "Already have an account? Log in Say goodbye to missing or delayed emails. Full name Work email Username Password I agree to the Terms of Service and Privacy Policy. Let\u2019s get started This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply. Made with \u2665 at ActiveCampaign",
+   "screenshot": "survey-shots/postmark.png"
+  },
+  {
+   "provider": "mailgun",
+   "url": "https://signup.mailgun.com/new/signup",
+   "http": 200,
+   "final_url": "https://signup.mailgun.com/new/signup",
+   "title": "Sign Up Free | Mailgun",
+   "oauth_buttons": [],
+   "inputs": [
+    {
+     "type": "text",
+     "name": "email",
+     "ph": "",
+     "id": "email"
+    },
+    {
+     "type": "text",
+     "name": "name",
+     "ph": "",
+     "id": "name"
+    },
+    {
+     "type": "text",
+     "name": "company",
+     "ph": "",
+     "id": "company"
+    },
+    {
+     "type": "checkbox",
+     "name": "",
+     "ph": "",
+     "id": "add_payment_info"
+    },
+    {
+     "type": "hidden",
+     "name": "",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "hidden",
+     "name": "",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "text",
+     "name": "cardholder",
+     "ph": "",
+     "id": "cardholder"
+    },
+    {
+     "type": "text",
+     "name": "",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "text",
+     "name": "address",
+     "ph": "",
+     "id": "address"
+    },
+    {
+     "type": "text",
+     "name": "address_line2",
+     "ph": "Optional",
+     "id": "address_line2"
+    },
+    {
+     "type": "text",
+     "name": "city",
+     "ph": "",
+     "id": "city"
+    },
+    {
+     "type": "hidden",
+     "name": "",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "hidden",
+     "name": "",
+     "ph": "",
+     "id": ""
+    }
+   ],
+   "captcha_signals": [
+    "hcaptcha",
+    "recaptcha"
+   ],
+   "phone_signals": false,
+   "card_signals": true,
+   "text_excerpt": "Sign up for free No commitment. No hidden fees. Work Email Full Name Company Add a credit card to remove the limit! Secure Payment Info This is a secure 256-bit TLS encrypted form - your data is safe with us. Country United States Currency $ US Dollars Cardholder Name Credit Card Details Billing Address (line 1) Billing Address (line 2) City State Free 30-Day Trial After 30 days, only $35.00/mo. Cancel anytime. We will send you a reminder email before charging your card. Select another plan Foundation 50k Trial Today's Total (November payment): $0.00 Monthly Recurring Cost: Foundation 50k $35.00 Plan Total: Free for 30 days Create account Already have an account? Log in By creating a Mailgun account, you agree to the Mailgun Terms of Service. Please read our Privacy Policy to learn more about the way we use your information. Copyright \u00a9 2026 Mailgun All Rights Reserved.",
+   "screenshot": "survey-shots/mailgun.png"
+  },
+  {
+   "provider": "sendgrid",
+   "url": "https://signup.sendgrid.com/",
+   "http": 200,
+   "final_url": "https://login.twilio.com/u/signup?state=hKFo2SBsVUpFVlFKaXRZTWFCU1hsVjlpdkdYWUlkR0V1NlhXcqFur3VuaXZlcnNhbC1sb2dpbqN0aWTZIGVxdXVuSDFJd1FYTEQ4dGNpbGZCYmhMajNVSkxzaHo3o2NpZNkgR244UWMyZ1FOa2trZ0llT2s4QlJqRWZ5eWNoMTU2VUk",
+   "title": "Twilio | Try Twilio Free",
+   "oauth_buttons": [
+    "Sign up with Google"
+   ],
+   "inputs": [
+    {
+     "type": "hidden",
+     "name": "state",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "text",
+     "name": "ulp-first-name",
+     "ph": "",
+     "id": "first-name"
+    },
+    {
+     "type": "text",
+     "name": "ulp-last-name",
+     "ph": "",
+     "id": "last-name"
+    },
+    {
+     "type": "hidden",
+     "name": "passwordPolicy.isFlexible",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "hidden",
+     "name": "strengthPolicy",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "hidden",
+     "name": "complexityOptions.minLength",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "text",
+     "name": "email",
+     "ph": "",
+     "id": "email"
+    },
+    {
+     "type": "password",
+     "name": "password",
+     "ph": "",
+     "id": "password"
+    },
+    {
+     "type": "hidden",
+     "name": "captcha",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "checkbox",
+     "name": "ulp-terms-of-service",
+     "ph": "",
+     "id": "terms-of-service"
+    },
+    {
+     "type": "hidden",
+     "name": "ulp-terms-of-service-shown",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "checkbox",
+     "name": "ulp-marketing-consent",
+     "ph": "",
+     "id": "marketing-consent"
+    },
+    {
+     "type": "hidden",
+     "name": "ulp-marketing-consent-shown",
+     "ph": "",
+     "id": "marketing-consent-shown"
+    },
+    {
+     "type": "hidden",
+     "name": "ulp-talon",
+     "ph": "",
+     "id": "talon"
+    },
+    {
+     "type": "hidden",
+     "name": "ulp-stytch-telemetry-id",
+     "ph": "",
+     "id": "stytch-telemetry-id"
+    },
+    {
+     "type": "hidden",
+     "name": "state",
+     "ph": "",
+     "id": ""
+    },
+    {
+     "type": "hidden",
+     "name": "connection",
+     "ph": "",
+     "id": ""
+    }
+   ],
+   "captcha_signals": [],
+   "phone_signals": true,
+   "card_signals": true,
+   "text_excerpt": "___ Start your free trial today to test out the Twilio platform with no strings attached: No credit card required Free trials available Access to all products across the Twilio platform Get up and running Verify your email address & phone number Tell us what you want to build first Start building! *Free trials may be limited by time, features, and usage caps, and are subject to change without notice. Sign up for free Start your free trial and unlock all Twilio products, including Twilio SendGrid and Twilio Segment. First name Last name Email address * Password * By clicking Continue, you agree to the Twilio Terms of Service and the Twilio Privacy Notice. If you are in the EEA or UK, you have read and agree to the Electronic Communications Code Disclosures, if applicable. Continue Already have an account? Login OR Sign up with Google Terms of service | Privacy policy \u00a9 2026 Twilio Inc. all rights reserved",
+   "screenshot": "survey-shots/sendgrid.png"
+  }
+ ]
+}
