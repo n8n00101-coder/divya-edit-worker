@@ -53,7 +53,7 @@ EXPECTED_CHAIN = ["groq", "openrouter", "gemini", "cloudflare",
                   "nvidia", "mistral", "ai21", "voyage",
                   "tavily", "serper", "exa",
                   "deepgram", "assemblyai", "elevenlabs", "stability", "jina",
-                  "pexels"]
+                  "kaggle", "pexels"]
 NEW_IDS = EXPECTED_CHAIN[4:-1]
 
 

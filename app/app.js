@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v60";
+const APP_V = "julie-v61";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -1125,7 +1125,7 @@ async function startOneTapSetup() {
     let email = "";
     try { const me = await api("me"); email = (me.account && me.account.email) || ""; } catch {}
     if (!email) { toast(t("setupNeedEmail"), true); return; }
-    const d = await api("setup/start", { method: "POST", json: { email, providers: ["groq", "openrouter", "gemini", "cohere", "together", "sambanova", "fireworks", "cerebras", "nvidia", "mistral", "ai21", "voyage", "tavily", "serper", "exa", "deepgram", "assemblyai", "elevenlabs", "stability", "jina", "pexels"] } });
+    const d = await api("setup/start", { method: "POST", json: { email, providers: ["groq", "openrouter", "gemini", "cohere", "together", "sambanova", "fireworks", "cerebras", "nvidia", "mistral", "ai21", "voyage", "tavily", "serper", "exa", "deepgram", "assemblyai", "elevenlabs", "stability", "jina", "kaggle", "pexels"] } });
     // R48 note: Cloudflare (the user's own server) stays out of this
     // list — it is set up from its own step. The mini-box still renders
     // a Cloudflare step when setup/status reports one.
