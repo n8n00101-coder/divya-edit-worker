@@ -320,7 +320,7 @@ def test_summary():
 
     async def fake_render(outline_data, chat_, workdir, notify=None,
                           deadline=None, results_out=None, ref_voice=None,
-                          amendments=None):
+                          amendments=None, **kw):
         if results_out is not None:
             results_out.append({"path": "/tmp/x.mp4", "duration": 66.0,
                                 "lang": "en", "caption": "", "topic": "t",
@@ -329,7 +329,7 @@ def test_summary():
         return ["/tmp/x.mp4"] * len(outline_data["chapters"])
 
     long_video.render_chapters = fake_render
-    long_video.assemble = lambda parts, out, titles: out
+    long_video.assemble = lambda parts, out, titles, **kw: out
     long_video._probe_duration = lambda p: 460.0  # the production 7.7 min
     try:
         res = asyncio.run(long_video.make_long_video(

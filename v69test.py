@@ -176,7 +176,8 @@ def test_make_long_video():
                               "minutes": mins} for i in range(n_ch)]})
         return chat
 
-    async def fake_make_video(brief, chat, notify=None, workdir=None):
+    async def fake_make_video(brief, chat, notify=None, workdir=None,
+                              **kw):
         Path(workdir).mkdir(parents=True, exist_ok=True)
         out = str(Path(workdir) / "chapter.mp4")
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
