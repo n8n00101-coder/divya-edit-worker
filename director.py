@@ -749,6 +749,17 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
             _vd_choices = {}
     _exclude87 = _brain.get("exclude") or {}
 
+    # v100 (Gate 4 — variety soft cap): a template may fill at
+    # most ~30% of a chapter's beats DURING selection. The Male
+    # Gaze director flattened a chapter onto `counter` for 9 of
+    # 13 beats because the vetoes only prevented IMMEDIATE
+    # repeats. The hard 25% cap is audited after the plan
+    # (anti_boring.audit_variety -> VHIST, with a re-plan round
+    # in doc.plan); this soft cap keeps selection from walking
+    # into that failure in the first place.
+    _chosen_counts = {}
+    _soft_cap = max(3, -(-3 * n // 10))
+
     def effective_of(b):
         return _comp.effective_visual(b)
 
@@ -773,6 +784,10 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
             return False, f"'{eff}' repeats the previous beat's visual"
         if eff in window:
             return False, f"'{eff}' already used within the last 2 beats"
+        if _chosen_counts.get(cand["template"], 0) >= _soft_cap:
+            return False, (f"'{cand['template']}' already fills "
+                           f"{_soft_cap} beats of this chapter — "
+                           f"variety soft cap (v100)")
         return True, ""
 
     for bi, (sc, bt, feats, role, si) in enumerate(raw_beats):
@@ -992,6 +1007,8 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
             chosen = (cand, probe)
             notes.append("primary_fallback used")
         cand, b = chosen
+        _chosen_counts[cand["template"]] = \
+            _chosen_counts.get(cand["template"], 0) + 1
         if cand["template"] == "evidence_document":
             document_used += 1
         # the beat's meaning record names the exact line segment the
@@ -1004,9 +1021,22 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
             if _vd.get("why") and _why_shares_words(_vd["why"], bt):
                 b["why"] = _vd["why"] + f' (line: "{bt[:60]}")'
             if _vd.get("footage_query"):
-                b["queries"] = ([_vd["footage_query"]] +
-                                [q for q in (b.get("queries") or [])
-                                 if q != _vd["footage_query"]])[:2]
+                # v100 (Gate 1): the Visual Director's footage
+                # query passes the same stock-searchability gate
+                # as the writer's — a name/title query is dropped,
+                # never searched (it can only miss, and the miss
+                # used to be silent).
+                _fq100 = _vd["footage_query"]
+                try:
+                    import anti_boring as _ab100
+                    if not _ab100.query_is_searchable(_fq100):
+                        _fq100 = None
+                except Exception:
+                    pass
+                if _fq100:
+                    b["queries"] = ([_fq100] +
+                                    [q for q in (b.get("queries") or [])
+                                     if q != _fq100])[:2]
         # an inherited lib_visual belongs to the OLD plan's decision
         # (doc.plan sets one for 'place' fact types — including the
         # accidental trigger of the phrase "in the first place").

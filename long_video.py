@@ -243,6 +243,37 @@ def _join_clips(paths, out_path):
     return out_path
 
 
+def _fix_guidance100(failed):
+    """v100 (Gate 3): per-class repair instructions for a chapter
+    fix round, keyed on the rules that actually failed — a footage
+    failure gets footage instructions, a fact failure gets fact
+    instructions, not one generic 'fix these' line."""
+    rules = {c.get("rule") for c in failed or []}
+    g = []
+    if rules & {"R10", "FG-SHARE", "PART2-RATIO"}:
+        g.append("FOOTAGE: every beat needs stock-searchable "
+                 "footage queries — generic visible subjects "
+                 "(people, places, objects, actions); NEVER film "
+                 "titles, film stills or people's names")
+    if rules & {"VHIST", "R1", "A5", "PART3-CHANGE", "PART3-TYPES",
+                "PART3-TRANS", "PART4-CHECK"}:
+        g.append("VARIETY: no single visual type over a quarter "
+                 "of the chapter's beats — picture each line with "
+                 "a different composed visual")
+    if rules & {"FG-FACT", "FG-TEASE"}:
+        g.append("FACTS: cut or properly source every unsourced "
+                 "statistic/claim, or hedge it; never invent "
+                 "sources, movements or events; never tease a "
+                 "chapter that does not exist")
+    if "R11" in rules:
+        g.append("SOUND: no unexplained silence over 0.8 s; "
+                 "loudness -14 LUFS, true peak <= -1 dB")
+    if "FIDELITY" in rules:
+        g.append("FIDELITY: every visual must picture the words "
+                 "of ITS OWN line")
+    return g
+
+
 async def render_chapters(outline_data, chat, workdir, notify=None,
                           deadline=None, results_out=None, ref_voice=None,
                           amendments=None, spec=None, cfg=None, pool=None):
@@ -377,74 +408,136 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                        if amendments is not None else {}),
                     **({"spec": spec, "cfg": ch_cfg, "footage_pool": pool}
                        if spec is not None or cfg is not None else {}))
-                joined = _join_clips([res["path"], ext["path"]],
-                                     str(ch_dir / f"ch{i + 1:02d}_full.mp4"))
+                # v100 (Gate 5 — LENGTH HONESTY): the extension may
+                # only add NEW material. A restatement top-up (the
+                # Male Gaze chapters "topped up" by repeating
+                # themselves, then overshot their budgets) is
+                # REJECTED: the chapter ships at its honest length
+                # and the film's total adjusts to reality.
+                _nov100 = None
                 try:
-                    new_dur = _probe_duration(joined)
-                except Exception:
-                    new_dur = dur + float(ext.get("duration") or 0)
-                res = {**res, "path": joined, "duration": new_dur,
-                       "topped_up": True, "topup_seconds": missing_s,
-                       "broll": (res.get("broll") or [])
-                                + (ext.get("broll") or [])}
-                print(f"render_chapters: chapter {i + 1} topped up "
-                      f"({int(dur)}s -> {int(new_dur)}s of "
-                      f"{budget['seconds']}s budget)")
+                    import anti_boring as _ab100t
+                    _old_vo = [str(s.get("vo") or "") for s in
+                               ((res.get("plan") or {}).get("scenes")
+                                or [])]
+                    _new_vo = [str(s.get("vo") or "") for s in
+                               ((ext.get("plan") or {}).get("scenes")
+                                or [])]
+                    if _old_vo and _new_vo:
+                        _nov100 = _ab100t.novelty_report(_new_vo,
+                                                         _old_vo)
+                except Exception as _e100t:
+                    print(f"render_chapters: novelty check failed "
+                          f"({str(_e100t)[:100]}) — top-up kept, "
+                          f"novelty unverified")
+                if _nov100 is not None and not _nov100["novel"]:
+                    res = {**res,
+                           "topup_rejected": (
+                               f"restatement (mean overlap "
+                               f"{_nov100['mean_overlap']:.0%}, worst "
+                               f"scene {_nov100['worst_overlap']:.0%})"),
+                           "honest_length": True,
+                           "topup_novelty": _nov100}
+                    print(f"render_chapters: chapter {i + 1} top-up "
+                          f"REJECTED — restatement, not new material "
+                          f"(overlap {_nov100['mean_overlap']:.0%}); "
+                          f"the chapter ships at its honest "
+                          f"{int(dur)}s")
+                else:
+                    joined = _join_clips(
+                        [res["path"], ext["path"]],
+                        str(ch_dir / f"ch{i + 1:02d}_full.mp4"))
+                    try:
+                        new_dur = _probe_duration(joined)
+                    except Exception:
+                        new_dur = dur + float(ext.get("duration") or 0)
+                    res = {**res, "path": joined, "duration": new_dur,
+                           "topped_up": True,
+                           "topup_seconds": missing_s,
+                           "broll": (res.get("broll") or [])
+                                    + (ext.get("broll") or [])}
+                    if _nov100 is not None:
+                        res["topup_novelty"] = _nov100
+                    print(f"render_chapters: chapter {i + 1} topped "
+                          f"up ({int(dur)}s -> {int(new_dur)}s of "
+                          f"{budget['seconds']}s budget)")
         except Exception as e:
             print(f"render_chapters: chapter {i + 1} top-up failed "
                   f"({str(e)[:150]}) — keeping the rendered chapter")
         # v79 (R12 + FIX 5): a chapter whose compliance report still
         # FAILs is re-rendered with the failures named in its brief —
-        # fix only that chapter, max 2 rounds, keep the best attempt.
+        # fix only that chapter, keep the best attempt.
         # A passed deadline skips retries (partial semantics win).
+        #
+        # v100 (Gate 3 — QC WITH TEETH): the loop no longer requires
+        # a spec. The Male Gaze run was spec-less, so its 112
+        # compliance FAILs were LOGGED and shipped with 0 fix
+        # rounds. Now: with a spec, any FAIL triggers (existing
+        # behaviour); without one, FAILs in the boring-critical
+        # classes (anti_boring.BORING_CRITICAL_RULES — footage
+        # share, variety, dead air, fact gate) trigger. Max 3
+        # rounds (Ajju's production protocol: fix loop max 3).
         _fix_rounds_used = 0
-        if spec is not None:
-            for _round in range(2):
-                rep = res.get("compliance") or {}
-                failed = [c for c in (rep.get("checks") or [])
-                          if c.get("status") == "FAIL"]
-                if not failed:
-                    break
-                _fix_rounds_used += 1
-                if deadline is not None and time.monotonic() > deadline:
-                    break
-                fix_lines = "; ".join(
-                    f"{c.get('rule')} scene {c.get('scene')}: {c.get('detail', '')[:90]}"
-                    for c in failed[:8])
-                fix_dir = ch_dir / f"fix{_round + 1}"
-                fix_dir.mkdir(parents=True, exist_ok=True)
-                _pool_mark = len(pool.assignments) if pool is not None else 0
+        for _round in range(3):
+            rep = res.get("compliance") or {}
+            failed = [c for c in (rep.get("checks") or [])
+                      if c.get("status") == "FAIL"]
+            if spec is not None:
+                trigger = failed
+            else:
                 try:
-                    res2 = await doc.make_video(
-                        ch_brief + ("\nCOMPLIANCE FIXES REQUIRED — the "
-                                    "previous render of this chapter "
-                                    "failed these checks; fix exactly "
-                                    "these, change nothing else: "
-                                    + fix_lines),
-                        chat, notify=notify, workdir=str(fix_dir),
-                        **({"ref_voice": ref_voice}
-                           if ref_voice is not None else {}),
-                        **({"amendments": amendments}
-                           if amendments is not None else {}),
-                        spec=spec, cfg=ch_cfg, footage_pool=pool)
-                except Exception as e:
-                    print(f"render_chapters: chapter {i + 1} compliance "
-                          f"retry {_round + 1} failed ({str(e)[:120]})")
-                    break
-                rep2 = res2.get("compliance") or {}
-                failed2 = [c for c in (rep2.get("checks") or [])
-                           if c.get("status") == "FAIL"]
+                    import anti_boring as _ab100f
+                    trigger = _ab100f.boring_critical_fails(failed)
+                except Exception:
+                    trigger = []
+            if not trigger:
+                break
+            if deadline is not None and time.monotonic() > deadline:
+                break
+            _fix_rounds_used += 1
+            fix_lines = "; ".join(
+                f"{c.get('rule')} scene {c.get('scene')}: {c.get('detail', '')[:90]}"
+                for c in trigger[:8])
+            _guide100 = _fix_guidance100(trigger)
+            if _guide100:
+                fix_lines += "\n" + "\n".join(_guide100)
+            fix_dir = ch_dir / f"fix{_round + 1}"
+            fix_dir.mkdir(parents=True, exist_ok=True)
+            _pool_mark = len(pool.assignments) if pool is not None else 0
+            try:
+                res2 = await doc.make_video(
+                    ch_brief + ("\nCOMPLIANCE FIXES REQUIRED — the "
+                                "previous render of this chapter "
+                                "failed these checks; fix exactly "
+                                "these, change nothing else: "
+                                + fix_lines),
+                    chat, notify=notify, workdir=str(fix_dir),
+                    **({"ref_voice": ref_voice}
+                       if ref_voice is not None else {}),
+                    **({"amendments": amendments}
+                       if amendments is not None else {}),
+                    **({"spec": spec, "cfg": ch_cfg,
+                        "footage_pool": pool}
+                       if spec is not None or pool is not None
+                       or cfg is not None else {}))
+            except Exception as e:
                 print(f"render_chapters: chapter {i + 1} compliance "
-                      f"retry {_round + 1}: {len(failed)} -> "
-                      f"{len(failed2)} failed checks")
-                if len(failed2) <= len(failed):
-                    res = res2
-                    if pool is not None:
-                        pool.assignments = (pool.assignments[:_pool_mark0]
-                                            + pool.assignments[_pool_mark:])
-                        pool._save()
-                if not failed2:
-                    break
+                      f"retry {_round + 1} failed ({str(e)[:120]})")
+                break
+            rep2 = res2.get("compliance") or {}
+            failed2 = [c for c in (rep2.get("checks") or [])
+                       if c.get("status") == "FAIL"]
+            print(f"render_chapters: chapter {i + 1} compliance "
+                  f"retry {_round + 1}: {len(failed)} -> "
+                  f"{len(failed2)} failed checks")
+            if len(failed2) <= len(failed):
+                res = res2
+                if pool is not None:
+                    pool.assignments = (pool.assignments[:_pool_mark0]
+                                        + pool.assignments[_pool_mark:])
+                    pool._save()
+            if not failed2:
+                break
         # v84 (Stage 2): record the TRUE correction rounds this
         # chapter consumed — the long report used to hard-code 0.
         res["fix_rounds_used"] = _fix_rounds_used
@@ -487,6 +580,24 @@ def _designed_silence_windows(results, chapter_starts):
     return wins
 
 
+def _flattest_music_chapters(results, limit=2):
+    """v100 (Gate 6): chapter numbers (1-based) whose PLANNED
+    music-intensity curve is flattest (smallest max-min spread
+    across the chapter's beats) — the chapters a flat delivered
+    mix is most likely made of. A chapter with no curve data
+    sorts first: an absent curve is the flattest of all."""
+    scored = []
+    for i, r in enumerate(results or []):
+        scenes = ((r or {}).get("plan") or {}).get("scenes") or []
+        vals = [float(s["music_intensity"]) for s in scenes
+                if isinstance(s, dict)
+                and isinstance(s.get("music_intensity"), (int, float))]
+        spread = (max(vals) - min(vals)) if len(vals) >= 2 else 0.0
+        scored.append((spread, i + 1))
+    scored.sort()
+    return [ch for _sp, ch in scored[:int(limit)]]
+
+
 async def _correct_assembled(final, paths, results, outline_data, chat,
                              workdir, titles, size, notify=None,
                              deadline=None, ref_voice=None,
@@ -499,8 +610,9 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
     mismatch, loudness, silence, colour drift, repeated visuals) ->
     map each defect to its chapter -> correct at CHAPTER level
     (re-render only the defective chapters, or fix the file-level
-    audio in place) -> re-assemble -> inspect again. Maximum 2
-    rounds (qc_core.bounded_correct_async); the TRUE round count
+    audio in place) -> re-assemble -> inspect again. Maximum 3
+    rounds (qc_core.bounded_correct_async; v100 — Ajju's fix-loop
+    protocol); the TRUE round count
     and fixes are returned for the compliance report. Defects that
     cannot be corrected safely stay FAIL in the returned checks —
     warn-and-deliver, never a false PASS.
@@ -534,7 +646,9 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
 
     def check_fn():
         ch, _info = _mq.inspect_file(
-            state["final"], cfg=mq_cfg, chapter_starts=_starts(),
+            state["final"],
+            cfg={**(mq_cfg or {}), "kind": "long"},
+            chapter_starts=_starts(),
             workdir=str(workdir), expected_size=expected,
             designed_silences=_designed_silence_windows(results,
                                                         _starts()))
@@ -566,13 +680,28 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
             fixes.append(f"round {rnd}: re-applied dual-pass loudnorm "
                          f"to the assembled file (no re-render)")
         # --- chapter-level: re-render only defective chapters
+        _work = {}
+        for _k in by_ch:
+            if _k is not None:
+                _work[_k] = sorted({c["rule"] for c in by_ch[_k]})
+        # v100 (Gate 6 — SOUND FLOOR): MQ-LRA is a file-level
+        # check, but its fix is chapter-level: re-render the
+        # chapters whose planned music curve is flattest with the
+        # cue-sheet brief. The curve must be EXECUTED — a flat
+        # mix is re-edited, not just re-measured.
+        if any(c["rule"] == "MQ-LRA" for c in file_level):
+            for _chno100 in _flattest_music_chapters(results,
+                                                     limit=2):
+                _work.setdefault(_chno100, [])
+                if "MQ-LRA" not in _work[_chno100]:
+                    _work[_chno100].append("MQ-LRA")
         done = 0
-        for chno in sorted(k for k in by_ch if k is not None):
+        for chno in sorted(_work):
             if done >= 2:
                 break
-            rules = sorted({c["rule"] for c in by_ch[chno]})
+            rules = sorted(_work[chno])
             if not set(rules) & {"MQ-BLACK", "MQ-FREEZE", "MQ-BLANK",
-                                 "MQ-SILENCE", "MQ-REPEAT"}:
+                                 "MQ-SILENCE", "MQ-REPEAT", "MQ-LRA"}:
                 continue
             if deadline is not None and time.monotonic() > deadline:
                 fixes.append(f"round {rnd}: chapter {chno} fix skipped "
@@ -587,12 +716,28 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
                 brief_i += _ds.arc_context_block(outline_data, i)
             except Exception:
                 pass
-            brief_i += (
-                "\nQUALITY FIX — the previous render of this chapter "
-                f"had these measured defects in the ASSEMBLED video: "
-                f"{', '.join(rules)}. Regenerate the chapter with "
-                "complete, varied visuals: no black, frozen or blank "
-                "frames, no repeated footage, no unexplained silence.")
+            _rq100 = [r for r in rules if r != "MQ-LRA"]
+            if _rq100:
+                brief_i += (
+                    "\nQUALITY FIX — the previous render of this "
+                    "chapter had these measured defects in the "
+                    f"ASSEMBLED video: {', '.join(_rq100)}. "
+                    "Regenerate the chapter with complete, varied "
+                    "visuals: no black, frozen or blank frames, no "
+                    "repeated footage, no unexplained silence.")
+            if "MQ-LRA" in rules:
+                brief_i += (
+                    "\nSOUND FIX — the assembled film's loudness "
+                    "range measured FLAT: the cue-sheet music "
+                    "curve was planned but not executed. Re-edit "
+                    "this chapter so the music intensity FOLLOWS "
+                    "THE ARC and actually moves: hook 0.7, "
+                    "context/evidence 0.5, contradiction 0.55, "
+                    "turning point dips to 0.3, payoff lifts to "
+                    "0.85, conclusion decays to 0.4; music ducks "
+                    "under narration and lifts in non-narration "
+                    "windows; SFX land on story beats only, not "
+                    "on every cut.")
             ch_cfg = None
             if cfg is not None:
                 ch_cfg = dict(cfg)
@@ -626,8 +771,10 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
                          f"from its chapters")
         return fixes
 
+    # v100 (Gate 3): 3 rounds, per Ajju's production protocol
+    # (fix loop max 3) — was 2.
     checks, rounds, fixes, _ok = await _qcx.bounded_correct_async(
-        check_fn, correct_fn, max_rounds=2)
+        check_fn, correct_fn, max_rounds=3)
     return checks, rounds, fixes, state["final"], state["paths"]
 
 
@@ -947,6 +1094,34 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     # ASSEMBLED file (size from spec, duration within 10%, -14 LUFS /
     # -1 dBTP, no silence >0.8 s outside chapter breaks), sampled at
     # 1 frame / 4 s. The three artifacts land at the workdir root.
+    # v100 (Gate 2 — FG-TEASE): the film may only tease content
+    # that exists in its own plan. The Male Gaze film ended on a
+    # giant "4" teasing a Chapter 4 that was never made. Audited
+    # once here, over every chapter's lines + the end card, and
+    # added to whichever compliance report the job produces.
+    _tease100 = []
+    try:
+        import anti_boring as _ab100z
+        _texts100 = []
+        for _ci100, _r100 in enumerate(results):
+            for _s100 in ((_r100.get("plan") or {}).get("scenes")
+                          or []):
+                _texts100.append((_ci100 + 1,
+                                  str(_s100.get("vo") or "")))
+        _last_plan100 = (results[-1].get("plan") or {}) if results \
+            else {}
+        _last_scenes100 = _last_plan100.get("scenes") or []
+        _tease100 = _ab100z.audit_teases(
+            _texts100, total_ch,
+            end_question=str(_last_plan100.get("end_question")
+                             or ""),
+            last_scene=_last_scenes100[-1] if _last_scenes100
+            else None)
+        if _tease100:
+            print(f"tease audit v100: {len(_tease100)} fake "
+                  f"tease(s) found")
+    except Exception as _e100z:
+        print("tease audit v100 failed:", str(_e100z)[:120])
     report = None
     if spec is not None and cfg is not None:
         try:
@@ -970,6 +1145,7 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                 designed_silences=_designed_silence_windows(results,
                                                             _starts))
             checks += mchecks
+            checks += _tease100
             diffs = _comp.sample_frame_diffs(final)
             frozen = 0
             run = 0
@@ -1050,6 +1226,7 @@ async def make_long_video(brief, chat, workdir, target_minutes,
             for _ci, _r in enumerate(results):
                 for _c in ((_r.get("compliance") or {}).get("checks") or []):
                     _ch_checks.append({**_c, "chapter": _ci + 1})
+            _ch_checks += _tease100
             _durs84 = []
             for _pth in paths:
                 try:

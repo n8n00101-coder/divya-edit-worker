@@ -1216,6 +1216,25 @@ def measure_loudness(path):
         return None, None
 
 
+def measure_lra(path):
+    """The delivered loudness RANGE (LRA, in LU) or None. v100
+    (Gate 6 — sound floor): the documentary pack requires the
+    cue-sheet music curve to be EXECUTED, and a flat mix is its
+    measurable fingerprint (v85, v86 and the Male Gaze film all
+    shipped LRA ≈ 2.5-3.1 LU). Same loudnorm measurement as
+    measure_loudness; only the input_lra field is read."""
+    r = subprocess.run(["ffmpeg", "-i", str(path), "-vn", "-af",
+                        "loudnorm=print_format=json", "-f", "null", "-"],
+                       capture_output=True, text=True)
+    m = re.search(r"\{[^{}]*\"input_lra\"[^{}]*\}", r.stderr or "")
+    if not m:
+        return None
+    try:
+        return float(json.loads(m.group(0))["input_lra"])
+    except Exception:
+        return None
+
+
 def silence_gaps(path, max_gap=0.8, noise="-45dB"):
     """Silences longer than max_gap seconds: [(start, end)]. R11: no
     silence over 0.8 s except at chapter breaks (the caller filters

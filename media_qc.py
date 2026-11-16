@@ -20,6 +20,11 @@ chapter start times are given — to the chapter that contains it):
 - MQ-BLANK   sampled frames that are (near-)solid colour — incl. the
              blank-BLUE frame (solid navy background, no content)
 - MQ-LOUD    integrated loudness / true peak vs configurable targets
+- MQ-LRA     v100 (Gate 6, sound floor): the delivered loudness
+             RANGE. A flat mix (< 5 LU) means the cue-sheet music
+             curve was planned but never executed — v85/v86 and
+             the Male Gaze film all shipped ≈ 2.5-3.1 LU. FAIL on
+             long films (cfg kind == "long"), WARN elsewhere.
 - MQ-SILENCE silence gaps > threshold outside chapter breaks. v88: a
              gap that overlaps a DESIGNED silence window (the Editing
              Director's sanctioned silence_after_s beats, passed in as
@@ -57,6 +62,8 @@ DEFAULTS = {
     "av_mismatch_max_s": 0.5,
     "loud_target_lufs": -14.0,
     "loud_tol_lufs": 1.5,
+    "lra_min_lu": 5.0,            # v100: delivered loudness range floor (documentary pack)
+    "kind": "",                   # v100: routing key (see _cfg) — "long" arms the MQ-LRA FAIL
     "peak_max_dbtp": -0.9,
     "silence_min_s": 0.8,
     "colour_drift_max": 0.35,    # relative mean-luma drift, chapter to chapter
@@ -84,6 +91,10 @@ def _cfg(cfg):
     for k, v in (cfg or {}).items():
         if k in out and isinstance(v, (int, float)):
             out[k] = v
+    # v100: `kind` is a routing key, not a threshold — it decides
+    # whether MQ-LRA FAILs (long) or only WARNs (everything else).
+    if (cfg or {}).get("kind"):
+        out["kind"] = str(cfg["kind"])
     return out
 
 
@@ -404,6 +415,40 @@ def inspect_file(path, cfg=None, chapter_starts=None, workdir=None,
     except Exception as e:
         checks.append({"rule": "MQ-LOUD", "status": "UNVERIFIED",
                        "detail": f"audio checks failed: {str(e)[:80]}",
+                       "scene": None})
+    # --- v100 Gate 6 (sound floor): the delivered loudness range.
+    # The cue-sheet music curve (hook .7 -> context .5 -> turning
+    # .3 -> payoff .85) either moved the mix or it did not; LRA is
+    # the measurement. A flat long film FAILs and the assembled
+    # correction loop re-edits the flattest chapters' music.
+    try:
+        import compliance as comp
+        _lra = comp.measure_lra(path)
+        info["lra"] = _lra
+        if _lra is None:
+            checks.append({"rule": "MQ-LRA", "status": "UNVERIFIED",
+                           "detail": "loudness range (LRA) could not "
+                                     "be measured",
+                           "scene": None})
+        elif _lra < cfg["lra_min_lu"]:
+            _long = cfg.get("kind") == "long"
+            checks.append({
+                "rule": "MQ-LRA",
+                "status": "FAIL" if _long else "WARN",
+                "detail": (f"loudness range {_lra:.1f} LU — a flat "
+                           f"mix (target >= {cfg['lra_min_lu']:.0f} "
+                           f"LU): the cue-sheet music curve was "
+                           f"not executed"),
+                "scene": None})
+        else:
+            checks.append({"rule": "MQ-LRA", "status": "PASS",
+                           "detail": (f"loudness range {_lra:.1f} LU "
+                                      f"(target >= "
+                                      f"{cfg['lra_min_lu']:.0f} LU)"),
+                           "scene": None})
+    except Exception as e:
+        checks.append({"rule": "MQ-LRA", "status": "UNVERIFIED",
+                       "detail": f"LRA check failed: {str(e)[:80]}",
                        "scene": None})
     # --- cut density (WARN only): one held shot for a whole chapter
     try:
