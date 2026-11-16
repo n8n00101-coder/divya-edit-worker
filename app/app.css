@@ -465,6 +465,11 @@ input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=
 .lv-head{background:#171717;border-bottom-color:#3A3A3A;color:#FFFFFF}
 .lv-stage{flex:1 1 auto;width:100%;background:#000;min-height:0}
 .lv-stage img{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+/* v96: zoomed live view — the desktop frame (1280x800) at 200% width,
+   pannable, for reading small page text on a phone. Toggled by the
+   header 🔍 button or a double-tap on the frame. */
+.lv-stage.zoom{overflow:auto;display:block}
+.lv-stage.zoom img{width:200%;max-width:none;height:auto;max-height:none}
 .lv-bar{background:#171717;border-top-color:#3A3A3A}
 .lv-btn{background:#303030;color:#FFFFFF}
 .lv-btn.primary{background:#FFFFFF;color:#0D0D0D}
@@ -499,7 +504,7 @@ input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=
 .lv-sub{padding:2px 14px 6px;font-size:12.5px;color:var(--muted);min-height:16px}
 /* H4: browser card inside the chat setup box — frame + step, tap = live view */
 .browser-card{margin:10px 0 2px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface2)}
-.browser-card img{display:block;width:100%;aspect-ratio:412/915;max-height:300px;object-fit:cover;object-position:top;background:#000;cursor:pointer}
+.browser-card img{display:block;width:100%;aspect-ratio:16/10;max-height:300px;object-fit:cover;object-position:top;background:#000;cursor:pointer}
 .bc-meta{display:flex;align-items:center;gap:7px;padding:7px 10px;font-size:12.5px;color:var(--muted)}
 .bc-dot{width:8px;height:8px;border-radius:50%;background:#3ba55d;flex:none;animation:bcPulse 1.6s ease-in-out infinite}
 @keyframes bcPulse{0%,100%{opacity:1}50%{opacity:.35}}

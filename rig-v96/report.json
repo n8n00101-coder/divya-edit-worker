@@ -1,0 +1,51 @@
+{
+ "base": "http://127.0.0.1:39293",
+ "results": {
+  "viewport is desktop 1280x800": {
+   "pass": true,
+   "detail": "1280x800"
+  },
+  "site renders DESKTOP layout": {
+   "pass": true,
+   "detail": "DESKTOP LAYOUT"
+  },
+  "cookie banner auto-dismissed on goto (Reject chosen)": {
+   "pass": true,
+   "detail": "choice=reject gone=True"
+  },
+  "agent cursor present and travelled to the click": {
+   "pass": true,
+   "detail": "cursor at 172px,762px"
+  },
+  "profile context kwargs are desktop": {
+   "pass": true,
+   "detail": "{\"width\": 1280, \"height\": 800}"
+  },
+  "status pill renders in-page": {
+   "pass": true,
+   "detail": "TEST PILL 123|inline-flex"
+  },
+  "pause_for_email_verify completes via fed link": {
+   "pass": true,
+   "detail": "took 68s"
+  },
+  "banner dismissed at pause entry too": {
+   "pass": true,
+   "detail": "choice=reject"
+  },
+  "wait streamed >=3 DISTINCT frames (pill ticking)": {
+   "pass": true,
+   "detail": "4 frames, 4 distinct, sizes kb=[29, 20, 20, 19]"
+  },
+  "job note ticked with check counts": {
+   "pass": true,
+   "detail": "Groq verification link kosam Gmail check chesthunna \u2014 check 1, 06:56:05 IST. Link vachaka nene open chestha."
+  },
+  "final page is the signed-in keys page": {
+   "pass": true,
+   "detail": "http://127.0.0.1:39293/t/keys"
+  }
+ },
+ "frames_total": 7,
+ "progress_posts": 6
+}

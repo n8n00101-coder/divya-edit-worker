@@ -1,0 +1,36 @@
+{
+ "results": {
+  "status path stashed the mail-wait fields": {
+   "pass": true,
+   "detail": "{\"job\": {\"state\": \"paused\", \"note\": \"Groq verification link nee email ki vachindhi \\u2014 link ni nuvvu tap cheyyaku, Julie ne Gmail nunchi link theesi open chesi sign in avthundhi.\", \"pauseReason\": \""
+  },
+  "live view frame is the DESKTOP 1280x800 frame": {
+   "pass": true,
+   "detail": "[1280, 800]"
+  },
+  "wait line: doing + check count": {
+   "pass": true,
+   "detail": "Waiting for the verification mail \u2014 Julie will open the link itself when it arrives. \u00b7 check 3 \u00b7 last 06:58:41 \u00b7 1:12"
+  },
+  "wait line TICKS (elapsed time moves)": {
+   "pass": true,
+   "detail": "'Waiting for the verification mail \u2014 Julie will open the link itself when it arrives. \u00b7 check 3 \u00b7 last 06:58:41 \u00b7 1:12' -> 'Waiting for the verification mail \u2014 Julie will open the link itself when it arrives. \u00b7 check 3 \u00b7 last 06:58:41 \u00b7 1:15'"
+  },
+  "no-Gmail-permission line is honest + names the one fix": {
+   "pass": true,
+   "detail": "Julie doesn't have your Gmail permission yet \u2014 so she can't fetch the verification link herself. Tap 'Allow Gmail access' once on the Setup screen \u2014 after that, Julie opens links herself. (The runner is waiting.)"
+  },
+  "zoom toggles a pannable 200% view": {
+   "pass": true,
+   "detail": "{\"cls\": \"lv-stage zoom\", \"iw\": 824, \"sw\": 412}"
+  },
+  "Stop / Take control / I-did-it / mini box all present": {
+   "pass": true,
+   "detail": "[True, True, True, True]"
+  },
+  "chat browser-card shows the desktop frame (16/10)": {
+   "pass": true,
+   "detail": "{\"w\": 240, \"h\": 150, \"ratio\": 1.6}"
+  }
+ }
+}
