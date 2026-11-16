@@ -1,0 +1,960 @@
+{
+ "url": "https://testpages.eviltester.com/pages/forms/html-form/submit",
+ "title": "HTML Form Test Page | Test Pages",
+ "text": "Pages\nApps\nFun and Games\nTools\nChallenges\nReference Information and Tutorials\nSupport this site by joining our Patreon. For as little as $1 a month you receive exclusive ad-free content, ebooks and online training courses. \u2014 Learn more\nPractice Pages\nPages\nBasics\nInput Elements\nForms\nBasic Inputs\nNumber Inputs\nText Inputs\nOther Text\nSpecial Formats\nHTML Form\nInstructions\nAjax\nJavaScript Validation\nCSS\nNavigation\nEmbedded Content\nFiles\nStorage\nInteraction\nMobile\nErrors\nAuth\nWeb Components\nBrowser APIs\nApps\nFun and Games\nTools\nChallenges\nReference Information and Tutorials\n\nSupport this site by joining our Patreon. As little as $1 a month, and you receive exclusive content, ebooks and videos.\n\nLearn More\n\nTag Cloud\n\n AI1 Alerts2 API21 Attributes2 Authentication3 Automating3 Canvas3 Components1 Cookies3 CSS4 Elements20 Errors4 Exploratory Testing74 Files2 Forms8 Frames4 Games18 Hover1 HTML1 HTTP1 Images1 Input7 Interaction49 Java1 JavaScript63 JSON1 Local Storage1 Locators19 Mobile1 Navigation7 Randomness1 Security Testing1 Shadow Dom3 Storage5 Synchronization12 Table2 Test Data2 Text4 Tool3 WebDriver2\n\nCategories\n\n Advanced11 Basics22 Buggy Game17 Challenges12 Fun and Games19 Intermediate17 Micro App33 Reference6 Tool3\nPages\nForms\nHTML Form\nHTML Form\n\nTags:\n\n Elements Locators Forms Exploratory Testing\n\nCategories:\n\n Basics\n\nSubmit this simple HTML form will POST your details to be processed by another part of the application and shown on a results page.\n\nUsername:\n\nPassword:\n\nTextArea Comment:\n\nFilename:\n\nCheckbox Items:\nCheckbox 1 Checkbox 2 Checkbox 3\nRadio Items:\nradio 1 radio 2 radio 3\nMultiple Select Values\n\nSelection Item 1\nSelection Item 2\nSelection Item 3\nSelection Item 4\n\nDropdown:\n\nDrop Down Item 1\nDrop Down Item 2\nDrop Down Item 3\nDrop Down Item 4\nDrop Down Item 5\nDrop Down Item 6\n\n \n\nYou submitted the form. The details below show the values you entered for processing.\n\nSubmitted Values\n\nusername\n\njulie_test\n\nNo Value for password\n\ncomments\n\nTesting Julie browse\n\nNo Value for filename\n\nhiddenField\n\nHidden Field Value\n\ncheckboxes\n\ncb3\n\nradioval\n\nrd2\n\nmultipleselect\n\nms4\n\ndropdown\n\ndd3\n\nsubmitbutton\n\nsubmit\nClear Results\n\nHTML Form - Instructions\n\nHelp keep this site free by joining our Patreon Membership site. Membership costs as little as $1 a month and includes access to exclusive e-books and online training courses.\n\nIf you'd like to see your advertising message here or learn about corporate sponsorship then Contact Us.\n\n \n\u00a9 2025\u20132026 Compendium Developments LtdPrivacy Policy",
+ "elements": [
+  {
+   "i": 0,
+   "tag": "a",
+   "type": "",
+   "label": "",
+   "href": "/",
+   "name": ""
+  },
+  {
+   "i": 1,
+   "tag": "a",
+   "type": "",
+   "label": "Pages",
+   "href": "/pages/",
+   "name": ""
+  },
+  {
+   "i": 2,
+   "tag": "a",
+   "type": "",
+   "label": "Apps",
+   "href": "/apps/",
+   "name": ""
+  },
+  {
+   "i": 3,
+   "tag": "a",
+   "type": "",
+   "label": "Fun and Games",
+   "href": "/fun-and-games/",
+   "name": ""
+  },
+  {
+   "i": 4,
+   "tag": "a",
+   "type": "",
+   "label": "Tools",
+   "href": "/tools/",
+   "name": ""
+  },
+  {
+   "i": 5,
+   "tag": "a",
+   "type": "",
+   "label": "Challenges",
+   "href": "/challenges/",
+   "name": ""
+  },
+  {
+   "i": 6,
+   "tag": "a",
+   "type": "",
+   "label": "Reference Information and Tutorials",
+   "href": "/reference/",
+   "name": ""
+  },
+  {
+   "i": 7,
+   "tag": "a",
+   "type": "",
+   "label": "Practice Pages",
+   "href": "/",
+   "name": ""
+  },
+  {
+   "i": 8,
+   "tag": "a",
+   "type": "",
+   "label": "Learn More",
+   "href": "https://patreon.com/eviltester",
+   "name": ""
+  },
+  {
+   "i": 9,
+   "tag": "a",
+   "type": "",
+   "label": "AI1",
+   "href": "/tags/ai/",
+   "name": ""
+  },
+  {
+   "i": 10,
+   "tag": "a",
+   "type": "",
+   "label": "Alerts2",
+   "href": "/tags/alerts/",
+   "name": ""
+  },
+  {
+   "i": 11,
+   "tag": "a",
+   "type": "",
+   "label": "API21",
+   "href": "/tags/api/",
+   "name": ""
+  },
+  {
+   "i": 12,
+   "tag": "a",
+   "type": "",
+   "label": "Attributes2",
+   "href": "/tags/attributes/",
+   "name": ""
+  },
+  {
+   "i": 13,
+   "tag": "a",
+   "type": "",
+   "label": "Authentication3",
+   "href": "/tags/authentication/",
+   "name": ""
+  },
+  {
+   "i": 14,
+   "tag": "a",
+   "type": "",
+   "label": "Automating3",
+   "href": "/tags/automating/",
+   "name": ""
+  },
+  {
+   "i": 15,
+   "tag": "a",
+   "type": "",
+   "label": "Canvas3",
+   "href": "/tags/canvas/",
+   "name": ""
+  },
+  {
+   "i": 16,
+   "tag": "a",
+   "type": "",
+   "label": "Components1",
+   "href": "/tags/components/",
+   "name": ""
+  },
+  {
+   "i": 17,
+   "tag": "a",
+   "type": "",
+   "label": "Cookies3",
+   "href": "/tags/cookies/",
+   "name": ""
+  },
+  {
+   "i": 18,
+   "tag": "a",
+   "type": "",
+   "label": "CSS4",
+   "href": "/tags/css/",
+   "name": ""
+  },
+  {
+   "i": 19,
+   "tag": "a",
+   "type": "",
+   "label": "Elements20",
+   "href": "/tags/elements/",
+   "name": ""
+  },
+  {
+   "i": 20,
+   "tag": "a",
+   "type": "",
+   "label": "Errors4",
+   "href": "/tags/errors/",
+   "name": ""
+  },
+  {
+   "i": 21,
+   "tag": "a",
+   "type": "",
+   "label": "Exploratory Testing74",
+   "href": "/tags/exploratory-testing/",
+   "name": ""
+  },
+  {
+   "i": 22,
+   "tag": "a",
+   "type": "",
+   "label": "Files2",
+   "href": "/tags/files/",
+   "name": ""
+  },
+  {
+   "i": 23,
+   "tag": "a",
+   "type": "",
+   "label": "Forms8",
+   "href": "/tags/forms/",
+   "name": ""
+  },
+  {
+   "i": 24,
+   "tag": "a",
+   "type": "",
+   "label": "Frames4",
+   "href": "/tags/frames/",
+   "name": ""
+  },
+  {
+   "i": 25,
+   "tag": "a",
+   "type": "",
+   "label": "Games18",
+   "href": "/tags/games/",
+   "name": ""
+  },
+  {
+   "i": 26,
+   "tag": "a",
+   "type": "",
+   "label": "Hover1",
+   "href": "/tags/hover/",
+   "name": ""
+  },
+  {
+   "i": 27,
+   "tag": "a",
+   "type": "",
+   "label": "HTML1",
+   "href": "/tags/html/",
+   "name": ""
+  },
+  {
+   "i": 28,
+   "tag": "a",
+   "type": "",
+   "label": "HTTP1",
+   "href": "/tags/http/",
+   "name": ""
+  },
+  {
+   "i": 29,
+   "tag": "a",
+   "type": "",
+   "label": "Images1",
+   "href": "/tags/images/",
+   "name": ""
+  },
+  {
+   "i": 30,
+   "tag": "a",
+   "type": "",
+   "label": "Input7",
+   "href": "/tags/input/",
+   "name": ""
+  },
+  {
+   "i": 31,
+   "tag": "a",
+   "type": "",
+   "label": "Interaction49",
+   "href": "/tags/interaction/",
+   "name": ""
+  },
+  {
+   "i": 32,
+   "tag": "a",
+   "type": "",
+   "label": "Java1",
+   "href": "/tags/java/",
+   "name": ""
+  },
+  {
+   "i": 33,
+   "tag": "a",
+   "type": "",
+   "label": "JavaScript63",
+   "href": "/tags/javascript/",
+   "name": ""
+  },
+  {
+   "i": 34,
+   "tag": "a",
+   "type": "",
+   "label": "JSON1",
+   "href": "/tags/json/",
+   "name": ""
+  },
+  {
+   "i": 35,
+   "tag": "a",
+   "type": "",
+   "label": "Local Storage1",
+   "href": "/tags/local-storage/",
+   "name": ""
+  },
+  {
+   "i": 36,
+   "tag": "a",
+   "type": "",
+   "label": "Locators19",
+   "href": "/tags/locators/",
+   "name": ""
+  },
+  {
+   "i": 37,
+   "tag": "a",
+   "type": "",
+   "label": "Mobile1",
+   "href": "/tags/mobile/",
+   "name": ""
+  },
+  {
+   "i": 38,
+   "tag": "a",
+   "type": "",
+   "label": "Navigation7",
+   "href": "/tags/navigation/",
+   "name": ""
+  },
+  {
+   "i": 39,
+   "tag": "a",
+   "type": "",
+   "label": "Randomness1",
+   "href": "/tags/randomness/",
+   "name": ""
+  },
+  {
+   "i": 40,
+   "tag": "a",
+   "type": "",
+   "label": "Security Testing1",
+   "href": "/tags/security-testing/",
+   "name": ""
+  },
+  {
+   "i": 41,
+   "tag": "a",
+   "type": "",
+   "label": "Shadow Dom3",
+   "href": "/tags/shadow-dom/",
+   "name": ""
+  },
+  {
+   "i": 42,
+   "tag": "a",
+   "type": "",
+   "label": "Storage5",
+   "href": "/tags/storage/",
+   "name": ""
+  },
+  {
+   "i": 43,
+   "tag": "a",
+   "type": "",
+   "label": "Synchronization12",
+   "href": "/tags/synchronization/",
+   "name": ""
+  },
+  {
+   "i": 44,
+   "tag": "a",
+   "type": "",
+   "label": "Table2",
+   "href": "/tags/table/",
+   "name": ""
+  },
+  {
+   "i": 45,
+   "tag": "a",
+   "type": "",
+   "label": "Test Data2",
+   "href": "/tags/test-data/",
+   "name": ""
+  },
+  {
+   "i": 46,
+   "tag": "a",
+   "type": "",
+   "label": "Text4",
+   "href": "/tags/text/",
+   "name": ""
+  },
+  {
+   "i": 47,
+   "tag": "a",
+   "type": "",
+   "label": "Tool3",
+   "href": "/tags/tool/",
+   "name": ""
+  },
+  {
+   "i": 48,
+   "tag": "a",
+   "type": "",
+   "label": "WebDriver2",
+   "href": "/tags/webdriver/",
+   "name": ""
+  },
+  {
+   "i": 49,
+   "tag": "a",
+   "type": "",
+   "label": "Advanced11",
+   "href": "/categories/advanced/",
+   "name": ""
+  },
+  {
+   "i": 50,
+   "tag": "a",
+   "type": "",
+   "label": "Basics22",
+   "href": "/categories/basics/",
+   "name": ""
+  },
+  {
+   "i": 51,
+   "tag": "a",
+   "type": "",
+   "label": "Buggy Game17",
+   "href": "/categories/buggy-game/",
+   "name": ""
+  },
+  {
+   "i": 52,
+   "tag": "a",
+   "type": "",
+   "label": "Challenges12",
+   "href": "/categories/challenges/",
+   "name": ""
+  },
+  {
+   "i": 53,
+   "tag": "a",
+   "type": "",
+   "label": "Fun and Games19",
+   "href": "/categories/fun-and-games/",
+   "name": ""
+  },
+  {
+   "i": 54,
+   "tag": "a",
+   "type": "",
+   "label": "Intermediate17",
+   "href": "/categories/intermediate/",
+   "name": ""
+  },
+  {
+   "i": 55,
+   "tag": "a",
+   "type": "",
+   "label": "Micro App33",
+   "href": "/categories/micro-app/",
+   "name": ""
+  },
+  {
+   "i": 56,
+   "tag": "a",
+   "type": "",
+   "label": "Reference6",
+   "href": "/categories/reference/",
+   "name": ""
+  },
+  {
+   "i": 57,
+   "tag": "a",
+   "type": "",
+   "label": "Tool3",
+   "href": "/categories/tool/",
+   "name": ""
+  },
+  {
+   "i": 58,
+   "tag": "a",
+   "type": "",
+   "label": "Learn more",
+   "href": "https://patreon.com/eviltester",
+   "name": ""
+  },
+  {
+   "i": 59,
+   "tag": "a",
+   "type": "",
+   "label": "Pages",
+   "href": "/pages/",
+   "name": ""
+  },
+  {
+   "i": 60,
+   "tag": "a",
+   "type": "",
+   "label": "Basics",
+   "href": "/pages/basics/",
+   "name": ""
+  },
+  {
+   "i": 61,
+   "tag": "a",
+   "type": "",
+   "label": "Input Elements",
+   "href": "/pages/input-elements/",
+   "name": ""
+  },
+  {
+   "i": 62,
+   "tag": "a",
+   "type": "",
+   "label": "Forms",
+   "href": "/pages/forms/",
+   "name": ""
+  },
+  {
+   "i": 63,
+   "tag": "a",
+   "type": "",
+   "label": "Basic Inputs",
+   "href": "/pages/forms/basic-inputs/",
+   "name": ""
+  },
+  {
+   "i": 64,
+   "tag": "a",
+   "type": "",
+   "label": "Number Inputs",
+   "href": "/pages/forms/number-inputs/",
+   "name": ""
+  },
+  {
+   "i": 65,
+   "tag": "a",
+   "type": "",
+   "label": "Text Inputs",
+   "href": "/pages/forms/text-inputs/",
+   "name": ""
+  },
+  {
+   "i": 66,
+   "tag": "a",
+   "type": "",
+   "label": "Other Text",
+   "href": "/pages/forms/other-text/",
+   "name": ""
+  },
+  {
+   "i": 67,
+   "tag": "a",
+   "type": "",
+   "label": "Special Formats",
+   "href": "/pages/forms/special-formats/",
+   "name": ""
+  },
+  {
+   "i": 68,
+   "tag": "a",
+   "type": "",
+   "label": "HTML Form",
+   "href": "/pages/forms/html-form/",
+   "name": ""
+  },
+  {
+   "i": 69,
+   "tag": "a",
+   "type": "",
+   "label": "Instructions",
+   "href": "/pages/forms/html-form/html-form-instructions/",
+   "name": ""
+  },
+  {
+   "i": 70,
+   "tag": "a",
+   "type": "",
+   "label": "Ajax",
+   "href": "/pages/forms/ajax/",
+   "name": ""
+  },
+  {
+   "i": 71,
+   "tag": "a",
+   "type": "",
+   "label": "JavaScript Validation",
+   "href": "/pages/forms/javascript-validation/",
+   "name": ""
+  },
+  {
+   "i": 72,
+   "tag": "a",
+   "type": "",
+   "label": "CSS",
+   "href": "/pages/css/",
+   "name": ""
+  },
+  {
+   "i": 73,
+   "tag": "a",
+   "type": "",
+   "label": "Navigation",
+   "href": "/pages/navigation/",
+   "name": ""
+  },
+  {
+   "i": 74,
+   "tag": "a",
+   "type": "",
+   "label": "Embedded Content",
+   "href": "/pages/embedded-pages/",
+   "name": ""
+  },
+  {
+   "i": 75,
+   "tag": "a",
+   "type": "",
+   "label": "Files",
+   "href": "/pages/files/",
+   "name": ""
+  },
+  {
+   "i": 76,
+   "tag": "a",
+   "type": "",
+   "label": "Storage",
+   "href": "/pages/storage/",
+   "name": ""
+  },
+  {
+   "i": 77,
+   "tag": "a",
+   "type": "",
+   "label": "Interaction",
+   "href": "/pages/interaction/",
+   "name": ""
+  },
+  {
+   "i": 78,
+   "tag": "a",
+   "type": "",
+   "label": "Mobile",
+   "href": "/pages/mobile/",
+   "name": ""
+  },
+  {
+   "i": 79,
+   "tag": "a",
+   "type": "",
+   "label": "Errors",
+   "href": "/pages/errors/",
+   "name": ""
+  },
+  {
+   "i": 80,
+   "tag": "a",
+   "type": "",
+   "label": "Auth",
+   "href": "/pages/auth/",
+   "name": ""
+  },
+  {
+   "i": 81,
+   "tag": "a",
+   "type": "",
+   "label": "Web Components",
+   "href": "/pages/web-components/",
+   "name": ""
+  },
+  {
+   "i": 82,
+   "tag": "a",
+   "type": "",
+   "label": "Browser APIs",
+   "href": "/pages/browser-apis/",
+   "name": ""
+  },
+  {
+   "i": 83,
+   "tag": "a",
+   "type": "",
+   "label": "Apps",
+   "href": "/apps/",
+   "name": ""
+  },
+  {
+   "i": 84,
+   "tag": "a",
+   "type": "",
+   "label": "Fun and Games",
+   "href": "/fun-and-games/",
+   "name": ""
+  },
+  {
+   "i": 85,
+   "tag": "a",
+   "type": "",
+   "label": "Tools",
+   "href": "/tools/",
+   "name": ""
+  },
+  {
+   "i": 86,
+   "tag": "a",
+   "type": "",
+   "label": "Challenges",
+   "href": "/challenges/",
+   "name": ""
+  },
+  {
+   "i": 87,
+   "tag": "a",
+   "type": "",
+   "label": "Reference Information and Tutorials",
+   "href": "/reference/",
+   "name": ""
+  },
+  {
+   "i": 88,
+   "tag": "a",
+   "type": "",
+   "label": "Pages",
+   "href": "/pages/",
+   "name": ""
+  },
+  {
+   "i": 89,
+   "tag": "a",
+   "type": "",
+   "label": "Forms",
+   "href": "/pages/forms/",
+   "name": ""
+  },
+  {
+   "i": 90,
+   "tag": "a",
+   "type": "",
+   "label": "Elements",
+   "href": "https://testpages.eviltester.com/tags/elements/",
+   "name": ""
+  },
+  {
+   "i": 91,
+   "tag": "a",
+   "type": "",
+   "label": "Locators",
+   "href": "https://testpages.eviltester.com/tags/locators/",
+   "name": ""
+  },
+  {
+   "i": 92,
+   "tag": "a",
+   "type": "",
+   "label": "Forms",
+   "href": "https://testpages.eviltester.com/tags/forms/",
+   "name": ""
+  },
+  {
+   "i": 93,
+   "tag": "a",
+   "type": "",
+   "label": "Exploratory Testing",
+   "href": "https://testpages.eviltester.com/tags/exploratory-testing/",
+   "name": ""
+  },
+  {
+   "i": 94,
+   "tag": "a",
+   "type": "",
+   "label": "Basics",
+   "href": "https://testpages.eviltester.com/categories/basics/",
+   "name": ""
+  },
+  {
+   "i": 95,
+   "tag": "input",
+   "type": "text",
+   "label": "username",
+   "href": "",
+   "name": "username"
+  },
+  {
+   "i": 96,
+   "tag": "input",
+   "type": "password",
+   "label": "password",
+   "href": "",
+   "name": "password"
+  },
+  {
+   "i": 97,
+   "tag": "textarea",
+   "type": "",
+   "label": "Comments...",
+   "href": "",
+   "name": "comments"
+  },
+  {
+   "i": 98,
+   "tag": "input",
+   "type": "file",
+   "label": "filename",
+   "href": "",
+   "name": "filename"
+  },
+  {
+   "i": 99,
+   "tag": "input",
+   "type": "checkbox",
+   "label": "cb1",
+   "href": "",
+   "name": "checkboxes[]"
+  },
+  {
+   "i": 100,
+   "tag": "input",
+   "type": "checkbox",
+   "label": "cb2",
+   "href": "",
+   "name": "checkboxes[]"
+  },
+  {
+   "i": 101,
+   "tag": "input",
+   "type": "checkbox",
+   "label": "cb3",
+   "href": "",
+   "name": "checkboxes[]"
+  },
+  {
+   "i": 102,
+   "tag": "input",
+   "type": "radio",
+   "label": "rd1",
+   "href": "",
+   "name": "radioval"
+  },
+  {
+   "i": 103,
+   "tag": "input",
+   "type": "radio",
+   "label": "rd2",
+   "href": "",
+   "name": "radioval"
+  },
+  {
+   "i": 104,
+   "tag": "input",
+   "type": "radio",
+   "label": "rd3",
+   "href": "",
+   "name": "radioval"
+  },
+  {
+   "i": 105,
+   "tag": "select",
+   "type": "",
+   "label": "Selection Item 1 Selection Item 2 Selection Item 3 Selection Item 4",
+   "href": "",
+   "name": "multipleselect[]"
+  },
+  {
+   "i": 106,
+   "tag": "select",
+   "type": "",
+   "label": "Drop Down Item 1 Drop Down Item 2 Drop Down Item 3 Drop Down Item 4 Drop Down It",
+   "href": "",
+   "name": "dropdown"
+  },
+  {
+   "i": 107,
+   "tag": "input",
+   "type": "image",
+   "label": "image",
+   "href": "",
+   "name": "image"
+  },
+  {
+   "i": 108,
+   "tag": "input",
+   "type": "reset",
+   "label": "cancel",
+   "href": "",
+   "name": "submitbutton"
+  },
+  {
+   "i": 109,
+   "tag": "input",
+   "type": "submit",
+   "label": "submit",
+   "href": "",
+   "name": "submitbutton"
+  },
+  {
+   "i": 110,
+   "tag": "button",
+   "type": "",
+   "label": "Clear Results",
+   "href": "",
+   "name": ""
+  },
+  {
+   "i": 111,
+   "tag": "a",
+   "type": "",
+   "label": "HTML Form - Instructions",
+   "href": "/pages/forms/html-form/html-form-instructions/",
+   "name": ""
+  },
+  {
+   "i": 112,
+   "tag": "a",
+   "type": "",
+   "label": "Patreon Membership site",
+   "href": "https://patreon.com/eviltester",
+   "name": ""
+  },
+  {
+   "i": 113,
+   "tag": "a",
+   "type": "",
+   "label": "e-books and online training courses",
+   "href": "https://www.testerhq.com/",
+   "name": ""
+  },
+  {
+   "i": 114,
+   "tag": "a",
+   "type": "",
+   "label": "Contact Us",
+   "href": "https://linkedin.com/in/eviltester",
+   "name": ""
+  },
+  {
+   "i": 115,
+   "tag": "a",
+   "type": "",
+   "label": "Twitter",
+   "href": "https://twitter.com/eviltester",
+   "name": ""
+  },
+  {
+   "i": 116,
+   "tag": "a",
+   "type": "",
+   "label": "LinkedIn",
+   "href": "https://linkedin.com/in/eviltester",
+   "name": ""
+  },
+  {
+   "i": 117,
+   "tag": "a",
+   "type": "",
+   "label": "GitHub",
+   "href": "https://github.com/eviltester",
+   "name": ""
+  },
+  {
+   "i": 118,
+   "tag": "a",
+   "type": "",
+   "label": "Privacy Policy",
+   "href": "https://www.eviltester.com/page/privacy/",
+   "name": ""
+  }
+ ],
+ "cookie_banner": false
+}

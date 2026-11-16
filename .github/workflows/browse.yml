@@ -1,0 +1,29 @@
+name: divya-browse
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Browse job id (KV setupjob:<job>, provider=browse)"
+        required: true
+        type: string
+jobs:
+  browse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install browser + deps
+        run: |
+          pip install -q playwright httpx
+          playwright install --with-deps chromium
+      - name: Run browse driver
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+          JOB: ${{ inputs.job }}
+          PROVIDER: browse
+          BROWSER_MODE: profile
+        run: python browse.py

@@ -1,0 +1,123 @@
+{
+ "results": [
+  {
+   "rung": "A open+dismiss+navigate+report",
+   "ok": false,
+   "evidence": {
+    "error": "RuntimeError: navigation incomplete: {'goto_cookiebot': True, 'title_before': 'Simple and Trusted Data Privacy Compliance with Cookiebot', 'banner_dismissed_via': '(none reported)', 'banner_still_present': True, 'goto_wikipedia': True, 'wiki_title': 'Wikipedia, the free encyclopedia', 'section_click': False, 'final_url': 'https://en.wikipedia.org/wiki/Main_Page', 'final_title': 'Wikipedia, the free encyclopedia', 'headline_h1': 'Main Page'}"
+   },
+   "secs": 125.8
+  },
+  {
+   "rung": "B search+click+extract fact",
+   "ok": false,
+   "evidence": {
+    "error": "RuntimeError: search flow incomplete: {'goto_ddg': True, 'ddg_title': '', 'result_click': False, 'final_url': 'https://html.duckduckgo.com/html/?q=capital+of+norway+wikipedia', 'final_title': '', 'fact_found': False, 'text_head': 'If this persists, please email us. Our support email address includes an anonymized error code that helps us understand the context of your search.'}"
+   },
+   "secs": 8.8
+  },
+  {
+   "rung": "C demo form fill+submit+confirm",
+   "ok": false,
+   "evidence": {
+    "error": "RuntimeError: form flow incomplete: {'goto_form': True, 'fill_username': True, 'fill_password': True, 'fill_comments': True, 'check_box': True, 'radio': True, 'select_via_fill': False, 'dropdown_value_after_fill': 'dd3', 'submit_click': False, 'final_url': 'https://testpages.eviltester.com/pages/forms/html-form/', 'echo_username': True, 'echo_dropdown_dd5': False}"
+   },
+   "secs": 34.9
+  },
+  {
+   "rung": "D redirect chain + multi-page",
+   "ok": false,
+   "evidence": {
+    "error": "RuntimeError: redirect/multipage incomplete: {'goto_redirect': True, 'landed_url': 'https://httpbin.org/get', 'goto_oslo': True, 'article_click': False, 'final_title': 'Oslo - Wikipedia', 'final_url': 'https://en.wikipedia.org/wiki/Oslo'}"
+   },
+   "secs": 21.5
+  },
+  {
+   "rung": "E live frame + progress glue",
+   "ok": true,
+   "evidence": {
+    "frames_posted": 7,
+    "frame_img_bytes": 157680,
+    "progress_posts": 2
+   },
+   "secs": 1.4
+  }
+ ],
+ "worker_posts": [
+  {
+   "path": "/api/setup/runner/tcframe?job=ladderjob1",
+   "payload": {
+    "url": "https://www.cookiebot.com/us/"
+   },
+   "img_len": 108392
+  },
+  {
+   "path": "/api/setup/runner/tcframe?job=ladderjob1",
+   "payload": {
+    "url": "https://www.cookiebot.com/us/"
+   },
+   "img_len": 109164
+  },
+  {
+   "path": "/api/setup/runner/progress?job=ladderjob1",
+   "payload": {
+    "provider": "browse",
+    "step": "rung-a",
+    "status": "running",
+    "message": "On Wikipedia, the free encyclopedia",
+    "state": "running",
+    "note": "On Wikipedia, the free encyclopedia",
+    "url": "https://en.wikipedia.org/wiki/Main_Page"
+   },
+   "img_len": 0
+  },
+  {
+   "path": "/api/setup/runner/tcframe?job=ladderjob1",
+   "payload": {
+    "url": "https://en.wikipedia.org/wiki/Main_Page"
+   },
+   "img_len": 141020
+  },
+  {
+   "path": "/api/setup/runner/tcframe?job=ladderjob1",
+   "payload": {
+    "url": "https://testpages.eviltester.com/pages/forms/html-form/"
+   },
+   "img_len": 96148
+  },
+  {
+   "path": "/api/setup/runner/tcframe?job=ladderjob1",
+   "payload": {
+    "url": "https://testpages.eviltester.com/pages/forms/html-form/"
+   },
+   "img_len": 90112
+  },
+  {
+   "path": "/api/setup/runner/tcframe?job=ladderjob1",
+   "payload": {
+    "url": "https://testpages.eviltester.com/pages/forms/html-form/"
+   },
+   "img_len": 90004
+  },
+  {
+   "path": "/api/setup/runner/progress?job=ladderjob1",
+   "payload": {
+    "provider": "browse",
+    "step": "rung-e",
+    "status": "running",
+    "message": "Frame check on Wikipedia Norway page",
+    "state": "running",
+    "note": "Frame check on Wikipedia Norway page",
+    "url": "https://en.wikipedia.org/wiki/Oslo"
+   },
+   "img_len": 0
+  },
+  {
+   "path": "/api/setup/runner/tcframe?job=ladderjob1",
+   "payload": {
+    "url": "https://en.wikipedia.org/wiki/Oslo"
+   },
+   "img_len": 157680
+  }
+ ]
+}
