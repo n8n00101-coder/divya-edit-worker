@@ -190,12 +190,24 @@ CURSOR_JS = r"""
         document.body.appendChild(c);
         const r2 = document.getElementById('__julie_ring');
         if (!r2) document.body.appendChild(ring);
+        if (!document.getElementById('__julie_pill')) { document.body.appendChild(pill); window.__juliePill(window.__juliePillText || ''); }
       }
     });
     guard.observe(document.documentElement, { childList: true, subtree: true });
     const ring = document.createElement('div'); ring.id = '__julie_ring';
     ring.style.cssText = 'position:fixed;width:34px;height:34px;border:3px solid #FF5A1F;border-radius:50%;z-index:2147483646;pointer-events:none;opacity:0;transform:translate(-50%,-50%)';
     document.body.appendChild(ring);
+    // v96: Julie's live status pill — composited INTO the page so it
+    // rides every streamed frame. During waits (email verification)
+    // the runner updates it with what she is doing right now + the
+    // check count + clock, so the user watches a LIVE wait, never a
+    // dead static frame (Ajju 2026-11-16: "live work asal
+    // kanipinchadam ledhu").
+    const pill = document.createElement('div'); pill.id = '__julie_pill';
+    pill.style.cssText = 'position:fixed;left:10px;bottom:10px;z-index:2147483645;pointer-events:none;background:rgba(13,13,13,.88);color:#ffffff;font:600 13px/1.35 system-ui,-apple-system,sans-serif;padding:7px 12px;border-radius:999px;display:none;align-items:center;gap:7px;box-shadow:0 2px 10px rgba(0,0,0,.35);max-width:92vw';
+    pill.innerHTML = '<span style="width:8px;height:8px;border-radius:50%;background:#3ba55d;flex:none;display:inline-block"></span><span id="__julie_pill_text"></span>';
+    document.body.appendChild(pill);
+    window.__juliePill = t => { window.__juliePillText = t || ''; const p = document.getElementById('__julie_pill'); if (!p) return; if (!t) { p.style.display = 'none'; return; } const s = document.getElementById('__julie_pill_text'); if (s) s.textContent = t; p.style.display = 'inline-flex'; };
     addEventListener('mousemove', e => { c.style.left = e.clientX + 'px'; c.style.top = e.clientY + 'px'; }, true);
     addEventListener('mousedown', e => { ring.style.left = e.clientX + 'px'; ring.style.top = e.clientY + 'px'; ring.style.opacity = '0.9'; ring.style.transition = 'none'; ring.style.width = '12px'; ring.style.height = '12px'; requestAnimationFrame(() => { ring.style.transition = 'all .45s ease-out'; ring.style.width = '44px'; ring.style.height = '44px'; ring.style.opacity = '0'; }); }, true);
   };
@@ -410,15 +422,15 @@ def capture_profile(ctx):
 
 def profile_context_kwargs():
     """The user's own browser configuration for the profile browser:
-    a PHONE viewport (v88 H1 — Ajju: the live view must show mobile
-    layouts like Muse's browser, readable on the user's phone, not a
-    desktop page squeezed), their locale and timezone, and their saved
+    a DESKTOP viewport (v96 — Ajju 2026-11-16, Groq screenshot: "ila
+    mobile laga undhi, PC computer laga ledhu" — the live view must
+    look like Muse's browser: a full PC page, cursor travelling,
+    sites rendering their DESKTOP layouts. This REVERSES the v88 H1
+    phone viewport), their locale and timezone, and their saved
     session when one exists."""
     kw = {
-        "viewport": {"width": 412, "height": 915},
-        "device_scale_factor": 2,
-        "is_mobile": True,
-        "has_touch": True,
+        "viewport": {"width": 1280, "height": 800},
+        "device_scale_factor": 1,
         "locale": "en-IN",
         "timezone_id": "Asia/Kolkata",
         "color_scheme": "light",
@@ -435,7 +447,7 @@ def open_context(browser):
     if PROFILE_MODE:
         ctx = browser.new_context(**profile_context_kwargs())
     else:
-        ctx = browser.new_context(viewport={"width": 412, "height": 915}, device_scale_factor=2, is_mobile=True, has_touch=True)
+        ctx = browser.new_context(viewport={"width": 1280, "height": 800})  # v96: desktop, same as profile mode
     try:
         ctx.add_init_script(CURSOR_JS)  # v68: visible agent cursor in the live view
     except Exception:
@@ -515,25 +527,55 @@ def fed_verify_link(job):
     return link if link.startswith("http") else ""
 
 
-def wait_for_fed_link(seconds=240, poll=20):
+def wait_for_fed_link(seconds=240, poll=20, page=None, name=""):
     """Poll the job until the server feeds a verification link, the job
     resumes or stops, or the deadline passes. Returns the link ("" when
     none arrived in time). Heartbeats keep the Worker watchdog aware that
     a live runner is waiting (v39).
     v95 (DO-burn): poll 10s -> 20s — a magic link takes minutes to land,
     not seconds; each poll costs the Worker several Durable Object
-    requests, and 12 min of waiting fell from ~72 polls to ~36."""
+    requests, and 12 min of waiting fell from ~72 polls to ~36.
+    v96 (visible work — Ajju 2026-11-16: "live work asal kanipinchadam
+    ledhu"): while waiting, Julie's on-page pill updates every poll
+    ("Gmail lo link vethukuthunna… · check N · HH:MM:SS IST") and a
+    frame is forced, so the live view shows a LIVE wait — the check
+    count and clock moving — never the dead static frame of the Groq
+    screenshot. Every ~40s the job note updates too, so the app's step
+    line ticks even between frames. The pill/frame work is best-effort
+    and never changes the wait's semantics."""
+    page = page if page is not None else _CUR.get("page")
     deadline = time.time() + seconds
+    checks = 0
+    last_note = 0.0
     while True:
         j = get_job()
         st = str(j.get("state") or "")
         if st == "stopped":
+            if page is not None:
+                set_pill(page, "")
             return ""
         link = fed_verify_link(j)
         if link or st == "running":
+            if page is not None:
+                set_pill(page, "Link vachindhi — Julie open chesthundhi…" if link else "")
             return link
         if time.time() > deadline:
+            if page is not None:
+                set_pill(page, "")
             return ""
+        checks += 1
+        if page is not None:
+            ist = time.strftime("%H:%M:%S", time.gmtime(time.time() + 19800))
+            set_pill(page, f"Gmail lo link vethukuthunna… · check {checks} · {ist} IST")
+            tc_post_frame(page, force=True)
+            if time.time() - last_note >= 40:
+                last_note = time.time()
+                try:
+                    progress("paused", "verify-email",
+                             f"{(name + ' ') if name else ''}verification link kosam Gmail check chesthunna — check {checks}, {ist} IST. Link vachaka nene open chestha.",
+                             page.url, reason="email", verify_wait=True)
+                except Exception:
+                    pass
         heartbeat()
         time.sleep(poll)
 
@@ -679,6 +721,105 @@ def maybe_sms(page, job):
         return code
     except Exception:
         return None
+
+
+def set_pill(page, text):
+    """v96: set Julie's on-page status pill (injected by CURSOR_JS).
+    The pill is part of the page, so it rides every streamed frame —
+    the live view shows what Julie is doing right now. Best-effort."""
+    try:
+        page.evaluate("(t) => { if (window.__juliePill) window.__juliePill(t); }", text or "")
+    except Exception:
+        pass
+
+
+_COOKIE_REJECT = ("Reject All", "Reject all cookies", "Reject All Cookies", "Reject cookies", "Reject", "Decline All", "Decline", "Refuse All")
+_COOKIE_ACCEPT = ("Accept All", "Accept all cookies", "Accept All Cookies", "Accept cookies", "Accept", "Allow All", "Allow all", "I Agree", "Agree", "Got It", "Got it")
+
+
+def _consent_banner_present(page):
+    """True when a cookie/consent banner is plausibly on the page —
+    a known container (OneTrust, TrustArc, CookieYes, generic cookie /
+    consent wrappers), a consent iframe, or the tell-tale privacy /
+    cookies heading. One cheap evaluate; it gates the button hunt so
+    normal pages cost almost nothing and a random 'Accept' button in
+    a signup flow is never touched."""
+    try:
+        return bool(page.evaluate(r"""() => {
+          const sels = ['#onetrust-banner-sdk', '#onetrust-consent-sdk', '.truste_box_overlay', '#truste-consent-track', '[id*="cookie" i]', '[class*="cookie" i]', '[id*="consent" i]', '[class*="consent" i]', 'iframe[src*="truste" i]', 'iframe[src*="onetrust" i]', 'iframe[src*="cookielaw" i]', 'iframe[src*="cookie" i]'];
+          for (const s of sels) { const el = document.querySelector(s); if (el) { const r = el.getBoundingClientRect(); if (r.width > 0 && r.height > 0) return true; } }
+          const t = (document.body && document.body.innerText || '').slice(0, 4000);
+          return /we value your privacy|this (site|website) uses cookies|we use cookies/i.test(t);
+        }"""))
+    except Exception:
+        return False
+
+
+def _click_named_button(page, names):
+    """Click the first VISIBLE button carrying one of `names` (top
+    frame or any child frame — TrustArc/OneTrust often render inside
+    an iframe). The cursor travels to it first, so the live view shows
+    the click land, Muse-style. Returns the name clicked ('' = none)."""
+    for frame in page.frames:
+        for name in names:
+            try:
+                loc = frame.get_by_role("button", name=name).first
+                if loc.count() and loc.is_visible():
+                    _cursor_to(page, loc)
+                    loc.click(timeout=2500)
+                    return name
+            except Exception:
+                continue
+    return ""
+
+
+def dismiss_cookie_banner(page):
+    """v96 (Ajju 2026-11-16, Groq screenshot): a 'We Value Your
+    Privacy' sheet sat on the page for the ENTIRE run — the runner
+    never dismissed it, and the user watched a covered page that
+    looked frozen. Standard page-prep now (called from goto() and at
+    pause entries): find the consent banner and dismiss it — REJECT
+    where a reject option exists (least tracking), else Accept, else
+    the banner's own close button. Returns what was clicked ('' = no
+    banner). Best-effort: a failed dismissal never breaks a flow."""
+    try:
+        if not _consent_banner_present(page):
+            return ""
+        hit = ""
+        for sel in ("#onetrust-reject-all-handler", "#onetrust-accept-btn-handler",
+                    "button#truste-consent-button", "#ccc-reject-all",
+                    "[data-testid='uc-deny-all-button']", "[data-testid='uc-accept-all-button']"):
+            try:
+                loc = page.locator(sel).first
+                if loc.count() and loc.is_visible():
+                    _cursor_to(page, loc)
+                    loc.click(timeout=2500)
+                    hit = sel
+                    break
+            except Exception:
+                continue
+        if not hit:
+            hit = _click_named_button(page, _COOKIE_REJECT) or _click_named_button(page, _COOKIE_ACCEPT)
+        if not hit:
+            for sel in ('#onetrust-banner-sdk .onetrust-close-btn-handler',
+                        '[id*="cookie" i] [aria-label*="close" i]',
+                        '[class*="consent" i] [aria-label*="close" i]',
+                        '[id*="consent" i] [aria-label*="close" i]'):
+                try:
+                    loc = page.locator(sel).first
+                    if loc.count() and loc.is_visible():
+                        loc.click(timeout=2000)
+                        hit = "close"
+                        break
+                except Exception:
+                    continue
+        if hit:
+            print(f"cookie banner dismissed via: {hit}", flush=True)
+            page.wait_for_timeout(400)
+            tc_post_frame(page, force=True)
+        return hit
+    except Exception:
+        return ""
 
 
 def tick_consent(page):
@@ -1238,6 +1379,7 @@ def goto(page, url, timeout=60000, tries=3):
     for attempt in range(1, tries + 1):
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+            dismiss_cookie_banner(page)  # v96: standard page-prep — no consent sheet rides the run
             return True
         except Exception as e:
             print(f"goto attempt {attempt}/{tries} failed for {url}: {e}")
@@ -1378,6 +1520,8 @@ def take_control(page, job, cfg, escape_when=None):
     on stop/timeout."""
     global LAST_TC_TIMEOUT
     LAST_TC_TIMEOUT = False
+    dismiss_cookie_banner(page)  # v96: the user takes over a clean page, not a consent sheet
+    set_pill(page, "")
     progress("paused", "google-signin", TC_PAUSE_MSG, page.url, reason="signin", tc=True)
     tc_post_frame(page)
     deadline = time.time() + 1500
@@ -1470,10 +1614,13 @@ def pause_for_email_verify(page, job, cfg, _link_retries=0):
     global LAST_VERIFY_DIAG
     LAST_VERIFY_DIAG = ""
     name = cfg["name"]
+    dismiss_cookie_banner(page)  # v96: the Groq screenshot's sheet covered the whole wait — clear it first
     progress("paused", "verify-email", MAGIC_LINK_PAUSE_MSG(name), page.url, reason="email", verify_wait=True)
+    set_pill(page, "Verification link kosam Gmail check chesthunna…")
+    tc_post_frame(page, force=True)
     link = ""
     for _round in range(3):
-        link = wait_for_fed_link(240)
+        link = wait_for_fed_link(240, page=page, name=name)
         if link:
             break
         if str(get_job().get("state") or "") in ("stopped", "running"):
@@ -1503,8 +1650,9 @@ def pause_for_email_verify(page, job, cfg, _link_retries=0):
         # v50 (X4): the pause may have been released (Continue / watchdog)
         # just before the mail landed — give the feed a short second
         # window instead of failing a run whose link is seconds away.
-        link = wait_for_fed_link(60)
+        link = wait_for_fed_link(60, page=page, name=name)
     if link:
+        set_pill(page, "Link vachindhi — open chesthunna…")
         progress("running", "verify-link", f"{name} verification link open chesthunna — sign in avthundhi.", link)
         try:
             # Shape only (host/path/param NAMES/length) — never the
@@ -1600,6 +1748,7 @@ def _verify_signed_in(page, cfg, name):
     """The keys-page signed-in check (tail of the old verify pause):
     True only when the keys page loads with no auth form left."""
     global LAST_VERIFY_DIAG
+    set_pill(page, "")  # v96: the wait is over — clear the status pill
     try:
         goto(page, cfg["keys_url"])
     except Exception:
