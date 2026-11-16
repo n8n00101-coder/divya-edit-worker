@@ -509,6 +509,21 @@ def _scene_composition(idx, scene, asset_name, media_start, width,
         f'data-duration="{_t(dur)}" data-track-index="1"></div>',
     ]
     js = []
+    # ROUND 5 (Fix 3 — FOOTAGE MOTION): the footage itself moves.
+    # hf_primary marks beats whose source is a still image or a
+    # measured-static clip with media_motion; the media element
+    # gets a real keyframed zoom (slow push-in over the whole
+    # beat, or a punch-in at the beat's accent) instead of sitting
+    # frozen under animated text — film 3's "static card" feel.
+    _mm = str(scene.get("media_motion") or "")
+    if _mm == "push_in":
+        js.append(f'tl.fromTo("#{p}-media", {{scale: 1.03}}, '
+                  f'{{scale: 1.14, duration: {_t(dur)}, '
+                  f'ease: "none", transformOrigin: "50% 50%"}}, 0);')
+    elif _mm == "punch_in":
+        js.append(f'tl.fromTo("#{p}-media", {{scale: 1.0}}, '
+                  f'{{scale: 1.16, duration: 0.9, '
+                  f'ease: "power3.out", transformOrigin: "50% 50%"}}, 0);')
     track = 2
     for layer in scene.get("layers") or []:
         if not isinstance(layer, dict):

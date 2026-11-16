@@ -32,6 +32,26 @@ long beats:
 
 Enablement: documentary longs (cfg kind == "long") unless the
 spec excludes graphics, or JULIE_HYPERFRAMES_PRIMARY=0.
+
+ROUND 5 (motion, effects, transitions): film 3's HF spans were
+static cards joined by hard cuts — the templates animated their
+text, but the FOOTAGE never moved and no beat ever transitioned.
+Now, per beat: (1) a MOTION TREATMENT — still images and
+measured-static clips get a keyframed push-in on the media
+element; accent beats (a spoken number, an effect hit, the
+chapter open) get a speedramp accent rendered by speedramp.py;
+every treatment is logged in the report and any beat measured
+static that received none is counted as untreated_static.
+(2) a TRANSITION into the beat — the editing plan's own
+transition field when it names one, else a rule default (dip
+from black to open, dissolve into data, fade into maps, a
+rotating slide/fade otherwise) — applied as real xfades in
+swap_spans, duration-compensated so the chapter's timing (and
+its voice sync) does not drift. (3) a MOTION AUDIT of the
+swapped chapter (motion_audit.audit_video): beats whose sampled
+frames do not change are named in the report as static — the
+chapter's MOTION-STATIC compliance check (long_video) reads it.
+JULIE_HF_TRANSITIONS=0 restores hard-cut concat.
 """
 
 import os
@@ -41,6 +61,8 @@ import subprocess
 import anti_boring
 import compliance
 import hyperframes_codegen
+import motion_audit
+import speedramp
 
 _PLACE_VISUALS = {"india_map", "world_dots", "map"}
 
@@ -123,6 +145,113 @@ def enabled_for(cfg):
         return False
     excludes = cfg.get("excludes") or []
     return "graphics" not in excludes and "hyperframes" not in excludes
+
+
+# ------------------------------------------------- ROUND 5: motion
+# xfade names this ffmpeg generation supports (verified against
+# the render host's `ffmpeg -h filter=xfade`).
+_XFADE_OK = {"fade", "fadeblack", "fadewhite", "dissolve",
+             "slideleft", "slideright", "slideup", "slidedown",
+             "wipeleft", "wiperight", "circleopen", "circleclose",
+             "zoomin", "pixelize", "radial", "hblur"}
+_RULE_ROTATION = ("fade", "slideleft", "dissolve", "slideright")
+
+
+def _xfade_for(plan_name, idx, layer_types):
+    """The xfade transition INTO beat `idx`: the editing plan's
+    own transition name when it maps to a real xfade, else a
+    rule default. A hard cut is never the default — film 3 cut
+    every boundary because nothing ever chose otherwise."""
+    n = str(plan_name or "").lower().replace("-", "_").replace(" ", "_")
+    if n and n not in ("cut", "none", "hard_cut"):
+        if "black" in n or "dip" in n:
+            return "fadeblack"
+        if "slide" in n and "right" in n:
+            return "slideright"
+        if "slide" in n:
+            return "slideleft"
+        if "wipe" in n:
+            return "wipeleft"
+        if "zoom" in n:
+            return "zoomin"
+        if "circle" in n:
+            return "circleopen"
+        if "dissolve" in n:
+            return "dissolve"
+        if "fade" in n:
+            return "fade"
+        if "match" in n:
+            # a match cut is an editorial alignment, not an
+            # ffmpeg blend — dissolve is the closest honest
+            # rendering of the intent at a beat boundary.
+            return "dissolve"
+    if idx == 0:
+        return "fadeblack"          # dip from black: chapter open
+    if "data_chart" in (layer_types or []):
+        return "dissolve"
+    if "map_card" in (layer_types or []):
+        return "fade"
+    return _RULE_ROTATION[idx % len(_RULE_ROTATION)]
+
+
+def _speed_accent(path, start, dur, proj_dir):
+    """Render a speedramp accent of the beat's footage window:
+    ease to 0.8x over the first 45%, back through 1.15x — the
+    output is >= the window length (the composition trims), so
+    the beat's timing is preserved. Returns the treated path or
+    None (the caller falls back and logs the failure)."""
+    try:
+        os.makedirs(proj_dir, exist_ok=True)
+        window = os.path.join(proj_dir, "accent_src.mp4")
+        span = float(dur) + 0.6
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-ss",
+             f"{float(start):.3f}", "-i", str(path), "-t",
+             f"{span:.3f}", "-c:v", "libx264", "-pix_fmt",
+             "yuv420p", "-an", window],
+            check=True, capture_output=True, timeout=300)
+        spec = [{"type": "speed", "factor": 0.8,
+                 "duration": round(0.45 * span, 3)},
+                {"type": "speed", "factor": 1.15,
+                 "duration": round(0.55 * span, 3)}]
+        out = os.path.join(proj_dir, "accent.mp4")
+        speedramp.render(window, out, spec)
+        return out
+    except Exception:
+        return None
+
+
+def _treat_beat(scene, path, media_start, dur, proj_dir, idx,
+                layers, failures):
+    """Decide + apply the beat's motion treatment. Returns
+    (treatment|None, media_motion|None, footage_path,
+    media_start, measured_static|None). A still image is static
+    by nature; a video clip is MEASURED (motion_audit) — an
+    unmeasurable clip is treated as unknown, never as moving."""
+    ext = os.path.splitext(str(path))[1].lower()
+    if ext in hyperframes_codegen._IMAGE_EXTS:
+        return ({"kind": "push_in", "source": "still"},
+                "push_in", path, media_start, True)
+    motion = motion_audit.clip_motion(path, media_start, dur)
+    measured_static = motion.get("static")
+    accent = bool(scene.get("_effect_choice")) or idx == 0 or any(
+        l.get("type") == "data_chart" for l in layers or [])
+    if accent:
+        treated = _speed_accent(path, media_start, dur, proj_dir)
+        if treated:
+            return ({"kind": "speed_accent", "source": "accent",
+                     "clip_max_diff": motion.get("max_diff")},
+                    None, treated, 0.0, measured_static)
+        failures.append({"scene": idx + 1,
+                         "kind": "speed_accent",
+                         "fallback": "punch_in"})
+        return ({"kind": "punch_in", "source": "accent_fallback"},
+                "punch_in", path, media_start, measured_static)
+    if measured_static:
+        return ({"kind": "push_in", "source": "static_clip",
+                 "clip_max_diff": motion.get("max_diff")},
+                "push_in", path, media_start, True)
+    return (None, None, path, media_start, measured_static)
 
 
 def _resolved_source(scene, plan):
@@ -213,8 +342,10 @@ def plan_beats(p, wd, cfg):
             if a.get("path"):
                 by_scene[int(a.get("scene") or 0)] = a
     starts = p.get("starts") or []
+    plan_trs = p.get("transitions") or []
     beats, declined = [], {"no_footage": 0, "declined": 0,
                            "no_timing": 0}
+    treatments, treat_failed, untreated_static = [], [], 0
     for i, sc in enumerate(p.get("scenes") or []):
         a = by_scene.get(i + 1)
         if not a or not os.path.isfile(str(a["path"])):
@@ -229,16 +360,41 @@ def plan_beats(p, wd, cfg):
             continue
         dur = float(sc.get("d") or 6)
         proj = os.path.join(wd, "hf_primary", f"beat{i + 1}")
-        script = [{"footage": str(a["path"]), "duration": dur,
-                   "media_start": float(a.get("start") or 0),
-                   "layers": layers}]
+        # ROUND 5: motion treatment first — it can replace the
+        # beat's footage (speedramp accent) or mark the media
+        # element for a keyframed push (still / static clip).
+        treatment, media_motion, fpath, mstart, mstatic = \
+            _treat_beat(sc, str(a["path"]),
+                        float(a.get("start") or 0), dur, proj, i,
+                        layers, treat_failed)
+        if treatment:
+            treatments.append({"scene": i + 1, **treatment})
+        elif mstatic:
+            untreated_static += 1
+        script = [{"footage": str(fpath), "duration": dur,
+                   "media_start": mstart, "layers": layers}]
+        if media_motion:
+            script[0]["media_motion"] = media_motion
         rep = hyperframes_codegen.generate_project(
             script, proj, width=W, height=H)
+        # the transition INTO this beat: doc.plan stamps each
+        # scene with the transition that brings the viewer into
+        # it (scene["transition"]); the plan's per-boundary list
+        # is the fallback source. Else a rule default.
+        plan_name = sc.get("transition") or (
+            plan_trs[i - 1] if 0 < i <= len(plan_trs) else None)
         beats.append({"scene": i + 1, "start": float(starts[i]),
                       "duration": dur, "project_dir": proj,
-                      "flags": rep.get("flags") or []})
+                      "flags": rep.get("flags") or [],
+                      "transition": _xfade_for(
+                          plan_name, i,
+                          [l.get("type") for l in layers]),
+                      "treatment": treatment})
     report = {"beats_considered": len(p.get("scenes") or []),
-              "beats_ready": len(beats), "declined": declined}
+              "beats_ready": len(beats), "declined": declined,
+              "motion_treatments": treatments,
+              "motion_treatment_failed": treat_failed,
+              "untreated_static": untreated_static}
     return beats, report
 
 
@@ -250,44 +406,88 @@ def _probe_duration(path):
     return float(r.stdout.strip())
 
 
-def swap_spans(raw_path, spans, out_path, width, height, fps=30):
+def swap_spans(raw_path, spans, out_path, width, height, fps=30,
+               transitions=None):
     """Replace [start, start+duration) spans of raw_path with the
     rendered beat clips (spans = [(start, duration, clip_path)],
     sorted, non-overlapping), normalising every segment to the
-    canvas. Video only — the pipeline mixes audio afterwards."""
+    canvas. Video only — the pipeline mixes audio afterwards.
+
+    ROUND 5: segments are fitted CROP-TO-FILL (never stretched —
+    scale-to-cover + centre crop), and beat boundaries carry
+    real transitions: `transitions` (parallel to spans) names
+    the xfade INTO each span; raw segments default to a fade.
+    The xfade chain is duration-compensated — every segment but
+    the last is clone-padded by the transition length and each
+    offset is the cumulative REAL duration, so the output keeps
+    the input's total length and the voice stays in sync. If
+    the xfade graph fails, the swap retries as a plain concat
+    (the failure is printed, never silent)."""
     total = _probe_duration(raw_path)
     spans = sorted(s for s in spans if s[0] < total)
     if not spans:
         return False
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", raw_path]
-    for _, _, clip in spans:
-        cmd += ["-i", clip]
-    filters, labels, cursor = [], [], 0.0
-    norm = f"fps={fps},scale={width}:{height},setsar=1,format=yuv420p"
-
-    def raw_seg(a, b, tag):
-        filters.append(
-            f"[0:v]trim=start={a:.3f}:end={b:.3f},"
-            f"setpts=PTS-STARTPTS,{norm}[{tag}]")
-        labels.append(tag)
-
+    trs = list(transitions or [])
+    # segments: (input_index, trim_filter, duration, transition_in)
+    segs, cursor = [], 0.0
+    norm = (f"fps={fps},scale={width}:{height}:"
+            f"force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1,format=yuv420p")
     for k, (s, d, _clip) in enumerate(spans):
         if s > cursor + 0.01:
-            raw_seg(cursor, s, f"s{len(labels)}")
-        filters.append(
-            f"[{k + 1}:v]trim=duration={d:.3f},"
-            f"setpts=PTS-STARTPTS,{norm}[s{len(labels)}]")
-        labels.append(f"s{len(labels)}")
+            segs.append((0, f"trim=start={cursor:.3f}:end={s:.3f}",
+                         s - cursor, "fade"))
+        segs.append((k + 1, f"trim=duration={d:.3f}", d,
+                     trs[k] if k < len(trs) and trs[k] else "fade"))
         cursor = s + d
     if total > cursor + 0.01:
-        raw_seg(cursor, total, f"s{len(labels)}")
-    filters.append(
-        "".join(f"[{t}]" for t in labels)
-        + f"concat=n={len(labels)}:v=1:a=0[out]")
-    cmd += ["-filter_complex", ";".join(filters), "-map", "[out]",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-            out_path]
-    subprocess.run(cmd, check=True, timeout=1800,
+        segs.append((0, f"trim=start={cursor:.3f}:end={total:.3f}",
+                     total - cursor, "fade"))
+
+    def build(use_xfade, td):
+        filters = []
+        for j, (inp, trim, d, _t) in enumerate(segs):
+            f = (f"[{inp}:v]{trim},setpts=PTS-STARTPTS,{norm},"
+                 f"settb=AVTB")
+            if use_xfade and j < len(segs) - 1:
+                f += f",tpad=stop_mode=clone:stop_duration={td:.3f}"
+            filters.append(f + f"[v{j}]")
+        if not use_xfade:
+            filters.append(
+                "".join(f"[v{j}]" for j in range(len(segs)))
+                + f"concat=n={len(segs)}:v=1:a=0[out]")
+            return ";".join(filters)
+        acc, offset = "v0", 0.0
+        for j in range(1, len(segs)):
+            offset += segs[j - 1][2]
+            name = segs[j][3] if segs[j][3] in _XFADE_OK else "fade"
+            filters.append(
+                f"[{acc}][v{j}]xfade=transition={name}:"
+                f"duration={td:.3f}:offset={offset:.3f}[x{j}]")
+            acc = f"x{j}"
+        filters.append(f"[{acc}]null[out]")
+        return ";".join(filters)
+
+    base = ["ffmpeg", "-y", "-loglevel", "error", "-i", raw_path]
+    for _, _, clip in spans:
+        base += ["-i", clip]
+    tail = ["-map", "[out]", "-c:v", "libx264", "-preset", "medium",
+            "-crf", "18", out_path]
+    want_xfade = (len(segs) > 1
+                  and os.environ.get("JULIE_HF_TRANSITIONS", "1") != "0")
+    if want_xfade:
+        shortest = min(d for _i, _t, d, _n in segs)
+        td = 0.35 if shortest >= 0.8 else max(0.12, shortest * 0.3)
+        if shortest >= 0.3:
+            r = subprocess.run(
+                base + ["-filter_complex", build(True, td)] + tail,
+                capture_output=True, text=True, timeout=1800)
+            if r.returncode == 0:
+                return True
+            print("hf swap: xfade graph failed — retrying as "
+                  f"concat ({(r.stderr or '')[-200:]})")
+    subprocess.run(base + ["-filter_complex", build(False, 0.0)]
+                   + tail, check=True, timeout=1800,
                    capture_output=True, text=True)
     return True
 
@@ -303,7 +503,7 @@ def render_and_swap(p, wd, cfg, raw_path):
     beats, report = plan_beats(p, wd, cfg)
     report["beats_rendered"] = 0
     report["render_failed"] = []
-    spans = []
+    spans, span_trs, rendered = [], [], []
     for b in beats:
         out = os.path.join(b["project_dir"], "hf_beat.mp4")
         try:
@@ -312,13 +512,29 @@ def render_and_swap(p, wd, cfg, raw_path):
                 tmpdir=os.path.join(wd, ".hyperframes-tmp"),
                 timeout=600)
             spans.append((b["start"], b["duration"], out))
+            span_trs.append(b.get("transition"))
+            rendered.append(b)
             report["beats_rendered"] += 1
         except Exception as e:
             report["render_failed"].append(
                 {"scene": b["scene"], "error": str(e)[:140]})
+    report["transitions"] = [b.get("transition") for b in rendered]
     if spans:
         swapped = os.path.join(wd, "raw_hf.mp4")
-        if swap_spans(raw_path, spans, swapped, W, H):
+        if swap_spans(raw_path, spans, swapped, W, H,
+                      transitions=span_trs):
             os.replace(swapped, raw_path)
             report["swapped"] = True
+            # ROUND 5 (Fix 2): the motion audit — sample the
+            # swapped chapter inside every rendered beat and
+            # measure pixel change. A beat that does not move
+            # is named here; long_video turns an over-budget
+            # static share into a MOTION-STATIC fix-round FAIL.
+            try:
+                report["motion_audit"] = motion_audit.audit_video(
+                    raw_path,
+                    [{"scene": b["scene"], "start": b["start"],
+                      "duration": b["duration"]} for b in rendered])
+            except Exception as e:
+                report["motion_audit"] = {"error": str(e)[:140]}
     return report

@@ -864,6 +864,22 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
     for i, s in enumerate(sc):
         s["transition"] = p["transitions"][i - 1] if 0 < i <= len(p["transitions"]) else ""
         s["sfx"] = SCENE_SFX.get(s.get("fact_type") or s.get("hit_type") or "calm", "pop")
+    # ROUND 5 (Fix 6 — PRESENTER GATE, plan level): a long-form
+    # documentary is faceless. The polaroid visual draws a cartoon
+    # FACE placeholder when no real photo backs it (film 3, the
+    # ROAD beat) — strip that choice here, at plan time, unless
+    # the job explicitly asked for a presenter. The render path
+    # (draw_scene_visual) enforces the same gate, and the chapter
+    # audit (PRESENTER-CARD) verifies the shipped plan.
+    if cfg and cfg.get("kind") == "long" and not cfg.get("presenter") \
+            and "presenter" not in str(brief or "").lower():
+        for s in sc:
+            if s.get("lib_visual") == "polaroid":
+                s["lib_visual"] = None
+                s["_presenter_stripped"] = "polaroid"
+            if _VIS_NAME_MAP.get(s.get("visual")) == "polaroid":
+                s["visual"] = "card"
+                s["_presenter_stripped"] = "polaroid"
     # v79: the spec + render config ride on the plan (FIX 3 — every
     # step receives prompt_spec.json), and the plan is enforced against
     # Blind's rules BEFORE anything renders: audit -> repair, max 2
@@ -1672,6 +1688,41 @@ def _ff_fill(lay, lo, hi):
     return out
 
 
+def fit_cover(img, w, h):
+    """ROUND 5 (Fix 4 — STRETCH): scale `img` to COVER (w, h)
+    preserving aspect, then centre-crop. The old code resized
+    layers straight to (W, H) — a 720x1280 portrait layer on a
+    1920x1080 long was stretched 2.7x sideways, the distortion
+    in Ajju's film-3 screenshots. Nothing in the render path
+    may fit by stretching again: cover (backgrounds) or
+    fit_inside_canvas (content layers)."""
+    iw, ih = img.size
+    if (iw, ih) == (w, h):
+        return img
+    s = max(w / iw, h / ih)
+    nw, nh = max(w, int(iw * s + 0.5)), max(h, int(ih * s + 0.5))
+    big = img.resize((nw, nh), Image.BICUBIC)
+    x0, y0 = (nw - w) // 2, (nh - h) // 2
+    return big.crop((x0, y0, x0 + w, y0 + h))
+
+
+def fit_inside_canvas(img, w, h):
+    """ROUND 5 (Fix 4): scale `img` INSIDE (w, h) preserving
+    aspect and paste it centred on a transparent (w, h) canvas
+    — for content layers (visuals, source lines) that must not
+    be cropped and must never be stretched."""
+    iw, ih = img.size
+    if (iw, ih) == (w, h):
+        return img
+    s = min(w / iw, h / ih)
+    nw, nh = max(1, int(iw * s + 0.5)), max(1, int(ih * s + 0.5))
+    small = img.resize((nw, nh), Image.BICUBIC)
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    out.alpha_composite(small.convert("RGBA"),
+                        ((w - nw) // 2, (h - nh) // 2))
+    return out
+
+
 def _fit_above_label(lay, extra_scale=1.0):
     # v36 (Blind A1 — fixed zones, 720-layer coords x1.5): a 1080x1920 visual
     # layer's CONTENT fits the VISUAL band y 480-1410 (below the title zone
@@ -1752,10 +1803,14 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
     # failure (the visual is still building in before its hit word) — only
     # an exception or a wrong-size result falls back.
     def _place720(lay720):
-        # 720x1280 -> 1080x1920, then fit above the label band.
+        # 720x1280 layer -> the canvas, then fit above the label
+        # band. ROUND 5 (Fix 4): the layer used to be resized
+        # straight to (W, H) — on a landscape long that STRETCHED
+        # every visuals_lib layer sideways. Now aspect-preserved
+        # (fit inside, centred on a transparent canvas).
         if lay720 is None or lay720.size != (720, 1280):
             return False
-        vlay.alpha_composite(_fit_above_label(lay720.resize((W, H), Image.BICUBIC),
+        vlay.alpha_composite(_fit_above_label(fit_inside_canvas(lay720, W, H),
                                               extra_scale=float(sc.get("_vis_scale", 1.0) or 1.0)))
         return True
     # v34 (Hark word_t): the scene's word timings [(start, dur, text)] — the
@@ -1788,8 +1843,20 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
                     return
             except Exception as e:
                 print(f"custom vis {cv} scene {idx} failed: {str(e)[:120]}")
+    # ROUND 5 (Fix 6 — PRESENTER GATE): in a long-form documentary
+    # the polaroid library visual draws a cartoon FACE placeholder
+    # when the scene has no real photo (film 3's ROAD beat). A
+    # faceless documentary never renders it unless the job
+    # explicitly asked for a presenter (render_config.presenter).
+    _rc5 = p.get("render_config") or {}
+    _presenter_blocked = (_rc5.get("kind") == "long"
+                          and not _rc5.get("presenter"))
     # 2) a stored library visual (the ideas' choice, or a sandbox fallback)
     lv = sc.get("lib_visual")
+    if _presenter_blocked and lv == "polaroid":
+        print(f"presenter gate: scene {idx} polaroid placeholder "
+              f"blocked (faceless long, no presenter requested)")
+        lv = None
     if lv and lv in VL.VIS:
         try:
             _args = _lib_args(lv)
@@ -1799,6 +1866,10 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
             print(f"library vis {lv} scene {idx} failed: {str(e)[:120]}")
     # 2b) the plan kind, mapped to a VL visual
     mv = _VIS_NAME_MAP.get(sc["visual"])
+    if _presenter_blocked and mv == "polaroid":
+        print(f"presenter gate: scene {idx} mapped polaroid "
+              f"blocked (faceless long, no presenter requested)")
+        mv = None
     if mv and mv in VL.VIS:
         try:
             _args = _lib_args(mv)
@@ -1806,8 +1877,11 @@ def draw_scene_visual(vd, vlay, p, idx, sc, pt, cy, acc):
                 return
         except Exception as e:
             print(f"mapped vis {mv} scene {idx} failed: {str(e)[:120]}")
-    # 3) the 25-kind library (create.draw_visual)
-    C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=cy, acc=acc, words=words)
+    # 3) the 25-kind library (create.draw_visual). ROUND 5: the
+    # scene's spoken line rides along — the counter/bar widgets
+    # may only print a number (or a %) the line actually speaks.
+    C.draw_visual(vd, vlay, sc["visual"], sc.get("value", ""), pt, cy=cy, acc=acc, words=words,
+                  vo=str(sc.get("vo") or ""))
 
 
 # v35 (Ajju 2026-11-11: effects fall ONE ON TOP OF ANOTHER through the whole
@@ -2464,7 +2538,8 @@ def scene_frame(p, idx, t, return_layers=False):
             # place with depth, not a tint on a void.
             _ffk = (_bk, "ff") if p.get("full_frame") else _bk
             if _ffk not in _SBG:
-                _sb = VL.scene_bg(_bk).resize((W, H), Image.BICUBIC).convert("RGBA")
+                # ROUND 5 (Fix 4): crop-to-fill, never stretch.
+                _sb = fit_cover(VL.scene_bg(_bk), W, H).convert("RGBA")
                 _alpha = 0.55 if p.get("full_frame") else 0.35
                 _sb.putalpha(_sb.split()[3].point(lambda v: int(v * _alpha)))
                 _SBG[_ffk] = _sb
@@ -2601,7 +2676,8 @@ def scene_frame(p, idx, t, return_layers=False):
         try:
             _sl = VL.VIS["source_line"](pt, 0.0, sc["d"], text=f"Source: {_src}", y=1200, accent=acc)
             if _sl is not None and _sl.size == (720, 1280):
-                lay.alpha_composite(_sl.resize((W, H), Image.BICUBIC))
+                # ROUND 5 (Fix 4): aspect-preserved, never stretched.
+                lay.alpha_composite(fit_inside_canvas(_sl, W, H))
                 _sw = ImageDraw.Draw(lay).textlength(f"Source: {_src}", font=VL._font(34, "small")) * 1.5
                 _src_bb = (int(W / 2 - _sw / 2), 1782, int(W / 2 + _sw / 2), 1818)
         except Exception as e:
@@ -2658,7 +2734,10 @@ def camera(im, idx, t, d, mood, move="push"):
 def outro(p, t):
     # v36 (Blind E4): the end card is 1 s — a QUESTION to the viewers +
     # the channel name, not a plain fade. The question comes from
-    # p["end_question"] (set by plan()); the channel name is "DIVYA".
+    # p["end_question"] (set by plan()); the channel name is "JULIE"
+    # (ROUND 5, Fix 5: the app was renamed Julie on 2026-11-12 — the
+    # end card still carried the OLD brand in film 3; user-facing
+    # strings are Julie, infra names stay).
     # The question is a title line (Anton 96 px, the title minimum, word
     # boundaries only, max 2 lines — extra words are dropped, never cut).
     acc = tuple(p.get("accent") or MOODS[p["scenes"][-1]["mood"]][2])
@@ -2684,7 +2763,7 @@ def outro(p, t):
         w = d.textlength(ln, font=f); d.text(((W - w) / 2, y), ln, font=f, fill=(255, 255, 255))
         y += 130
     f2 = anton(int(110 * max(k, 0.2)))
-    w = d.textlength("DIVYA", font=f2); d.text(((W - w) / 2, y + 120), "DIVYA", font=f2, fill=acc)
+    w = d.textlength("JULIE", font=f2); d.text(((W - w) / 2, y + 120), "JULIE", font=f2, fill=acc)
     return im
 
 def transition(a, b, p, name, acc):

@@ -1012,6 +1012,12 @@ BORING_CRITICAL_RULES = {
     "R11",                         # chapter-level dead air / loudness
     "MQ-SILENCE", "MQ-LRA",        # assembled-level dead air / flat mix
     "DEPICTION",                   # round 4: literal-illustration budget
+    "DIR-FALLBACK",                # round 5: a director stage fell back —
+                                   # the chapter was NOT brain-directed
+    "MOTION-STATIC",               # round 5: rendered beats that do not
+                                   # move (static cards) over budget
+    "PRESENTER-CARD",              # round 5: avatar/presenter card in a
+                                   # faceless long-form documentary
 }
 
 

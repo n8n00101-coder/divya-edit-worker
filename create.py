@@ -138,7 +138,14 @@ def num_of(v, default=7):
     m = re.search(r"\d+", v or ""); return int(m.group(0)) if m else default
 
 
-def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None, words=None):
+def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None, words=None, vo=""):
+    # ROUND 5 (Fix 2): `vo` is the scene's spoken line. The number
+    # widgets may only print what the narration actually says —
+    # film 3's counter rendered an unsourced death count as
+    # "1200%" because the plan's value string carried a "%" the
+    # voice never spoke. A counter whose number is not spoken
+    # draws nothing; a "%" prints only when the line speaks a
+    # percent (the HF data-chart path has the same rule).
     # v25: optional accent (the look's accent) — defaults to RED for the old engine.
     # v34 (Hark word_t): words = [(start, dur, text)] — the count/fill visuals
     # run while the NUMBER word is spoken, instead of a fixed 0.8 s build-in.
@@ -155,14 +162,28 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None, words=None)
                 return clamp((t - o) / max(dd + 0.3, 0.1))
         return None
     wp = _wprogress()
+    _vo_digits = re.sub(r"[,\s]", "", str(vo or ""))
+    # when the caller supplies the spoken line it is the ONLY
+    # authority for a "%"; without one (create-mode shorts, whose
+    # scenes carry no line at this call site) the legacy
+    # value-carries-% rule stands.
+    _speaks_pct = (("%" in str(vo)) or ("percent" in str(vo).lower())) \
+        if vo else ("%" in str(value or ""))
     if kind == "counter":
-        n = num_of(value, 100); cur = int(n * (wp if wp is not None else a))
-        f = font(220); center_text(d, cy - 140, f"{cur}{'%' if '%' in value else ''}", f, acc)
+        n = num_of(value, 100)
+        # the counted number must be SPOKEN by this scene's line
+        # (digits compared comma-free); an unspoken plan value is
+        # internal data, not a claim the film may headline.
+        if vo and str(n) not in _vo_digits:
+            return
+        cur = int(n * (wp if wp is not None else a))
+        f = font(220); center_text(d, cy - 140, f"{cur}{'%' if _speaks_pct else ''}", f, acc)
     elif kind == "bar":
         p = num_of(value, 80) / 100 * a
         rrect(d, (140, cy - 50, W - 140, cy + 50), 20, outline=WHITE, width=5)
         rrect(d, (155, cy - 35, 155 + (W - 310) * min(p, 1), cy + 35), 14, fill=acc)
-        center_text(d, cy + 80, f"{int(p*100)}%", font(64), WHITE)
+        if _speaks_pct:
+            center_text(d, cy + 80, f"{int(p*100)}%", font(64), WHITE)
     elif kind == "battery":
         p = max(0.05, 1 - 0.85 * a) if not value or "%" not in value else num_of(value) / 100
         rrect(d, (290, cy - 160, 790, cy + 160), 30, outline=WHITE, width=8)
@@ -479,7 +500,7 @@ def draw_visual(d, img, kind, value, t, cx=W // 2, cy=880, acc=None, words=None)
             d.line([(x0, cy + 5), (x0 + (x1 - x0) * q, cy + 5 - 10 * q)], fill=(220, 50, 50), width=14)
     elif kind == "lower_third":  # documentary name + title bar, bottom-left (value: "Name | Title")
         parts = [x.strip() for x in str(value or "").split("|")]
-        name = parts[0][:24] if parts and parts[0] else "DIVYA"
+        name = parts[0][:24] if parts and parts[0] else "JULIE"
         title = parts[1][:32] if len(parts) > 1 else ""
         k = ease(t / 0.4)
         y0, y1 = 1500, 1650
