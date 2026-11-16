@@ -1011,6 +1011,7 @@ BORING_CRITICAL_RULES = {
     "FIDELITY",                    # visual must picture THIS line
     "R11",                         # chapter-level dead air / loudness
     "MQ-SILENCE", "MQ-LRA",        # assembled-level dead air / flat mix
+    "DEPICTION",                   # round 4: literal-illustration budget
 }
 
 
