@@ -239,7 +239,16 @@ def shorts_cut_points(chapters, duration):
 # ------------------------------------------------------------ main API
 def build_packaging(topic, final_title, chapters, sources=None,
                     claims=None, duration=None):
-    """The full packaging dict for one finished long video."""
+    """The full packaging dict for one finished long video.
+
+    ROUND 4 (fold-in): an AUTO/empty topic is not a topic — the
+    pair check once graded the string 'Auto: What Nobody Tells
+    You' against a film actually titled 'The Rise of Electric
+    Cars'. When the topic is the AUTO placeholder, packaging
+    falls back to the delivered final title as its subject."""
+    if not str(topic or "").strip() \
+            or str(topic).strip().lower().startswith("auto"):
+        topic = final_title
     chs = _norm_chapters(chapters)
     dur = float(duration or (chs[-1]["end_s"] if chs else 0))
     titles = title_candidates(topic, final_title, chs)

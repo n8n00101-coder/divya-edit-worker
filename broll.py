@@ -605,6 +605,33 @@ class FootagePool:
             self.rejected.extend({**r, "scene": scene_no, "query": query}
                                  for r in rejected)
             kept.sort(key=lambda c: -score_candidate(c, query))
+
+            def _finish(cand, dest, _verify):
+                start, motion = active_window(dest, needed_s)
+                keyword = ""
+                line_toks = _tokens(line)
+                for tok in _tokens(query):
+                    if tok in line_toks:
+                        keyword = tok
+                        break
+                rec = {"scene": scene_no, "clip_id": cand["id"],
+                       "provider": cand["provider"],
+                       "source_url": cand["page"], "query": query,
+                       "keyword": keyword, "start": round(start, 2),
+                       "path": dest, "static": motion < 1.2,
+                       "uploader": cand.get("uploader", ""),
+                       **({"verify": _verify} if _verify else {})}
+                self.used_ids.append(cand["id"])
+                self.last_uploader = cand.get("uploader", "")
+                self.assignments.append(rec)
+                self._save()
+                return rec
+
+            # ROUND 4 (Fix 3): a verifier-UNDECIDED candidate is
+            # only a fallback — the next candidate gets its chance
+            # first; the undecided one is used only when nothing
+            # better verifies, and its record says keyword_only.
+            _pending_undecided = None
             for cand in kept:
                 dest = os.path.join(
                     workdir, f"pool_{cand['provider']}_{str(cand['id']).split(':')[-1]}.mp4")
@@ -643,6 +670,19 @@ class FootagePool:
                                 or (hasattr(self.verifier, "outage")
                                     and self.verifier.outage())):
                             _verify["keyword_only"] = True
+                        # ROUND 4 (Fix 3): UNDECIDED means the
+                        # verifier looked and would not decide —
+                        # the clip is NOT vision-verified (flag it
+                        # keyword_only) and the next candidate is
+                        # tried first; this one is only the
+                        # fallback when nothing better verifies.
+                        if _v == "undecided":
+                            _verify["keyword_only"] = True
+                            if _pending_undecided is None and \
+                                    cand is not kept[-1]:
+                                _pending_undecided = (cand, dest,
+                                                      _verify)
+                                continue
                         if _v == "fail":
                             self.rejected.append(
                                 {**cand, "scene": scene_no, "query": query,
@@ -652,25 +692,10 @@ class FootagePool:
                     except Exception as _e:
                         _verify = {"verdict": "unverified",
                                    "reason": str(_e)[:100]}
-                start, motion = active_window(dest, needed_s)
-                keyword = ""
-                line_toks = _tokens(line)
-                for tok in _tokens(query):
-                    if tok in line_toks:
-                        keyword = tok
-                        break
-                rec = {"scene": scene_no, "clip_id": cand["id"],
-                       "provider": cand["provider"],
-                       "source_url": cand["page"], "query": query,
-                       "keyword": keyword, "start": round(start, 2),
-                       "path": dest, "static": motion < 1.2,
-                       "uploader": cand.get("uploader", ""),
-                       **({"verify": _verify} if _verify else {})}
-                self.used_ids.append(cand["id"])
-                self.last_uploader = cand.get("uploader", "")
-                self.assignments.append(rec)
-                self._save()
-                return rec
+                return _finish(cand, dest, _verify)
+            if _pending_undecided is not None:
+                _pc, _pd, _pv = _pending_undecided
+                return _finish(_pc, _pd, _pv)
         self.rejected.append({"scene": scene_no,
                               "reason": "no unused clip matched any query"})
         self._save()

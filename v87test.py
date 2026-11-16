@@ -34,10 +34,16 @@ def check(name, cond, detail=""):
 import visual_director as VD
 
 pack = VD.taste_pack()
-check("taste pack loads in full (v88: bound follows the merged pack — "
-      "Premiere-course + pro-editor rules took it to ~17.8k chars)",
-      15000 <= len(pack) <= 60000,
-      f"{len(pack)} chars")
+check("taste pack loads in full (round 4: INTEGRITY, not a size "
+      "ceiling — the old <=60,000 pin failed on the real 63,631-char "
+      "pack while proving nothing about truncation; the pack must "
+      "start at its title, end at its final rule, and sit in a "
+      "sane band)",
+      pack.startswith("# JULIE TASTE PACK")
+      and "Post-film self-grade" in pack[-600:]
+      and "delivery note." in pack[-200:]
+      and 40000 <= len(pack) <= 120000,
+      f"{len(pack)} chars, head={pack[:30]!r}, tail={pack[-40:]!r}")
 check("taste pack carries the core laws",
       all(w in pack for w in ("Blind R2", "LRA", "sanctioned",
                               "UNVERIFIED", "re-PLANNED")))

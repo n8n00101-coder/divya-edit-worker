@@ -365,6 +365,13 @@ def _run_chapters(make_video_stub, **kw):
 _calls3 = {"n": 0, "briefs": []}
 
 
+# ROUND 4: stub plans carry the fact-gate event, mirroring the
+# real doc.make_video contract in a long job (an ungated fix pass
+# is not accepted over the gated render it would replace).
+_FG100 = {"claims": 0, "rewrite_round": False, "removed": [],
+          "dropped_scenes": []}
+
+
 async def _mv_critical(brief, chat, **kw):
     _calls3["n"] += 1
     _calls3["briefs"].append(brief)
@@ -374,9 +381,10 @@ async def _mv_critical(brief, chat, **kw):
                     {"rule": "R10", "status": "FAIL",
                      "detail": "9/10 scenes have no footage",
                      "scene": None}]},
-                "plan": {"scenes": []}}
+                "plan": {"fact_gate": dict(_FG100), "scenes": []}}
     return {"path": "ch1_fix.mp4", "duration": 56.0,
-            "compliance": {"checks": []}, "plan": {"scenes": []}}
+            "compliance": {"checks": []},
+            "plan": {"fact_gate": dict(_FG100), "scenes": []}}
 
 
 _res3 = _run_chapters(_mv_critical, spec=None, cfg={"kind": "long"})
@@ -399,7 +407,7 @@ async def _mv_trivial(brief, chat, **kw):
             "compliance": {"checks": [
                 {"rule": "R6", "status": "FAIL",
                  "detail": "title too long", "scene": 1}]},
-            "plan": {"scenes": []}}
+            "plan": {"fact_gate": dict(_FG100), "scenes": []}}
 
 
 _res3b = _run_chapters(_mv_trivial, spec=None, cfg={"kind": "long"})
@@ -441,10 +449,12 @@ def _run_topup(ext_vo):
         if "EXTENSION" in brief:
             return {"path": "ext.mp4", "duration": 60.0,
                     "compliance": {"checks": []},
-                    "plan": {"scenes": [{"vo": ext_vo}]}}
+                    "plan": {"fact_gate": dict(_FG100),
+                             "scenes": [{"vo": ext_vo}]}}
         return {"path": "ch1.mp4", "duration": 60.0,
                 "compliance": {"checks": []},
-                "plan": {"scenes": [{"vo": _VO_OLD}]}}
+                "plan": {"fact_gate": dict(_FG100),
+                         "scenes": [{"vo": _VO_OLD}]}}
 
     doc.make_video = _mv
     long_video._join_clips = _fake_join

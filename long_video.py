@@ -104,21 +104,80 @@ def _outline_prompt(target_minutes, chapters_wanted=None):
     )
 
 
-def outline(brief, chat, target_minutes=None, chapters_wanted=None):
+def outline(brief, chat, target_minutes=None, chapters_wanted=None,
+            topic_history=None, exclusions=None):
     """Ask the LLM (same [{"role": ...}] message format as doc.plan) for a
     long-video outline. Returns {"title": ..., "chapters": [...]}.
     Without target_minutes: 3-6 chapters totalling 5-10 minutes (the
     original contract). With target_minutes (2-60): enough 1-2 minute
     chapters to total EXACTLY the target. Raises ValueError on bad JSON
     or on an outline that breaks the chapter/total rules.
+
+    ROUND 4 (Fix 1a — TOPIC LOCK): `exclusions` (subjects the owner
+    explicitly ruled out, from their own words) bind EVERY pick;
+    `topic_history` (subjects already delivered as films) binds
+    AUTO picks. Both ride INTO the prompt — the third film's
+    exclusion died when the brief was rewritten to "topic AUTO",
+    so the constraint now travels with the call, not the brief —
+    and both are enforced AFTER the pick: a colliding title is
+    rejected and re-picked (max 3 attempts), after which the
+    outline raises with the conflict stated plainly instead of
+    silently repeating a subject.
     """
-    raw = chat([{"role": "system", "content": OUTLINE_SYSTEM},
-                {"role": "user", "content": _outline_prompt(target_minutes, chapters_wanted)
-                 + (brief or "AUTO")}])
-    try:
-        data = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
-    except Exception:
-        raise ValueError(f"outline: LLM did not return JSON: {raw[:300]!r}")
+    import topic_lock as _tl
+    is_auto = not str(brief or "").strip() or bool(
+        re.search(r"\bAUTO\b", str(brief or ""), re.I))
+    lock_note = ""
+    if exclusions:
+        lock_note += (
+            "\nTOPIC LOCK — the owner explicitly excluded these "
+            "subjects: " + "; ".join(str(e) for e in exclusions)
+            + ". Never pick an excluded subject.")
+    if is_auto and topic_history:
+        lock_note += (
+            "\nTOPIC LOCK — these subjects were already delivered "
+            "as films; pick a DIFFERENT subject, not a re-titled "
+            "repeat: "
+            + "; ".join(str(h) for h in topic_history) + ".")
+    last_collision = None
+    collision_kind = ""
+    for _attempt in range(3):
+        prompt = _outline_prompt(target_minutes, chapters_wanted) \
+            + (brief or "AUTO") + lock_note
+        if last_collision:
+            prompt += (
+                f"\nYour previous pick, '{last_collision}', "
+                "violates the TOPIC LOCK above. Pick a genuinely "
+                "different subject.")
+        raw = chat([{"role": "system", "content": OUTLINE_SYSTEM},
+                    {"role": "user", "content": prompt}])
+        try:
+            data = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
+        except Exception:
+            raise ValueError(f"outline: LLM did not return JSON: {raw[:300]!r}")
+        out = _validate_outline(data, target_minutes, chapters_wanted)
+        title = out["title"]
+        ex_hit = _tl.exclusion_hit(title, exclusions or [])
+        hist_hit = _tl.history_hit(title, topic_history or []) \
+            if is_auto else None
+        if not ex_hit and not hist_hit:
+            return out
+        last_collision = title
+        collision_kind = (f"excluded subject '{ex_hit}'" if ex_hit
+                          else f"repeat of delivered film '{hist_hit}'")
+        print(f"outline: TOPIC LOCK rejected pick '{title}' "
+              f"({collision_kind}) — re-picking "
+              f"({_attempt + 1}/3)")
+    raise ValueError(
+        f"outline: TOPIC LOCK — every pick collided with the "
+        f"order's constraints (last pick '{last_collision}': "
+        f"{collision_kind}); refusing to silently repeat a subject")
+
+
+def _validate_outline(data, target_minutes=None, chapters_wanted=None):
+    """The outline's structural rules (title + chapter count/total),
+    unchanged from the original outline(): raises ValueError on any
+    break, returns {"title": ..., "chapters": [...]}."""
     title = str(data.get("title", "")).strip()
     chapters = data.get("chapters", [])
     if target_minutes:
@@ -274,6 +333,13 @@ def _fix_guidance100(failed):
                  "statistic/claim, or hedge it; never invent "
                  "sources, movements or events; never tease a "
                  "chapter that does not exist")
+    if "DEPICTION" in rules:
+        g.append("DEPICTION: stop showing the thing each line "
+                 "names — re-voice the beats as EVIDENCE (a "
+                 "sourced document or data visual), CONTEXT "
+                 "(setting, ambience, structure) or METAPHOR (a "
+                 "symbolic visual); literal illustration must "
+                 "fall to ~20% of the chapter's beats")
     if "R11" in rules:
         g.append("SOUND: no unexplained silence over 0.8 s; "
                  "loudness -14 LUFS, true peak <= -1 dB")
@@ -306,11 +372,28 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
     wd = Path(workdir)
     wd.mkdir(parents=True, exist_ok=True)
     paths = []
-    for i in range(len(outline_data["chapters"])):
+    _n_ch = len(outline_data["chapters"])
+    for i in range(_n_ch):
         if deadline is not None and paths and time.monotonic() > deadline:
             print(f"render_chapters: time budget reached — stopping "
                   f"after {len(paths)}/{len(outline_data['chapters'])} chapters")
             break
+        # ROUND 4 (Fix 4 — CHAPTER THROUGHPUT CAP): each chapter
+        # gets an equal share of the REMAINING job budget
+        # (remaining / chapters left, recomputed per chapter).
+        # The third film spent its whole 3000 s budget on chapter
+        # 1's render + top-up + correction rounds; chapters 2-5
+        # were never attempted. Optional passes (top-up, fix
+        # rounds) stop at the chapter's own deadline — the main
+        # render always runs — so every chapter is attempted and
+        # no chapter can eat the film.
+        _ch_t0 = time.monotonic()
+        _ch_deadline = None
+        if deadline is not None:
+            _ch_deadline = _ch_t0 + max(0.0, deadline - _ch_t0) \
+                / max(1, _n_ch - i)
+        _long_ctx = bool(cfg and cfg.get("kind") == "long")
+        _gate_passes = []
         ch_dir = wd / f"ch{i + 1:02d}"
         # v75: the chapter dir must EXIST before make_video writes into
         # it. Nothing created it — codegen's plan.json write and the
@@ -375,6 +458,21 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                   f"({str(last_err)[:150]}) — assembling the {len(paths)} "
                   f"finished chapters")
             break
+        # ROUND 4 (Fix 2): the main pass's fact-gate event is
+        # recorded on the chapter — every pass that reaches the
+        # film leaves an event, and a missing one is labelled in
+        # the record, never silent. (The fail-closed choke point
+        # itself lives in doc.plan / doc.make_video: through the
+        # real engine an ungated documentary pass cannot render.)
+        if _long_ctx:
+            _ev = (res.get("plan") or {}).get("fact_gate")
+            _gate_passes.append(
+                {"pass": "main", **_ev} if _ev is not None
+                else {"pass": "main", "missing": True})
+            if _ev is None:
+                print(f"render_chapters: chapter {i + 1} main pass "
+                      f"has NO fact-gate event — labelled in the "
+                      f"chapter record")
         # v78: verify the chapter against its narration budget. A
         # chapter that rendered materially short (<80% of its allotted
         # seconds) is topped up ONCE — an extension render of NEW
@@ -388,8 +486,21 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
             dur = res.get("duration")
             if not (isinstance(dur, (int, float)) and dur > 0):
                 dur = _probe_duration(res["path"])
+            # ROUND 4 (Fix 4): the top-up is an optional pass — it
+            # runs only inside the chapter's own budget share. A
+            # short chapter whose share is spent ships at honest
+            # length, labelled, and the remaining chapters keep
+            # their shares.
+            if dur < TOPUP_MIN_FRACTION * budget["seconds"] and \
+                    _ch_deadline is not None and \
+                    time.monotonic() > _ch_deadline:
+                print(f"render_chapters: chapter {i + 1} is short "
+                      f"({int(dur)}s of {budget['seconds']}s) but "
+                      f"its budget share is spent — top-up skipped, "
+                      f"chapter ships at honest length")
             if dur < TOPUP_MIN_FRACTION * budget["seconds"] and not (
-                    deadline is not None and time.monotonic() > deadline):
+                    _ch_deadline is not None
+                    and time.monotonic() > _ch_deadline):
                 missing_s = max(10, int(round(budget["seconds"] - dur)))
                 missing_w = max(20, int(round(missing_s / 60 * WORDS_PER_MIN)))
                 missing_c = max(100, int(round(missing_s / 60 * CHARS_PER_MIN)))
@@ -424,6 +535,41 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                        if amendments is not None else {}),
                     **({"spec": spec, "cfg": ch_cfg, "footage_pool": pool}
                        if spec is not None or cfg is not None else {}))
+                # ROUND 4 (Fix 2): the top-up pass's fact-gate
+                # event is recorded like every other pass — and a
+                # top-up with NO gate event never joins the
+                # chapter (fail closed at the join; see the
+                # rejection chain below). Film 3's unsourced
+                # "1,200 deaths" arrived through exactly this
+                # pass, ungated and unlogged.
+                _ext_gate = (ext.get("plan") or {}).get("fact_gate") \
+                    if _long_ctx else None
+                if _long_ctx:
+                    _gate_passes.append(
+                        {"pass": "topup", **_ext_gate}
+                        if _ext_gate is not None else
+                        {"pass": "topup", "missing": True})
+                _ext_vo = [str(s.get("vo") or "") for s in
+                           ((ext.get("plan") or {}).get("scenes")
+                            or [])]
+                # ROUND 4 (Fix 1c — TOPIC COHERENCE): the chapter's
+                # subject was locked at plan time (film title +
+                # chapter title + brief). A top-up whose scenes
+                # barely touch that subject is not an extension —
+                # it is a different film (film 3: seatbelts inside
+                # an EV chapter). Novelty is checked below; this
+                # checks the top-up is still ABOUT the chapter.
+                _coh = None
+                try:
+                    import topic_lock as _tl4c
+                    _anchors4 = _tl4c.subject_anchors(
+                        outline_data.get("title"), ch.get("title"),
+                        ch.get("brief"))
+                    _coh = _tl4c.coherence_report(_ext_vo, _anchors4)
+                except Exception as _e4c:
+                    print(f"render_chapters: coherence check failed "
+                          f"({str(_e4c)[:100]}) — top-up coherence "
+                          f"unverified")
                 # v100 (Gate 5 — LENGTH HONESTY): the extension may
                 # only add NEW material. A restatement top-up (the
                 # Male Gaze chapters "topped up" by repeating
@@ -480,11 +626,29 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                         f"{_rest100['mean_containment']:.0%}, no "
                         f"new claim/fact/angle)"
                         + _cite100)
+                if _reject100 is None and _long_ctx and \
+                        _ext_gate is None:
+                    _reject100 = (
+                        "no fact-gate event on the top-up pass — "
+                        "fail closed: ungated material never joins "
+                        "a gated chapter (round 4, fix 2)")
+                if _reject100 is None and _coh is not None and \
+                        _coh["checked"] and not _coh["coherent"]:
+                    _reject100 = (
+                        f"topic drift — only "
+                        f"{_coh['scenes_with_anchor']}/{_coh['scenes']} "
+                        f"top-up scenes touch the chapter's locked "
+                        f"subject (dominant new words: "
+                        f"{', '.join(_coh['foreign_words']) or '—'}); "
+                        f"a top-up extends the SAME chapter's "
+                        f"subject (round 4, topic lock)")
                 if _reject100 is not None:
                     res = {**res,
                            "topup_rejected": _reject100,
                            "honest_length": True,
                            "topup_novelty": _novelty_info}
+                    if _coh is not None:
+                        res["topup_coherence"] = _coh
                     print(f"render_chapters: chapter {i + 1} top-up "
                           f"REJECTED — {_reject100}; the chapter "
                           f"ships at its honest {int(dur)}s")
@@ -503,12 +667,41 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                                     + (ext.get("broll") or [])}
                     if _novelty_info is not None:
                         res["topup_novelty"] = _novelty_info
+                    if _coh is not None:
+                        res["topup_coherence"] = _coh
                     print(f"render_chapters: chapter {i + 1} topped "
                           f"up ({int(dur)}s -> {int(new_dur)}s of "
                           f"{budget['seconds']}s budget)")
         except Exception as e:
             print(f"render_chapters: chapter {i + 1} top-up failed "
                   f"({str(e)[:150]}) — keeping the rendered chapter")
+        # ROUND 4 (Fix 5 — DEPICTION BUDGET): count the chapter's
+        # depiction mix from its plan BEFORE the fix loop, so an
+        # over-literal chapter's DEPICTION FAIL rides the same
+        # compliance teeth as any other boring-critical failure
+        # (round-3 pack rule: literal illustration <= ~20% of
+        # beats; film 3 measured 57.5% and nothing counted it).
+        try:
+            import depiction_qc as _dq4
+            _dep_scenes = (res.get("plan") or {}).get("scenes") or []
+            res["depiction"] = _dq4.depiction_report(_dep_scenes)
+            _dep_checks = _dq4.depiction_checks(_dep_scenes)
+            if _dep_checks:
+                _rep4 = dict(res.get("compliance") or {})
+                _rep4["checks"] = list(_rep4.get("checks") or []) \
+                    + _dep_checks
+                _rep4["checks_failed"] = sum(
+                    1 for c in _rep4["checks"]
+                    if c.get("status") == "FAIL")
+                res["compliance"] = _rep4
+                print(f"render_chapters: chapter {i + 1} depiction "
+                      f"{res['depiction']['literal_share']:.0%} "
+                      f"literal — over the "
+                      f"{_dq4.LITERAL_BUDGET:.0%} budget; DEPICTION "
+                      f"FAIL rides the fix loop")
+        except Exception as _e4d:
+            print(f"render_chapters: depiction count failed "
+                  f"({str(_e4d)[:100]})")
         # v79 (R12 + FIX 5): a chapter whose compliance report still
         # FAILs is re-rendered with the failures named in its brief —
         # fix only that chapter, keep the best attempt.
@@ -537,7 +730,16 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                     trigger = []
             if not trigger:
                 break
-            if deadline is not None and time.monotonic() > deadline:
+            # ROUND 4 (Fix 4): fix rounds are optional passes —
+            # they stop at the CHAPTER's budget share, not the
+            # job's, so one chapter's correction loop can no
+            # longer consume the whole film budget.
+            if _ch_deadline is not None \
+                    and time.monotonic() > _ch_deadline:
+                print(f"render_chapters: chapter {i + 1} fix "
+                      f"rounds stop — the chapter's budget share "
+                      f"is spent ({len(failed)} FAIL(s) remain, "
+                      f"labelled in the report)")
                 break
             _fix_rounds_used += 1
             fix_lines = "; ".join(
@@ -569,20 +771,77 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                 print(f"render_chapters: chapter {i + 1} compliance "
                       f"retry {_round + 1} failed ({str(e)[:120]})")
                 break
+            # ROUND 4 (Fix 5): the fix pass is re-counted for
+            # depiction too — its own mix is part of whether it
+            # is an improvement.
+            try:
+                import depiction_qc as _dq4f
+                _dep2 = _dq4f.depiction_checks(
+                    (res2.get("plan") or {}).get("scenes") or [])
+                if _dep2:
+                    _rep2b = dict(res2.get("compliance") or {})
+                    _rep2b["checks"] = list(
+                        _rep2b.get("checks") or []) + _dep2
+                    res2["compliance"] = _rep2b
+            except Exception:
+                pass
             rep2 = res2.get("compliance") or {}
             failed2 = [c for c in (rep2.get("checks") or [])
                        if c.get("status") == "FAIL"]
             print(f"render_chapters: chapter {i + 1} compliance "
                   f"retry {_round + 1}: {len(failed)} -> "
                   f"{len(failed2)} failed checks")
+            # ROUND 4 (Fix 2): the fix pass's fact-gate event is
+            # recorded like every pass; an ungated fix pass is
+            # NOT accepted over the gated render it would replace
+            # (fail closed, labelled).
+            _ev2 = (res2.get("plan") or {}).get("fact_gate") \
+                if _long_ctx else None
+            if _long_ctx:
+                _gate_passes.append(
+                    {"pass": f"fix{_round + 1}", **_ev2}
+                    if _ev2 is not None else
+                    {"pass": f"fix{_round + 1}", "missing": True})
             if len(failed2) <= len(failed):
-                res = res2
-                if pool is not None:
-                    pool.assignments = (pool.assignments[:_pool_mark0]
-                                        + pool.assignments[_pool_mark:])
-                    pool._save()
+                if _long_ctx and _ev2 is None:
+                    print(f"render_chapters: chapter {i + 1} fix "
+                          f"pass {_round + 1} carries NO fact-gate "
+                          f"event — not accepted (fail closed)")
+                else:
+                    res = res2
+                    if pool is not None:
+                        pool.assignments = (
+                            pool.assignments[:_pool_mark0]
+                            + pool.assignments[_pool_mark:])
+                        pool._save()
             if not failed2:
                 break
+        # ROUND 4: the chapter's FINAL records — the depiction
+        # mix of the plan that actually ships (post fix rounds),
+        # with exactly one DEPICTION check in its compliance
+        # matching that mix; the per-pass fact-gate events; and
+        # the chapter's budget share vs what it used.
+        try:
+            import depiction_qc as _dq4z
+            _fin_scenes = (res.get("plan") or {}).get("scenes") or []
+            res["depiction"] = _dq4z.depiction_report(_fin_scenes)
+            _repF = dict(res.get("compliance") or {})
+            _checksF = [c for c in (_repF.get("checks") or [])
+                        if c.get("rule") != "DEPICTION"]
+            _checksF += _dq4z.depiction_checks(_fin_scenes)
+            _repF["checks"] = _checksF
+            _repF["checks_failed"] = sum(
+                1 for c in _checksF if c.get("status") == "FAIL")
+            res["compliance"] = _repF
+        except Exception:
+            pass
+        if _long_ctx:
+            res["fact_gate_passes"] = _gate_passes
+        if deadline is not None:
+            res["chapter_budget"] = {
+                "share_s": round(_ch_deadline - _ch_t0, 1)
+                if _ch_deadline else None,
+                "used_s": round(time.monotonic() - _ch_t0, 1)}
         # v84 (Stage 2): record the TRUE correction rounds this
         # chapter consumed — the long report used to hard-code 0.
         res["fix_rounds_used"] = _fix_rounds_used
@@ -825,7 +1084,8 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
 
 async def make_long_video(brief, chat, workdir, target_minutes,
                           notify=None, deadline=None, ref_voice=None,
-                          amendments=None, spec=None, cfg=None):
+                          amendments=None, spec=None, cfg=None,
+                          topic_history=None, topic_exclusions=None):
     """Runner entry point (v69): outline -> chaptered render -> assemble
     for a requested length of target_minutes (2-60). Returns a result
     dict shaped like doc.make_video's (path/title/duration/lang/caption/
@@ -850,6 +1110,13 @@ async def make_long_video(brief, chat, workdir, target_minutes,
     import spec_engine as _se
     if cfg is None:
         cfg = _se.resolve_render_config(spec, "long")
+    # ROUND 4 (Fix 1): the topic lock's data rides the render
+    # config into every chapter (doc's plan_info reads it for the
+    # per-chapter topic verdicts) and into the outline call below.
+    if topic_history:
+        cfg["topic_history"] = list(topic_history)
+    if topic_exclusions:
+        cfg["topic_exclusions"] = list(topic_exclusions)
     chapters_wanted = None
     if cfg.get("duration_s"):
         target_minutes = max(2, min(60, int(round(cfg["duration_s"] / 60))))
@@ -862,7 +1129,9 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                 f"\n(The outline MUST total exactly {target_minutes} "
                 f"minutes — count the chapter minutes.)")
             out = outline(b, chat, target_minutes,
-                          chapters_wanted=chapters_wanted)
+                          chapters_wanted=chapters_wanted,
+                          topic_history=topic_history,
+                          exclusions=topic_exclusions)
             break
         except ValueError as e:
             last_err = e
@@ -1257,6 +1526,13 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                               if s.get("has_footage"))
             plan_info = {
                 "lang": first.get("lang"), "topic": first.get("topic", brief),
+                # ROUND 4 (Fix 1b): the film-level topic verdict
+                # judges the DELIVERED title (the outline's pick)
+                # against the lock — not a chapter's raw topic
+                # string, and never the word "Auto".
+                "title": out["title"],
+                "topic_history": list(topic_history or []),
+                "topic_exclusions": list(topic_exclusions or []),
                 "voice_used": next((r.get("_voice_used") or (r.get("plan") or {}).get("_voice_used")
                                     for r in results if r), None) or first.get("voice_used"),
                 "voice_gender": cfg.get("voice_gender"),
@@ -1409,6 +1685,19 @@ async def make_long_video(brief, chat, workdir, target_minutes,
               f"{len(_mq_left)} defect(s) remaining")
     except Exception as e:
         print("assembled correction loop failed:", str(e)[:200])
+    # ROUND 4 (fold-in): a film that ships with compliance FAILs
+    # says so at DELIVERY level — in the summary the owner reads —
+    # not only inside compliance_report.json. Film 3 shipped at
+    # 19 FAILs after 3 correction rounds and the delivery line
+    # never mentioned it.
+    _comp_warn = ""
+    if report is not None and int(report.get("checks_failed") or 0):
+        _comp_warn = (
+            f"⚠ compliance: {report['checks_failed']} check(s) "
+            f"still FAIL after {int(report.get('fix_rounds') or 0)} "
+            f"correction round(s) — shipped with known defects "
+            f"(see compliance_report.json)")
+        summary += "; " + _comp_warn
     # v84 (Stage 5 / P3): Editing Director, LOG-ONLY. Reads the
     # chapter plans, writes director_log.json, changes NOTHING.
     _director_log = None
@@ -1544,6 +1833,21 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                   f"new proposal(s) (approval-gated)")
         except Exception as e:
             print("edit memory write failed:", str(e)[:150])
+    # ROUND 4: film-level aggregates — the depiction mix over
+    # every delivered beat, and every pass's fact-gate event, so
+    # the QC surfaces exist on the delivery record itself.
+    _dep_film = None
+    _fg_film = []
+    try:
+        import depiction_qc as _dq4lv
+        _dep_film = _dq4lv.depiction_report(
+            [s for r in results
+             for s in ((r.get("plan") or {}).get("scenes") or [])])
+    except Exception:
+        _dep_film = None
+    for _ci, _r in enumerate(results):
+        for _ev in (_r.get("fact_gate_passes") or []):
+            _fg_film.append({"chapter": _ci + 1, **_ev})
     result = {"path": final, "title": out["title"], "duration": duration,
               "lang": first.get("lang", "te"),
               "caption": first.get("caption", ""),
@@ -1564,7 +1868,12 @@ async def make_long_video(brief, chat, workdir, target_minutes,
               "footage_share": (round(_cov_sc / _tot_sc, 3)
                                 if _tot_sc else 0.0),
               "partial": partial, "chapters_done": len(paths),
-              "chapters_total": total_ch, "long": True}
+              "chapters_total": total_ch, "long": True,
+              # ROUND 4: delivery-level compliance warning + the
+              # film's depiction mix + per-pass fact-gate events.
+              "compliance_warning": _comp_warn or None,
+              "depiction": _dep_film,
+              "fact_gate_passes": _fg_film}
     # v89: PACKAGING STEP (additive, delivery end) — 10 titles, 3
     # thumbnail concepts, a validated title<->thumbnail pair, the
     # description, 3 Shorts cut points and a debate-question first
@@ -1590,8 +1899,23 @@ async def make_long_video(brief, chat, workdir, target_minutes,
         for _b89 in broll_sources:
             if isinstance(_b89, dict) and _b89.get("url"):
                 _srcs89.append(str(_b89["url"]))
+        # ROUND 4 (fold-in): packaging grades the DELIVERED film —
+        # its topic is a real chapter topic or the delivered
+        # title, never the raw order string. Film 3's pair check
+        # graded 'Auto: What Nobody Tells You' × 'MYSTERY
+        # REVEALED' because the topic passed in was the literal
+        # brief word "Auto".
+        _pkg_topic = ""
+        for _r89 in results:
+            _t89b = str((_r89.get("plan") or {}).get("topic")
+                        or _r89.get("topic") or "").strip()
+            if _t89b and _t89b.lower() != "auto":
+                _pkg_topic = _t89b
+                break
+        if not _pkg_topic:
+            _pkg_topic = out["title"]
         _pkg = _pkg89.build_packaging(
-            first.get("topic", brief), out["title"], _chs89,
+            _pkg_topic, out["title"], _chs89,
             sources=_srcs89,
             claims=[c["title"] for c in out["chapters"]][:3],
             duration=duration)

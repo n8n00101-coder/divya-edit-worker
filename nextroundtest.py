@@ -110,15 +110,24 @@ def _run_topup(ext_vo_list):
     orig_mv, orig_join = doc.make_video, long_video._join_clips
     orig_probe = long_video._probe_duration
 
+    # ROUND 4: the stub mirrors the real doc.make_video contract —
+    # in a long job every plan carries its fact-gate event (doc.plan
+    # sets it; an ungated top-up no longer joins). Without it the
+    # round-4 join gate would reject for the wrong reason.
+    _FG = {"claims": 0, "rewrite_round": False, "removed": [],
+           "dropped_scenes": []}
+
     async def _mv(brief, chat, **kw):
         if "EXTENSION" in brief:
             return {"path": "ext.mp4", "duration": 43.0,
                     "compliance": {"checks": []},
-                    "plan": {"scenes": [{"vo": v}
+                    "plan": {"fact_gate": dict(_FG),
+                             "scenes": [{"vo": v}
                                         for v in ext_vo_list]}}
         return {"path": "ch1.mp4", "duration": 59.0,
                 "compliance": {"checks": []},
-                "plan": {"scenes": [{"vo": v} for v in OLD_VO]}}
+                "plan": {"fact_gate": dict(_FG),
+                         "scenes": [{"vo": v} for v in OLD_VO]}}
 
     def _fake_join(paths, out):
         _joins["n"] += 1

@@ -79,18 +79,36 @@ def sample_frames(clip_path, n=MAX_FRAMES, workdir=None):
     return out
 
 
-def _default_verifier(frames, narration, why):
+def _default_verifier(frames, narration, why, forced=False):
     """Real vision via doc3.vjson (free rotation). Returns
-    {'verdict': 'pass'|'fail'|'uncertain', 'reason': str}."""
+    {'verdict': 'pass'|'fail'|'uncertain'|'undecided', 'reason': str}.
+
+    ROUND 4 (Fix 3): `forced` is the forced-choice retry — the
+    prompt offers NO uncertain option and demands a yes/no. The
+    third film's verifier answered 31/40 calls "uncertain" and
+    decided nothing; an undecided answer is not an answer, so an
+    uncertain first verdict is retried once in this mode. If the
+    model STILL will not choose, the verdict is 'undecided' — a
+    distinct, countable outcome, not a quiet keep."""
     import doc3  # lazy: heavy module, only on a real check
-    prompt = (
-        "You verify documentary B-roll. The narration line is: "
-        f"\"{narration}\". The editor chose this clip because: \"{why}\". "
-        "Look at the frames. Does the ACTUAL visual content match the "
-        "narration's meaning? Reply ONLY JSON: "
-        "{\"match\": true/false, \"reason\": \"short reason\"}. "
-        "If the frames are ambiguous, use {\"match\": \"uncertain\", "
-        "\"reason\": \"why\"}.")
+    if forced:
+        prompt = (
+            "You verify documentary B-roll. The narration line is: "
+            f"\"{narration}\". The editor chose this clip because: "
+            f"\"{why}\". Look at the frames. You MUST choose: does "
+            "the ACTUAL visual content match the narration's "
+            "meaning, or not? There is no 'unsure' option — pick "
+            "the closer answer. Reply ONLY JSON: "
+            "{\"match\": true/false, \"reason\": \"short reason\"}.")
+    else:
+        prompt = (
+            "You verify documentary B-roll. The narration line is: "
+            f"\"{narration}\". The editor chose this clip because: \"{why}\". "
+            "Look at the frames. Does the ACTUAL visual content match the "
+            "narration's meaning? Reply ONLY JSON: "
+            "{\"match\": true/false, \"reason\": \"short reason\"}. "
+            "If the frames are ambiguous, use {\"match\": \"uncertain\", "
+            "\"reason\": \"why\"}.")
     # NEXT-ROUND (Fix 2 — the bytes bug): doc3.vjson base64-encodes
     # its jpgs argument, so it takes image BYTES (the doc3.py:1010
     # convention: open(fp, "rb").read()). This verifier used to hand
@@ -108,13 +126,14 @@ def _default_verifier(frames, narration, why):
                 jpgs.append(f.read())
     res = doc3.vjson(prompt, jpgs)
     if not isinstance(res, dict):
-        return {"verdict": "uncertain", "reason": "vision gave no verdict"}
+        return {"verdict": "undecided" if forced else "uncertain",
+                "reason": "vision gave no verdict"}
     m = res.get("match")
     if m is True:
         return {"verdict": "pass", "reason": str(res.get("reason", ""))[:200]}
     if m is False:
         return {"verdict": "fail", "reason": str(res.get("reason", ""))[:200]}
-    return {"verdict": "uncertain",
+    return {"verdict": "undecided" if forced else "uncertain",
             "reason": str(res.get("reason", "ambiguous frames"))[:200]}
 
 
@@ -146,6 +165,15 @@ class BrollVerifier:
         # errored clips with no outage ever declared).
         self.errors = []
         self.answers = 0
+        # ROUND 4 (Fix 3): decisiveness bookkeeping. `decisive`
+        # counts candidates whose FINAL verdict is pass/fail;
+        # `undecided` counts candidates still undecided after the
+        # forced-choice retry. Film 3: 31 answers, ALL "uncertain"
+        # — zero decisive verdicts, no outage declared, nothing
+        # flagged. That state is now a named outcome.
+        self.decisive = 0
+        self.undecided = 0
+        self.forced_retries = 0
 
     def _save_cache(self):
         if not self.cache_path:
@@ -160,10 +188,22 @@ class BrollVerifier:
         ctx = hashlib.sha256(f"{narration}|{why}".encode()).hexdigest()[:16]
         return f"{frame_hash}:{ctx}"
 
+    def _call_verifier(self, frames, narration, why, forced):
+        """One verifier invocation. Verifiers that predate the
+        forced-choice mode (3-arg callables, as injected by older
+        tests) are called without the flag — a TypeError from the
+        signature is not a vision error."""
+        try:
+            return self.verifier(frames, narration, why, forced=forced)
+        except TypeError:
+            return self.verifier(frames, narration, why)
+
     def verify_candidate(self, cand, narration, why, workdir=None):
         """cand: dict with at least 'id' and 'path' (local clip file).
         Returns (verdict, reason, from_cache). verdict in
-        pass/fail/uncertain/unverified."""
+        pass/fail/undecided/unverified — ROUND 4: 'uncertain' is
+        never a FINAL verdict; it triggers one forced-choice retry
+        and then resolves to pass/fail or 'undecided'."""
         cid = str(cand.get("id") or cand.get("path") or "?")
         # --- editing-memory pre-check: a visual rejected in an earlier
         # job for a similar context is rejected here at zero cost.
@@ -187,30 +227,72 @@ class BrollVerifier:
         fh = dhash_file(frames[0]) or hashlib.sha256(
             open(frames[0], "rb").read()).hexdigest()[:16]
         key = self._cache_key(fh, narration, why)
-        if key in self.cache:
+        if key in self.cache and self.cache[key].get("verdict") != "uncertain":
             v = self.cache[key]
             self.log.append({"candidate": cid, "verdict": v["verdict"],
                              "reason": v["reason"], "calls": 0,
                              "cached": True})
             return v["verdict"], v["reason"], True
+        # A cached "uncertain" (pre-round-4 cache) is not an
+        # answer either — it falls through to the forced-choice
+        # retry below; with no budget left it resolves to
+        # "undecided" so the caller flags the clip honestly.
         if self.calls_made >= self.budget:
+            if key in self.cache:
+                verdict = "undecided"
+                reason = ("vision undecided (cached uncertain; no "
+                          "budget for the forced-choice retry)")
+                self.undecided += 1
+                self.cache[key] = {"verdict": verdict, "reason": reason}
+                self._save_cache()
+                self.log.append({"candidate": cid, "verdict": verdict,
+                                 "reason": reason, "calls": 0,
+                                 "cached": True})
+                return verdict, reason, True
             self.log.append({"candidate": cid, "verdict": "unverified",
                              "reason": f"vision call budget ({self.budget}) reached",
                              "calls": 0})
             return "unverified", "vision call budget reached", False
         self.calls_made += 1
+        calls_used = 1
         try:
-            res = self.verifier(frames, narration, why)
+            res = self._call_verifier(frames, narration, why, False)
             verdict = res.get("verdict", "uncertain")
             reason = str(res.get("reason", ""))[:200]
             self.answers += 1
+            # ROUND 4 (Fix 3): "uncertain" is not an answer — ONE
+            # forced-choice retry (match / no-match, no third
+            # option). Still no choice -> the candidate is
+            # UNDECIDED, a verdict the caller must flag, not a
+            # quiet keep.
+            if verdict == "uncertain" and self.calls_made < self.budget:
+                self.calls_made += 1
+                calls_used += 1
+                self.forced_retries += 1
+                res2 = self._call_verifier(frames, narration, why, True)
+                v2 = res2.get("verdict", "undecided")
+                r2 = str(res2.get("reason", ""))[:200]
+                if v2 in ("pass", "fail"):
+                    verdict, reason = v2, (r2 or reason)
+                else:
+                    verdict = "undecided"
+                    reason = (f"vision undecided after forced-choice "
+                              f"retry: {r2 or reason}")[:200]
+            elif verdict == "uncertain":
+                verdict = "undecided"
+                reason = (f"vision undecided (no budget for the "
+                          f"forced-choice retry): {reason}")[:200]
         except Exception as e:
             verdict, reason = "unverified", f"vision unavailable: {str(e)[:100]}"
             self.errors.append(reason)
+        if verdict in ("pass", "fail"):
+            self.decisive += 1
+        elif verdict == "undecided":
+            self.undecided += 1
         self.cache[key] = {"verdict": verdict, "reason": reason}
         self._save_cache()
         self.log.append({"candidate": cid, "verdict": verdict,
-                         "reason": reason, "calls": 1})
+                         "reason": reason, "calls": calls_used})
         if self.memory is not None and verdict == "fail":
             try:
                 self.memory.record_rejection(
@@ -219,19 +301,43 @@ class BrollVerifier:
                 pass
         return verdict, reason, False
 
+    def indecision_outage(self):
+        """ROUND 4 (Fix 3): True when more than half of the
+        candidates the verifier actually judged ended UNDECIDED
+        (uncertain even after the forced-choice retry). A verifier
+        that will not decide is an outage with better logging —
+        film 3 got 31 'uncertain' answers, zero decisive verdicts,
+        and no declaration anywhere."""
+        judged = self.decisive + self.undecided
+        return judged > 0 and (self.undecided / judged) > 0.5
+
     def outage(self):
         """True when the verifier was actually called and has
-        NEVER answered — every attempt errored. Selections made
-        in this state are keyword-only and must be flagged."""
-        return bool(self.errors) and self.answers == 0
+        NEVER answered — every attempt errored — or when it
+        answers but will not decide (indecision outage).
+        Selections made in either state are keyword-only and
+        must be flagged."""
+        return (bool(self.errors) and self.answers == 0) \
+            or self.indecision_outage()
 
     def report(self):
         """The job-level vision summary for footage.json / the
-        delivery report: calls, answers, errors, and the OUTAGE
-        declaration when the verifier never answered."""
+        delivery report: calls, answers, errors, decisive and
+        undecided counts, and the OUTAGE declaration when the
+        verifier never answered or would not decide."""
         rep = {"calls": self.calls_made, "answers": self.answers,
-               "errors": len(self.errors), "outage": self.outage()}
-        if self.outage():
+               "errors": len(self.errors), "outage": self.outage(),
+               "decisive": self.decisive, "undecided": self.undecided,
+               "forced_retries": self.forced_retries}
+        if self.indecision_outage():
+            rep["note"] = (
+                "VISION VERIFIER INDECISIVE — "
+                f"{self.undecided} of {self.decisive + self.undecided} "
+                "judged clips ended undecided even after a "
+                "forced-choice retry; clips flagged keyword_only "
+                "were picked by keyword score alone and are NOT "
+                "vision-verified")
+        elif self.outage():
             rep["note"] = (
                 "VISION VERIFIER OUTAGE — the verifier errored on "
                 f"every call ({self.errors[0]}); clips flagged "
@@ -242,8 +348,9 @@ class BrollVerifier:
     def verify_scene(self, candidates, narration, why, workdir=None):
         """Check up to MAX_CANDIDATES candidates for one scene.
         Returns (chosen_or_None, results). A candidate with verdict
-        'pass' wins; 'uncertain' is kept as a truthful fallback;
-        'fail' is rejected with its reason recorded."""
+        'pass' wins; 'undecided'/'unverified' are kept as truthful
+        fallbacks (the caller flags them — the verifier did NOT
+        verify them); 'fail' is rejected with its reason recorded."""
         results = []
         fallback = None
         for cand in (candidates or [])[:MAX_CANDIDATES]:
@@ -254,7 +361,8 @@ class BrollVerifier:
                             "cached": cached})
             if verdict == "pass":
                 return cand, results
-            if verdict in ("uncertain", "unverified") and fallback is None:
+            if verdict in ("uncertain", "unverified", "undecided") \
+                    and fallback is None:
                 fallback = cand
         return fallback, results
 
