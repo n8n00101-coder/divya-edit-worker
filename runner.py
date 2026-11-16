@@ -41,6 +41,11 @@ async def main():
     # post their own specific failure note first (see _FAILED_POSTED).
     try:
         return await _run_job(j)
+    except JobCancelled:
+        # v99: belt-and-braces — a stop that unwinds past _run_job is
+        # still a cancellation, never a failure.
+        app_state("cancelled", "User stop chepparu — video cancel chesa.")
+        return
     except BaseException as e:
         # v78: app_state itself stays silent when the result was already
         # delivered (delivered is terminal — see _RESULT_DELIVERED).
@@ -80,6 +85,8 @@ async def edit_create_job(j, wa, note):
         groq_chat, workdir=wd, notify=note)
     print("edit video", res["path"], res.get("duration"),
           "changed scenes:", (res.get("edit") or {}).get("changed_scenes"))
+    # v99: honoured before the result upload too, not only delivery.
+    raise_if_cancelled()
     caption = str(res.get("caption", ""))[:300]
     _ed = res.get("edit") or {}
     qcline = ""
@@ -105,6 +112,8 @@ async def edit_create_job(j, wa, note):
             upload_artifacts(res.get("workdir"))
     except Exception as e:
         print("edit result upload failed", str(e)[:200])
+    # v99: a stop that landed during the edit silences the delivery.
+    raise_if_cancelled()
     try:
         size = os.path.getsize(res["path"]) / 1e6
         wa_path = fit_size(res["path"], 15) if size > 15.5 else res["path"]
@@ -117,13 +126,34 @@ async def edit_create_job(j, wa, note):
 async def _run_job(j):
     import whatsapp as wa, autoedit  # import after env is set (config reads env)
     to = j["to"]
-    note = lambda t: wa.send_text(to, t)
-    if j.get("mode") == "edit_create":
-        return await edit_create_job(j, wa, note)
-    if j.get("mode") == "create":
-        return await create_job(j, wa, note)
-    if j.get("app"):
-        return await app_edit_job(j, wa)
+    # v99: the job was stopped before this runner even started (the
+    # flag rides the /job record) — report cancelled and send nothing.
+    if j.get("cancelled"):
+        app_state("cancelled", "User stop chepparu — video cancel chesa.")
+        return
+
+    async def note(t):
+        # v99 (WA discipline): progress sends are gated on the job NOT
+        # being cancelled, checked at SEND time — not when the stage
+        # was queued. A cancelled job goes silent AND halts here:
+        # raising unwinds the engine at its stage boundary, so no
+        # further progress, result or delivery can follow a stop.
+        if job_cancelled():
+            raise JobCancelled()
+        await wa.send_text(to, t)
+
+    try:
+        if j.get("mode") == "edit_create":
+            return await edit_create_job(j, wa, note)
+        if j.get("mode") == "create":
+            return await create_job(j, wa, note)
+        if j.get("app"):
+            return await app_edit_job(j, wa)
+    except JobCancelled:
+        # v99: a user stop is not a failure — no failed post, no WA
+        # failure text. Settle the job as cancelled and finish clean.
+        app_state("cancelled", "User stop chepparu — video cancel chesa.")
+        return
     try:
         src = await wa.download_media(j["media_id"], "mp4")
         res = await autoedit.auto_edit(src, j["instruction"] + EDIT_PIPELINE + HARK_PIPELINE + HARK_LONG_PIPELINE + HARK_PROCESS + THEORY + HARK_BEHAVIOUR + HARK_AESTHETIC + HARK_NEAT + HARK_DIRECTOR, notify=note)
@@ -150,6 +180,10 @@ async def _run_job(j):
             await wa.send_media(to, res["path"], "video", caption=f"✨ Edit ready! {res['summary'][:300]}\n{qa}")
         except Exception as e:
             print("wa send_media failed (post-result, non-fatal):", str(e)[:200])
+    except JobCancelled:
+        # v99: user stop — settle as cancelled, no failure text.
+        app_state("cancelled", "User stop chepparu — video cancel chesa.")
+        return
     except Exception as e:
         await wa.send_text(to, f"⚠️ Edit fail ayyindi: {str(e)[:300]}. Instruction konchem marchi malli try cheyyandi.")
         raise
@@ -195,6 +229,45 @@ def app_state(state, note=""):
                    headers={"x-runner-key": KEY}, timeout=20)
     except Exception as e:
         print("state post failed", type(e).__name__)
+
+
+# v99 (WA discipline): user STOP. The Worker records the stop on the
+# job (cancel:<job>); the flag rides the amendments poll the runner
+# already makes at engine checkpoints. Once seen it is latched here:
+# every progress send is gated on it AT SEND TIME (see _run_job's
+# note), the engines halt at their next notify/checkpoint via
+# JobCancelled, and nothing further is delivered. 2026-11-16: a job
+# Ajju stopped twice on WhatsApp rendered on and delivered, because
+# no cancel state existed anywhere in the system.
+class JobCancelled(Exception):
+    pass
+
+
+_CANCEL = {"seen": False, "at": 0.0}
+
+
+def job_cancelled(force=False):
+    """True once the Worker says this job was stopped. Latched; the
+    poll is throttled to one Worker read per 10 s unless forced."""
+    if _CANCEL["seen"]:
+        return True
+    now = time.monotonic()
+    if force or now - _CANCEL["at"] > 10:
+        _CANCEL["at"] = now
+        try:
+            r = httpx.get(f"{WORKER}/api/runner/amendments",
+                          params={"job": JOB},
+                          headers={"x-runner-key": KEY}, timeout=6)
+            if r.status_code == 200 and r.json().get("cancelled"):
+                _CANCEL["seen"] = True
+        except Exception:
+            pass
+    return _CANCEL["seen"]
+
+
+def raise_if_cancelled():
+    if job_cancelled(force=True):
+        raise JobCancelled()
 
 
 def upload_artifacts(wd):
@@ -522,6 +595,9 @@ async def app_edit_job(j, wa):
     import autoedit
     to, use_wa = j["to"], bool(j.get("wa"))
     async def note(t):
+        # v99: same send-time cancel gate as the create path.
+        if job_cancelled():
+            raise JobCancelled()
         app_state("running", t)
         if use_wa:
             try: await wa.send_text(to, t)
@@ -537,6 +613,8 @@ async def app_edit_job(j, wa):
         if j.get("sfx"):
             res["path"] = mix_sfx(res["path"], str(j["sfx"]))
         qa = "QA ✅" if res["review"].get("ok") else "QA note: " + "; ".join(res["review"].get("issues", [])[:2])
+        # v99: no result post, no WA copy, for a cancelled job.
+        raise_if_cancelled()
         app_path = fit_size(res["path"], 23)
         r = httpx.post(f"{WORKER}/api/runner/result", params={"job": JOB, "note": f"{res['summary'][:200]} {qa}"[:290]},
                        content=open(app_path, "rb").read(), headers={"x-runner-key": KEY, "content-type": "video/mp4"}, timeout=300)
@@ -545,6 +623,9 @@ async def app_edit_job(j, wa):
             raise RuntimeError(f"result upload {r.status_code}")
         if use_wa:
             await wa.send_media(to, fit_size(res["path"], 15.5), "video", caption=f"✨ Edit ready! {res['summary'][:300]}\n{qa}")
+    except JobCancelled:
+        # v99: user stop — _run_job settles the job as cancelled.
+        raise
     except Exception as e:
         app_state("failed", f"Edit fail ayyindi: {str(e)[:250]}")
         raise
@@ -744,7 +825,15 @@ class Amendments:
             r = httpx.get(f"{WORKER}/api/runner/amendments", params={"job": JOB},
                           headers={"x-runner-key": KEY}, timeout=20)
             if r.status_code == 200:
-                for it in (r.json().get("amendments") or []):
+                data = r.json()
+                # v99: the same poll carries the cancel flag — latch
+                # it so the send gate (note) and the delivery checks
+                # see the stop even between their own polls. (Raising
+                # here would be swallowed by the engines' amendment
+                # poll guards; the halt happens at the next notify.)
+                if data.get("cancelled"):
+                    _CANCEL["seen"] = True
+                for it in (data.get("amendments") or []):
                     self.seen[it["id"]] = it
             else:
                 print("amendments fetch:", r.status_code)
@@ -971,6 +1060,10 @@ async def create_job(j, wa, note):
         # guaranteed to 413 — and it silently became the result-upload
         # source too. The result below uploads from the ORIGINAL file;
         # the WA copy is duration-fitted (fit_size) after delivery.
+        # v99: a stop that landed during the render is honoured
+        # BEFORE anything is sent or uploaded — no gate warning, no
+        # result, no delivery for a cancelled job.
+        raise_if_cancelled()
         qc = res.get("qc") or {}
         qcline = "" if not qc else ("\nQC ✅" if qc.get("pass") else "\nQC weak: " + "; ".join(qc.get("weak", [])[:3])[:250])
         gate_ok, gate_flaws, dropped = analysis_gate(res["path"], res.get("facts"))
@@ -1037,6 +1130,10 @@ async def create_job(j, wa, note):
                 upload_artifacts(res.get("workdir"))
         except Exception as e:
             print("result upload failed", str(e)[:200])
+        # v99: last gate before the WhatsApp copy goes out — a stop
+        # that landed during the upload still silences the delivery
+        # (the Worker also refuses a cancelled job's result with 409).
+        raise_if_cancelled()
         # v78: WhatsApp delivery is best-effort AFTER the app result —
         # job 7aee5d2a died exactly here (send_media HTTP 413 on the
         # 108 MB file) and took the delivered job down with it. Fit a
@@ -1050,6 +1147,10 @@ async def create_job(j, wa, note):
             httpx.post(f"{WORKER}/done", json={"to": to, "topic": res["topic"], "job": JOB}, headers={"x-runner-key": KEY}, timeout=20)
         except Exception:
             pass
+    except JobCancelled:
+        # v99: user stop — NOT an error path: no failed post, no WA
+        # failure text. _run_job settles the job as cancelled.
+        raise
     except Exception as e:
         # v78: an error AFTER the result was delivered changes nothing —
         # the video is in the app, the charge stands, the job is done.
