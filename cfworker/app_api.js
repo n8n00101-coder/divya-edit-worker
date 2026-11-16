@@ -2037,12 +2037,19 @@ function isSetupQuestion(text) {
   return SETUP_Q_RX.test(t);
 }
 function setupGuideReply(lang) {
-  // v88 (G2): SHORT and honest — the busy truth + retry. Never a Setup
-  // sales pitch, and never the old tap-the-email-link line:
-  // the standing truth (F8) is the link goes to the user's email and
-  // JULIE opens it herself; the user taps only inside Take Control.
-  if (lang === "en") return "The shared AI is busy right now — its free limit is full, so it can't answer at the moment. It clears on its own in a bit; please try again shortly.";
-  return "Shared AI ippudu busy ga undhi — free limit full ayyindhi, anduke ippudu answer ivvaledu. Konchem sepu lo thane clear avuthundi; appudu malli try cheyyi.";
+  // v99 (WA discipline): this text is the brain-total-failure fallback
+  // ONLY — it fires when every chat provider actually failed (the groq
+  // "Sorry ra" sentinel / userBrain exhaustion), never as the answer
+  // to a command the Worker handles structurally (stop/cancel are
+  // structural since v99). It must say three things plainly: WHAT is
+  // busy, WHAT did not happen (nothing started, nothing changed), and
+  // WHEN to retry. The old text ("Shared AI ippudu busy ga undhi —
+  // free limit full ayyindhi, anduke ippudu answer ivvaledu…") fired
+  // at Ajju's "Stop" on 2026-11-16 while a runaway job kept rendering
+  // behind it — incomprehensible in context, and it claimed nothing
+  // about the job either way.
+  if (lang === "en") return "My AI brain is busy right now — the free limit is full, so I couldn't answer that message. I haven't started or changed anything. The limit clears on its own in a little while; please say it again then.";
+  return "Naa AI brain ippudu busy ga undhi — free limit full ayindhi, anduke nee message ki reply ivvalekapothunna. Nenu emi start cheyyaledu, emi change cheyyaledu. Konchem sepu lo limit thane clear avuthundi — appudu malli cheppu.";
 }
 // v51 (F2): a busy/limit answer in chat is ONE short line — never a
 // paragraph wall. The brain sometimes expands the setup pitch into a
@@ -2052,7 +2059,7 @@ function setupGuideReply(lang) {
 // user's phone — tab titles now come only from user messages, app.js.)
 function busyWallGuard(reply, lang) {
   const r = String(reply || "");
-  if (/shared ai is busy|free limit is full|shared ai ippudu busy/i.test(r) && (r.length > 180 || /give one allow|#\/setup|tap the verification|sms code/i.test(r))) return setupGuideReply(lang);
+  if (/shared ai is busy|free limit is full|shared ai ippudu busy|brain ippudu busy|brain is busy/i.test(r) && (r.length > 180 || /give one allow|#\/setup|tap the verification|sms code/i.test(r))) return setupGuideReply(lang);
   return r;
 }
 // v51 (F3): never the same assistant reply twice back-to-back. When the
@@ -3103,7 +3110,11 @@ async function appRunner(req, env, p, url, body) {
   // the runner actually applied, with the consuming stage — an item's
   // stage is set once, so the delivery report can never upgrade a
   // missed amendment into an applied one.
-  if (p === "runner/amendments" && req.method === "GET") { return Response.json({ ok: true, amendments: await amendList(env, job) }); }
+  // v99 (WA discipline): the amendments poll also carries the job's
+  // cancel flag — it is the runner's one regular Worker contact, so a
+  // user stop reaches the runner here (runner.py gates every progress
+  // send on it and halts at the next checkpoint).
+  if (p === "runner/amendments" && req.method === "GET") { return Response.json({ ok: true, cancelled: !!(await env.KV.get(`cancel:${job}`)), amendments: await amendList(env, job) }); }
   if (p === "runner/amendments" && req.method === "POST") {
     const list = await amendList(env, job);
     const ids = new Set((Array.isArray(body.ids) ? body.ids : []).map(Number));
@@ -3113,7 +3124,29 @@ async function appRunner(req, env, p, url, body) {
     return Response.json({ ok: true, amendments: list });
   }
   if (p === "runner/state" && req.method === "POST") {
-    const state = ["running", "done", "failed"].includes(body.state) ? body.state : "running";
+    const state = ["running", "done", "failed", "cancelled"].includes(body.state) ? body.state : "running";
+    // v99 (WA discipline): a user-cancelled job is TERMINAL. The cancel
+    // flag (cancel:<job>, set by the structural stop handler) beats
+    // every later runner post: a "running" post changes nothing, and a
+    // "cancelled" post — or a "failed" post that is really the runner
+    // unwinding a cancel — settles the entry as CANCELLED, never
+    // failed, with the pointers cleared and the v73 refund applied
+    // exactly once (refundJobSpend is idempotent and still refuses a
+    // delivered job). 2026-11-16: Ajju said stop twice on WhatsApp and
+    // the job rendered on and delivered — there was no cancel state
+    // anywhere in the system.
+    const cancelFlag = !!(await env.KV.get(`cancel:${job}`));
+    if (cancelFlag && state === "running") return Response.json({ ok: true, cancelled: true });
+    if (state === "cancelled" || (cancelFlag && state === "failed")) {
+      if (st && st.job === job && !st.has_result) await save({ state: "cancelled", note: String(body.note || "User stop chepparu — cancel chesa.").slice(0, 300) });
+      const refC = st?.num ? { n, num: st.num } : await histNumForJob(env, job);
+      if (refC) { const eC = await histGet(env, refC.n, refC.num); if (eC && !eC.has_result && !eC.doneAt && eC.state !== "done") { eC.state = "cancelled"; eC.cancelledAt = Date.now(); eC.note = "User stop chepparu — cancel chesa."; await histPut(env, refC.n, eC); } }
+      await env.KV.delete(`busy:${n}`); await env.KV.delete(`upl:${job}`);
+      if ((await env.KV.get(`curjob:${n}`)) === job) await env.KV.delete(`curjob:${n}`);
+      const ajC = JSON.parse((await env.KV.get(`appjob:${n}`)) || "null"); if (ajC && ajC.job === job) await env.KV.delete(`appjob:${n}`);
+      await refundJobSpend(env, job, n);
+      return Response.json({ ok: true, cancelled: true });
+    }
     const pct = Number.isFinite(body.pct) ? Math.max(0, Math.min(100, body.pct | 0)) : null;
     // v78: DELIVERED IS TERMINAL. Job 7aee5d2a (2026-11-13): the result
     // posted, the History entry got doneAt + has_result + the success
@@ -3143,6 +3176,9 @@ async function appRunner(req, env, p, url, body) {
     return Response.json({ ok: true });
   }
   if (p === "runner/result" && req.method === "POST") {
+    // v99 (WA discipline): a cancelled job's result is REFUSED — after
+    // the user stopped it, the video is never stored as done/delivered.
+    if (await env.KV.get(`cancel:${job}`)) return Response.json({ ok: false, cancelled: true }, { status: 409 });
     const b = await req.arrayBuffer(); if (b.byteLength > EDIT_MAX) return new Response("too big", { status: 413 });
     await env.KV.put(`res:${job}`, b, { expirationTtl: 86400 * 3 });
     await save({ state: "done", has_result: true, size: b.byteLength, note: String(url.searchParams.get("note") || "").slice(0, 300) });

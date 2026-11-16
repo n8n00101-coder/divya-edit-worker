@@ -251,6 +251,75 @@ function amendReplyLine(lang, text) {
   return lang === "en" ? `Adding it to THIS video — ${short}` : `Ee video lone add chesthunna — ${short}`;
 }
 
+// ---------- v99 (WA discipline): structural STOP ----------
+// 2026-11-16 incident: Ajju said "Stop" and "Just stop it" on WhatsApp
+// while a video he never ordered was rendering — and NOTHING happened:
+// no stop concept existed anywhere (the word fell through to the chat
+// brain, which was itself saturated, and the runner kept sending
+// progress and delivered the video). A stop is now STRUCTURAL, like
+// amendments: detected in code, executed in code, never the brain's
+// call. Cancelling writes the flag in two places the runner already
+// touches — cancelled on the job record (rides /job) and cancel:<job>
+// (rides the amendments poll + gates runner/state + runner/result) —
+// refunds the recorded spend via the v73 idempotent path, clears the
+// busy/curjob/appjob pointers, and settles the History entry as
+// "cancelled". The runner halts at its next progress send/checkpoint
+// and goes silent (runner.py v99 note gate).
+const STOP_PROD_RX = /(music|bgm|sfx|sound\s*effects?|captions?|subtitles?|footage|b[-\s]?roll|broll|transitions?|animations?|visual\s*effects?|\beffects?\b|zoom|background|graphics?|\bstyle\b|\blook\b)/i;
+function isStopIntent(text) {
+  const t = String(text || "").trim().toLowerCase();
+  if (!t || t.split(/\s+/).length > 6) return false;
+  if (!/\b(stop|aapu|aapey|aapandi|cancel|bandh|vaddu)\b/.test(t)) return false;
+  // "music aapu" names a production element — that is an AMENDMENT to
+  // the running video, not a stop (unless the whole video is named:
+  // "video aapu" / "anni aapu" stay stops).
+  if (STOP_PROD_RX.test(t) && !/\b(video|reel|short|anni|everything|mottham|motham)\b/.test(t)) return false;
+  return true;
+}
+// A stop strong enough to deserve the "nothing is running" answer even
+// when no job was found. A lone "vaddu" is NOT here: it is also the
+// natural "no" to other questions (upload confirms), so with no active
+// job it falls through to the normal flow.
+function isBareStop(text) {
+  const t = String(text || "").trim().toLowerCase();
+  return t.split(/\s+/).length <= 6 && /\b(stop|aapu|aapey|aapandi|cancel|bandh)\b/.test(t) && !STOP_PROD_RX.test(t);
+}
+async function cancelActiveJob(env, user) {
+  const job = await runningJob(env, user);
+  if (!job) return null;
+  const jr = parseRec(await env.KV.get(`job:${job}`)) || {};
+  jr.cancelled = true; jr.cancelledAt = Date.now();
+  await env.KV.put(`job:${job}`, JSON.stringify(jr), { expirationTtl: 86400 });
+  await env.KV.put(`cancel:${job}`, "1", { expirationTtl: 86400 });
+  await env.KV.delete(`busy:${user}`);
+  if ((await env.KV.get(`curjob:${user}`)) === job) await env.KV.delete(`curjob:${user}`);
+  const aj = parseRec(await env.KV.get(`appjob:${user}`));
+  if (aj && aj.job === job) await env.KV.delete(`appjob:${user}`);
+  // Delivered is terminal (v78): a job whose video already landed is
+  // reported honestly as delivered, never "cancelled" after the fact —
+  // and refundJobSpend itself refuses it, so the money rule holds
+  // whichever path asks first.
+  let delivered = false;
+  try {
+    const ref = await histNumForJob(env, job);
+    const e = ref ? await histGet(env, ref.n, ref.num) : null;
+    if (e && (e.has_result || e.doneAt || e.state === "done")) delivered = true;
+  } catch {}
+  if (delivered) return { job, delivered: true, refunded: false };
+  let refunded = false;
+  try { refunded = await refundJobSpend(env, job, user); } catch {}
+  try {
+    const ref = await histNumForJob(env, job);
+    if (ref) { const e = await histGet(env, ref.n, ref.num); if (e && !e.has_result && !e.doneAt && e.state !== "done") { e.state = "cancelled"; e.cancelledAt = Date.now(); e.note = refunded ? "User stop chepparu — cancel chesa, tokens refund chesa." : "User stop chepparu — cancel chesa."; await histPut(env, ref.n, e); } }
+  } catch {}
+  return { job, delivered: false, refunded };
+}
+function stopReply(cxl, redo) {
+  if (!cxl) return "Ippudu emi run avvatledhu — cancel cheyadaniki emi ledu.";
+  if (cxl.delivered) return "Aa video already ready ayyi deliver ayipoyindhi — ippudu cancel cheyyalenu.";
+  return "Aapesa — video cancel chesa. Inka progress messages raavu." + (cxl.refunded ? " Tokens venakki ichesa." : "") + (redo ? " Malli kavali ante topic cheppu, fresh ga start chestha." : "");
+}
+
 async function history(env, user) { return JSON.parse((await env.KV.get(`h:${user}`)) || "[]").filter(x => !(x.role === "assistant" && /can[’']t (share|help)|cannot share/i.test(String(x.content)))); }
 async function remember(env, user, h) {
   // v68 (Ajju — "Muse laga history gurthu pettukovali"): the recent 30
@@ -536,6 +605,21 @@ async function handle(env, m) {
 
   if (m.type === "text") {
     let text = m.text.body.trim(); // let: R46 "edit:" with no video strips the prefix and falls through to create.
+    // v99 (WA discipline): STOP is structural — handled here, before
+    // every conversational flow, never by the brain. It cancels the
+    // running create (flag + refund + pointers + History), and the
+    // answer is ONE clear line, sent even when the brain is down.
+    // With nothing running, a bare stop gets the plain "nothing to
+    // cancel" line; a lone "vaddu" (a natural "no" elsewhere) falls
+    // through to the normal flow untouched.
+    if (isStopIntent(text)) {
+      const cxl = await cancelActiveJob(env, user).catch(() => null);
+      if (cxl || isBareStop(text)) {
+        const a2 = stopReply(cxl, /\b(malli|redo|again)\b/i.test(text));
+        const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh);
+        return say(env, user, a2);
+      }
+    }
     if (/^edit\s*[:\-]/i.test(text)) {
       const vid = await env.KV.get(`lastvideo:${user}`);
       // R46: no video received — create from scratch per the instruction, never ask
@@ -608,6 +692,18 @@ async function handle(env, m) {
         return say(env, user, a2);
       }
     }
+    // v99 (WA discipline, app v93 parity): greetings, small talk and
+    // quick math are CHAT — answered deterministically here, never by
+    // a brain that might continue an old video thread, and never by
+    // the busy fallback when the brain is saturated. (2026-11-16:
+    // "Hi" after a delivered alcohol video made the brain emit
+    // [[CREATE: ALCOHOL IMPACT]] — a whole video from a greeting,
+    // because the WA path had none of the app's v93 gates.)
+    if (/^\s*(hi+|hello|hey|helo|hai|namaste|hii+)[\s!.]*$/i.test(text) || /(em\s+chesthunnav|enti\s+chesthunnav|ela\s+unnav|how\s+are\s+you|what\s+are\s+you\s+doing)/i.test(text) || mathAnswer(text)) {
+      const a2 = mathAnswer(text) || parkedFallback(text, "te");
+      const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh);
+      return say(env, user, a2);
+    }
     const h = await history(env, user); h.push({ role: "user", content: text });
     let ans = await groq(env, [{ role: "system", content: SYS }, ...(await memContext(env, user)), ...h]);
     let mm = ans.match(/\[\[\s*CREATE\s*:\s*([^\]]*)\]\]/i);
@@ -616,10 +712,21 @@ async function handle(env, m) {
     // R46 guard: if the reply still asks the user to send/attach a video and the
     // user did not offer one, force a create instead.
     if (!mm && /(\battach\b|\bupload\b|\bsend\b|\bpampu\b).{0,30}\bvideo\b|\bvideo\b.{0,30}(\battach\b|\bupload\b|\bpampu\b)/i.test(ans) && !/(naa\s+video|nenu\s+(pampina|upload)|video\s+istha)/i.test(text)) { mm = [null, text]; ans = "Sare, start chesa — script, visuals, voice, captions, edit, motham nene A to Z chestha. Ready ayyaka ikkade pampistha."; }
+    // v99 (WA discipline): a [[CREATE]] marker is honoured ONLY when
+    // the user's own message carries an order — the Worker never lets
+    // the brain start a video off a greeting, a question or small
+    // talk, however the history reads (the app gates the same way).
+    // Structural force-creates above (reference flow / no-video edit
+    // orders) already carry their order signal in the message itself.
+    if (mm && !forceCreateWA && !isCreateOrder(text) && !isNewTopicOrder(text) && !isNoVideoEditOrder(text)) {
+      mm = null;
+      if (/start chesa/i.test(ans)) ans = parkedFallback(text, "te");
+    }
     // v37 (fix A): groq()'s total-failure sentinel is a dead end on WhatsApp
     // too — replace it with the R48 Setup reply (v38: says plainly when
     // setup finished but no working key was found, and offers a re-run).
     if (/^Sorry ra, naa AI brain/.test(ans)) ans = await setupFallbackReply(env, user, "te");
+    ans = busyWallGuard(ans, "te"); // v99: app parity (v51 F2) — a brain-written busy wall collapses to the one clear line
     const askOnly = /(gala(va|ra|vu)|cheya(gala|lava)|chesta(va|ra)|can you|could you|possible\s*a|avuthunda)\s*\??\s*$/i.test(text) && !/\b(chey(yi|i)?|create|make)\b\s*$/i.test(text);
     let go = !!mm && !askOnly;
     if (mm && askOnly) ans = "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
@@ -2811,12 +2918,19 @@ function isSetupQuestion(text) {
   return SETUP_Q_RX.test(t);
 }
 function setupGuideReply(lang) {
-  // v88 (G2): SHORT and honest — the busy truth + retry. Never a Setup
-  // sales pitch, and never the old tap-the-email-link line:
-  // the standing truth (F8) is the link goes to the user's email and
-  // JULIE opens it herself; the user taps only inside Take Control.
-  if (lang === "en") return "The shared AI is busy right now — its free limit is full, so it can't answer at the moment. It clears on its own in a bit; please try again shortly.";
-  return "Shared AI ippudu busy ga undhi — free limit full ayyindhi, anduke ippudu answer ivvaledu. Konchem sepu lo thane clear avuthundi; appudu malli try cheyyi.";
+  // v99 (WA discipline): this text is the brain-total-failure fallback
+  // ONLY — it fires when every chat provider actually failed (the groq
+  // "Sorry ra" sentinel / userBrain exhaustion), never as the answer
+  // to a command the Worker handles structurally (stop/cancel are
+  // structural since v99). It must say three things plainly: WHAT is
+  // busy, WHAT did not happen (nothing started, nothing changed), and
+  // WHEN to retry. The old text ("Shared AI ippudu busy ga undhi —
+  // free limit full ayyindhi, anduke ippudu answer ivvaledu…") fired
+  // at Ajju's "Stop" on 2026-11-16 while a runaway job kept rendering
+  // behind it — incomprehensible in context, and it claimed nothing
+  // about the job either way.
+  if (lang === "en") return "My AI brain is busy right now — the free limit is full, so I couldn't answer that message. I haven't started or changed anything. The limit clears on its own in a little while; please say it again then.";
+  return "Naa AI brain ippudu busy ga undhi — free limit full ayindhi, anduke nee message ki reply ivvalekapothunna. Nenu emi start cheyyaledu, emi change cheyyaledu. Konchem sepu lo limit thane clear avuthundi — appudu malli cheppu.";
 }
 // v51 (F2): a busy/limit answer in chat is ONE short line — never a
 // paragraph wall. The brain sometimes expands the setup pitch into a
@@ -2826,7 +2940,7 @@ function setupGuideReply(lang) {
 // user's phone — tab titles now come only from user messages, app.js.)
 function busyWallGuard(reply, lang) {
   const r = String(reply || "");
-  if (/shared ai is busy|free limit is full|shared ai ippudu busy/i.test(r) && (r.length > 180 || /give one allow|#\/setup|tap the verification|sms code/i.test(r))) return setupGuideReply(lang);
+  if (/shared ai is busy|free limit is full|shared ai ippudu busy|brain ippudu busy|brain is busy/i.test(r) && (r.length > 180 || /give one allow|#\/setup|tap the verification|sms code/i.test(r))) return setupGuideReply(lang);
   return r;
 }
 // v51 (F3): never the same assistant reply twice back-to-back. When the
@@ -3877,7 +3991,11 @@ async function appRunner(req, env, p, url, body) {
   // the runner actually applied, with the consuming stage — an item's
   // stage is set once, so the delivery report can never upgrade a
   // missed amendment into an applied one.
-  if (p === "runner/amendments" && req.method === "GET") { return Response.json({ ok: true, amendments: await amendList(env, job) }); }
+  // v99 (WA discipline): the amendments poll also carries the job's
+  // cancel flag — it is the runner's one regular Worker contact, so a
+  // user stop reaches the runner here (runner.py gates every progress
+  // send on it and halts at the next checkpoint).
+  if (p === "runner/amendments" && req.method === "GET") { return Response.json({ ok: true, cancelled: !!(await env.KV.get(`cancel:${job}`)), amendments: await amendList(env, job) }); }
   if (p === "runner/amendments" && req.method === "POST") {
     const list = await amendList(env, job);
     const ids = new Set((Array.isArray(body.ids) ? body.ids : []).map(Number));
@@ -3887,7 +4005,29 @@ async function appRunner(req, env, p, url, body) {
     return Response.json({ ok: true, amendments: list });
   }
   if (p === "runner/state" && req.method === "POST") {
-    const state = ["running", "done", "failed"].includes(body.state) ? body.state : "running";
+    const state = ["running", "done", "failed", "cancelled"].includes(body.state) ? body.state : "running";
+    // v99 (WA discipline): a user-cancelled job is TERMINAL. The cancel
+    // flag (cancel:<job>, set by the structural stop handler) beats
+    // every later runner post: a "running" post changes nothing, and a
+    // "cancelled" post — or a "failed" post that is really the runner
+    // unwinding a cancel — settles the entry as CANCELLED, never
+    // failed, with the pointers cleared and the v73 refund applied
+    // exactly once (refundJobSpend is idempotent and still refuses a
+    // delivered job). 2026-11-16: Ajju said stop twice on WhatsApp and
+    // the job rendered on and delivered — there was no cancel state
+    // anywhere in the system.
+    const cancelFlag = !!(await env.KV.get(`cancel:${job}`));
+    if (cancelFlag && state === "running") return Response.json({ ok: true, cancelled: true });
+    if (state === "cancelled" || (cancelFlag && state === "failed")) {
+      if (st && st.job === job && !st.has_result) await save({ state: "cancelled", note: String(body.note || "User stop chepparu — cancel chesa.").slice(0, 300) });
+      const refC = st?.num ? { n, num: st.num } : await histNumForJob(env, job);
+      if (refC) { const eC = await histGet(env, refC.n, refC.num); if (eC && !eC.has_result && !eC.doneAt && eC.state !== "done") { eC.state = "cancelled"; eC.cancelledAt = Date.now(); eC.note = "User stop chepparu — cancel chesa."; await histPut(env, refC.n, eC); } }
+      await env.KV.delete(`busy:${n}`); await env.KV.delete(`upl:${job}`);
+      if ((await env.KV.get(`curjob:${n}`)) === job) await env.KV.delete(`curjob:${n}`);
+      const ajC = JSON.parse((await env.KV.get(`appjob:${n}`)) || "null"); if (ajC && ajC.job === job) await env.KV.delete(`appjob:${n}`);
+      await refundJobSpend(env, job, n);
+      return Response.json({ ok: true, cancelled: true });
+    }
     const pct = Number.isFinite(body.pct) ? Math.max(0, Math.min(100, body.pct | 0)) : null;
     // v78: DELIVERED IS TERMINAL. Job 7aee5d2a (2026-11-13): the result
     // posted, the History entry got doneAt + has_result + the success
@@ -3917,6 +4057,9 @@ async function appRunner(req, env, p, url, body) {
     return Response.json({ ok: true });
   }
   if (p === "runner/result" && req.method === "POST") {
+    // v99 (WA discipline): a cancelled job's result is REFUSED — after
+    // the user stopped it, the video is never stored as done/delivered.
+    if (await env.KV.get(`cancel:${job}`)) return Response.json({ ok: false, cancelled: true }, { status: 409 });
     const b = await req.arrayBuffer(); if (b.byteLength > EDIT_MAX) return new Response("too big", { status: 413 });
     await env.KV.put(`res:${job}`, b, { expirationTtl: 86400 * 3 });
     await save({ state: "done", has_result: true, size: b.byteLength, note: String(url.searchParams.get("note") || "").slice(0, 300) });
