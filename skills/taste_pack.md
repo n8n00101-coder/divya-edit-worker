@@ -570,3 +570,197 @@ knowledge file, §6).
   over a face, never the only text track in a documentary section.
   Every kinetic word is timed from the waveform (±0.15 s of the spoken
   onset), not from a transcript guess.
+
+# ADDITIONS — Editing field round 1 (merged 2026-11-16)
+
+*From the field map (`JULIE_EDITING_FIELD_MAP.md`) round-1 gap
+packs: shorts/vertical, tutorial/how-to, colour grading, sound
+design deep, trailers, music-video beat craft, comedy timing.
+Full knowledge: `JULIE_BRAIN_KNOWLEDGE_SHORTS_VERTICAL.md`,
+`..._TUTORIAL_HOWTO.md`, `..._COLOUR_GRADING.md`,
+`..._SOUND_DESIGN_DEEP.md`, `..._TRAILERS.md`,
+`..._MUSIC_VIDEO_BEAT.md`, `..._COMEDY_TIMING.md`.
+Only the executable core is here; flagged-and-rejected practices
+live in the knowledge files and stay rejected.*
+
+## Vertical is its own frame (shorts/reels)
+
+- One subject per beat in 9:16 — one face, one product, one line.
+  Context comes from the next beat, never from widening this one.
+- Safe zone is law: all critical content (faces, hook text,
+  captions, numbers, the product) inside the centre 900×1400 of
+  1080×1920. Dead: top ~120 px, bottom ~320 px, right ~120 px.
+- Every short is four gates, in order: HOOK (0–2 s, opens a loop)
+  → CONFIRMATION (2–5 s, proof the promise is real — never skip)
+  → PAYOFF (in steps, one idea per beat, the hook's question
+  answered only at its step) → LOOP or one CTA. A slow sign-off
+  ending is banned.
+- Pattern interrupt every 2–3 s, rotating in kind (cut → sound →
+  graphic → punch-in); an interrupt must carry information, not
+  just motion. B-roll inserts run 0.8–2.0 s unless the insert is
+  the payoff step.
+- Loop only genuinely re-watchable content: frame loop (last
+  frame = frame 0 in composition/position/colour) or sentence
+  loop (last line feeds the hook line). Hooks are written to be
+  heard twice — no greetings, no "in this video".
+- Muted-first design: the story must read from captions + picture
+  alone; 2–5 words on screen, clause-chunked, house karaoke sync.
+- Landscape into vertical: crop-and-follow the action. Blur-pad
+  is banned (standing law, restated because it recurs).
+
+## Tutorials must be followable
+
+- Structure: DESTINATION (finished result shown first — it is
+  the hook) → PATH (steps in the viewer's performance order) →
+  PROOF (the same finished state, working, at the end).
+- One action per beat, signalled before it happens (line, step
+  number, or highlight lands before the cursor moves). Two
+  actions in one beat is a defect.
+- Step furniture in one fixed position (Step n of N); the same
+  step list is the chapters. Prerequisites are step 0 and are
+  shown, not assumed.
+- The cursor is the actor: intentional moves, arrive-pause-act;
+  wandering/idle cursor is dead air and is cut. Zoom/highlight
+  lands BEFORE the click on every small target. Clicks and
+  keystrokes carry subtle sound.
+- Typing is shown as first-chars → cut → completed field, full
+  text legible in the held frame. Waits/loads cut to zero or to
+  a LABELLED time-skip. Each phase boundary gets one recap beat
+  showing the accumulated state.
+- A step is never hidden and an on-screen failure is never
+  silently jumped: show the honest fix or re-record the step.
+
+## Colour: correct, then grade, then protect
+
+- Order is fixed: BALANCE (per-shot black/white points, cast
+  neutralised, scopes over eyes) → MATCH (every shot to its
+  scene's reference shot, one reference per scene) → GRADE (one
+  named look) → PROTECT (accuracy colours).
+- A look must be nameable in one phrase per video ("cold
+  institutional", "golden archive"). GRADE_LOCK applies it
+  identically to every beat; the look never changes mid-video —
+  only the story's light may.
+- Palette discipline: 2–3 dominant hues + 1 accent; saturation is
+  spent on the accent, held back elsewhere.
+- Skin is protected: face hue stays on the skin-tone line and
+  saturates less than accents, whatever the look does elsewhere.
+  A grade that breaks skin is rejected, not shipped.
+- Accuracy colours (flags, charts, scales, UI, product colours)
+  are never re-graded to fit the look.
+- A LUT/preset is a starting point applied AFTER correction, at
+  partial strength — never the grade itself, never on raw mixed
+  footage. Mixed sources are normalised individually to the
+  reference: soften the too-perfect down, never sharpen archive up.
+- Delivery check at phone size/brightness; shadow floor stays a
+  few points above zero so blacks survive platform compression.
+  Consistency across shots beats beauty in any one shot.
+
+## Sound design: layers, palette, stacks
+
+- Four layers, fixed priority, mixed from the voice outward:
+  VOICE (levelled first, house constant level) → IMPORTANT SFX →
+  MUSIC (automated, carved 6–10 dB under speech, lifted in gaps)
+  → AMBIENCE (the floor). Every sound names its job in ≤3 words
+  or comes out.
+- Build a palette per project BEFORE cutting: 1–2 ambiences, 3–5
+  foley basics, 5–10 spot effects, the music cues — each function
+  with 2–3 variants, rotated. The same effect twice in a row is
+  a defect. Sources ₹0-legal only (Freesound CC0/CC-BY with
+  attribution recorded, own synthesis, house library).
+- Foley sells reality: sync to the exact frame of contact,
+  built in micro-layers (contact + surface + cloth), timing and
+  velocity varied between repetitions, felt more than heard
+  (~8–12 dB under voice) unless foley is the beat's subject.
+- Ambience is laid before detailed editing; place changes are
+  crossfaded, not hard-cut, unless shock is intended. A dropped
+  floor (designed silence) is budgeted like a payoff — rare,
+  placed, purposeful.
+- Spot effects are STACKS, never single files: whoosh = low
+  sweep + mid body + high air (+ peak click); impact = sub thump
+  + mid crack + high detail + short tail. Placement: sound LEADS
+  picture — transition sounds start ~2–3 frames before their
+  cut; a riser peaks exactly at the reveal frame.
+- Riser → impact → silence is the standard tension unit, spent
+  at act turns and payoffs only. One designed spot event per
+  beat remains the ceiling; foley/ambience are layers, not spots.
+- Mix check on a phone speaker: every sub-heavy stack carries a
+  mid/high layer that survives it. Contrast is pacing — a track
+  at one intensity throughout is a defect.
+
+## Trailers: sell the feeling, resolve nothing
+
+- A trailer is a standalone short film selling premise + tone +
+  one central question. It never summarises and NEVER resolves
+  anything; the work's best moment is withheld or shown out of
+  context, not spent.
+- Three movements, shot lengths descending: SETUP (~25% — world
+  + character, 2–4 s shots, sparse music, premise in dialogue) →
+  TURN & ESCALATION (~45% — inciting event on a smash cut or
+  silence drop, score changes gear, stakes named, 2–3 fragment
+  title cards) → CLIMAX + BUTTON (~30% — biggest images on the
+  music's hits, final hit on the strongest image, title card,
+  then the BUTTON: one last joke/scare/line, built to be
+  repeated to a friend).
+- Build order is the houses': log out-of-context lines + images
+  → one-sentence premise + one-sentence mood → MUSIC CHOSEN AND
+  HIT-MAPPED → radio cut (must play with eyes closed) → picture
+  laid to sound → sound design (risers, braams, the silence drop
+  before the biggest hit) → cards and button last.
+- Dialogue is sequenced, never re-worded: lines may be reordered
+  to build the argument; they may never be spliced into claims
+  nobody made. No fake review quotes, ever. Tone may be
+  emphasised, never misrepresented.
+- Teasers sell mood + one image ("what is this?"); trailers sell
+  the question ("what happens?"). Every Julie long video gets a
+  teaser cut in this grammar (vertical version obeys the shorts
+  gates on top).
+
+## Beat craft: the track leads
+
+- The finished mix is pinned first and locked; the section map
+  (intro/verse/pre-chorus/chorus/drop/bridge) and the beat grid
+  (real BPM; sec/beat = 60/BPM) exist before any shot is chosen.
+- Cut on BARS, not beats. Rate ladder: verses 2–4 bars/shot →
+  builds 1–2 bars → chorus/drop 1 bar to 1 beat → sub-beat only
+  in bursts of ≤8 beats. Signature move: hold through the verse,
+  halve shot length exactly on the chorus downbeat.
+- Mix the three cut types in every piece: hard beat cuts
+  (downbeat), melodic cuts (phrase/flourish changes), action cuts
+  (the picture's own movement peak). A cut 1–2 frames BEFORE the
+  beat is the pro adjustment when a passage feels late.
+- The hero shot is placed on the biggest musical moment from the
+  section map, before assembly — never left to leftovers. Shot
+  content energy must match section energy, not just shot length.
+- Visible performance must sync (syllable, note, gesture) — sync
+  first, beauty second. Deliberate holds across a grid line are
+  emphasis, budgeted like designed silences.
+- Murch's order outranks the grid: emotion > story > rhythm. A
+  cut on the snare that breaks the feeling is a bad cut.
+
+## Comedy: clarity, holds, escalation
+
+- The gag must be READABLE: wide, static, clear frames holding
+  setup → action → consequence together; close-ups are for
+  reactions, never to hide the action. A cut that removes the
+  consequence removes the joke.
+- Timing lives in three holds: the anticipation hold before the
+  gag, the gag at full clarity (never trimmed for pace), the
+  reaction hold after — ending when the laugh would peak, not
+  when it ends. First assembly instinct is too short: reaction
+  holds run ~1.5–2× instinct. Holds are written into the beat
+  sheet at planning; a comedy beat sheet without holds is
+  unfinished.
+- Wright grammar: action-movie treatment (whip pans, crash
+  zooms, heroic synced sound) applied to genuinely mundane
+  action — the contrast is the joke, and both sides must be
+  fully committed. Build a cutting rhythm of three matching
+  beats, then BREAK it: the break is the punchline.
+- SFX are the dialogue track in no-dialogue comedy: oversized,
+  frame-synced, stacked; sudden silence after a barrage is the
+  other punchline. Captions may set up a gag; they never
+  annotate the visible ("he fell down!" is banned).
+- Repetition is structure only with escalation: plant → return
+  bigger → third return pays off or breaks the pattern. Running
+  gags are ledgered like open loops; a planted gag that never
+  pays off is a defect. The shorts pattern-interrupt budget does
+  not apply inside a running gag.
