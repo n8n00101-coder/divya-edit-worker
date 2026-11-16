@@ -283,7 +283,12 @@ def test_cross_file_consistency():
     worker = (HERE / "cfworker" / "divya.js").read_text(encoding="utf-8")
     block = re.search(r"const SETUP_PROVIDERS = \{(.*?)\n\};", worker, re.S).group(1)
     worker_ids = set(re.findall(r"^  (\w+): \{", block, re.M))
-    assert worker_ids == set(EXPECTED_CHAIN), worker_ids ^ set(EXPECTED_CHAIN)
+    # F7 (PR #105): resend + brevo are Worker SETUP/VERIFY providers for
+    # the mail channel's own project-identity keys — deliberately never
+    # in CHAIN_ORDER (see setup.py FLOWS comments), so the Worker set is
+    # the chain plus exactly those two.
+    assert worker_ids == set(EXPECTED_CHAIN) | {"resend", "brevo"}, \
+        worker_ids ^ (set(EXPECTED_CHAIN) | {"resend", "brevo"})
     keylist = re.search(r"const KEYLIST_PROVIDERS = \[(.*?)\];", worker, re.S).group(1)
     for pid in NEW_IDS:
         assert f'["{pid}"' in keylist, f"KEYLIST missing {pid}"
