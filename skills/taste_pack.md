@@ -764,3 +764,236 @@ live in the knowledge files and stay rejected.*
   gags are ledgered like open loops; a planted gag that never
   pays off is a defect. The shorts pattern-interrupt budget does
   not apply inside a running gag.
+
+
+# ADDITIONS — Editing field round 2 (merged 2026-11-16)
+
+*From the field map round-2 gap packs: narrative scene,
+horror/mood, ads, news packaging, vlog, wedding/event,
+animation editing, kinetic type. Full knowledge:
+`JULIE_BRAIN_KNOWLEDGE_NARRATIVE_SCENE.md`,
+`..._HORROR_MOOD.md`, `..._ADS.md`, `..._NEWS_PACKAGING.md`,
+`..._VLOG.md`, `..._WEDDING_EVENT.md`,
+`..._ANIMATION_EDITING.md`, `..._KINETIC_TYPE.md`.
+Only the executable core is here; flagged-and-rejected
+practices live in the knowledge files and stay rejected.*
+
+## Narrative scenes: radio first, cut on the thought
+
+- Build order is fixed: RADIO EDIT (audio only, must play
+  eyes-closed) → coverage assembly → reaction pass → trim.
+  No pass undoes an earlier pass without naming why.
+- Cut on the THOUGHT, not the line-end (the blink point).
+  Dragnet ping-pong — whole line per speaker-shot — is
+  banned as a default; it survives only as chosen flatness.
+- Every major line gets a planned listener beat; move the
+  picture to the listener wherever a line's IMPACT outranks
+  its delivery. Reactions are never trimmed to "keep pace".
+- Split edits are the default grammar: J-cut (next audio
+  leads picture by ~4–12 frames) and L-cut (audio carries
+  over the reaction). A dialogue scene with zero split
+  edits is unfinished.
+- Murch's Rule of Six is the priority, never traded
+  downward: EMOTION (51%) > STORY (23%) > RHYTHM (10%) >
+  EYE-TRACE (7%) > 2D PLANE (5%) > 3D SPACE (4%). Sacrifice
+  from the bottom up; diagnose a wrong cut top-down.
+- 180°/eyeline check runs on every scene: axis drawn, one
+  side only (cross only via on-screen move or neutral shot),
+  A looks frame-right / B frame-left in every shot, gaze on
+  the partner's eyes — never at camera.
+- Inserts only for story objects the audience must read;
+  return from an insert to the exact eyeline state the
+  scene left.
+
+## Horror / true crime: dread is a wait with a reason
+
+- Every dread beat names: what the audience knows, what the
+  character doesn't, what is withheld. Slow with no
+  anticipated threat is a defect, not atmosphere.
+- Plant the odd detail first; delay its meaning by beats;
+  reveal the implication only after the lean-in. A loop
+  opened must close — withholding that never pays off is
+  bait and is banned.
+- Cutting baseline is flat and long (holds past comfort,
+  negative space the eye must search); break the baseline,
+  never speed it — one sharp cut or silence against
+  flatness out-screams a barrage.
+- The only scare shape: SETTLE (quiet baseline) → FALSE
+  RELEASE (guard drops, hold 1–2 beats past comfort) → HIT
+  (one event, one sound spike) → aftermath hold. True hits
+  are rare and never telegraphed by the same swell twice.
+- Sound leads picture: J-cut the dread sound under the
+  innocent shot. One wrong detail per scene in the undertone
+  bed; designed silence (~2–4 s before a hit or hardest
+  fact) is budgeted like a payoff.
+- True-crime apparatus is built once and reused identically:
+  timeline/map cards held ≥6–8 s, one fact isolated per
+  card, verified/alleged/unknown visually distinguished,
+  reconstructions labelled on screen every time.
+- True-crime restraint: measured narration, silence around
+  the hardest facts, NO stinger on a death/victim beat, no
+  music swell under the victim's section.
+
+## Ads: one message, one ask, hold the brand
+
+- One message (one sentence, written before scripting) and
+  exactly ONE CTA in exact words, said AND shown, as the
+  last spoken thing. A beat serving a second message is cut.
+- Word budget is arithmetic: ~2.5 words/sec — 30 s ≈ 70
+  words max, 15 s ≈ 35, 6 s ≈ 12–15. Over-budget scripts
+  are cut on paper, never read faster.
+- 30 s structure, in order: HOOK (0–3 s, brand by 5 s) →
+  PROBLEM (3–8 s, product unnamed) → PRODUCT-AS-TURN
+  (8–12 s, big and close) → HOW IT HELPS (12–22 s, product
+  DOING the job, ≤7 words per card) → PROOF (22–26 s, one
+  real item) → CTA + ENDCARD (26–30 s).
+- 15 s is cut FROM the 30 (problem+product share a shot,
+  proof becomes one text line); a 6 s bumper is three shots
+  only: product close → one benefit in 3–5 words → logo+CTA.
+- Endcard is a designed still held long enough to read:
+  ≥~3 s in a 30, ≥2 s in a 15. End on the product, never the
+  presenter; nothing else competes on the card.
+- Scripts are two-column (picture | sound, timings summing
+  to the spot). If the picture column alone doesn't tell
+  the story, the spot fails muted — rewrite the picture.
+- UGC inverts the surface only (phone framing, presenter
+  first, spoken-confession hook); the five-beat skeleton is
+  identical, and the ad still ends on the packshot.
+
+## News packaging: grammar without impersonation
+
+- Package shape is fixed: ANCHOR INTRO (who/what/where in
+  sentence one; never the conclusion) → REPORT (strongest
+  actuality first, facts in causal order, one SOT, nat-sound
+  pockets, latest development last-but-one) → TAG (what's
+  next / still unknown; never repeats the intro).
+- Every element has a slug, a duration and a running order
+  before assembly; total running time is checked arithmetic.
+  Package / VO / VO-SOT grammars are never mixed mid-item.
+- Lower third = who + what qualifies them, two lines max,
+  shown ONCE per person at first appearance, held to the
+  read-twice floor (~4–5 s), text never changes mid-hold.
+- One furniture budget: bug + ONE graphic at any instant.
+  Bug is single, small, static; ticker runs at one constant
+  speed, never carries the current item's facts, and drops
+  out entirely under a solemn/victim beat.
+- Graphics exist only for facts pictures can't show
+  (numbers, timelines, maps, exact quotes); one fact per
+  card, built in the order narration speaks it, source
+  credited on the card, charts on honest scales.
+- Quote cards are verbatim with speaker + context; a trim
+  that changes meaning is fabrication.
+- Labels state only what's true: no BREAKING/LIVE furniture
+  on non-live material, no real channel's name/look/bug —
+  Julie borrows the grammar as her own explainer format.
+
+## Vlogs: cut the breath, plant the payoff
+
+- Cut every breath, hesitation and filler: silences >~0.3 s
+  come out. Cuts land on breath and THOUGHT boundaries —
+  mid-thought jumps are glitches, thought-boundary jumps
+  are pace. Leave a breath after a punchline so it lands.
+- Punch in or out at jump cuts (medium ↔ tighter crop;
+  source 4K, deliver 1080p). Identical-framing jumps every
+  2 s read as nervous, not energetic.
+- The day's want, obstacle and payoff moment are planted in
+  the first 30 s and revisited every 2–3 min. A segment in
+  which nothing changes is cut to a montage beat or removed.
+- B-roll is punctuation: it covers jump cuts, lands ON the
+  noun it illustrates, runs only while that thought runs
+  (1–4 s), and returns to the face for the reaction. The
+  face never vanishes long enough to make a slideshow.
+- Talking-head fatigue is timed: an interrupt inside every
+  ~12–15 s of static frame (2–4 s per visual change in
+  short-form), rotating in kind — cut → graphic → b-roll →
+  sound.
+- Long-form rhythm: start tight (change every 10–20 s),
+  widen once hooked (25–40 s), and break calm stretches
+  every 2–3 min with a 5–10-cut burst. The oscillation,
+  not the speed, sustains 8+ minutes.
+- Cold-open on the day's best real moment (visual event in
+  2 s), then rewind — the payoff reached later must be that
+  same moment, honestly arrived at.
+
+## Weddings / events: words are the spine, one summit
+
+- Emotion over chronology, always: open on the day's single
+  strongest moment (a vow line, the first-look reaction),
+  never on drone + title card. The archive edit keeps the
+  order; the highlight keeps the feelings.
+- Selects first: pull the lines and the breaking-voice /
+  room-goes-quiet moments before cutting. Five strong
+  moments carry a 4-min film; cutting from rushes produces
+  chronology by default.
+- Speeches and vows are the spine. Keep WHOLE SENTENCES and
+  the speech's own structure (intro → rise → punchline →
+  toast); a cut never lands mid-word or mid-sentence.
+- Music bridges the gaps BETWEEN speeches and never covers
+  words; words are mixed first. Drop the music (~2 s of
+  quiet, or out entirely) before a vow or a major speech.
+- ONE biggest moment only: the most emotional track goes to
+  the vows OR the first dance, never three competing peaks.
+  Every other beat is graded below the summit.
+- Keep pockets of natural sound (laughter, applause, the
+  room's hush) under montage — sync sound is what makes it
+  THIS wedding, not a stock video.
+- Event grammar transfers: a corporate/keynote film's vows
+  are its keynote lines — whole sentences, same music and
+  summit discipline.
+
+## Animation: the animatic is the cut
+
+- The film is edited FIRST: shot order, count, lengths and
+  cut points are locked at ANIMATIC. If it doesn't play in
+  boards, it doesn't go to production — polish never fixes
+  timing.
+- The animatic is finished in structure, deliberately
+  unfinished in craft; judge it only on one-look readability,
+  breathing timing and the turn landing — never prettiness.
+- Soundtrack first: voice (final where possible) and temp
+  music/SFX are recorded BEFORE boards are timed; panels are
+  cut TO the track. Silent-animatic approval for dialogue or
+  comedy work approves a different film.
+- The X-sheet converts the lock to frame numbers; animators
+  execute it. A timing question found in production goes
+  BACK to the animatic and is re-locked there, once, for all.
+- Frames are spent on acting: holds for anticipation and
+  reaction, extra frames where a decision must be read;
+  steal frames from travel/mechanics, spend them on faces.
+- Blocking-first: pose stills must read in one look (who
+  does what to what) before animation; the 180°/eyeline
+  check runs on the LAYOUT, inside the one locked scene
+  file per location — never after render.
+- Post is conformance, not discovery: finished shots splice
+  into the living Leica reel at the SAME duration and order;
+  a shot arriving off-length is a defect sent back, never
+  absorbed by re-trimming neighbours.
+
+## Kinetic type: hierarchy first, speed is arithmetic
+
+- Every card has ONE named role — VOICE (the narration's own
+  words, never paraphrased), QUOTE (verbatim + attributed,
+  visually distinct) or DATA (facts, tabular style, sourced
+  on the card) — and the same role keeps the same treatment
+  all film.
+- Lock the static card first (face, sizes, weights, position)
+  and read it frozen; motion never rescues bad typography.
+  One primary line + at most one supporting line per card.
+- Exactly ONE accent word per card — the word the beat turns
+  on, chosen at script stage. Two accents = no accent.
+- Entrance grammar is a fixed house set per role (mask/wipe,
+  blur-in, punch on the accent, word stagger); total reveal
+  ≤~800 ms on ease-out curves, exits quieter than entrances.
+  A type card may BE the transition at act turns only.
+- Reading limits are hard: hold ≥~0.3 s/word + ~1 s minimum
+  per card after reveal; voice phrases ≤2–3 words/sec; hook
+  cards ~90 wpm; DATA/QUOTE cards slow to 40–60 wpm.
+- Kinetic words land on their spoken onset within ±0.15 s;
+  QC checks the accent words first. Phrases chunk at 2–5
+  words on clause boundaries — an over-budget script loses
+  WORDS, never gains speed.
+- Type never fights the face: no card over a face, type sits
+  in negative space / lower-third / full-frame cards, and
+  face + dense type are sequenced, never simultaneous. The
+  layer runs OVER real footage — full-frame type only at
+  hooks, act turns and data beats, in short runs.

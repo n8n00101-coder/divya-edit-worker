@@ -173,6 +173,65 @@ def replan_choice(beat_no, line, failed_template, failure_note,
     return None
 
 
+def emit_hyperframes_compositions(plan, outdir, enabled=False, **kw):
+    """v89 guarded wiring: convert a directed plan's graphics-carrying
+    scenes into a HyperFrames scene script and emit the project via
+    hyperframes_codegen. OFF by default — returns None and writes
+    nothing unless enabled=True or JULIE_HYPERFRAMES_CODEGEN=1, so
+    existing behaviour is unchanged.
+
+    A plan scene participates only when it carries an explicit
+    graphics spec — scene["graphics"] (one layer dict or a list of
+    layer dicts; see hyperframes_codegen for the layer types) — plus
+    a footage path in scene["footage_path"] / ["footage_file"] /
+    ["asset"] (a string path; the plan-level footage pool dict is
+    deliberately NOT read as a path) and a duration in
+    scene["duration"] / ["duration_est_s"] / ["d"] (default 5.0).
+    Scenes without a spec are skipped silently; scenes with a spec
+    but no usable footage path are skipped and named in the returned
+    report's flags. Returns the codegen report dict, or None when
+    disabled or when no scene carried a graphics spec."""
+    if not enabled and \
+            os.environ.get("JULIE_HYPERFRAMES_CODEGEN", "") != "1":
+        return None
+    scenes = plan.get("scenes") if isinstance(plan, dict) else plan
+    script, skipped = [], []
+    for sc in scenes or []:
+        if not isinstance(sc, dict):
+            continue
+        gfx = sc.get("graphics") or sc.get("hf_graphics")
+        if not gfx:
+            continue
+        footage = None
+        for key in ("footage_path", "footage_file", "asset"):
+            if isinstance(sc.get(key), str) and sc.get(key):
+                footage = sc[key]
+                break
+        if not footage:
+            skipped.append(
+                f"plan scene {sc.get('no', '?')}: graphics spec but "
+                f"no footage path — skipped (graphics never replace "
+                f"footage)")
+            continue
+        entry = {
+            "footage": footage,
+            "duration": float(sc.get("duration")
+                              or sc.get("duration_est_s")
+                              or sc.get("d") or 5.0),
+            "layers": gfx if isinstance(gfx, list) else [gfx],
+        }
+        if sc.get("media_start") is not None:
+            entry["media_start"] = float(sc["media_start"])
+        script.append(entry)
+    if not script:
+        return None
+    import hyperframes_codegen as _hfc
+    report = _hfc.generate_project(script, outdir, **kw)
+    if skipped:
+        report["flags"] = list(report.get("flags") or []) + skipped
+    return report
+
+
 if __name__ == "__main__":
     menus = [{"beat": 1, "line": "Psychologists call this the "
               "compliance reflex.", "role": "evidence",

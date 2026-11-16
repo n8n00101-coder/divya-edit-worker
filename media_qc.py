@@ -32,6 +32,9 @@ chapter start times are given — to the chapter that contains it):
              recur at distant timestamps (reused footage/graphics)
 - MQ-CUTS    scene-cut density (0 cuts in a long chapter = one held
              shot; reported as WARN, never a hard FAIL on its own)
+- MQ-COLOUR-LINT  v89 colour_lint advisory (crushed blacks / blown
+             highlights / exposure level per chapter-shot) — WARN or
+             UNVERIFIED only, NEVER a FAIL by design
 
 Thresholds are configurable via the `cfg` dict (Knowledge Base
 category "media_qc" — see edit_memory.seed_knowledge_base notes and
@@ -61,6 +64,8 @@ DEFAULTS = {
     "repeat_min_gap_s": 8.0,     # recurrences closer than this are one stretch
     "card_allowance_s": 1.6,     # chapter title cards (1.5 s of dark
                                  # navy by design) are not black frames
+    "colour_lint_advisory": 1,   # v89: colour_lint findings ride along
+                                 # as WARN/UNVERIFIED, never FAIL
 }
 
 
@@ -314,6 +319,36 @@ def inspect_file(path, cfg=None, chapter_starts=None, workdir=None,
                         "start": round(s["t"], 2)})
                     break
             seen[s["t"]] = h
+    # --- colour lint (v89, ADVISORY only): signalstats + histogram
+    # per chapter-shot. Findings become WARN (or UNVERIFIED when the
+    # lint itself could not measure) — this block must never add a
+    # FAIL, so an otherwise passing video still passes.
+    if cfg.get("colour_lint_advisory"):
+        try:
+            import colour_lint
+            if chapter_starts and len(chapter_starts) > 1:
+                _bounds = list(chapter_starts) + [info["duration"]]
+                _lint_shots = [{
+                    "start": _bounds[i], "end": _bounds[i + 1],
+                    "scene": i, "label": f"chapter {i + 1}"}
+                    for i in range(len(chapter_starts))]
+            else:
+                _lint_shots = None
+            for _f in colour_lint.lint_file(path, shots=_lint_shots):
+                checks.append({
+                    "rule": "MQ-COLOUR-LINT",
+                    "status": ("UNVERIFIED"
+                               if _f.get("verdict") == "UNVERIFIED"
+                               else "WARN"),
+                    "detail": f"colour lint [{_f.get('metric')}]: "
+                              f"{_f.get('detail')}",
+                    "scene": None})
+        except Exception as e:
+            checks.append({"rule": "MQ-COLOUR-LINT",
+                           "status": "UNVERIFIED",
+                           "detail": f"colour lint could not run: "
+                                     f"{str(e)[:80]}",
+                           "scene": None})
     # --- loudness + silence (reuse the compliance measurements)
     try:
         import compliance as comp

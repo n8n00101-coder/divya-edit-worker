@@ -77,13 +77,19 @@ def playbooks() -> str:
     inside the old cap but one merge away from silent truncation,
     which is exactly how taste starved before v87. The loaded char
     count is logged once per process so a truncated pack is visible
-    in the run log instead of invisible in the output."""
-    ed = _read(os.path.join(SKILLS, "taste_pack.md"), 60000) or \
+    in the run log instead of invisible in the output.
+    v89: the cap rises 60,000 -> 120,000 chars (Ajju's order
+    2026-11-16: implement EVERYTHING). The pack grew through the
+    documentary-trending merge (~33.2k), field round 1 (~43.5k) and
+    field round 2 (narrative/horror/ads/news/vlog/wedding/animation/
+    kinetic-type) past the old cap; truncation would silently cut
+    the newest sections first (they append last)."""
+    ed = _read(os.path.join(SKILLS, "taste_pack.md"), 120000) or \
         _read(os.path.join(SKILLS, "editing_playbook.md"), 5000)
     if ed and not _pack_log_done["done"]:
         _pack_log_done["done"] = True
         print(f"taste pack loaded: {len(ed)} chars "
-              f"(cap 60000 — full pack, no truncation)")
+              f"(cap 120000 — full pack, no truncation)")
     asst = _read(os.path.join(SKILLS, "assistant_playbook.md"), 2500)
     return ("\n\nASSISTANT PLAYBOOK (how to behave):\n" + asst if asst else "") + \
            ("\n\nEDITING TASTE PACK (full — use for taste and defaults):\n" + ed if ed else "")

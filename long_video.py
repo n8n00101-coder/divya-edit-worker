@@ -1249,23 +1249,65 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                   f"new proposal(s) (approval-gated)")
         except Exception as e:
             print("edit memory write failed:", str(e)[:150])
-    return {"path": final, "title": out["title"], "duration": duration,
-            "lang": first.get("lang", "te"),
-            "caption": first.get("caption", ""),
-            "topic": first.get("topic", brief),
-            "plan": first.get("plan", {}),
-            "broll": broll_sources, "summary": summary,
-            "voice_note": voice_note,
-            "amendments_applied": amend_applied,
-            # v79: contract artifacts (FIX 1/5) for the runner upload.
-            "spec": spec or [], "render_config": cfg or {},
-            "compliance": report, "director": _director_log,
-            "visual_plan": _visual_plan86,
-            "taste_qc": _taste87,
-            "workdir": str(workdir),
-            "footage": pool.footage_json() if pool else {},
-            "partial": partial, "chapters_done": len(paths),
-            "chapters_total": total_ch, "long": True}
+    result = {"path": final, "title": out["title"], "duration": duration,
+              "lang": first.get("lang", "te"),
+              "caption": first.get("caption", ""),
+              "topic": first.get("topic", brief),
+              "plan": first.get("plan", {}),
+              "broll": broll_sources, "summary": summary,
+              "voice_note": voice_note,
+              "amendments_applied": amend_applied,
+              # v79: contract artifacts (FIX 1/5) for the runner upload.
+              "spec": spec or [], "render_config": cfg or {},
+              "compliance": report, "director": _director_log,
+              "visual_plan": _visual_plan86,
+              "taste_qc": _taste87,
+              "workdir": str(workdir),
+              "footage": pool.footage_json() if pool else {},
+              "partial": partial, "chapters_done": len(paths),
+              "chapters_total": total_ch, "long": True}
+    # v89: PACKAGING STEP (additive, delivery end) — 10 titles, 3
+    # thumbnail concepts, a validated title<->thumbnail pair, the
+    # description, 3 Shorts cut points and a debate-question first
+    # comment, written to packaging.json and attached to the result.
+    # Wrapped: a packaging failure NEVER changes delivery behaviour.
+    try:
+        import packaging as _pkg89
+        _chs89, _t89 = [], 0.0
+        for _i89, _ttl89 in enumerate(titles):
+            try:
+                _d89 = _probe_duration(paths[_i89])
+            except Exception:
+                _d89 = 60.0
+            _chs89.append({"title": _ttl89, "start_s": _t89,
+                           "end_s": _t89 + _d89})
+            _t89 += _d89 + (CARD_SECONDS if _i89 < len(titles) - 1
+                            else 0.0)
+        _srcs89 = []
+        for _r89 in results:
+            for _s89 in ((_r89.get("plan") or {}).get("scenes") or []):
+                if _s89.get("source"):
+                    _srcs89.append(str(_s89["source"]))
+        for _b89 in broll_sources:
+            if isinstance(_b89, dict) and _b89.get("url"):
+                _srcs89.append(str(_b89["url"]))
+        _pkg = _pkg89.build_packaging(
+            first.get("topic", brief), out["title"], _chs89,
+            sources=_srcs89,
+            claims=[c["title"] for c in out["chapters"]][:3],
+            duration=duration)
+        result["packaging"] = _pkg
+        with open(Path(workdir) / "packaging.json", "w",
+                  encoding="utf-8") as _f:
+            json.dump(_pkg, _f, indent=1)
+        print(f"packaging v89: pair "
+              f"{'PASS' if _pkg['pair_check']['passes'] else 'FLAGGED'} "
+              f"— '{_pkg['chosen_pair']['title']}' x "
+              f"'{_pkg['chosen_pair']['thumbnail_text']}'")
+    except Exception as e:
+        print("packaging v89 failed (delivery unchanged):",
+              str(e)[:200])
+    return result
 
 
 # ---------------------------------------------------------------- assemble

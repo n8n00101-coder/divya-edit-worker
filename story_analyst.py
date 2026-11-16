@@ -22,6 +22,11 @@ Contract:
 import json
 import re
 
+try:
+    import hooks_lib as _hooks
+except Exception:  # hooks are additive — the analyst must still run
+    _hooks = None
+
 OPPORTUNITIES = ("footage", "document", "number", "quote", "contrast",
                  "term", "scene")
 
@@ -67,7 +72,77 @@ def _parse(raw):
         return None
 
 
-def analyse_script(scenes, chat, taste="", topic=""):
+# ------------------------------------------------------- topic pre-flight
+_PLACE_WORDS = ("village", "town", "city", "coast", "river", "island",
+                "desert", "forest", "mountain", "valley", "harbour",
+                "harbor", "port", "lake", "ocean", "sea", "street",
+                "market", "temple", "fort", "bridge", "india", "kerala",
+                "goa", "assam", "rajasthan", "himalaya", "ganges",
+                "village", "district", "state", "country", "region")
+_TWIST_WORDS = ("but", "yet", "actually", "hidden", "secret", "twist",
+                "reveal", "despite", "paradox", "forgot", "vanish",
+                "disappear", "nobody", "no one", "never", "truth",
+                "behind", "real reason", "turns out", "ironically")
+
+
+def preflight(topic, angle="", sources=None):
+    """Topic pre-flight checklist (additive; deterministic, no LLM).
+
+    Checks: a one-line hook is possible (a generated hook variant
+    scores WORKABLE or better), a mappable place exists in the
+    topic/angle, real sources are available, and a twist/payoff
+    exists. Returns a structured verdict dict. `blocked` is True
+    ONLY when there is no viable hook AND no sources — every other
+    gap is a warning (`missing`), never a hard block."""
+    topic = str(topic or "").strip()
+    angle = str(angle or "").strip()
+    text = f"{topic} {angle}".lower()
+    srcs = [s for s in (sources or [])
+            if (isinstance(s, dict) and (s.get("url") or s.get("title")
+                                         or s.get("source")))
+            or (isinstance(s, str) and s.strip())]
+    variants = []
+    hook_ok = False
+    if _hooks is not None and topic:
+        try:
+            variants = _hooks.generate_hook_variants(topic, angle)
+            hook_ok = bool(variants) and \
+                variants[0]["score"]["total"] >= 30
+        except Exception:
+            variants, hook_ok = [], False
+    place_ok = any(w in text for w in _PLACE_WORDS) or bool(
+        re.search(r"\b[A-Z][a-z]{2,}\b", f"{topic} {angle}"))
+    twist_ok = any(w in text for w in _TWIST_WORDS)
+    checks = {"hook_possible": bool(hook_ok),
+              "mappable_place": bool(place_ok),
+              "sources_available": bool(srcs),
+              "twist_or_payoff": bool(twist_ok)}
+    missing = [k for k, v in checks.items() if not v]
+    blocked = not checks["hook_possible"] and not checks[
+        "sources_available"]
+    verdict = "block" if blocked else ("warn" if missing else "pass")
+    if missing:
+        print(f"preflight [{verdict}]: topic {topic[:60]!r} — "
+              f"missing: {', '.join(missing)}")
+    return {"version": "v89-preflight-1", "topic": topic,
+            "checks": checks, "missing": missing,
+            "verdict": verdict, "blocked": blocked,
+            "hook_variants": variants}
+
+
+def hook_variants(topic, angle=""):
+    """Ranked hook variants (2-3 named formulas) for a topic/angle,
+    scored by hooks_lib. [] when the library is unavailable."""
+    if _hooks is None or not str(topic or "").strip():
+        return []
+    try:
+        return _hooks.generate_hook_variants(str(topic), str(angle or ""))
+    except Exception:
+        return []
+
+
+def analyse_script(scenes, chat, taste="", topic="", angle="",
+                   sources=None):
     """Return the beat sheet dict {version, scenes: [...]} aligned to
     `scenes` by index, or None when the model call fails or returns
     nothing usable. Never raises."""
@@ -105,10 +180,20 @@ def analyse_script(scenes, chat, taste="", topic=""):
         })
     if not any(r["analysed"] for r in out):
         return None
-    return {"version": "v87-story-analyst-1", "topic": topic,
-            "scenes": out,
-            "turning_points": [r["scene"] for r in out
-                               if r["turning_point"]]}
+    sheet = {"version": "v87-story-analyst-1", "topic": topic,
+             "scenes": out,
+             "turning_points": [r["scene"] for r in out
+                                if r["turning_point"]]}
+    # v89 (additive): before script lock — ranked hook variants in
+    # named formulas + the topic pre-flight verdict ride on the sheet.
+    # Existing callers read scenes/turning_points and are unaffected.
+    try:
+        sheet["hook_variants"] = hook_variants(topic, angle)
+        sheet["preflight"] = preflight(topic, angle, sources)
+    except Exception as e:
+        print(f"story_analyst v89 hooks/preflight failed: "
+              f"{str(e)[:120]}")
+    return sheet
 
 
 def scene_for(sheet, scene_index0):
