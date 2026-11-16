@@ -685,9 +685,9 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
     # contexts (long cfg / director-led briefs) — the same
     # contexts that get directed below. The gate's log + residual
     # checks ride on the plan into the compliance report.
+    _doc_ctx100 = bool(cfg and cfg.get("kind") == "long")
     try:
         import anti_boring as _ab100g
-        _doc_ctx100 = bool(cfg and cfg.get("kind") == "long")
         if not _doc_ctx100:
             try:
                 import director as _dir100g
@@ -732,12 +732,28 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
                         _s100["source_ref"] = _e100["title"]
                         _s100["source_text"] = \
                             str(_e100.get("snippet") or "")[:400]
-            if _fg100["log"].get("removed") or _fg100["log"].get("dropped_scenes"):
-                print(f"fact gate v100: {_fg100['log']['claims']} claims, "
-                      f"rewrite={_fg100['log']['rewrite_round']}, "
-                      f"removed={len(_fg100['log']['removed'])}, "
-                      f"dropped={len(_fg100['log']['dropped_scenes'])}")
+            # ROUND 4 (Fix 2): the gate event is logged for EVERY
+            # gated pass — claims, rewrite, removals — not only
+            # when something was cut. The third film's top-up
+            # carried the film's one hard number and left no gate
+            # event anywhere; an uneventful pass is now impossible
+            # to confuse with a gated one.
+            print(f"fact gate v100: {_fg100['log']['claims']} claims, "
+                  f"rewrite={_fg100['log']['rewrite_round']}, "
+                  f"removed={len(_fg100['log']['removed'])}, "
+                  f"dropped={len(_fg100['log']['dropped_scenes'])}")
     except Exception as _e100g:
+        # ROUND 4 (Fix 2 — FAIL CLOSED): in a documentary context
+        # a gate that could not run means the script is UNGATED,
+        # and an ungated script never renders. The old behaviour
+        # printed "script ungated" and rendered anyway — that is
+        # how unsourced claims shipped. Outside documentary
+        # contexts the gate is advisory and the old print stands.
+        if _doc_ctx100:
+            raise RuntimeError(
+                "FACT GATE fail-closed: the gate could not run on "
+                f"this documentary script ({str(_e100g)[:100]}) — "
+                "an ungated script never renders") from _e100g
         print("fact gate v100 failed (script ungated):", str(_e100g)[:120])
     p["lang"] = p.get("lang") if p.get("lang") in ("en", "te", "hi") else "te"
     # PROOF-FIX 5: the script must FIT the ordered duration before
@@ -3158,6 +3174,21 @@ def _log_rejection(p, fq, wd=None):
         return None
 
 
+def _qc_bg_gray(mood, look, section, shape):
+    """ROUND 4 (Fix 6): a scene's background as a grayscale float
+    array AT THE EXTRACTED FRAME'S OWN SHAPE (h, w). frame_qc used
+    to resize every background to (270, 480) — the portrait shorts
+    geometry — so for every LANDSCAPE long the comparison
+    `frame - background` died with "operands could not be
+    broadcast together with shapes (152,270) (480,270)" and the
+    whole frame check degraded to a logged flaw. The crash fired
+    on three consecutive films. The background now takes the
+    frame's shape, whatever the film's aspect."""
+    bg = background(mood, look, section)
+    return np.asarray(bg.resize((int(shape[1]), int(shape[0])))
+                      .convert("L"), dtype=np.float32)
+
+
 def frame_qc(p, video_path, wd=None):
     """v35 (Ajju: "Divya is not checking at all"). Automated post-render
     frame check. The old team_qc scores the PLAN text and never looks at a
@@ -3294,8 +3325,9 @@ def frame_qc(p, video_path, wd=None):
                     _t = _k * 0.5
                     _si = max([j for j, _st in enumerate(starts) if _st <= _t] or [0])
                     if _si not in _bgs:
-                        _bgs[_si] = np.asarray(background(p["scenes"][_si]["mood"], p.get("look"),
-                                                          p["scenes"][_si].get("section")).resize((270, 480)).convert("L"), dtype=np.float32)
+                        _bgs[_si] = _qc_bg_gray(
+                            p["scenes"][_si]["mood"], p.get("look"),
+                            p["scenes"][_si].get("section"), _im.shape)
                     if float(np.abs(_im - _bgs[_si]).mean()) < 2.55:
                         _kind = f"blank vs background (t={_t:.1f}s, scene {_si + 1}, <1% change)"
                 if _kind and _prev and _prev[0] == _kind.split(" (")[0]:
@@ -3584,6 +3616,26 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         print(f"edit render: saved plan, {len(p.get('scenes') or [])} scenes")
     else:
         p = plan(brief, chat, recent, recent_styles, recent_families, spec=spec, cfg=cfg)
+    # ROUND 4 (Fix 2 — fact gate on EVERY pass): in a documentary
+    # context, a plan with NO fact-gate event must not render —
+    # fail closed, labelled. plan() now raises when its own gate
+    # cannot run, so a fresh plan always carries the event; this
+    # choke point covers the remaining road in: a plan_override
+    # (edit / taste re-plan) whose saved plan predates the gate or
+    # lost the event. The third film's unsourced "1,200 deaths"
+    # arrived through a pass no gate event covered.
+    _doc_ctx_r4 = bool(cfg and cfg.get("kind") == "long")
+    if not _doc_ctx_r4:
+        try:
+            import director as _dir_r4
+            _doc_ctx_r4 = bool(_dir_r4.should_direct(brief, cfg))
+        except Exception:
+            _doc_ctx_r4 = False
+    if _doc_ctx_r4 and "fact_gate" not in p:
+        raise RuntimeError(
+            "FACT GATE fail-closed: this documentary pass carries "
+            "no fact-gate event — an ungated script never renders "
+            "(re-plan so the gate runs, or fix the gate)")
     # v32 (Blind codegen): ONE engine writes tr_/fx_/vis_ in a single call
     # (codegen.run: PLAN -> CODE -> sandbox -> fix x2 -> library fallback),
     # while the QC scores the plan in parallel. A failed custom function
@@ -4084,6 +4136,13 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                             "scene": None})
         _plan_info = {
             "lang": p.get("lang"), "topic": p.get("topic", brief),
+            # ROUND 4 (Fix 1b): the topic verdict judges the
+            # DELIVERED title/topic against the order — the film's
+            # real title plus the topic lock's history/exclusions
+            # (threaded through cfg on the long path).
+            "title": p.get("title"),
+            "topic_history": cfg.get("topic_history") or [],
+            "topic_exclusions": cfg.get("topic_exclusions") or [],
             "voice_used": p.get("_voice_used", voice),
             "voice_gender": cfg.get("voice_gender") or p.get("voice"),
             "music_applied": not (cfg.get("music") is False or aflags.get("music") == "off"),
