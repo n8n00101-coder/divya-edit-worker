@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v55";
+const APP_V = "julie-v56";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -48,7 +48,7 @@ const T = {
     callBtn: n => `Call ${n}`, waBtn: "WhatsApp open cheyyi", openBtn: n => `${n} open cheyyi`, playBtn: "YouTube lo vinu", openedTab: n => `${n} open chesa — kottha tab lo`, openedApp: n => `${n} open chesa`, openYTApp: "YouTube app open chesa ✓", ytNoApp: "YouTube app phone lo ledu — browser lo open chesa.", ytOpening: "YouTube app open chesthunna…", waApp: "WhatsApp app open chesa ✓", waNoApp: "WhatsApp app phone lo ledu — browser lo open chesa.", waOpening: "WhatsApp app open chesthunna…", updBanner: v => `Kotha version ${v} vachindi — Refresh cheyyi.`, updRefresh: "Refresh cheyyi", updCheck: "App update check cheyyi", updLatest: "App latest version lo undi ✓", openBlocked: "Browser open cheyanivvaledu — kindha link tap cheyyi", openOff: "Auto-open off lo undi — kindha link tap cheyyi", calBtn: "Google Calendar lo add cheyyi", subBtn: "Plans chudu", pickContact: "Contacts nunchi select", typeNumber: "Number type cheyyi",
     noNumber: n => `${n} number naa daggara ledu. "save ${n} 98xxxxxxxx" ani cheppu, leda contacts nunchi select cheyyi.`, askNumber: n => `${n} phone number?`, saved: (n, x) => `${n} number save chesa (+${x}). Ee phone lo matrame untundi.`,
     remFire: t => `Reminder: ${t}`, notifTitle: "Julie reminder",
-    connectNote: "Login page browser lo open avuthundi. Connect ayyaka ikkadiki tirigi raa.", connect: "Connect", connectedP: "Connected", soon: "Tvaralo", ytNoChannel: "Connect ayyindhi, kani ee account lo YouTube channel kanipinchaledu", connNoAccount: "Connect ayyindhi, kani account kanipinchaledu", ytNoChannelShort: "Channel kanipinchaledu", connNoAccountShort: "Account kanipinchaledu",
+    connectNote: "Login page browser lo open avuthundi. Connect ayyaka ikkadiki tirigi raa.", connect: "Connect", connectedP: "Connected", soon: "Tvaralo", ytNoChannel: "Connect ayyindhi, kani ee account lo YouTube channel kanipinchaledu", connNoAccount: "Connect ayyindhi, kani account kanipinchaledu", ytNoChannelShort: "Channel kanipinchaledu", connNoAccountShort: "Account kanipinchaledu", acctTitle: "Google accounts", acctAdd: "＋ Account add cheyyi", acctDefault: "Default", acctMakeDefault: "Default cheyyi", acctRemove: "Remove", acctRemoveQ: "Ee account remove cheyala?", acctCap: "10 accounts ayipoyayi — kothadi add cheyalante mundhu okati remove cheyyi.", acctYtNone: "YouTube channel ledu", acctExpired: "Malli connect cheyyali",
     setupIntro: "Rendu veellu matrame: (1) Automate with Julie — Julie ne anni setup chesthundhi, nee okka permission tho. (2) Manual — nee daggara already oka model key unte, kindha Add Model lo ivvu. Anthe.",
     autoTitle: "Automate with Julie", modelTitle: "Manual — Add Model", modelSub: "Nee daggara already oka AI model key unte ikkada ivvu — Julie test chesi save chesthundhi, tarvatha chat ki ade brain avuthundhi. Chat lo model name + key pampina kuda Julie thane save chesthundhi.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "udaa: gpt-5, llama-3.3-70b", modelKeyPh: "API key paste cheyyi", modelOwn: "Nee key nee own server lone sealed ga untundhi — andukani adi misuse avvadhu, evariki kanipinchadhu.", modelNone: "Inka nee own model save avvaledu.", modelConnected: m => `Connected ✓ — ${m}`, keysTitle: n => `Nee keys (${n})`, keysNone: "Inka keys emi add avvaledu.", keyWorking: "Working ✓", keyNotWorking: "Pani cheyatledu", keySrcManual: "Manual", keySrcDivya: "Julie added", modelTesting: "Test chesthunna…", tcTitle: "Take Control — sign-in screen", tcHint: "Ee screen Julie browser dhi. Screen meeda tap chesi, kindha box lo type chesi sign in cheyu — ayyaka paina 'Nenu chesa ✓' nokku.", tcTypeBtn: "Type cheyyi", tcPh: "Ikkada type cheyyi…",
     googleRow: "Continue with Google", googleSub: "Nee email ni setup ki vaadutham", continueGoogle: "Continue", orLoginPw: "Leda password tho login cheyyi",
@@ -103,7 +103,7 @@ const T = {
     callBtn: n => `Call ${n}`, waBtn: "Open WhatsApp", openBtn: n => `Open ${n}`, playBtn: "Listen on YouTube", openedTab: n => `Opened ${n} in a new tab`, openedApp: n => `Opened ${n}`, openYTApp: "Opened the YouTube app ✓", ytNoApp: "YouTube app isn't on this phone — opened in the browser instead.", ytOpening: "Opening the YouTube app…", waApp: "Opened the WhatsApp app ✓", waNoApp: "WhatsApp app isn't on this phone — opened in the browser instead.", waOpening: "Opening the WhatsApp app…", updBanner: v => `New version ${v} is out — refresh to get it.`, updRefresh: "Refresh", updCheck: "Check for app updates", updLatest: "App is on the latest version ✓", openBlocked: "Browser blocked it — tap the link below", openOff: "Auto-open is off — tap the link below", calBtn: "Add to Google Calendar", subBtn: "See plans", pickContact: "Pick from contacts", typeNumber: "Type number",
     noNumber: n => `I don't have ${n}'s number. Say "save ${n} 98xxxxxxxx", or pick from contacts.`, askNumber: n => `${n}'s phone number?`, saved: (n, x) => `Saved ${n} (+${x}). It stays on this phone only.`,
     remFire: t => `Reminder: ${t}`, notifTitle: "Julie reminder",
-    connectNote: "Sign-in opens in your browser. Come back here when done.", connect: "Connect", connectedP: "Connected", soon: "Soon", ytNoChannel: "Connected, but no YouTube channel found on this account", connNoAccount: "Connected, but no account found", ytNoChannelShort: "No channel found", connNoAccountShort: "No account found",
+    connectNote: "Sign-in opens in your browser. Come back here when done.", connect: "Connect", connectedP: "Connected", soon: "Soon", ytNoChannel: "Connected, but no YouTube channel found on this account", connNoAccount: "Connected, but no account found", ytNoChannelShort: "No channel found", connNoAccountShort: "No account found", acctTitle: "Google accounts", acctAdd: "＋ Add account", acctDefault: "Default", acctMakeDefault: "Make default", acctRemove: "Remove", acctRemoveQ: "Remove this account?", acctCap: "10 accounts connected — remove one first to add another.", acctYtNone: "No YouTube channel", acctExpired: "Reconnect needed",
     setupIntro: "Just two ways: (1) Automate with Julie — Julie sets up everything itself, with your one-time permission. (2) Manual — already have a model key? Add it below. That's all.",
     autoTitle: "Automate with Julie", modelTitle: "Manual — Add Model", modelSub: "Already have an AI model key? Give it here — Julie tests it, saves it, and uses it as your chat brain. You can also just send the model name + key in chat and Julie saves it.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "e.g. gpt-5, llama-3.3-70b", modelKeyPh: "Paste the API key", modelOwn: "Your key stays sealed on your own server — that's why it can't be misused or seen by anyone.", modelNone: "No model of your own saved yet.", modelConnected: m => `Connected ✓ — ${m}`, keysTitle: n => `Your keys (${n})`, keysNone: "No keys added yet.", keyWorking: "Working ✓", keyNotWorking: "Not working", keySrcManual: "Manual", keySrcDivya: "Julie added", modelTesting: "Testing…", tcTitle: "Take Control — sign-in screen", tcHint: "This screen is Julie's browser. Tap the screen and type in the box below to sign in — then tap 'I did it ✓' above.", tcTypeBtn: "Type", tcPh: "Type here…",
     googleRow: "Continue with Google", googleSub: "Uses your email for setup", continueGoogle: "Continue", orLoginPw: "Or log in with a password",
@@ -147,7 +147,7 @@ const T = {
     freeTitle: "फ्री:", freeList: "हफ़्ते में 5 शॉर्ट्स (फ्री), कॉल, WhatsApp मैसेज, ऐप्स/साइट खोलना, गाने, रिमाइंडर, समय, मौसम, छोटे सवाल।", proTitle: "प्रो:", proList: "अनलिमिटेड शॉर्ट्स, मल्टी-स्टेप एजेंट काम, लंबी रिसर्च, अकाउंट ऑटोमेशन।",
     voiceHonest: "Julie सिर्फ़ जब ऐप खुला हो और स्क्रीन पर हो, तब सुनती है (वेब ऐप बैकग्राउंड में नहीं सुनता)। कॉल/WhatsApp चुपचाप नहीं भेज सकती: डायलर या WhatsApp सब कुछ भरकर खोलती है, आप Call/Send दबाते हैं। वॉइस पहचान ब्राउज़र की सर्विस (Chrome में Google) से होती है।",
     callBtn: n => `कॉल करें ${n}`, waBtn: "WhatsApp खोलें", openBtn: n => `${n} खोलें`, playBtn: "YouTube पर सुनें", openedTab: n => `${n} naye tab mein khola`, openedApp: n => `${n} khola`, openYTApp: "YouTube ऐप खुल गया ✓", ytNoApp: "YouTube ऐप फ़ोन में नहीं है — ब्राउज़र में खोला।", ytOpening: "YouTube ऐप खोल रही हूँ…", waApp: "WhatsApp ऐप खुल गया ✓", waNoApp: "WhatsApp ऐप फ़ोन में नहीं है — ब्राउज़र में खोला।", waOpening: "WhatsApp ऐप खोल रही हूँ…", updBanner: v => `नया वर्शन ${v} आ गया — रिफ्रेश करें।`, updRefresh: "रिफ्रेश करें", updCheck: "ऐप अपडेट चेक करें", updLatest: "ऐप लेटेस्ट वर्शन पर है ✓", openBlocked: "Browser ne roka — neeche link dabao", openOff: "Auto-open band hai — neeche link dabao", calBtn: "Google Calendar में जोड़ें", subBtn: "प्लान देखें", pickContact: "कॉन्टैक्ट से चुनें", typeNumber: "नंबर टाइप करें", noNumber: n => `${n} का नंबर मेरे पास नहीं है। "${n} सेव करें 98xxxxxxxx" कहें, या कॉन्टैक्ट से चुनें।`, askNumber: n => `${n} का फ़ोन नंबर?`, saved: (n, x) => `${n} का नंबर सेव कर लिया (+${x})। यह सिर्फ़ इसी फ़ोन में रहेगा।`, remFire: t => `रिमाइंडर: ${t}`, notifTitle: "Julie रिमाइंडर",
-    connectNote: "लॉग इन पेज ब्राउज़र में खुलेगा। कनेक्ट होने के बाद यहाँ वापस आएँ।", connect: "कनेक्ट", connectedP: "कनेक्टेड", soon: "जल्द आ रहा है", ytNoChannel: "कनेक्टेड, लेकिन इस अकाउंट पर YouTube चैनल नहीं मिला", connNoAccount: "कनेक्टेड, लेकिन कोई अकाउंट नहीं मिला", ytNoChannelShort: "चैनल नहीं मिला", connNoAccountShort: "अकाउंट नहीं मिला",
+    connectNote: "लॉग इन पेज ब्राउज़र में खुलेगा। कनेक्ट होने के बाद यहाँ वापस आएँ।", connect: "कनेक्ट", connectedP: "कनेक्टेड", soon: "जल्द आ रहा है", ytNoChannel: "कनेक्टेड, लेकिन इस अकाउंट पर YouTube चैनल नहीं मिला", connNoAccount: "कनेक्टेड, लेकिन कोई अकाउंट नहीं मिला", ytNoChannelShort: "चैनल नहीं मिला", connNoAccountShort: "अकाउंट नहीं मिला", acctTitle: "Google खाते", acctAdd: "＋ खाता जोड़ें", acctDefault: "डिफ़ॉल्ट", acctMakeDefault: "डिफ़ॉल्ट करें", acctRemove: "हटाएं", acctRemoveQ: "यह खाता हटाएं?", acctCap: "10 खाते हो गए — नया जोड़ने के लिए पहले एक हटाएं।", acctYtNone: "YouTube चैनल नहीं है", acctExpired: "फिर से कनेक्ट करें",
     setupIntro: "सिर्फ़ दो तरीके: (1) Automate with Julie — Julie खुद सब setup करती है, आपकी एक बार की परमिशन से। (2) Manual — पहले से model key है तो नीचे Add Model में दें। बस इतना ही।",
     autoTitle: "Automate with Julie", modelTitle: "Manual — Add Model", modelSub: "पहले से कोई AI model key है? यहाँ दें — Julie test करके save करेगी और उसे ही आपकी chat brain बनाएगी। Chat में model name + key भेजने पर भी Julie खुद save कर लेगी।", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "जैसे: gpt-5, llama-3.3-70b", modelKeyPh: "API key paste करें", modelOwn: "आपकी key आपके अपने server पर ही sealed रहती है — इसलिए उसका misuse नहीं हो सकता और वह किसी को दिखती नहीं।", modelNone: "अभी आपकी अपनी कोई model save नहीं है।", modelConnected: m => `Connected ✓ — ${m}`, keysTitle: n => `आपकी keys (${n})`, keysNone: "अभी कोई key add नहीं हुई।", keyWorking: "Working ✓", keyNotWorking: "काम नहीं कर रही", keySrcManual: "Manual", keySrcDivya: "Julie added", modelTesting: "Test हो रहा है…", tcTitle: "Take Control — sign-in screen", tcHint: "यह screen Julie के browser की है। Screen पर tap करके और नीचे box में type करके sign in करें — फिर ऊपर 'मैंने कर दिया ✓' दबाएँ।", tcTypeBtn: "Type करें", tcPh: "यहाँ type करें…",
     googleRow: "Continue with Google", googleSub: "आपका ईमेल सेटअप के लिए इस्तेमाल होगा", continueGoogle: "जारी रखें", orLoginPw: "या पासवर्ड से लॉग इन करें",
@@ -190,7 +190,7 @@ const T = {
     freeTitle: "Free:", freeList: "Hafte me 5 lakh free tokens, calls, WhatsApp message, apps/sites open, gaane, reminders, time, weather, chhote sawaal.", proTitle: "Pro:", proList: "unlimited shorts, multi-step agent kaam, long research, account automation.",
     voiceHonest: "Julie sirf jab app khula ho aur screen par ho, tab sunti hai (web app background me nahi sunta). Call/WhatsApp chupchaap nahi bhej sakti: dialer ya WhatsApp sab kuch bharkar kholti hai, aap Call/Send dabate hain. Voice pehchan browser ki service (Chrome me Google) se hoti hai.",
     callBtn: n => `Call karo ${n}`, waBtn: "WhatsApp kholo", openBtn: n => `${n} kholo`, playBtn: "YouTube par suno", openedTab: n => `${n} naye tab mein khola`, openedApp: n => `${n} khola`, openYTApp: "YouTube app khul gaya ✓", ytNoApp: "YouTube app phone mein nahi hai — browser mein khola.", ytOpening: "YouTube app khol rahi hoon…", waApp: "WhatsApp app khul gaya ✓", waNoApp: "WhatsApp app phone mein nahi hai — browser mein khola.", waOpening: "WhatsApp app khol rahi hoon…", updBanner: v => `Naya version ${v} aa gaya — refresh karo.`, updRefresh: "Refresh karo", updCheck: "App update check karo", updLatest: "App latest version par hai ✓", openBlocked: "Browser ne roka — neeche link dabao", openOff: "Auto-open band hai — neeche link dabao", calBtn: "Google Calendar me jodo", subBtn: "Plans dekho", pickContact: "Contacts se chuno", typeNumber: "Number type karo", noNumber: n => `${n} ka number mere paas nahi hai. "${n} save karo 98xxxxxxxx" kaho, ya contacts se chuno.`, askNumber: n => `${n} ka phone number?`, saved: (n, x) => `${n} ka number save kar liya (+${x}). Ye sirf isi phone me rahega.`, remFire: t => `Reminder: ${t}`, notifTitle: "Julie reminder",
-    connectNote: "Log in page browser me khulega. Connect hone ke baad yahan wapas aao.", connect: "Connect", connectedP: "Connected", soon: "Jald aa raha hai", ytNoChannel: "Connected, lekin is account par YouTube channel nahi mila", connNoAccount: "Connected, lekin koi account nahi mila", ytNoChannelShort: "Channel nahi mila", connNoAccountShort: "Account nahi mila",
+    connectNote: "Log in page browser me khulega. Connect hone ke baad yahan wapas aao.", connect: "Connect", connectedP: "Connected", soon: "Jald aa raha hai", ytNoChannel: "Connected, lekin is account par YouTube channel nahi mila", connNoAccount: "Connected, lekin koi account nahi mila", ytNoChannelShort: "Channel nahi mila", connNoAccountShort: "Account nahi mila", acctTitle: "Google accounts", acctAdd: "＋ Account jodo", acctDefault: "Default", acctMakeDefault: "Default karo", acctRemove: "Hatao", acctRemoveQ: "Ye account hataein?", acctCap: "10 accounts ho gaye — naya jodne ke liye pehle ek hatao.", acctYtNone: "YouTube channel nahi hai", acctExpired: "Phir se connect karo",
     setupIntro: "Sirf do tareeke: (1) Automate with Julie — Julie khud sab setup karti hai, aapki ek baar ki permission se. (2) Manual — pehle se model key hai to neeche Add Model me dein. Bas itna hi.",
     autoTitle: "Automate with Julie", modelTitle: "Manual — Add Model", modelSub: "Pehle se koi AI model key hai? Yahan dein — Julie test karke save karegi aur use hi aapki chat brain banayegi. Chat me model name + key bhejne par bhi Julie khud save kar legi.", modelNameL: "Model name", modelKeyL: "API key", modelNamePh: "jaise: gpt-5, llama-3.3-70b", modelKeyPh: "API key paste karo", modelOwn: "Aapki key aapke apne server par hi sealed rehti hai — isliye uska misuse nahi ho sakta aur woh kisi ko dikhti nahi.", modelNone: "Abhi aapki apni koi model save nahi hai.", modelConnected: m => `Connected ✓ — ${m}`, keysTitle: n => `Aapki keys (${n})`, keysNone: "Abhi koi key add nahi hui.", keyWorking: "Working ✓", keyNotWorking: "Kaam nahi kar rahi", keySrcManual: "Manual", keySrcDivya: "Julie added", modelTesting: "Test ho raha hai…", tcTitle: "Take Control — sign-in screen", tcHint: "Ye screen Julie ke browser ki hai. Screen par tap karke aur neeche box me type karke sign in karo — phir upar 'Maine kar diya ✓' dabao.", tcTypeBtn: "Type karo", tcPh: "Yahan type karo…",
     googleRow: "Continue with Google", googleSub: "Aapka email setup ke liye use hoga", continueGoogle: "Continue", orLoginPw: "Ya password se log in karo",
@@ -1815,14 +1815,35 @@ $("#profLogout").onclick = () => logout(false);
 /* ---------- connect ---------- */
 const PDESC = { te: { youtube: "Videos upload cheyadaniki", google: "Gmail, Drive", instagram: "Reels post cheyadaniki", facebook: "Page lo post cheyadaniki", telegram: "Telegram lo kuda Julie" }, en: { youtube: "Upload videos", google: "Gmail, Drive", instagram: "Post Reels", facebook: "Post to your Page", telegram: "Julie on Telegram too" } };
 let connData = [];
-async function connectLink(prov) {
+async function connectLink(prov, account) {
   // v61: NO pre-opened blank tab (it threw the user into a stray browser
   // tab, and stranded them there when the call failed). Ask the server
   // first — through the two-door resilient api() — then go in THIS tab;
   // the OAuth callback redirects back into the app (?connected=...).
-  const r = await api("connect/link", { method: "POST", json: { provider: prov } }).catch(() => ({}));
+  // v97: `account` ("new" = add another Google account, or an account id
+  // = reconnect it) rides along; the Worker hands back the OAuth start
+  // on the APP origin (the host that loads on the user's network).
+  const r = await api("connect/link", { method: "POST", json: { provider: prov, ...(account ? { account } : {}) } }).catch(() => ({}));
   if (r.ok && r.url) location.href = r.url;
   else toast(r.error || t("netErr"));
+}
+function renderAccts(d) {
+  // v97 (MULTI-ACCOUNT): one row per connected Google account — email,
+  // Gmail/YouTube state, default badge or Make-default, Remove — plus
+  // the always-visible Add-account button (the old UI hid every add
+  // path once one account was connected: Ajju 2026-11-16).
+  const el = $("#acctList"); if (!el) return;
+  const list = d.accounts || [], cap = d.acctCap || 10;
+  const rows = list.map(a => {
+    const badges = [a.gmail ? "Gmail ✓" : "", a.yt ? (a.ytChannel ? a.ytChannel : (a.ytNoChannel ? t("acctYtNone") : "YouTube ✓")) : ""].filter(Boolean).join(" · ");
+    const state = a.state === "expired" ? (badges ? " · " : "") + t("acctExpired") : "";
+    return `<div class="row"><div class="prov"><div class="pi" aria-hidden="true">${esc((a.email || "G").charAt(0).toUpperCase())}</div><div class="pt"><b>${esc(a.email || a.ytChannel || "Google")}</b><span class="muted small">${esc(badges + state)}${a.def ? "" : ` <button class="mini-link" data-acct-def="${a.id}">${t("acctMakeDefault")}</button>`} <button class="mini-link" data-acct-del="${a.id}">${t("acctRemove")}</button></span></div></div>${a.def ? `<span class="pill ok">${t("acctDefault")}</span>` : ""}</div>`;
+  }).join("");
+  const atCap = list.length >= cap;
+  el.innerHTML = (list.length || true) ? `<p class="acct-h">${t("acctTitle")} (${list.length}/${cap})</p>` + rows + (atCap ? `<p class="muted small">${t("acctCap")}</p>` : `<button class="pill go" id="acctAdd">${t("acctAdd")}</button>`) : "";
+  $$("#acctList [data-acct-def]").forEach(b => b.onclick = async () => { const r = await api("connect/default", { method: "POST", json: { account: b.dataset.acctDef } }).catch(() => ({})); if (r.ok) loadConnect(); else toast(r.error || t("netErr")); });
+  $$("#acctList [data-acct-del]").forEach(b => b.onclick = async () => { if (!confirm(t("acctRemoveQ"))) return; const r = await api("connect/remove", { method: "POST", json: { account: b.dataset.acctDel } }).catch(() => ({})); if (r.ok) loadConnect(); else toast(r.error || t("netErr")); });
+  const add = $("#acctAdd"); if (add) add.onclick = () => connectLink("google", "new");
 }
 async function loadConnect() {
   try {
@@ -1835,22 +1856,35 @@ async function loadConnect() {
       const noAcct = p.connected && p.noAccount;
       const noAcctShort = p.id === "youtube" ? t("ytNoChannelShort") : t("connNoAccountShort");
       const noAcctLong = p.id === "youtube" ? t("ytNoChannel") : t("connNoAccount");
-      const sub = noAcct ? noAcctLong : (p.connected ? (p.who || t("connectedP")) : (PDESC[S.lang]?.[p.id] || p.desc));
+      // v97 geometry: the row subtitle stays SHORT (the long no-account
+      // sentence moves to the full-width #ytNote under the list) and the
+      // YouTube who loses its `channel "..."` wrapper — both were what
+      // stacked the row to 112-205px in the rig.
+      const sub = noAcct ? noAcctShort : (p.connected ? (p.id === "youtube" ? String(p.who || "").replace(/^channel "/, "").replace(/"$/, "") || t("connectedP") : (p.who || t("connectedP"))) : (PDESC[S.lang]?.[p.id] || p.desc));
+      if (p.id === "youtube") { const yn = $("#ytNote"); if (yn) { yn.hidden = !noAcct; yn.textContent = noAcct ? noAcctLong : ""; } }
       const pill = noAcct ? `<span class="pill wait">⚠ ${esc(noAcctShort)}</span>`
         : p.connected ? `<span class="pill ok">✓ ${t("connectedP")}</span>`
         : p.ready ? `<button class="pill go" data-p="${p.id}" aria-label="${esc(t("connect") + " " + p.name)}">${t("connect")}</button>`
         : `<span class="pill wait">${t("soon")}</span>`;
-      return `<div class="row"><div class="prov"><div class="pi" aria-hidden="true">${esc(p.name[0])}</div><div class="pt"><b>${esc(p.name)}</b><span class="muted small">${esc(sub)}</span></div></div>${pill}${p.id === "youtube" ? ` <button class="pill" data-yt="1">${esc(t("openYT"))}</button>` : ""}</div>`;
+      // v97: the YouTube "Open" action lives INSIDE .pt as a mini-link
+      // under the subtitle — as a second trailing pill it crushed .pt
+      // to a 1-character column and the row ballooned (108px @412px,
+      // 1039px in the no-channel state, rig-measured 2026-11-16).
+      const ytOpen = p.id === "youtube" && !noAcct ? ` <button class="mini-link" data-yt="1">${esc(t("openYT"))}</button>` : "";
+      return `<div class="row"><div class="prov"><div class="pi" aria-hidden="true">${esc(p.name[0])}</div><div class="pt"><b>${esc(p.name)}</b><span class="muted small">${esc(sub)}${ytOpen}</span></div></div>${pill}</div>`;
     }).join("");
+    renderAccts(d);
     $$("#provList [data-p]").forEach(b => b.onclick = () => connectLink(b.dataset.p));
     // v39: the Connect page's YouTube row opens YouTube (app on Android,
     // browser otherwise) — previously it had no way to open YouTube at all.
     $$("#provList [data-yt]").forEach(b => b.onclick = () => { openUrl(ytAppUrl()); });
     const g = d.providers.find(p => p.id === "google");
-    if (g) { $("#gWho").textContent = g.connected ? (g.noAccount ? t("connNoAccount") : (g.who || t("connectedP"))) : t("googleSub"); $("#gBtn").hidden = !!g.connected || !g.ready; }
+    if (g) { const more = (d.accounts || []).length > 1 ? ` +${d.accounts.length - 1}` : ""; $("#gWho").textContent = g.connected ? (g.noAccount ? t("connNoAccount") : (g.who || t("connectedP"))) + more : t("googleSub"); $("#gBtn").hidden = !g.ready; }
   } catch {}
 }
-$("#gBtn").onclick = () => connectLink("google");
+// v97: the Setup-screen Google button NEVER hides once ready — when an
+// account is already connected it ADDS another one (multi-account).
+$("#gBtn").onclick = () => { const g = connData.find(p => p.id === "google"); connectLink("google", g && g.connected ? "new" : undefined); };
 $("#loginGoogleBtn") && ($("#loginGoogleBtn").onclick = async () => { const r = await api("auth/google", { method: "POST", json: {} }).catch(() => ({})); if (r.ok && r.url) location.href = r.url; else toast(r.error || t("netErr")); });
 
 /* ---------- server & API setup ---------- */

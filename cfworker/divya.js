@@ -711,11 +711,12 @@ async function oauthRoutes(env, url) {
     const s = JSON.parse((await env.KV.get(`oauth:${state}`)) || "null");
     if (!s || !code) return page("Connect avvaledu (link expire leda cancel). WhatsApp lo malli /connect try cheyyi.");
     await env.KV.delete(`oauth:${state}`);
-    let tok, who = "", prof = null;
+    let tok, who = "", prof = null, gEmail = "";
     if (url.pathname === "/oauth/google") {
       tok = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ code, client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, redirect_uri: base + "/oauth/google", grant_type: "authorization_code" }) })).json();
       if (!tok.access_token) return page("Google connect fail: " + (tok.error_description || tok.error || "unknown"));
       if (s.prov === "youtube") { const c = await (await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); const chTitle = c.items?.[0]?.snippet?.title; who = chTitle ? `channel "${chTitle}"` : "(ee account lo YouTube channel kanipinchaledu)"; if (!chTitle) tok.noChannel = true; /* v39 (D3): token held, no channel behind it */ }
+      if (s.prov === "youtube") { try { const ui = await (await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); gEmail = String(ui.email || "").toLowerCase(); } catch {} /* v97: key the account by its Google email (scope already carries openid email) */ }
       else { prof = await (await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); who = prof.email || ""; }
     } else {
       tok = await (await fetch(`${G}/oauth/access_token?` + new URLSearchParams({ client_id: env.FB_APP_ID, client_secret: env.FB_APP_SECRET, redirect_uri: base + "/oauth/meta", code }))).json();
@@ -743,9 +744,23 @@ async function oauthRoutes(env, url) {
       // derivation for a: sessions (a.phone || "u_"+uid). Never logged.
       const nid = a.phone || ("u_" + a.uid);
       await env.KV.put(`tok:${nid}:google`, JSON.stringify({ ...tok, at: Date.now(), who: email }));
+      try { await gAcctRegister(env, nid, "google", { ...tok, at: Date.now(), who: email }, email); } catch {} /* v97: the login grant is also accounts-list account #1; never break login */
       return Response.redirect("https://divya-app.n8n00101.workers.dev/?gtoken=" + encodeURIComponent(await newSession(env, a)), 302);
     }
-    await env.KV.put(`tok:${s.user}:${s.prov}`, JSON.stringify({ ...tok, at: Date.now(), who }));
+    const rec97 = { ...tok, at: Date.now(), who };
+    if (s.prov === "google" || s.prov === "youtube") {
+      // v97 (MULTI-ACCOUNT): register the grant under the account's own
+      // email so up to 10 Google accounts coexist per user; the default
+      // account's grant still lands in the legacy slot (gAcctRegister
+      // picks the key). A cap refusal stores NOTHING and says so.
+      const em97 = s.prov === "google" ? String(prof?.email || who || "").toLowerCase() : gEmail;
+      let reg97 = null;
+      try { reg97 = await gAcctRegister(env, s.user, s.prov, rec97, em97); } catch {}
+      if (reg97 && !reg97.ok && reg97.cap) return page(`Already ${GACCT_CAP} Google accounts connect ayyi unnayi — kotta account add cheyyalante mundhu Julie app lo okati remove cheyyi. (Account limit reached — remove one in the Julie app first.)`);
+      if (!reg97 || !reg97.ok) await env.KV.put(`tok:${s.user}:${s.prov}`, JSON.stringify(rec97));
+    } else {
+      await env.KV.put(`tok:${s.user}:${s.prov}`, JSON.stringify(rec97));
+    }
     // v61: app-originated connects return INTO the app (the old plain
     // page dead-ended app users on the API host, outside Julie).
     if (s.app) return Response.redirect("https://divya-app.n8n00101.workers.dev/?connected=" + encodeURIComponent(s.prov), 302);
@@ -1449,18 +1464,33 @@ async function chatUpload(env, u, text, lang) {
   }
   if (e.state !== "done") return { reply: en ? `Video ${e.n} is still being edited. I'll tell you when it's ready.` : `Video ${e.n} inka edit avthondi. Ready ayyaka cheptha.` };
   const targets = uploadTargets(low);
+  // v97 (MULTI-ACCOUNT): pick the YouTube account EXPLICITLY — a channel
+  // name or account email named in the message wins; otherwise the
+  // default account — and the confirmation below NAMES the channel so
+  // the owner can correct it before saying "cheyu".
+  let ytAcct = undefined, ytLabel = "";
+  if (targets.includes("yt")) {
+    const gidx3 = await gAccts(env, u.n);
+    const ytAccts = gidx3.list.filter(a => a.yt);
+    if (ytAccts.length) {
+      const hinted = ytAccts.find(a => (a.ytChannel && low.includes(a.ytChannel.toLowerCase())) || (a.email && low.includes(a.email.toLowerCase())));
+      const chosen = hinted || ytAccts.find(a => a.id === gidx3.def) || ytAccts[0];
+      ytAcct = chosen.id; ytLabel = chosen.ytChannel || chosen.email || "";
+    }
+  }
   const copy = await genUploadCopy(env, u, e, lang);
-  await env.KV.put(`uppend:${u.n}`, JSON.stringify({ num: e.n, job: e.job, targets, copy, privacy: "unlisted", at: Date.now() }), { expirationTtl: 1800 });
+  await env.KV.put(`uppend:${u.n}`, JSON.stringify({ num: e.n, job: e.job, targets, copy, privacy: "unlisted", ytAcct, at: Date.now() }), { expirationTtl: 1800 });
   const tNames = targets.map(t => t === "yt" ? "YouTube" : "Instagram").join(" + ");
+  const chanLine = targets.includes("yt") && ytLabel ? `\nYouTube channel: ${ytLabel}` : "";
   return { reply: en
-    ? `Video ${e.n} — ${inspectVideo(e)}.\nYouTube title: ${copy.yt_title}\nInstagram caption: ${copy.ig_caption.slice(0, 200)}${copy.ig_caption.length > 200 ? "…" : ""}\nUpload to ${tNames}? Say "cheyu" to post, or tell me what to change.`
-    : `Video ${e.n} — ${inspectVideo(e)}.\nYouTube title: ${copy.yt_title}\nInstagram caption: ${copy.ig_caption.slice(0, 200)}${copy.ig_caption.length > 200 ? "…" : ""}\n${tNames} lo upload cheyala? "cheyu" ani cheppu, leda em marchalo cheppu.` };
+    ? `Video ${e.n} — ${inspectVideo(e)}.\nYouTube title: ${copy.yt_title}\nInstagram caption: ${copy.ig_caption.slice(0, 200)}${copy.ig_caption.length > 200 ? "…" : ""}${chanLine}\nUpload to ${tNames}? Say "cheyu" to post, or tell me what to change.`
+    : `Video ${e.n} — ${inspectVideo(e)}.\nYouTube title: ${copy.yt_title}\nInstagram caption: ${copy.ig_caption.slice(0, 200)}${copy.ig_caption.length > 200 ? "…" : ""}${chanLine}\n${tNames} lo upload cheyala? "cheyu" ani cheppu, leda em marchalo cheppu.` };
 }
 async function runUpload(env, u, pend, lang) {
   const out = [];
   let allOk = true;
   if (pend.targets.includes("yt")) {
-    const r = await doPostYoutube(env, u.n, { job: pend.job, title: pend.copy.yt_title, description: pend.copy.yt_description, tags: pend.copy.yt_tags.join(","), privacy: pend.privacy });
+    const r = await doPostYoutube(env, u.n, { job: pend.job, title: pend.copy.yt_title, description: pend.copy.yt_description, tags: pend.copy.yt_tags.join(","), privacy: pend.privacy, account: pend.ytAcct });
     if (!r.ok) allOk = false;
     out.push(r.ok ? `YouTube ✓ ${r.url}` : `YouTube ✗ ${r.error || ""}`);
   }
@@ -1742,16 +1772,76 @@ async function appApi(req, env, url, ctx) {
       const noAccount = !!t && (t.noChannel === true || /kanipinchaledu/i.test(t.who || ""));
       return { id, name: pr.title.replace(" connect", ""), desc: pr.desc, connected: !!t, who: t?.who || "", ready, noAccount };
     }));
-    return appJson(req, { ok: true, providers: list });
+    // v97: the Google accounts list (default first-class): the app
+    // renders one row per account + Add/Remove/Default controls.
+    const gidx = await gAccts(env, u.n);
+    const accounts = gidx.list.map(a => ({ id: a.id, email: a.email, ytChannel: a.ytChannel, ytNoChannel: a.ytNoChannel, gmail: a.gmail, yt: a.yt, state: a.state, def: a.id === gidx.def }));
+    return appJson(req, { ok: true, providers: list, accounts, acctCap: GACCT_CAP, acctDef: gidx.def });
   }
   if (p === "connect/link" && req.method === "POST") {
     const prov = String(body.provider || "");
     if (!PROVIDERS[prov]) return appJson(req, { ok: false, error: "unknown" }, 400);
     const ready = (GSCOPE[prov] && env.GOOGLE_CLIENT_ID) || (MSCOPE[prov] && env.FB_APP_SECRET) || (prov === "telegram" && env.TG_BOT);
     if (!ready) return appJson(req, { ok: false, ready: false, error: lang === "en" ? "Still being set up." : "Inka setup lo undi." });
+    // v97: account intent — "new" (add another account; soft cap check
+    // here, hard check at the OAuth callback where the email is known)
+    // or an existing account id (reconnect that account).
+    const acct = body.account ? String(body.account).slice(0, 80) : "";
+    if ((prov === "google" || prov === "youtube") && acct === "new") {
+      const idx = await gAccts(env, u.n);
+      if (idx.list.length >= GACCT_CAP) return appJson(req, { ok: false, cap: true, error: lang === "en" ? `${GACCT_CAP} Google accounts already connected — remove one first.` : `${GACCT_CAP} Google accounts already connect ayyi unnayi — mundhu okati remove cheyyi.` });
+    }
     const state = crypto.randomUUID().replace(/-/g, "");
-    await env.KV.put(`oauth:${state}`, JSON.stringify({ user: u.n, prov, app: true }), { expirationTtl: 900 });
-    return appJson(req, { ok: true, url: prov === "telegram" ? `https://t.me/${env.TG_BOT}?start=${state}` : `https://divya.n8n00101.workers.dev/c/${state}` });
+    await env.KV.put(`oauth:${state}`, JSON.stringify({ user: u.n, prov, app: true, acct: acct || undefined }), { expirationTtl: 900 });
+    // v97: the OAuth start goes through the APP origin (which proxies
+    // /c/ to this Worker) — the app origin is the host that demonstrably
+    // loads on the user's network (v60 dual-door); the old API-host URL
+    // is exactly the host some ISPs drop, which made Connect taps look
+    // dead ("open kuda avvatledhu" — Ajju 2026-11-16).
+    return appJson(req, { ok: true, url: prov === "telegram" ? `https://t.me/${env.TG_BOT}?start=${state}` : `https://divya-app.n8n00101.workers.dev/c/${state}` });
+  }
+  if (p === "connect/remove" && req.method === "POST") {
+    // v97: remove ONE Google account: its grants go; if it was the
+    // default, the next account is promoted and its grants are copied
+    // into the legacy slots so default-path consumers keep working.
+    const id = String(body.account || "");
+    const idx = await gAccts(env, u.n);
+    const i = idx.list.findIndex(a => a.id === id);
+    if (i < 0) return appJson(req, { ok: false, error: lang === "en" ? "Account not found." : "Account kanipinchaledu." }, 404);
+    const wasDef = idx.def === id;
+    for (const prov of ["google", "youtube"]) { await env.KV.delete(`tok:${u.n}:${prov}#${id}`); if (wasDef) await env.KV.delete(`tok:${u.n}:${prov}`); }
+    idx.list.splice(i, 1);
+    if (wasDef) {
+      idx.def = idx.list.length ? idx.list[0].id : null;
+      if (idx.def) for (const prov of ["google", "youtube"]) {
+        const rec = await env.KV.get(gTokKey(u.n, prov, idx.def, id));
+        if (rec) await env.KV.put(`tok:${u.n}:${prov}`, rec); else await env.KV.delete(`tok:${u.n}:${prov}`);
+      }
+    }
+    await gAcctsSave(env, u.n, idx);
+    return appJson(req, { ok: true, accounts: idx.list.map(a => ({ id: a.id, email: a.email, ytChannel: a.ytChannel, ytNoChannel: a.ytNoChannel, gmail: a.gmail, yt: a.yt, state: a.state, def: a.id === idx.def })), acctDef: idx.def });
+  }
+  if (p === "connect/default" && req.method === "POST") {
+    // v97: choose the default account: the old default's grants are
+    // snapshotted into its #-keys, the new default's grants are copied
+    // into the legacy slots. All other accounts stay untouched.
+    const id = String(body.account || "");
+    const idx = await gAccts(env, u.n);
+    if (!idx.list.some(a => a.id === id)) return appJson(req, { ok: false, error: lang === "en" ? "Account not found." : "Account kanipinchaledu." }, 404);
+    if (idx.def !== id) {
+      const oldDef = idx.def;
+      if (oldDef) for (const prov of ["google", "youtube"]) {
+        const rec = await env.KV.get(`tok:${u.n}:${prov}`);
+        if (rec) await env.KV.put(`tok:${u.n}:${prov}#${oldDef}`, rec);
+      }
+      for (const prov of ["google", "youtube"]) {
+        const rec = await env.KV.get(`tok:${u.n}:${prov}#${id}`);
+        if (rec) await env.KV.put(`tok:${u.n}:${prov}`, rec); else await env.KV.delete(`tok:${u.n}:${prov}`);
+      }
+      idx.def = id;
+      await gAcctsSave(env, u.n, idx);
+    }
+    return appJson(req, { ok: true, accounts: idx.list.map(a => ({ id: a.id, email: a.email, ytChannel: a.ytChannel, ytNoChannel: a.ytNoChannel, gmail: a.gmail, yt: a.yt, state: a.state, def: a.id === idx.def })), acctDef: idx.def });
   }
   // ---- Post to connected YouTube / Instagram (owner-OK gate: body.confirm must be true) ----
 
@@ -1774,8 +1864,19 @@ async function postBytes(env, job, videoUrl) {
   return null;
 }
 async function doPostYoutube(env, n, o, en = false) {
-  // o: {job, video_url, title, description, tags, privacy, publishAt}
-  const t = await ytToken(env, n);
+  // o: {job, video_url, title, description, tags, privacy, publishAt, account}
+  // v97: o.account (id | email | channel substring) picks WHICH connected
+  // Google account's channel receives the upload; omitted = default.
+  let t = await ytToken(env, n, o.account ? await gResolveAcct(env, n, o.account) : undefined);
+  if (!t && !o.account) {
+    // v97: no account named — if the default account has no usable
+    // YouTube grant, use the first connected account that does (the
+    // chat flow names its pick explicitly in the owner-OK prompt). An
+    // EXPLICITLY named account never falls back: it works or fails
+    // honestly, so a video never lands on the wrong channel.
+    const idx = await gAccts(env, n);
+    for (const a of idx.list) { if (!a.yt) continue; const t2 = await ytToken(env, n, a.id); if (t2) { t = t2; break; } }
+  }
   if (!t) return { ok: false, code: 400, error: en ? "YouTube is not connected. Connect it first." : "YouTube connect avvaledu. Mundhu connect cheyyi." };
   const bytes = await postBytes(env, o.job, o.video_url);
   if (!bytes) return { ok: false, code: 400, error: en ? "Video not found. Give a job id or a video link." : "Video kanipinchaledu. Job id leda video link ivvu." };
@@ -1825,18 +1926,23 @@ async function doPostInstagram(env, n, o, en = false) {
   if (ref && ref.n === n) await histMarkPosted(env, n, ref.num, "ig", { mediaId: pub.id, url: res.url, at: Date.now() });
   return res;
 }
-  async function ytToken(env, n) {
-    const t = JSON.parse((await env.KV.get(`tok:${n}:youtube`)) || "null");
+  async function ytToken(env, n, acctId) {
+    // v97: acctId selects a non-default account's YouTube grant; omitted
+    // = the default account = the legacy slot (old behaviour).
+    const idx = acctId ? await gAccts(env, n) : null;
+    const key = acctId ? gTokKey(n, "youtube", acctId, idx && idx.def) : `tok:${n}:youtube`;
+    const t = JSON.parse((await env.KV.get(key)) || "null");
     if (!t || !t.access_token) return null;
     if (t.expires_in && t.at && Date.now() - t.at > (t.expires_in - 300) * 1000 && t.refresh_token) {
       const nt = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) })).json().catch(() => ({}));
-      if (nt.access_token) { const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in }; await env.KV.put(`tok:${n}:youtube`, JSON.stringify(merged)); return merged; }
+      if (nt.access_token) { const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in }; await env.KV.put(key, JSON.stringify(merged)); return merged; }
       // v74: the refresh grant failed — including the GCP Testing-mode
       // rule that refresh tokens expire after 7 days. Returning the
       // stale token made uploads fail with Google's raw error and the
       // user was never told the actual fix. Null routes callers to the
       // "not connected — connect first" message (a reconnect re-issues
       // the refresh token). The Gmail reader already behaves this way.
+      if (acctId) await gAcctMarkExpired(env, n, acctId);
       return null;
     }
     return t;
@@ -1852,7 +1958,7 @@ async function doPostInstagram(env, n, o, en = false) {
   }
   if (p === "post/youtube" && req.method === "POST") {
     if (!body.confirm) return appJson(req, { ok: false, needs_confirm: true, error: lang === "en" ? "Confirm to post this video to your YouTube channel." : "Ee video ni nee YouTube channel lo post cheyala? Confirm cheyyi." }, 400);
-    const r = await doPostYoutube(env, u.n, body, lang === "en");
+    const r = await doPostYoutube(env, u.n, { ...body, account: body.account }, lang === "en");
     return appJson(req, r, r.ok ? 200 : (r.code || 502));
   }
   if (p === "post/youtube/insights" && req.method === "GET") {
@@ -3506,7 +3612,7 @@ async function acctPublic(req, env, p, body) {
   if (p === "auth/google") {
     const state = hexOf(crypto.getRandomValues(new Uint8Array(12)));
     await env.KV.put(`oauth:${state}`, JSON.stringify({ login: true, prov: "google" }), { expirationTtl: 900 });
-    return appJson(req, { ok: true, url: "https://divya.n8n00101.workers.dev/c/" + state });
+    return appJson(req, { ok: true, url: "https://divya-app.n8n00101.workers.dev/c/" + state });
   }
   if (p === "auth/signup") {
     const name = String(body.name || "").trim().replace(/\s+/g, " ").slice(0, 60), email = normEmail(body.email), raw = String(body.phone || "").trim();
@@ -4346,6 +4452,77 @@ async function limitWarnMaybe(env, u, lang, opts = {}) {
 }
 
 // ===== v40 (R19): Worker-side verification-mail reader =====
+// ---- v97 (MULTI-ACCOUNT — Ajju 2026-11-16: "at a time atleast 10
+// accounts manage cheyyali"): up to 10 Google accounts per user. ----
+// Storage model: the DEFAULT account's grants keep living in the legacy
+// slots tok:<n>:google / tok:<n>:youtube, so every pre-v97 consumer
+// (WhatsApp connect, default token paths, setup chains) keeps working
+// untouched. Extra accounts hold their grants at
+// tok:<n>:google#<acctId> / tok:<n>:youtube#<acctId>. The index
+// gaccts:<n> = {list: [{id, email, ytChannel, ytNoChannel, gmail, yt,
+// state}], def} is DERIVED from the legacy slots on first read when
+// absent (migration-on-read — an existing single-grant user simply
+// becomes account #1, the default) and persisted on mutation only, so
+// hot paths pay no extra writes. Account identity = the Google email
+// (stable across reconnects); id = a short hash of it.
+const GACCT_CAP = 10;
+function gAcctId(email) {
+  const e = String(email || "").toLowerCase();
+  let h = 0; for (let i = 0; i < e.length; i++) h = (h * 31 + e.charCodeAt(i)) >>> 0;
+  return "a" + h.toString(36);
+}
+function gYtTitle(who) { const m = /^channel "([\s\S]*)"$/.exec(String(who || "")); return m ? m[1] : String(who || ""); }
+function gTokKey(n, prov, id, def) { return id && def && id !== def ? `tok:${n}:${prov}#${id}` : `tok:${n}:${prov}`; }
+async function gAccts(env, n) {
+  const idx = parseRec(await env.KV.get(`gaccts:${n}`));
+  if (idx && Array.isArray(idx.list)) return idx;
+  const g = parseRec(await env.KV.get(`tok:${n}:google`));
+  const y = parseRec(await env.KV.get(`tok:${n}:youtube`));
+  const list = [];
+  if (g || y) {
+    const email = (g && g.who) || "";
+    list.push({ id: gAcctId(email || (y && y.who) || "acct1"), email, ytChannel: y && !y.noChannel ? gYtTitle(y.who) : "", ytNoChannel: !!(y && y.noChannel), gmail: !!g, yt: !!y, state: "ok", at: (g && g.at) || (y && y.at) || 0 });
+  }
+  return { list, def: list.length ? list[0].id : null };
+}
+async function gAcctsSave(env, n, idx) { try { await env.KV.put(`gaccts:${n}`, JSON.stringify(idx)); } catch {} }
+async function gAcctMarkExpired(env, n, id) {
+  try { const idx = await gAccts(env, n); const a = idx.list.find(x => x.id === id); if (a && a.state !== "expired") { a.state = "expired"; await gAcctsSave(env, n, idx); } } catch {}
+}
+// Resolve an account hint (id | email | channel-title substring) to an id.
+async function gResolveAcct(env, n, hint) {
+  if (!hint) return undefined;
+  const h = String(hint).toLowerCase();
+  const idx = await gAccts(env, n);
+  const a = idx.list.find(x => x.id === hint) || idx.list.find(x => x.email && x.email.toLowerCase() === h) || idx.list.find(x => (x.ytChannel && x.ytChannel.toLowerCase().includes(h)) || (x.email && x.email.toLowerCase().includes(h)));
+  return a ? a.id : undefined;
+}
+// Register (or refresh) one account's grant after an OAuth callback.
+// prov is "google" | "youtube"; rec is the token record; email is the
+// Google account email (for google connects rec.who IS the email; for
+// youtube connects oauthRoutes resolves it via userinfo and passes it).
+// Accounts are keyed by email — reconnecting the same email refreshes
+// that account in place. A NEW email beyond the cap is refused
+// ({ok:false, cap:true}) and NOTHING is stored.
+async function gAcctRegister(env, n, prov, rec, email) {
+  const idx = await gAccts(env, n);
+  const em = String(email || (prov === "google" ? rec.who : "") || "").toLowerCase();
+  let a = em ? idx.list.find(x => x.email && x.email.toLowerCase() === em) : null;
+  if (!a && !em) a = idx.list.find(x => x.id === idx.def) || null;
+  if (!a) {
+    if (idx.list.length >= GACCT_CAP) return { ok: false, cap: true };
+    a = { id: gAcctId(em || ("acct" + Date.now())), email: em, ytChannel: "", ytNoChannel: false, gmail: false, yt: false, state: "ok", at: Date.now() };
+    idx.list.push(a);
+    if (!idx.def) idx.def = a.id;
+  }
+  a.state = "ok"; a.at = Date.now();
+  if (em && !a.email) a.email = em;
+  if (prov === "google") a.gmail = true;
+  if (prov === "youtube") { a.yt = true; if (rec.noChannel) { a.ytNoChannel = true; a.ytChannel = ""; } else if (rec.who) { a.ytChannel = gYtTitle(rec.who); a.ytNoChannel = false; } }
+  await env.KV.put(gTokKey(n, prov, a.id, idx.def), JSON.stringify(rec));
+  await gAcctsSave(env, n, idx);
+  return { ok: true, id: a.id, def: idx.def };
+}
 // The setup runner pauses on an email verification (Groq/OpenRouter/
 // Cloudflare magic link). The agent's Gmail tool redacts sign-in links,
 // so the link can never travel agent -> runner. Instead the WORKER reads
@@ -4356,27 +4533,31 @@ async function limitWarnMaybe(env, u, lang, opts = {}) {
 // client-facing API — the only place it appears is the job record
 // (setupjob:<job>, 2-day TTL) returned by setup/runner/job to the runner
 // (x-runner-key auth). setup/status strips it via stripJobSecrets().
-async function googleToken(env, n) {
+async function googleToken(env, n, acctId) {
   // Same refresh pattern as ytToken: expired + refresh_token -> refresh
   // via oauth2.googleapis.com/token, store back, return the fresh token.
   // No refresh token / refresh fails -> null (caller surfaces re-consent).
-  const t = parseRec(await env.KV.get(`tok:${n}:google`));
+  // v97: acctId selects a non-default account's grant; omitted = the
+  // default account = the legacy slot, byte-for-byte the old behaviour.
+  const idx = acctId ? await gAccts(env, n) : null;
+  const key = acctId ? gTokKey(n, "google", acctId, idx && idx.def) : `tok:${n}:google`;
+  const t = parseRec(await env.KV.get(key));
   if (!t || !t.access_token) return null;
   if (t.expires_in && t.at && Date.now() - t.at > (t.expires_in - 300) * 1000) {
-    if (!t.refresh_token) return null;
+    if (!t.refresh_token) { if (acctId) await gAcctMarkExpired(env, n, acctId); return null; }
     // v50: a network-level failure of the refresh fetch must read as
     // "no token" (callers surface re-consent), never as a thrown error
     // escaping to a 500 — the bare `await fetch` here used to do that.
     let nt = {};
     try { const resp = await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) }); nt = await resp.json().catch(() => ({})); } catch { return null; }
-    if (!nt.access_token) return null;
+    if (!nt.access_token) { if (acctId) await gAcctMarkExpired(env, n, acctId); return null; }
     const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in };
     // v50: persisting the refreshed token is best-effort — a KV write
     // failure (e.g. the daily write quota) must not fail the request;
     // the fresh token is still returned for THIS call. (Live 2026-11-12:
     // this bare put threw "KV put() limit exceeded for the day" and
     // gmail/verify returned HTTP 500.)
-    try { await env.KV.put(`tok:${n}:google`, JSON.stringify(merged)); } catch {}
+    try { await env.KV.put(key, JSON.stringify(merged)); } catch {}
     return merged;
   }
   return t;
@@ -4470,6 +4651,36 @@ function isApiDisabled(status, errObj) {
   return /accessNotConfigured|SERVICE_DISABLED|has not been used in project/i.test(s);
 }
 async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
+  // v97 (MULTI-ACCOUNT): the verification mail lands in the inbox of
+  // the Google account the setup used — job.email (the chain email).
+  // Candidate order: (1) the account whose email matches job.email,
+  // (2) the default account, (3) every other Gmail grant. A found link
+  // or a matched-mail outcome (mail-no-link) ends the search; account-
+  // level problems (needs-scope / api-not-enabled) are remembered and
+  // reported if no inbox yields the link, so the honest fix-it state
+  // still surfaces. With one account this is exactly the old behaviour.
+  const idx = await gAccts(env, n);
+  const want = String((job && job.email) || "").toLowerCase();
+  const order = [];
+  const push = a => { if (a && a.gmail && !order.includes(a.id)) order.push(a.id); };
+  push(idx.list.find(a => want && a.email && a.email.toLowerCase() === want));
+  push(idx.list.find(a => a.id === idx.def));
+  idx.list.forEach(push);
+  if (!order.length) return { ok: false, reason: "no-gmail-token" };
+  let last = { ok: false, reason: "no-gmail-token" };
+  let definitive = null;
+  for (const id of order) {
+    const tok = await googleToken(env, n, id);
+    if (!tok) continue;
+    const r = await fetchVerifyLinkTok(tok, provider, job, chainAt, opts);
+    if (r.ok) return r;
+    last = r;
+    if (r.reason === "mail-no-link") return r;
+    if ((r.reason === "needs-scope" || r.reason === "api-not-enabled") && !definitive) definitive = r;
+  }
+  return definitive || last;
+}
+async function fetchVerifyLinkTok(tok, provider, job, chainAt, opts) {
   // Server-side only. Returns {ok:true, link|code, from, subject} or
   // {ok:false, reason: "no-gmail-token"|"needs-scope"|"api-not-enabled"|"no-mail-yet"|"mail-no-link"|"gmail-error"}.
   // The link/code is returned ONLY to in-Worker callers (job feed /
@@ -4480,8 +4691,6 @@ async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
   // (provider query, then a broader sender-domain query over a 1d window),
   // 10 results each; (3) a mail that MATCHES sender+subject+recency but
   // yields no link/code reports the honest "mail-no-link", not "no-mail-yet".
-  const tok = await googleToken(env, n);
-  if (!tok) return { ok: false, reason: "no-gmail-token" };
   const m = VERIFY_PROVIDERS[String(provider || "").toLowerCase()] || VERIFY_PROVIDERS.generic;
   const window = (opts && opts.window) || "2h";
   const auth = { Authorization: "Bearer " + tok.access_token };
@@ -4619,8 +4828,9 @@ async function gmailStateFor(env, n, job) {
   if (mf === "no-mail-yet") return { state: "no-mail-yet", provider };
   if (mf === "mail-no-link") return { state: "no-link", provider }; // v50 (X4): mail arrived but carried no usable link — say so, never "no mail"
   if (mf === "gmail-error") return { state: "error", provider };
-  const tok = parseRec(await env.KV.get(`tok:${n}:google`));
-  if (!tok || !tok.access_token) return { state: "no-token", provider };
+  // v97: "has a Gmail grant" = ANY connected account grants Gmail.
+  const gidx2 = await gAccts(env, n);
+  if (!gidx2.list.some(a => a.gmail)) return { state: "no-token", provider };
   return { state: "no-mail-yet", provider };
 }
 function stripJobSecrets(j) {
@@ -4926,8 +5136,11 @@ async function gcpPollOp(tok, pollUrl) {
     await new Promise(res => setTimeout(res, GEMINI_POLL_MS));
   }
 }
-async function provisionGeminiKey(env, n) {
-  const tok = await googleToken(env, n);
+async function provisionGeminiKey(env, n, wantEmail) {
+  // v97: when the chain names an email that matches a connected Google
+  // account, provision under THAT account; otherwise the default.
+  const aid = wantEmail ? await gResolveAcct(env, n, wantEmail) : undefined;
+  const tok = aid ? await googleToken(env, n, aid) : await googleToken(env, n);
   if (!tok) return { ok: false, reason: "no-google-token" };
   const at = tok.access_token;
   const errMsg = e => String((e && (e.message || e.status)) || "");
@@ -5065,7 +5278,7 @@ async function setupStartNext(env, n) {
   if (nextId === "gemini") {
     rec.state = "running"; rec.step = "creating key"; rec.upd = Date.now();
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
-    const prov = await provisionGeminiKey(env, n).catch(e => ({ ok: false, reason: "provision-error", detail: String(e).slice(0, 200) }));
+    const prov = await provisionGeminiKey(env, n, chain.email).catch(e => ({ ok: false, reason: "provision-error", detail: String(e).slice(0, 200) }));
     rec.upd = Date.now();
     if (prov.ok) {
       rec.state = "done"; rec.step = "key saved"; rec.note = "";
