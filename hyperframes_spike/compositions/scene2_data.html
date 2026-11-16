@@ -1,0 +1,190 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: #000;
+    }
+    #s2-video {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 1080px;
+      object-fit: cover;
+    }
+    #s2-vignette {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.38) 100%);
+    }
+    #s2-panel {
+      position: absolute;
+      right: 96px;
+      top: 120px;
+      width: 700px;
+      padding: 52px 56px 44px;
+      background: rgba(8, 14, 20, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+    }
+    #s2-ptitle {
+      font-family: Oswald, sans-serif;
+      font-weight: 600;
+      font-size: 44px;
+      letter-spacing: 2px;
+      color: #ffffff;
+      text-transform: uppercase;
+    }
+    #s2-psub {
+      margin-top: 8px;
+      font-family: Inter, sans-serif;
+      font-size: 28px;
+      color: rgba(255, 255, 255, 0.75);
+    }
+    .s2-row {
+      margin-top: 40px;
+    }
+    .s2-rowhead {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-family: Inter, sans-serif;
+    }
+    .s2-year {
+      font-size: 30px;
+      font-weight: 700;
+      color: #ffffff;
+      letter-spacing: 2px;
+    }
+    .s2-val {
+      font-family: Oswald, sans-serif;
+      font-size: 46px;
+      font-weight: 600;
+      color: #ffffff;
+    }
+    .s2-val small {
+      font-size: 28px;
+      color: rgba(255, 255, 255, 0.7);
+    }
+    .s2-barbg {
+      margin-top: 12px;
+      height: 34px;
+      background: rgba(255, 255, 255, 0.13);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .s2-bar {
+      height: 100%;
+      border-radius: 6px;
+      transform-origin: left center;
+    }
+    #s2-bar1 {
+      width: 262px;
+      background: #7fb2d9;
+    }
+    #s2-bar2 {
+      width: 560px;
+      background: #ffb340;
+    }
+    #s2-note {
+      margin-top: 42px;
+      font-family: Inter, sans-serif;
+      font-size: 29px;
+      font-weight: 700;
+      color: #ffb340;
+    }
+    #s2-big {
+      margin-top: 30px;
+      padding-top: 30px;
+      border-top: 1px solid rgba(255, 255, 255, 0.18);
+      font-family: Inter, sans-serif;
+      font-size: 28px;
+      color: rgba(255, 255, 255, 0.85);
+    }
+    #s2-big b {
+      font-family: Oswald, sans-serif;
+      font-size: 54px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+    #s2-src {
+      margin-top: 22px;
+      font-family: Inter, sans-serif;
+      font-size: 24px;
+      color: rgba(255, 255, 255, 0.5);
+    }
+  </style>
+  <div id="root" data-composition-id="scene2" data-width="1920" data-height="1080">
+    <video
+      id="s2-video"
+      class="clip"
+      data-start="0"
+      data-duration="15"
+      data-media-start="16"
+      data-track-index="0"
+      src="assets/footage.webm"
+      muted
+      playsinline
+    ></video>
+    <div id="s2-vignette" class="clip" data-start="0" data-duration="15" data-track-index="1"></div>
+    <div id="s2-panel" class="clip" data-start="0" data-duration="15" data-track-index="2">
+      <div id="s2-ptitle">The rise is speeding up</div>
+      <div id="s2-psub">Global sea-level rise, millimetres per year</div>
+      <div class="s2-row">
+        <div class="s2-rowhead">
+          <div class="s2-year">1993</div>
+          <div class="s2-val"><span id="s2-v1">0.0</span> <small>mm / yr</small></div>
+        </div>
+        <div class="s2-barbg"><div class="s2-bar" id="s2-bar1"></div></div>
+      </div>
+      <div class="s2-row">
+        <div class="s2-rowhead">
+          <div class="s2-year">2023</div>
+          <div class="s2-val"><span id="s2-v2">0.0</span> <small>mm / yr</small></div>
+        </div>
+        <div class="s2-barbg"><div class="s2-bar" id="s2-bar2"></div></div>
+      </div>
+      <div id="s2-note">&times;2.1 faster in one generation</div>
+      <div id="s2-big"><b>+103 mm</b>&nbsp; of sea level since 1993</div>
+      <div id="s2-src">Source: NASA Sea Level Change, 2024</div>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    const c1 = { v: 0 };
+    const c2 = { v: 0 };
+    tl.fromTo("#s2-panel", { opacity: 0, x: 60 }, { opacity: 1, x: 0, duration: 0.7, ease: "power3.out" }, 0.4);
+    tl.fromTo("#s2-bar1", { scaleX: 0 }, { scaleX: 1, duration: 1.1, ease: "power3.inOut" }, 1.2);
+    tl.to(
+      c1,
+      {
+        v: 2.1,
+        duration: 1.1,
+        ease: "power3.inOut",
+        onUpdate: function () {
+          document.querySelector("#s2-v1").textContent = c1.v.toFixed(1);
+        },
+      },
+      1.2,
+    );
+    tl.fromTo("#s2-bar2", { scaleX: 0 }, { scaleX: 1, duration: 1.3, ease: "power3.inOut" }, 4.4);
+    tl.to(
+      c2,
+      {
+        v: 4.5,
+        duration: 1.3,
+        ease: "power3.inOut",
+        onUpdate: function () {
+          document.querySelector("#s2-v2").textContent = c2.v.toFixed(1);
+        },
+      },
+      4.4,
+    );
+    tl.fromTo("#s2-note", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 6.4);
+    tl.fromTo("#s2-big", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 8.6);
+    tl.fromTo("#s2-src", { opacity: 0 }, { opacity: 1, duration: 0.6, ease: "power2.out" }, 9.4);
+    window.__timelines["scene2"] = tl;
+  </script>
+</template>

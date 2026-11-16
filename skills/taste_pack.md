@@ -323,3 +323,250 @@ Distilled from a 6-reel editing course; every rule below was checked against the
   raise the hit.
 - Planned silence is near-silence: room tone or music tail stays
   under it. Digital zero reads as a failure, not as drama.
+
+# ADDITIONS — Trending documentary craft (merged 2026-11-16)
+Distilled from frame studies and editor breakdowns of the documentary
+channels that define YouTube now (Harris, Vox, fern, LEMMiNO, Nexpo,
+Magnates Media, ColdFusion) plus measured pacing/retention research.
+Full knowledge: JULIE_BRAIN_KNOWLEDGE_DOCUMENTARY_TRENDING.md. Every rule
+below was checked against the laws above — where trending practice
+conflicted with this pack, the pack won (the conflicts are logged in the
+knowledge file, §6).
+
+## Evidence is an apparatus, not a decoration
+- Every documentary ships a source log: every visual, in on-screen
+  order, with its publication/owner, its date, and where it is held.
+  Every borrowed clip is logged before render — source, timestamp in
+  the original, seconds used, the claim it supports. 100% or no render.
+  (LEMMiNO's published source pages; essay-craft clip logs.)
+- One source-card style for the whole video: verbatim quote, then
+  author + title + year in a smaller line; page shots keep the
+  publication name and date visible in frame. (Essay craft.)
+- Highlight in sync with the read: on any document or screenshot, dim
+  everything except the sentence being read; the highlight wipes across
+  the phrase as the voice reads it (onset within ±0.5 s of the word).
+  Never show it pre-drawn. (LEMMiNO; Vox suppression emphasis.)
+- Play the real recording before interpreting it: where a real
+  recording exists, ≥3 s of it runs with no narration over it; the
+  interpretation comes in the next beat. (Nexpo; LEMMiNO.)
+- Match picture to claim, not to paragraph: a new specific claim gets a
+  new claim-matched shot, even mid-paragraph. Generic stock is
+  forbidden under a specific named person, place, number or event —
+  every b-roll asset is scored for specificity against the beat's own
+  words before it may be used. (ColdFusion; Harris.)
+- Label every reconstruction for 100% of its frames (RECONSTRUCTION /
+  ILLUSTRATION), styled distinctly from archive. Era texture (grain,
+  VHS) only on assets whose real date matches that era — never age
+  modern footage. In reconstructions, imply violence by composition
+  and light; never depict the act. (Genre disclosure practice, fenced
+  by the honesty contract.)
+- Correct on the record: a wrong image found after publish gets a
+  description correction naming the timestamp, what was shown, and
+  what should have been shown. (ColdFusion.)
+
+## Documentary structure at trending standard
+- State the mystery by 0:60: no intro, sponsor or promise-speech before
+  it. The first narration sentence gives a precise date + place, or
+  plays over real archival audio of the event. (LEMMiNO.)
+- Build long videos as 6–8 mini-arcs: each has its own visual setup,
+  one complication, one resolution — and re-establishes its board in
+  its first 60 s, so a mid-video joiner can follow. (Harris; fern.)
+- Evidence first, context second, on a 30–90 s micro-cycle: show the
+  concrete visual, withhold the explanation, pay it off inside the
+  cycle. Abstract narration never runs >10 s without a visible anchor.
+  (Harris.)
+- Adjudicate theories one at a time, in one template: claim → evidence
+  for → evidence against → status (supported / unsupported /
+  unresolved). Never montage competing theories together. (LEMMiNO.)
+- Update a timeline graphic at every date jump, and give every location
+  change a map beat (label the new place, draw the route from the
+  previous one). A date or place the narration moves past without its
+  graphic is a plan defect. (LEMMiNO; true-crime craft.)
+- Documentary narration runs at 140–165 wpm, in historical present for
+  story beats; past tense only once the outcome is known. A 30 s window
+  outside the pace band is flagged at the script gate. (Harris; fern.)
+- End on the landing: payoff → human aftermath → one wider question.
+  The final beat is the thesis or an explicit statement of what is
+  still unknown; the single end CTA follows the landing and nothing
+  follows the CTA. Where the opening visual can return stripped of all
+  labels and overlays for the close, use it. (LEMMiNO; fern; Harris.)
+
+## Loops and re-hooks, run as a ledger
+- Keep a loop ledger in the plan: at most 3 loops open at once — 1 main
+  (the title's question), 1 chapter, 1 scene. A new loop opens every
+  60–90 s in long-form; closes run at roughly 1 per 2 opens. No moment
+  before the final 10% has zero loops open; the main loop closes inside
+  the final 10%. An abandoned loop is a broken promise, logged like one.
+- Close-and-open in the same breath at every chapter join: the last
+  seconds of a chapter open the next chapter's question. No chapter
+  ends with all loops closed. Chapter transitions are mini cold opens,
+  never recaps.
+- Three timed re-hook gates, on top of the 1/3 and 2/3 beats: a drift
+  interrupt at 0:25–0:35 (framing change, music drop or SFX); a second
+  gate at 0:50–1:30 (reframe the promise — new urgency, a twist, doubled
+  stakes); a 10–20 s re-hook at 40% of runtime ±2% (restate why the
+  viewer is watching, raise the stakes, change location, framing,
+  graphic style or music). Candidate re-hooks are marked every ~2 min
+  in the outline; only earned ones (new question, stake or payoff)
+  survive. Never 3 minutes without one.
+- Place the reframe turn at 60–75%: one explicit sentence that recasts
+  everything shown so far as a larger claim — "what happened" becomes
+  "what it means". Absent, before 50%, or after 80% fails the plan.
+- Never announce the ending: no wrap-up phrases, no summary close. The
+  ending phase is the slowest-cut phase of the film — the payoff needs
+  room to land.
+
+## Pace by phase, measured in refresh events
+- Cutting rate follows the runtime curve, not a flat rate: hook fastest,
+  setup fast, body breathing (median 4–5 s), climax re-tightens,
+  resolution slowest. The closing phase never cuts as fast as the hook.
+- A refresh is wider than a cut: push-in, overlay, text reveal, graphic
+  animation, state change inside a held graphic, SFX-anchored frame.
+  Inside one idea the picture may hold while refreshes carry the pace —
+  a held map or graphic must change state at least every ~3 s, and no
+  held graphic goes >5 s with no state change.
+- Deliberate holds are budgeted, not accidental: 2–7 holds longer than
+  10 s per 10-minute block, placed at emotional or evidentiary peaks —
+  and a hold earns its length only if something inside it keeps moving
+  (push, parallax, draw-on, state change). A fully static frame obeys
+  the normal beat ceiling. A block with zero long holds and zero short
+  shots fails the variety check.
+- Cut on the voice turn, not the music grid: picture changes land on
+  narration turns (new sentence, name, place). Music may polish a cut's
+  timing; it is never the grid. Protect the breath: the narrator's
+  pause before a reveal is storytelling — never trim a beat before it
+  has landed, and give each chapter's biggest statement ~1 s before
+  cutting away.
+
+## Maps and visual explanation (the Harris/Vox grammar)
+- A map beat starts wide (continent/country) and pushes to the named
+  place inside the line that names it. Strip the base map's labels; add
+  back only the places the narration names, each on its naming beat.
+  Never hold a static full map while places are named off-screen.
+- Keep one map spine per geography segment: footage plays as an inset
+  on the map instead of cutting away from it, and map sequences toggle
+  to ground level — never maps alone for more than ~60 s. Where aerial
+  footage exists, put the map labels on the aerial shot.
+- Badge every named actor and keep the badge resident until that
+  actor's role ends (≤7 co-resident). Each side of a conflict keeps a
+  fixed screen side for the whole video; a meaning change (allied →
+  fighting) is a dot/colour change on the badge, not a new graphic.
+- Instantiate counted nouns as counted objects: a spoken number ≤8 of a
+  thing is shown as that many pins/icons/objects, not written as a
+  digit. When the narration points ("here", "this city", "down
+  there"), the camera move starts with or before the pointing word.
+- Run every beat in arrival order: evidence enters first, the gesture
+  (highlight, circle, arrow) draws second on the detail as it is named,
+  the takeaway type lands last. One focal object per beat at 50–70% of
+  frame; everything else is demoted. Exactly one gesture per beat, and
+  exactly one element in the frame wears the accent colour — the one
+  the narration is on.
+- The quote-lift for sourced quotes: show the real document, push into
+  the passage, highlight it, then lift the quote as set type with the
+  document ghosted behind and attribution in its fixed small line.
+  Never typeset a quote whose source document has not been shown.
+- Visualise the mechanism, then play the example: for an invisible
+  process, build the simplest diagram first, add one element per beat,
+  and play the real example at the exact beat the diagram completes.
+- Every narration line names its visual referent in the plan — the
+  on-screen object it talks about. A line with no referent fails the
+  script gate.
+- Punch in on the word, to the region: emphasis zooms target the row,
+  phrase or face (never frame centre), land settled exactly on the
+  naming word, ease in and out, and release to neutral before the next
+  transition. Cut transitions at peak velocity, motion direction
+  matched, the sentence bridging the seam. Never cut to blank between
+  graphics: two graphics separated by <10 frames merge into one
+  continuous graphic.
+- Evidence is a physical object: photos and documents carry a hard
+  short shadow and at most 3° of tilt; screenshots keep their UI
+  chrome; nothing floats flat and shadowless. A person still used as a
+  graphic is cut out as a paper piece — silhouette, off-white border,
+  soft shadow — never a rectangular photo pasted on a graphic ground.
+- Backgrounds for graphic beats are built from tinted subject imagery
+  (blacks lifted to dark grey, texture over the top), never a flat
+  solid. One texture treatment covers every graphic in the video.
+
+## Music is edited, not laid (the cue-sheet system)
+- Spot the music in the script: a cue sheet lists every cue's in/out,
+  its role, and its intended end (natural ending / dropout /
+  crossfade). One unbroken track under a whole film is a plan defect.
+- Cut music only on phrase boundaries (downbeats, 4- or 8-bar units);
+  loop whole phrases verbatim, never arbitrary seconds. The final
+  musical accent lands after the final narration word.
+- Use stems before volume: duck only the stem that fights the voice,
+  restore it in no-voice sections. Carve a static −2 to −3 dB pocket
+  at 1–4 kHz in the music bus under narration — level ducking alone
+  still masks consonants. No lyrics under speech, ever: a vocal
+  version plays only where narration is absent for its full duration.
+- Tag every dropout: key-statement, evidence/natural-sound,
+  testimony, or chapter-break full stop. A chapter-break full stop
+  (music + SFX + voice stop together ≥0.8 s on room tone, restart =
+  one hard sound or one voice entry) counts as that movement's
+  sanctioned silence. Drop the music ~1 s before each chapter's
+  biggest reveal.
+- Budget design accents: risers, braams, impacts, stingers ≤4 per
+  minute in narration sections, never two braams within 30 s. Every
+  riser ≥2 s is paid off within 0.5 s of its peak — impact, reveal
+  cut, or deliberate dropout. Accents land only on scripted story
+  markers, never on consecutive beats.
+- One ambience bed per location, unbroken under every cut inside that
+  location, changing only on a location change. Solo test: clearly
+  audible alone, barely noticeable in the mix.
+- J/L cuts are the default join: at a change of location or time,
+  offset the audio 0.3–1.5 s unless the join is tagged a hard chapter
+  break. A film whose joins are all straight in picture and sound
+  reads chopped.
+- Attach tactile foley to every graphic entrance, matched to the
+  object: paper for documents/photos, marker for highlights,
+  click/tick for counters and pins, snap for cutouts. One sound per
+  entrance; a silent graphic entrance is a plan defect. Give each
+  chapter one sound motif, used only at that chapter's transitions
+  and tension beats.
+- Keep the voice flat when the content peaks: on the darkest or most
+  shocking lines, VO level stays within ±1 dB and pace within ±10% of
+  the video median. Music and SFX carry the spike; the narrator's
+  volume never does.
+- Voice chain, fixed order: clean → high-pass 80–100 Hz → presence EQ
+  → compress ~3:1 → de-ess if sibilant. Compression before cleaning is
+  a defect. TTS pauses are built by function — comma, sentence and
+  scene-change pauses at audibly different lengths; uniform pauses
+  are a synthetic tell.
+
+## Finish: matching, type roles, honest charts
+- Correct before grade, in order: normalise → exposure/white balance
+  → match neighbours → creative grade last. Declare one reference shot
+  per sequence and match to it in the order exposure → white balance →
+  contrast → saturation → texture. Run the three-cut test (previous →
+  current → next) across every source-type change.
+- The texture pass is separate from the grade: reconcile grain and
+  sharpness afterwards, softening the too-perfect source — never
+  sharpen archive up to stock. Protect accuracy colours: flags,
+  charts, scientific scales, UI and product colours are never
+  re-graded to fit the look.
+- Assign font roles, not just fonts: Font A = Julie's own voice
+  (statements, stats, labels; never tilted, always on grid); Font B =
+  quoted/archival voice; dates, sources and coordinates in mono or
+  Font A's smaller weight, in one fixed position. Set type shows the
+  operative phrase only (~4–6 words), never the full narrated sentence
+  — verbatim text belongs in captions.
+- Numbers are protagonists, sources are furniture: every number shown
+  large carries its source in small type directly beneath it, in the
+  same position on every chart and number card in the video.
+- Charts are honest by construction: bar/area axes start at zero, no
+  exceptions; a line chart may start above zero only with its axis
+  values legible for its whole duration; every chart discloses its
+  time window, its unit/denominator, and "log scale" if logarithmic;
+  dual axes and 3D charts are banned. A chart's title may state only
+  what its data directly shows. Charts build in argument order (axes →
+  data → annotation, the data landing within 0.5 s of the narration
+  naming it), carry no legend and no filled panel — series are
+  direct-labelled at their ends, the featured series in accent, the
+  rest grey — and a chart that changes basis morphs into its next
+  state instead of cutting to a second chart.
+- Captions and cards are different jobs: captions are verbatim,
+  full-line, chunked at clause boundaries; kinetic type is emphasis
+  only — ≤1 accent word per card, placed in open frame space, never
+  over a face, never the only text track in a documentary section.
+  Every kinetic word is timed from the waveform (±0.15 s of the spoken
+  onset), not from a transcript guess.

@@ -1,0 +1,174 @@
+<template>
+  <style>
+    #root {
+      position: absolute;
+      inset: 0;
+      overflow: hidden;
+      background: #000;
+    }
+    #s3-video {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 1920px;
+      height: 1080px;
+      object-fit: cover;
+    }
+    #s3-scrim {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 560px;
+      background: linear-gradient(to top, rgba(0, 0, 0, 0.66), rgba(0, 0, 0, 0));
+    }
+    #s3-vignette {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.38) 100%);
+    }
+    #s3-panel {
+      position: absolute;
+      left: 96px;
+      top: 96px;
+      width: 520px;
+      padding: 40px 44px 34px;
+      background: rgba(8, 14, 20, 0.78);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 18px;
+    }
+    #s3-ptitle {
+      font-family: Oswald, sans-serif;
+      font-weight: 600;
+      font-size: 38px;
+      letter-spacing: 2px;
+      color: #ffffff;
+      text-transform: uppercase;
+    }
+    #s3-mapwrap {
+      margin-top: 18px;
+      display: flex;
+      gap: 24px;
+      align-items: flex-start;
+    }
+    #s3-side {
+      padding-top: 130px;
+    }
+    #s3-place {
+      font-family: Inter, sans-serif;
+      font-size: 29px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      color: #ffb340;
+    }
+    #s3-placedesc {
+      margin-top: 10px;
+      font-family: Inter, sans-serif;
+      font-size: 28px;
+      line-height: 1.35;
+      color: rgba(255, 255, 255, 0.85);
+      width: 190px;
+    }
+    #s3-micro {
+      margin-top: 16px;
+      font-family: Inter, sans-serif;
+      font-size: 24px;
+      color: rgba(255, 255, 255, 0.5);
+    }
+    #s3-payoff {
+      position: absolute;
+      left: 110px;
+      bottom: 205px;
+      display: flex;
+      gap: 34px;
+      font-family: Oswald, sans-serif;
+      font-weight: 700;
+      font-size: 118px;
+      letter-spacing: 1px;
+      color: #ffffff;
+      text-transform: uppercase;
+    }
+    #s3-payoff .accent {
+      color: #ffb340;
+    }
+  </style>
+  <div id="root" data-composition-id="scene3" data-width="1920" data-height="1080">
+    <video
+      id="s3-video"
+      class="clip"
+      data-start="0"
+      data-duration="15"
+      data-media-start="33"
+      data-track-index="0"
+      src="assets/footage.webm"
+      muted
+      playsinline
+    ></video>
+    <div id="s3-scrim" class="clip" data-start="0" data-duration="15" data-track-index="1"></div>
+    <div id="s3-vignette" class="clip" data-start="0" data-duration="15" data-track-index="1"></div>
+    <div id="s3-panel" class="clip" data-start="0" data-duration="10" data-track-index="2">
+      <div id="s3-ptitle">One coast, shrinking</div>
+      <div id="s3-mapwrap">
+        <svg width="230" height="330" viewBox="0 0 460 640" fill="none">
+          <path
+            id="s3-state"
+            d="M150,30 L330,55 L430,150 L425,610 L60,610 C52,470 82,330 66,190 C60,120 90,60 150,30 Z"
+            fill="rgba(255,255,255,0.07)"
+            stroke="rgba(255,255,255,0.45)"
+            stroke-width="3"
+          />
+          <path
+            id="s3-coast"
+            d="M96,52 C66,190 88,330 70,470 C64,530 60,575 60,608"
+            stroke="#ffb340"
+            stroke-width="7"
+            stroke-linecap="round"
+            pathLength="1"
+            stroke-dasharray="1"
+            stroke-dashoffset="1"
+            opacity="0"
+          />
+          <g id="s3-ticks" stroke="#ff5d47" stroke-width="6" stroke-linecap="round">
+            <line x1="52" y1="200" x2="76" y2="206" />
+            <line x1="56" y1="330" x2="80" y2="336" />
+            <line x1="44" y1="470" x2="68" y2="476" />
+          </g>
+          <circle id="s3-ring" cx="74" cy="318" r="16" fill="none" stroke="#ffb340" stroke-width="4" />
+          <circle id="s3-dot" cx="74" cy="318" r="10" fill="#ffb340" />
+        </svg>
+        <div id="s3-side">
+          <div id="s3-place">NESKOWIN</div>
+          <div id="s3-placedesc">The beach here narrows a little more each winter.</div>
+        </div>
+      </div>
+      <div id="s3-micro">Illustrative map — not to scale</div>
+    </div>
+    <div id="s3-payoff" class="clip" data-start="10" data-duration="5" data-track-index="2">
+      <span id="s3-w1">But</span><span id="s3-w2">how</span><span id="s3-w3" class="accent">fast?</span>
+    </div>
+  </div>
+  <script>
+    const tl = gsap.timeline({ paused: true });
+    tl.fromTo("#s3-panel", { opacity: 0, x: -60 }, { opacity: 1, x: 0, duration: 0.7, ease: "power3.out" }, 0.4);
+    tl.to("#s3-coast", { opacity: 1, duration: 0.05, ease: "none" }, 1.2);
+    tl.to("#s3-coast", { strokeDashoffset: 0, duration: 2.0, ease: "power2.inOut" }, 1.2);
+    tl.fromTo("#s3-dot", { scale: 0, transformOrigin: "74px 318px" }, { scale: 1, duration: 0.45, ease: "back.out(2.2)" }, 3.3);
+    tl.fromTo(
+      "#s3-ring",
+      { scale: 0.4, opacity: 0.95, transformOrigin: "74px 318px" },
+      { scale: 2.6, opacity: 0, duration: 1.1, ease: "power2.out" },
+      3.45,
+    );
+    tl.set("#s3-ring", { scale: 0.4, opacity: 0.95 }, 4.7);
+    tl.to("#s3-ring", { scale: 2.6, opacity: 0, duration: 1.1, ease: "power2.out" }, 4.7);
+    tl.fromTo("#s3-place", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 3.8);
+    tl.fromTo("#s3-placedesc", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.55, ease: "power3.out" }, 4.05);
+    tl.fromTo("#s3-ticks line", { opacity: 0 }, { opacity: 1, duration: 0.3, stagger: 0.28, ease: "power2.out" }, 5.2);
+    tl.fromTo("#s3-micro", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.out" }, 6.0);
+    tl.to("#s3-panel", { opacity: 0, duration: 0.5, ease: "power2.in" }, 9.4);
+    tl.fromTo("#s3-w1", { opacity: 0, y: 44 }, { opacity: 1, y: 0, duration: 0.5, ease: "power4.out" }, 10.6);
+    tl.fromTo("#s3-w2", { opacity: 0, y: 44 }, { opacity: 1, y: 0, duration: 0.5, ease: "power4.out" }, 11.15);
+    tl.fromTo("#s3-w3", { opacity: 0, y: 44 }, { opacity: 1, y: 0, duration: 0.5, ease: "power4.out" }, 11.7);
+    window.__timelines["scene3"] = tl;
+  </script>
+</template>
