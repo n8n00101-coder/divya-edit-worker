@@ -18,6 +18,21 @@ def load_job():
     os.environ["WA_TOKEN"] = j["WA_TOKEN"]
     os.environ["WA_PHONE_ID"] = j["PHONE_ID"]
     os.environ["GROQ_KEY"] = j["GROQ_KEY"]
+    # RENDERER PIVOT (Phase 1): the alternate free-provider keys +
+    # scout model lists ride the job payload too — channel.py
+    # rotates a film's LLM calls across ALL of them, not just Groq
+    # (a Groq-only runner has nothing to fail over to when the free
+    # quota dies mid-film).
+    for k in ("OPENROUTER_KEY", "GEMINI_KEY", "CEREBRAS_KEY",
+              "SAMBANOVA_KEY", "NVIDIA_KEY", "MISTRAL_KEY",
+              "COHERE_KEY", "ZAI_KEY"):
+        if j.get(k):
+            os.environ[k] = str(j[k])
+            for v in str(j[k]).split(","):
+                if v.strip():
+                    print(f"::add-mask::{v.strip()}")
+    if j.get("SCOUT_MODELS"):
+        os.environ["JULIE_SCOUT_MODELS"] = json.dumps(j["SCOUT_MODELS"])
     # v69: stock B-roll keys (doc.py/broll.py). Optional — the Worker only
     # sends them when the secrets exist; absent/empty keeps today's
     # code-drawn-only behaviour.
@@ -80,9 +95,20 @@ async def edit_create_job(j, wa, note):
         app_state("failed", "Edit cheyalenu — project file corrupt.")
         return
     wd = os.path.join(os.environ.get("DATA_DIR", "/tmp/divya"), f"edit_{JOB}")
+    # RENDERER PIVOT (Phase 1): edits ride the same channel layer
+    # (with the same ImportError degradation as create_job).
+    try:
+        import channel as _chan1e
+        _chan1e.set_groq_leg(groq_chat)
+        _chan1e.begin_film(deadline=time.monotonic() + 1200)
+        _chat1e = _chan1e.chat
+    except ImportError as _echan1e:
+        print("channel layer unavailable:", str(_echan1e)[:100],
+              "— edit calls ride the Groq leg directly")
+        _chat1e = groq_chat
     res = await _doc.apply_project_edit(
         project, str(j.get("user_prompt") or j.get("brief") or ""),
-        groq_chat, workdir=wd, notify=note)
+        _chat1e, workdir=wd, notify=note)
     print("edit video", res["path"], res.get("duration"),
           "changed scenes:", (res.get("edit") or {}).get("changed_scenes"))
     # v99: honoured before the result upload too, not only delivery.
@@ -827,6 +853,25 @@ def parse_requested_seconds(brief):
     return None
 
 
+def authoritative_target_s(brief, spec):
+    """RENDERER PIVOT (Phase 3): ONE length authority. The
+    prompt_spec extracted from the USER's own words is the only
+    length that counts; numbers in the (chat-brain-rewritten) brief
+    — including its FINAL VIDEO LENGTH line — never override it.
+    The first film's brief carried both "3 minutes" and "10
+    minutes": the brief's first match targeted/priced 3 min while
+    the user's spec said 600s. Falls back to the brief parse only
+    when the spec names no duration."""
+    try:
+        import spec_engine as _se
+        s = _se.spec_duration_s(spec or [])
+    except Exception:
+        s = None
+    if s:
+        return min(int(s), 3600)
+    return parse_requested_seconds(brief)
+
+
 class Amendments:
     """v72: mid-flight production amendments for THIS job. The Worker
     stores them on the job record (amend:<job>) when the user sends a
@@ -936,6 +981,34 @@ async def create_job(j, wa, note):
         app_state("running", "Job start ayyindi — pani modalu.")
     except Exception:
         pass
+    # RENDERER PIVOT (Phase 1): every pipeline LLM call in this job
+    # goes through channel.chat — paced, rotated across every
+    # configured free provider, failover on 429, bounded by a
+    # per-film call budget — instead of storming the single Groq
+    # channel (the first v89 film's chapter 2 and its fix-round
+    # corrector both died on Groq 429 retry storms). groq_chat
+    # remains the channel's Groq LEG (its sweep contract is pinned
+    # by v75test); the channel cools the whole leg down when it
+    # reports a 429, and a stage no channel can serve falls back
+    # labelled with reason "channel" (brain_status), never silently.
+    try:
+        import channel as _chan1
+    except ImportError as _echan1:
+        # The channel module ships beside runner.py; if it is ever
+        # missing (an isolated harness copies runner.py alone) the
+        # job must still run — on the bare Groq leg, loudly logged.
+        print("channel layer unavailable:", str(_echan1)[:100],
+              "— pipeline calls ride the Groq leg directly")
+        _chan1 = None
+    if _chan1 is not None:
+        _chan1.set_groq_leg(groq_chat)
+        _chan1.begin_film(
+            deadline=time.monotonic()
+            + int(os.environ.get("DIVYA_LONG_BUDGET_S", "3000")
+                  or 3000))
+        _chat = _chan1.chat
+    else:
+        _chat = groq_chat
     # v72: mid-flight amendments provider for this job (see Amendments).
     amend = Amendments()
     # v71: the owner's saved reference voice (flagged in the job by the
@@ -973,7 +1046,7 @@ async def create_job(j, wa, note):
             import spec_engine as _se
             import broll as _broll_mod
             _src_text = str(j.get("user_prompt") or j.get("brief") or "")
-            _spec = _se.extract_spec(_src_text, chat=groq_chat)
+            _spec = _se.extract_spec(_src_text, chat=_chat)
             _problems = _se.capability_check(
                 _spec, _kind,
                 footage_available=_broll_mod.FootagePool().available())
@@ -1003,6 +1076,26 @@ async def create_job(j, wa, note):
             print("v79 spec extraction failed (continuing without spec):",
                   str(e)[:200])
             _spec, _cfg = [], None
+    # RENDERER PIVOT (Phase 3): with the spec extracted, the length
+    # is re-resolved under the ONE authority — the user's spec wins
+    # over the brief's FINAL VIDEO LENGTH line (which the Worker
+    # now also writes from the spec; this is the defense-in-depth
+    # half for any brief that still carries a second number). Runs
+    # BEFORE the v98 cfg resolution so a kind flip re-resolves the
+    # canvas from the spec, never from the stale brief kind.
+    _auth_s = authoritative_target_s(j.get("brief", ""), _spec)
+    if _auth_s is not None and _auth_s != _target_s:
+        print(f"length authority: spec {_auth_s}s overrides the "
+              f"brief's {_target_s}s (the user's own words win)")
+        _target_s = _auth_s
+        _kind = "long" if _target_s > 90 else "short"
+        if _cfg is not None and _cfg.get("kind") != _kind:
+            try:
+                import spec_engine as _se3
+                _cfg = _se3.resolve_render_config(_spec, _kind)
+            except Exception as _e3:
+                print("length authority: cfg re-resolve failed:",
+                      str(_e3)[:150])
     # v84 (Stage 1): routing observability — one greppable line per
     # job: engine, job type, spec engaged or not, QC mode. A spec
     # failure no longer silently changes what the job gets: long jobs
@@ -1049,7 +1142,7 @@ async def create_job(j, wa, note):
             _budget = int(os.environ.get("DIVYA_LONG_BUDGET_S", "3000") or 3000)
             print(f"long route: target {_target_min} min, budget {_budget}s")
             res = await long_video.make_long_video(
-                j.get("brief", ""), groq_chat,
+                j.get("brief", ""), _chat,
                 workdir=os.path.join(os.environ.get("DATA_DIR", "/tmp/divya"),
                                      f"long_{JOB}"),
                 target_minutes=_target_min, notify=note,
@@ -1084,7 +1177,7 @@ async def create_job(j, wa, note):
                     if _cfg is not None and _spec:
                         kw["spec"] = _spec
                         kw["cfg"] = _cfg
-                    res = await create.make_video(_brief_run, groq_chat, notify=note, **kw)
+                    res = await create.make_video(_brief_run, _chat, notify=note, **kw)
                     print("look", res.get("plan", {}).get("look"), res.get("plan", {}).get("accent"))
                     break
                 except (ValueError, KeyError) as e:  # bad plan JSON -> retry once

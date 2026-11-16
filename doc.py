@@ -368,7 +368,10 @@ line) and 2 footage "queries" that SHOW the meaning (for a liver line: "doctor h
 night" — never just the topic word). QUERY RULE (v100, Gate 1): queries must be GENERIC stock subjects a footage library
 tags — visible people, places, objects and actions ("woman looking into a mirror", "cinema audience in the dark") —
 NEVER a film or programme title, a film still, a screenshot, or a person's name: stock libraries carry none of those,
-the search can only miss, and the beat then ships without footage. A clock only when the line is about time. A graphic only when the line has a real
+the search can only miss, and the beat then ships without footage. QUERY FORM (renderer pivot, Phase 2a): every query is a
+NOUN PHRASE naming a visible subject — "honeybee on rooftop hive", "doctor holding liver scan" — NEVER a fragment of the
+narration sentence ("ever looked wondered who's" matches nothing a library tags; sentence shards are rejected before
+the search and the beat is re-planned). A clock only when the line is about time. A graphic only when the line has a real
 number or a real list. Numbers: the "value" must be the exact number the vo line says, with its unit, and never 0.
 Each visual must literally show the line's idea (battery=energy, chat=messages/people, graph=growth or fall,
 clock=time, calendar=days, warning=danger/mistake, check=right way, versus=comparison, counter=a number, list=steps, heart=love/health,
@@ -662,7 +665,8 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
         try:
             import anti_boring as _ab100
             _kept100, _dropped100 = _ab100.searchable_queries(
-                s["queries"], s["vo"], str(s.get("label") or ""))
+                s["queries"], s["vo"], str(s.get("label") or ""),
+                topic=str(p.get("topic") or ""))
             if _dropped100:
                 print(f"plan v100: scene query {_dropped100} not "
                       f"stock-searchable — replaced with {_kept100}")
@@ -691,10 +695,43 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
             except Exception:
                 _doc_ctx100 = False
         if _doc_ctx100:
-            _fg100 = _ab100g.fact_gate(sc, chat)
+            # RENDERER PIVOT (Phase 4 — FACT GATE v2): for a LONG
+            # the gate judges against a RESEARCH RECORD of sources
+            # actually retrieved for this topic (research.py,
+            # keyless Wikipedia) — a writer-invented source string
+            # no longer counts, and the record rides on the plan so
+            # source stamps can only print retrieved titles. A
+            # failed fetch yields an EMPTY record (strict: nothing
+            # resolves; claims must hedge or be cut), never the old
+            # lenient string check.
+            _research100 = None
+            if cfg and cfg.get("kind") == "long":
+                try:
+                    import research as _res100
+                    _research100 = _res100.build_research_record(
+                        str(p.get("topic") or ""))
+                    p["research"] = _research100
+                    print(f"research: {len(_research100)} retrieved "
+                          f"sources for '{str(p.get('topic') or '')[:40]}'")
+                except Exception as _er100:
+                    print("research step failed (gate runs strict):",
+                          str(_er100)[:100])
+                    _research100 = []
+                    p["research"] = []
+            _fg100 = _ab100g.fact_gate(sc, chat, research=_research100)
             sc = _fg100["scenes"]
             p["scenes"] = sc
             p["fact_gate"] = _fg100["log"]
+            if _research100:
+                # a scene whose citation resolves carries the
+                # retrieved text — the only words a document
+                # visual may ever show (fake-document ban).
+                for _s100 in sc:
+                    _e100 = _ab100g.resolve_source(_s100, _research100)
+                    if _e100:
+                        _s100["source_ref"] = _e100["title"]
+                        _s100["source_text"] = \
+                            str(_e100.get("snippet") or "")[:400]
             if _fg100["log"].get("removed") or _fg100["log"].get("dropped_scenes"):
                 print(f"fact gate v100: {_fg100['log']['claims']} claims, "
                       f"rewrite={_fg100['log']['rewrite_round']}, "
@@ -2076,6 +2113,45 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
             queries = [q for q in dict.fromkeys(
                 (" ".join((topic + " " + label).split()), topic, label)) if q]
         dur_s = float(sc.get("d") or 6)
+        # RENDERER PIVOT (Phase 2a): the query-QUALITY gate runs
+        # BEFORE the pool call. The first v89-brain film searched
+        # voice-line fragments ("ever looked wondered who's",
+        # "nest hidden cracks sipping") that no stock library can
+        # match — the candidates died and the beats shipped as
+        # generated islands. Fragments are dropped here; when
+        # nothing searchable remains, a subject query is derived
+        # (topic-anchored) and, failing that, the re-plan hook is
+        # asked BEFORE the first search instead of only after a
+        # miss.
+        try:
+            import anti_boring as _ab2a
+            _good2a = [q for q in queries
+                       if _ab2a.query_is_searchable(q)]
+            if len(_good2a) < len(queries):
+                print(f"broll scene {i + 1}: dropped "
+                      f"{len(queries) - len(_good2a)} unsearchable "
+                      "queries (fragment/name/artefact) before "
+                      "the search")
+            if not _good2a:
+                _der2a = _ab2a.derive_subject_query(
+                    str(sc.get("vo") or ""),
+                    str(sc.get("label") or ""),
+                    str(p.get("topic") or ""))
+                if _der2a:
+                    _good2a = [_der2a]
+            if not _good2a and replan is not None:
+                _rq2a = [q for q in (replan(sc, i + 1) or [])
+                         if _ab2a.query_is_searchable(q)][:2]
+                if _rq2a:
+                    _good2a = _rq2a
+                    sc["queries"] = _rq2a
+                    print(f"broll scene {i + 1}: queries re-planned "
+                          f"before the search ({_rq2a})")
+            if _good2a:
+                queries = _good2a
+        except Exception as _e2a:
+            print(f"broll scene {i + 1}: query-quality pass "
+                  f"failed: {str(_e2a)[:100]}")
         # v79 (A4 — Ajju's ASSAULTS frame is the canonical failure: a
         # warning triangle pasted ON the hand/bottle): a widget/icon
         # scene NEVER pastes its graphic over the footage subject, in
@@ -2485,6 +2561,17 @@ def scene_frame(p, idx, t, return_layers=False):
     # caption band. Only when the scene states a sourced fact (E3: a source
     # line on every fact/number).
     _src = sc.get("source")
+    # RENDERER PIVOT (Phase 4): a decorative source stamp may only
+    # print a source from the RESEARCH RECORD — when the plan
+    # carries one, the scene's source must resolve against it
+    # (the printed text becomes the retrieved title); a free-text
+    # source the writer invented prints nothing.
+    if p.get("research") is not None:
+        try:
+            import anti_boring as _ab4s
+            _src = _ab4s.resolved_source_title(sc, p["research"]) or None
+        except Exception:
+            _src = None
     _src_bb = None
     # v79.2 (Ajju item 7): NO source lines in the video unless the
     # user asked for them — "user cheppaledhu kabatti alantivi videos
@@ -3844,6 +3931,26 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         parts = pool.map(_render_chunk, jobs)
     open(f"{wd}/parts.txt", "w").write("".join(f"file '{x}'\n" for x in parts))
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", f"{wd}/parts.txt", "-c", "copy", f"{wd}/raw.mp4"], check=True)
+    # RENDERER PIVOT (Phase 5): HyperFrames is the PRIMARY visual
+    # layer for documentary longs — the beats that have real
+    # footage are re-rendered as footage + HTML/CSS typography/
+    # motion graphics and swapped into the assembled video here,
+    # before captions burn; the widget render above remains the
+    # fallback for every beat codegen declines (pure-data beats,
+    # document beats, render failures — all counted in the
+    # report on the plan). Any failure leaves raw.mp4 untouched.
+    try:
+        import hf_primary as _hf5
+        if _hf5.enabled_for(cfg):
+            _rep5 = _hf5.render_and_swap(p, wd, cfg, f"{wd}/raw.mp4")
+            p["hyperframes_primary"] = _rep5
+            print(f"hyperframes primary: {_rep5['beats_rendered']}/"
+                  f"{_rep5['beats_considered']} beats rendered "
+                  f"(declined: {_rep5['declined']}, "
+                  f"failed: {len(_rep5['render_failed'])})")
+    except Exception as _e5:
+        print("hyperframes primary failed (widget render stands):",
+              str(_e5)[:150])
     ass = f"{wd}/subs.ass"
     _cap_off = aflags.get("captions") == "off" or cfg.get("captions") is False
     if not _cap_off:

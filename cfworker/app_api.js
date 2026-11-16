@@ -535,7 +535,7 @@ async function appTalk(env, u, text, lang, voiceId) {
   // never asks the user to recite a phrase to get work done.
   let premium_required = false;
   let tk = null, cost = 0;
-  if (go) { cost = videoCost(parseMins(mm && mm[1])); tk = await tokSpend(env, u.n, cost); if (!tk.ok) { ans = tokMsg(lang, tk); go = false; } }
+  if (go) { cost = videoCost(lengthMins(cleanText, mm && mm[1])); tk = await tokSpend(env, u.n, cost); if (!tk.ok) { ans = tokMsg(lang, tk); go = false; } }
   if (go) {
     let brief = (mm[1] || "AUTO").trim() || "AUTO";
     // v67: a preference saved during the previous render (voice/language)
@@ -2371,6 +2371,16 @@ const TOK = {
 const videoCost = mins => TOK.PER_MIN * Math.max(1, Math.ceil(mins || 1)); // 1 min = 100K (short), 10 min = 1M
 const lenToMins = len => ({ "30s": 1, "60s": 1, "3m": 3, "10m": 10, "15m": 15, "30m": 30, "60m": 60, full: 10, auto: 1 }[len] || 1); // "full" charged as 10 min (source duration unknown at order time)
 const parseMins = s => { const m = String(s || "").match(/(\d+)\s*(?:min|mins|mints|minute|minutes|nimisham|nimishalu|nims?)/i); return m ? parseInt(m[1], 10) : 1; };
+// RENDERER PIVOT (Phase 3): ONE length authority — the user's own
+// prompt. specDurationS mirrors spec_engine.extract_deterministic's
+// duration rule (a seconds pattern first, else minutes) over the
+// USER's exact words; lengthMins prices from it, falling back to
+// the brief's number only when the user named no duration. (The
+// first film was priced and targeted at 3 minutes because the chat
+// brain's brief contained "3 minutes" before "10 minutes", while
+// the user's own spec said 600s.)
+const specDurationS = t => { const s = String(t || "").toLowerCase(); let m = s.match(/\b(\d+(?:\.\d+)?)\s*(?:seconds?|secs?|s)\b/); if (m) return Math.round(parseFloat(m[1])); m = s.match(/\b(\d+(?:\.\d+)?)\s*(?:minutes?|mins?|mints)\b/); return m ? Math.round(parseFloat(m[1]) * 60) : null; };
+const lengthMins = (userText, briefText) => { const s = specDurationS(userText); return s ? Math.max(1, Math.ceil(s / 60)) : parseMins(briefText); };
 const PLANS = {
   free:    { name: "Free",    monthly: 0,   grant: 0,           voice: true },
   starter: { name: "Starter", monthly: 29,  grant: 2_000_000,   voice: true },
