@@ -134,6 +134,37 @@ GOOGLE_PAUSE_MSG = "Google sign-in — Take Control tho nuvve sign in cheyyi, ta
 # own browser, where the session must land.
 VERIFY_NEEDLES = ["check your email", "email was sent", "verify your email", "verification link", "confirm your email", "sent you an email"]
 
+# v104 (chain robustness): verification-WALL pages whose signals match
+# NO VERIFY_NEEDLES phrase. Proven live 2026-11-16 (Cohere): the page
+# TITLE was "Confirm Email" and _submit_error scraped the title text
+# as a signup "error" — the flow failed at the signup-form step and
+# the email-verify pause (with the Gmail feed behind it) never
+# engaged. These phrases describe a page whose ONLY next step is the
+# emailed link/code; they route to pause_for_email_verify exactly
+# like VERIFY_NEEDLES. Deliberately specific (no bare "confirm" /
+# "verify") so ordinary pages with a Confirm button never match.
+VERIFY_WALL_NEEDLES = ["confirm email", "confirm your email address",
+                       "confirmation email", "verify your email address",
+                       "verify email", "check your inbox",
+                       "sent you a confirmation email",
+                       "email confirmation", "confirm your account",
+                       "activate your account", "verification email"]
+
+
+def _verify_wall(page):
+    """True when the page is an email-verification WALL (its only next
+    step is the mailed link/code) — including title-only walls like
+    Cohere's "Confirm Email" page, which _page_says (body + URL only)
+    can miss."""
+    if _page_says(page, VERIFY_WALL_NEEDLES):
+        return True
+    try:
+        t = (page.title() or "").lower()
+    except Exception:
+        t = ""
+    return any(n in t for n in ("confirm email", "verify email",
+                                "confirm your email", "verification"))
+
 
 def MAGIC_LINK_PAUSE_MSG(name):
     # v92: no user action in this message — Julie waits for the
@@ -432,11 +463,37 @@ def fetch_profile():
         print("browser profile fetch failed:", e, "— fresh session", flush=True)
 
 
+def _job_state_soft():
+    """Best-effort job-state read for the zombie guard ("" on any
+    failure — a gone job record reads as "" too, which is NOT alive)."""
+    try:
+        r = httpx.get(f"{WORKER}/api/setup/runner/job", params={"job": JOB}, headers=H, timeout=20)
+        if r.status_code != 200:
+            return ""
+        return str((r.json().get("job") or {}).get("state") or "")
+    except Exception:
+        return ""
+
+
+def job_alive():
+    """v104: is THIS job still the live one? A runner whose job was
+    stopped, chain-advanced or finished must exit BEFORE touching the
+    shared browser profile. Live 2026-11-16: a runner for a dead job
+    started ~30 min late, ran its whole flow and pushed the profile
+    (cookies 227 -> 192), silently erasing the live session. The
+    Worker refuses a stale job's profile POST (409) as the backstop;
+    this is the runner half of the same guard."""
+    return _job_state_soft() in ("queued", "running", "paused")
+
+
 def push_profile():
     """Save the current session back to the Worker (sealed there at
     rest). Best-effort: a failed save never fails the setup, and the
     state is never printed or logged."""
     if not PROFILE_MODE or not PROFILE_STATE:
+        return
+    if not job_alive():
+        print("browser profile save skipped: job no longer live (zombie guard)", flush=True)
         return
     try:
         r = httpx.post(f"{WORKER}/api/setup/runner/profile", params={"job": JOB},
@@ -528,6 +585,12 @@ def launch_browser(p):
 def check_stop():
     """True if the user stopped the job. Waits while paused (up to 30 min).
 
+    v104: a NON-email pause that outlives its PAUSE_SKIP_S budget
+    raises PauseExpired instead — the provider then fails labelled
+    paused-<kind> and the chain advances (a delivered answer flips
+    the job back to running inside the window, so the normal resume
+    path is untouched).
+
     v39: while paused, re-posts the last progress as a heartbeat (every
     poll, ~30s) so the Worker sees a LIVE runner waiting on the user —
     without it the Worker's staleness watchdog cannot tell a waiting run
@@ -537,12 +600,21 @@ def check_stop():
     poll+heartbeat costs the Worker several Durable Object requests.
     """
     deadline = time.time() + 1800
+    pause_since = None
     while True:
         j = get_job()
         st = j.get("state", "")
         if st == "stopped":
             return True
         if st == "paused":
+            if pause_since is None:
+                pause_since = time.time()
+            kind = (LAST_PROGRESS.get("reason")
+                    or _pause_reason(LAST_PROGRESS.get("step") or "")
+                    or "email")
+            budget = PAUSE_SKIP_S.get(kind)
+            if budget and time.time() - pause_since > budget:
+                raise PauseExpired(kind)
             heartbeat()
             time.sleep(30)
             if time.time() > deadline:
@@ -572,6 +644,28 @@ def wait_pause():
 # chain always continues. The value is never printed or logged.
 ASK_TTL = {"otp": 600, "field": 900, "captcha": 1500}
 ASK_MAX_ATTEMPTS = 2
+
+# v104 (chain robustness — Ajju's order after the 2026-11-16 live run):
+# a PAUSE must never hold the whole automate chain hostage. Live: 8 of
+# 22 providers paused (captcha x4, google-signin x3, sms x1); each pause
+# blocked until the 30-min Worker watchdog killed the ENTIRE chain and
+# a human intervened 7 times to finish the run. Non-email pauses now
+# carry a bounded budget here (mirroring the ASK_TTL clocks above, and
+# the Worker applies the same budgets server-side as a backstop): when
+# the budget expires with no user input delivered, check_stop raises
+# PauseExpired and the provider fails LABELLED (paused-<kind>) so the
+# chain skips it and advances. An "email" pause is deliberately ABSENT:
+# the server feed owns it (links/codes arrive without the user) and
+# pause_for_email_verify self-terminates on its own clock.
+PAUSE_SKIP_S = {"signin": 900, "captcha": 1500, "sms": 600, "field": 900}
+
+
+class PauseExpired(Exception):
+    """A non-email pause outlived its budget with no user input."""
+
+    def __init__(self, kind):
+        super().__init__(kind)
+        self.kind = kind
 
 
 def await_user_input(page, kind, prompt, field=None, ttl_s=None, attempt=1):
@@ -682,6 +776,21 @@ def fed_verify_link(job):
         return ""
     link = str(job.get("verify_link") or job.get("verifyLink") or "").strip()
     return link if link.startswith("http") else ""
+
+
+def report_link_rejected(kind="link"):
+    """v104: tell the Worker the verification link/code it fed was
+    REJECTED by the provider (e.g. a Stytch redirect-error landing).
+    The Worker marks it consumed (job.fedBad) so the feed hunts a
+    NEWER mail instead of re-feeding the same dead link — live
+    2026-11-16 the identical Groq link (len 189) was fed twice, 11 s
+    apart, after the first landing had already errored. Best-effort."""
+    try:
+        httpx.post(f"{WORKER}/api/setup/runner/linkbad", params={"job": JOB},
+                   json={"kind": kind}, headers=H, timeout=20)
+        print("verify: rejected fed link reported — feed will wait for a newer mail", flush=True)
+    except Exception as e:
+        print("verify: linkbad report failed:", e, flush=True)
 
 
 def wait_for_fed_link(seconds=240, poll=20, page=None, name=""):
@@ -850,6 +959,8 @@ def maybe_captcha(page):
         if wait_pause():
             return False
         return True
+    except PauseExpired:
+        raise  # v104: a pause-budget expiry must reach run_flow, never be swallowed
     except Exception:
         return True
 
@@ -876,6 +987,8 @@ def maybe_sms(page, job):
             click(page, ["button:has-text('Verify')", "button:has-text('Continue')", "button[type='submit']"])
             page.wait_for_timeout(3000)
         return code
+    except PauseExpired:
+        raise  # v104: a pause-budget expiry must reach run_flow, never be swallowed
     except Exception:
         return None
 
@@ -1459,15 +1572,22 @@ def submit_provider_result(provider, name, result):
             err = (result.get("error") or "") + " (key verification failed — key store cheyyaledu)"
             result = dict(result, status="failed", error=err.strip(), key=None)
             key = None
-    report_result(provider, result["status"],
-                  key=key if verified else None,
-                  error=result.get("error"), extra=result.get("extra") or None)
+    # v104 (silent-death fix): the terminal progress event goes FIRST.
+    # It is the event that lands the terminal reason on the job record
+    # and the chain's failReason AND advances the chain; report_result
+    # (up to 4 attempts x 180 s) can no longer delay or lose it — live
+    # 2026-11-16 exa/assemblyai died with no reason recorded anywhere.
+    # Double-advance is impossible: both handlers guard on
+    # chain.current + done/failed membership.
     if result["status"] == "done":
         progress("done", "done", f"{name} ready — app lo save ayyindhi.", "")
     elif result["status"] == "failed":
         progress("failed", "error", result.get("error") or "Setup aagipoyindhi — Take Control tho try cheyyi.", "")
     else:
         progress("stopped", "stopped", "Setup aapesaaru.", "")
+    report_result(provider, result["status"],
+                  key=key if verified else None,
+                  error=result.get("error"), extra=result.get("extra") or None)
     return result
 
 
@@ -1892,6 +2012,11 @@ def pause_for_email_verify(page, job, cfg, _link_retries=0):
             print(f"verify landing: {sp.scheme}://{sp.hostname}{sp.path} diag={LAST_VERIFY_DIAG or '-'}", flush=True)
         except Exception:
             pass
+        if LAST_VERIFY_DIAG:
+            # v104: the fed link landed on a rejection (redirect-error
+            # / error page) — mark it consumed server-side so the feed
+            # hunts a NEWER mail instead of re-feeding this dead link.
+            report_link_rejected("link")
     if _verify_signed_in(page, cfg, name):
         return True
     # v48 (Take Control): the provider refused the automated link open
@@ -2099,7 +2224,7 @@ def flow_email_signup(page, job, cfg):
         # is a verification pause, never a failure.
         ctrls2 = wait_for_auth_form(page, cfg, timeout_s=30)
         if ctrls2 is None:
-            if _page_says(page, VERIFY_NEEDLES):
+            if _page_says(page, VERIFY_NEEDLES) or _verify_wall(page):
                 if pause_for_email_verify(page, job, cfg):
                     pass  # verified + signed in — fall through to key creation
                 else:
@@ -2154,9 +2279,18 @@ def flow_email_signup(page, job, cfg):
     # Give the server response a moment to render first (the error shows
     # ~5s after submit; the branch waited only ~4s).
     page.wait_for_timeout(2500)
-    err = _submit_error(page)
-    if err:
-        return _fail(f"{cfg['name']} signup error: {err} (step: signup form).")
+    # v104: a verification WALL (Cohere's "Confirm Email" page class)
+    # is a pause, never a signup error — route it to the server-fed
+    # verify pause BEFORE _submit_error can scrape the wall's title
+    # text as an "error" (live 2026-11-16: Cohere failed exactly so,
+    # and the email feed never engaged).
+    if _verify_wall(page):
+        if not pause_for_email_verify(page, job, cfg):
+            return _fail(_verify_fail_msg(cfg["name"]), extra={"no_retry": True})
+    else:
+        err = _submit_error(page)
+        if err:
+            return _fail(f"{cfg['name']} signup error: {err} (step: signup form).")
     # The account may already exist: the page says so instead of signing
     # up. First try signing in with the job's password (an auto-provision
     # run reuses the sealed setup password, so this usually just works).
@@ -2185,7 +2319,7 @@ def flow_email_signup(page, job, cfg):
     # here; the user must NOT tap the link themselves. On resume without
     # a link, _verify_signed_in detects a session the user created via
     # Take Control and key creation proceeds (v88 G3).
-    if _page_says(page, VERIFY_NEEDLES):
+    if _page_says(page, VERIFY_NEEDLES) or _verify_wall(page):
         if not pause_for_email_verify(page, job, cfg):
             return _fail(_verify_fail_msg(cfg["name"]), extra={"no_retry": True})
     if check_stop():
@@ -2391,7 +2525,8 @@ def flow_cloudflare(page, job, cfg):
     if sms is False:
         return _stopped()
     # Email verification pause (same as the other providers, v39 C7).
-    if _page_says(page, VERIFY_NEEDLES):
+    # v104: title-only verification walls route here too.
+    if _page_says(page, VERIFY_NEEDLES) or _verify_wall(page):
         if not pause_for_email_verify(page, job, cfg):
             return _fail(_verify_fail_msg(cfg["name"]), extra={"no_retry": True})
     if check_stop():
@@ -2628,7 +2763,7 @@ def flow_pexels(page, job, cfg):
         state = classify_pexels_page(text, html)
         if state != "has-key" and _pexels_signed_out(page):
             return _fail(f"{name} sign-in complete avvaledu — inka login page lone undhi. Malli setup run cheyyi (step: sign-in).", extra={"no_retry": True})
-    if state != "has-key" and _page_says(page, VERIFY_NEEDLES):
+    if state != "has-key" and (_page_says(page, VERIFY_NEEDLES) or _verify_wall(page)):
         # A fresh Pexels account can ask for email verification (Google
         # signups usually skip it). Same pause kind as everywhere else:
         # paused-email — the server feeds the link and the runner opens
@@ -2822,7 +2957,7 @@ def _resend_login(page, job, cfg):
         return "invalid"
     # A verification wall (magic link / emailed code) is the server-fed
     # pause, never the user's job.
-    if _page_says(page, VERIFY_NEEDLES) or _visible(page, ["input[name*='code' i]", "input[inputmode='numeric']"]):
+    if _page_says(page, VERIFY_NEEDLES) or _verify_wall(page) or _visible(page, ["input[name*='code' i]", "input[inputmode='numeric']"]):
         if not pause_for_email_verify(page, job, cfg):
             return "fail"
     return "ok" if _verify_signed_in(page, cfg, name) else "fail"
@@ -3221,7 +3356,7 @@ def flow_resend(page, job, cfg):
         # was never created.
         return _fail(f"{name} signup password rule satisfy avvaledu — password lo letters, numbers mariyu symbols undali (step: signup form).", extra={"no_retry": True})
     # Verification wall (link or code by email) — the server-fed pause.
-    if _page_says(page, VERIFY_NEEDLES) or _visible(page, ["input[name*='code' i]", "input[inputmode='numeric']"]):
+    if _page_says(page, VERIFY_NEEDLES) or _verify_wall(page) or _visible(page, ["input[name*='code' i]", "input[inputmode='numeric']"]):
         if not pause_for_email_verify(page, job, cfg):
             return _fail(_verify_fail_msg(name), extra={"no_retry": True})
         key = _resend_create_key(page, cfg)
@@ -3363,7 +3498,7 @@ def flow_brevo(page, job, cfg):
     # Email-validation wall — the server-fed pause (Brevo mails a
     # validation link; the Worker feeds it from the owner's Gmail and
     # the runner opens it in THIS browser; the user never taps it).
-    if _page_says(page, VERIFY_NEEDLES) or _page_says(page, ["validate your email", "validation email", "confirm your account"]):
+    if _page_says(page, VERIFY_NEEDLES) or _verify_wall(page) or _page_says(page, ["validate your email", "validation email", "confirm your account"]):
         if not pause_for_email_verify(page, job, cfg):
             return _fail(_verify_fail_msg(name), extra={"no_retry": True})
     if check_stop():
@@ -3889,6 +4024,11 @@ def run_flow(page, job, cfg):
         return flow_email_signup(page, job, cfg)
     except WallHit as w:
         return _fail(f"{cfg['name']} security wall ({w}) — Take Control tho nuvve okkasari sign in cheyyi, tarvatha Julie ne continue chesthundhi.", extra={"no_retry": True, "wall": str(w)})
+    except PauseExpired as pe:
+        # v104: the pause budget expired with no user input — fail
+        # LABELLED so the chain records paused-<kind>, skips this
+        # provider and advances (never a chain-wide stop).
+        return _fail(f"{cfg['name']} — user step (paused-{pe.kind}) time ayipoyindhi, input raaledhu. Ee provider skip chesi chain continue chesthunna.", extra={"no_retry": True})
     except Exception as e:
         print(f"flow error for {cfg['name']}:", e)
         return _fail(f"{cfg['name']} flow aagipoyindhi: {e}. Take Control tho try cheyyi.")
@@ -3909,6 +4049,9 @@ def run_provider(browser, job, cfg, provider):
         except Exception as e:
             print(f"provider error for {cfg['name']}:", e)
             last = _fail(f"{cfg['name']} flow aagipoyindhi: {e}. Take Control tho try cheyyi.")
+            # v104 dying gasp: even an exception OUTSIDE the flow's own
+            # handling leaves its reason on the job record before exit.
+            progress("failed", "error", last["error"], "")
         finally:
             close_context(ctx)
         if last["status"] in ("done", "stopped"):
@@ -3931,6 +4074,14 @@ def main():
     global CURRENT_PROVIDER, _JOB_EMAIL
     job = get_job()
     _JOB_EMAIL = job.get("email") or ""
+    # v104 claim-time zombie guard: a dispatched run can start LONG
+    # after its job ended (GitHub queue congestion — live 2026-11-16 a
+    # run started 36 min late for a job the chain had already left).
+    # A terminal job record means this runner is a zombie: exit at
+    # once, never open the browser, never touch the shared profile.
+    if str(job.get("state") or "") in ("done", "failed", "stopped"):
+        print(f"setup: job already {job.get('state')} — zombie runner exiting without touching anything", flush=True)
+        return
     # v47: restore the user's saved browser session before any flow
     # runs (profile mode only; a no-op otherwise).
     fetch_profile()
