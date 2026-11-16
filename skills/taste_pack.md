@@ -23,6 +23,35 @@ share actual words with the beat's line.)
    meaning (battery for draining energy, scale for a weighed choice,
    clock for a deadline), never decoration.
 
+## Format literacy (decided at intake, never an afterthought)
+Format is a BRAIN decision, made when the job is first understood —
+platform first, then canvas. Nobody should ever have to tell Julie
+that a YouTube long video is landscape HD; that is table stakes, the
+way a pro editor simply knows it. The user can override any default;
+the user's SILENCE never does.
+- YouTube long video → 16:9 landscape, 1920×1080 (Full HD). Never
+  vertical, never SD — a portrait "long video" is a format defect,
+  however good the edit inside it.
+- YouTube Shorts / Instagram Reels / TikTok → 9:16 vertical,
+  1080×1920 (safe-zone law in the shorts section below).
+- Instagram feed post → 4:5 (1080×1350) or 1:1 (1080×1080).
+- No platform named → length decides: long takes the YouTube-long
+  default, short takes the vertical default.
+- HD floor: where the platform norm is HD, SD delivery is a defect,
+  not a saving. A source below the delivery canvas is replaced or
+  the beat is replanned — never upscale a soft source and ship it
+  as if it were HD.
+- One canvas per video: every chapter, title card and graphic is
+  born at the job's canvas. A vertical chapter inside a landscape
+  film (or the reverse) is a QC defect, not a style.
+- Never letterbox or pillarbox a deliverable to fake a format —
+  bars mean the format decision was wrong. Reframe the shot
+  (crop-and-follow) or replan the beat.
+- The format (platform, canvas, orientation) is written into the
+  plan BEFORE the first beat is planned. If a later instruction
+  changes the platform, the format is re-decided first and every
+  planned beat is re-checked against the new canvas.
+
 ## Beat grammar
 - One sentence = one beat. The picture changes every ~2–5 s; hook beats
   are shortest (2–4 s), evidence may be held, the payoff and the closing
