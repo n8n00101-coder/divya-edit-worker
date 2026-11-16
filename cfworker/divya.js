@@ -4654,8 +4654,35 @@ async function setupDispatch(env, job, provider, browser) {
   // "ephemeral" (the original throwaway headless contexts).
   const inputs = { job, provider };
   if (browser) inputs.browser = browser;
+  const t0 = Date.now();
   const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/setup.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs }) }).catch(() => null);
-  return !!r && r.status === 204;
+  if (!r || r.status !== 204) return { ok: false };
+  // v104 (chain robustness): capture WHICH run this dispatch created,
+  // so the watchdog can tell "still queued in GitHub" from "runner
+  // silent" — live 2026-11-16 a job queued 36 min was declared
+  // stalled and its chain deleted while the run waited legitimately.
+  // Best-effort: any failure here leaves the old upd-clock behaviour.
+  try {
+    const lr = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/setup.yml/runs?event=workflow_dispatch&per_page=10`, { headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" } });
+    if (lr.ok) {
+      const runs = (await lr.json()).workflow_runs || [];
+      const mine = runs.find((x) => Date.parse(x.created_at || "") >= t0 - 10000);
+      if (mine) return { ok: true, runId: mine.id, runAt: Date.parse(mine.created_at) || t0 };
+    }
+  } catch (e) { /* run capture is best-effort */ }
+  return { ok: true };
+}
+
+// v104: the dispatched GitHub run's real state, for the watchdog.
+// null = unknown (API failure) -> the caller keeps the old behaviour.
+async function ghRunState(env, runId) {
+  if (!env.GH_TOKEN || !env.GH_REPO || !runId) return null;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/runs/${runId}`, { headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" } });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return { status: String(j.status || ""), conclusion: String(j.conclusion || ""), startedAt: Date.parse(j.run_started_at || j.created_at || "") || 0 };
+  } catch (e) { return null; }
 }
 // ===== v101 (R51 browser parity): GENERAL browse jobs =====
 // Until now the only browser Julie had was the setup browser —
@@ -4772,8 +4799,22 @@ async function setupWatchdog(env, n, chain) {
   const last = cur.upd || cur.at || 0;
   const limit = cur.state === "paused" ? SETUP_STALE_PAUSED_MS : SETUP_STALE_RUNNING_MS;
   if (Date.now() - last < limit) return null;
+  // v104 (chain robustness): before declaring a stall, ask GitHub
+  // what the dispatched run is actually doing. A run still QUEUED
+  // (repo congestion — live 2026-11-16: 36 min queued) is not a
+  // stall: the silence clock starts at run START, not dispatch.
+  // A completed run falls through to the normal stall verdict; an
+  // unknown state (API failure) keeps the old behaviour.
+  if (cur.ghRun && cur.ghRun.id) {
+    const rs = await ghRunState(env, cur.ghRun.id);
+    if (rs && rs.status === "queued") return null;
+    if (rs && rs.status === "in_progress") {
+      const effLast = Math.max(last, cur.ghRun.startedAt || 0, rs.startedAt || 0);
+      if (Date.now() - effLast < limit) return null;
+    }
+  }
   const mins = Math.max(1, Math.round((Date.now() - last) / 60000));
-  const fin = { state: "stalled", done: chain.done || [], failed: chain.failed || [],
+  const fin = { state: "stalled", done: chain.done || [], failed: chain.failed || [], skipped: (chain && chain.skipped) || null,
     provider: cur.provider, note: (cur.note || "") + ` — runner nunchi ${mins} min nunchi update ledu (setup aagipoyindhi).`,
     lastStep: cur.step || "", lastUrl: cur.url || "", at: Date.now(), geminiVerify: (chain && chain.geminiNeedsVerify) || null, failReason: (chain && chain.failReason) || null };
   // v50: persistence is best-effort. When the daily KV write quota is
@@ -4785,6 +4826,56 @@ async function setupWatchdog(env, n, chain) {
   try { await env.KV.delete(`setupchain:${n}`); } catch {}
   return fin;
 }
+// v104 (chain robustness — Ajju's order after the 2026-11-16 live
+// run): a PAUSE must never kill the chain. Live: 8 of 22 providers
+// paused (captcha x4, google-signin x3, sms x1); each pause blocked
+// until the 30-min watchdog killed the WHOLE chain, and a human
+// intervened 7 times to finish the run. A paused job now carries a
+// per-kind budget (the same clocks as the PR #109 in-chat asks):
+// past the budget with NO user input delivered, the chain SKIPS the
+// provider — recorded in chain.skipped + failReason — and advances.
+// The runner applies the same budgets itself (setup.py PAUSE_SKIP_S)
+// and normally fails the provider first with the same label; this is
+// the server backstop for a runner that never wakes. An "email"
+// pause is deliberately ABSENT: the server feed owns it (links and
+// codes arrive without the user) and its own machinery terminates.
+const SETUP_PAUSE_SKIP_MS = { signin: 15 * 60 * 1000, sms: 10 * 60 * 1000, captcha: 25 * 60 * 1000, field: 15 * 60 * 1000 };
+async function setupPauseSkip(env, n, chain) {
+  // Returns { skipped: provider, kind } when the chain advanced past
+  // an over-budget pause, else null. Never skips while a resume is in
+  // flight: a delivered userInput for the current ask, a fed
+  // verifyLink/verifyCode/smsCode, or a resume newer than the pause
+  // all mean the user DID answer — the runner owns it from there.
+  if (!chain || !chain.current) return null;
+  const cur = parseRec(await env.KV.get(`setupjob:${chain.current}`));
+  if (!cur || cur.state !== "paused") return null;
+  const kind = cur.pauseReason || (cur.awaiting && cur.awaiting.kind === "otp" ? "sms" : cur.awaiting ? "field" : "email");
+  const budget = SETUP_PAUSE_SKIP_MS[kind];
+  if (!budget) return null;
+  const since = cur.pausedAt || cur.upd || cur.at || 0;
+  if (!since || Date.now() - since < budget) return null;
+  if (cur.userInput && cur.awaiting && cur.userInput.askId === cur.awaiting.id) return null;
+  if (cur.verifyLink || cur.verifyCode || cur.smsCode) return null;
+  if (cur.resumedAt && cur.resumedAt > since) return null;
+  const prov = cur.provider;
+  const reason = `paused-${kind} — user step time ayipoyindhi, input raaledhu; provider skip chesam`;
+  chain.failed = chain.failed || [];
+  if (!chain.failed.includes(prov)) chain.failed.push(prov);
+  chain.skipped = chain.skipped || {};
+  chain.skipped[prov] = { kind, at: Date.now() };
+  chain.failReason = chain.failReason || {};
+  chain.failReason[prov] = reason.slice(0, 80);
+  // Mark the job stopped: the runner wakes from its pause wait, sees
+  // the stop and exits; its late result/progress posts are ignored
+  // because chain.current has already moved on.
+  cur.state = "stopped"; cur.step = "paused-skipped"; cur.note = reason; cur.upd = Date.now();
+  await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(cur), { expirationTtl: 86400 * 2 });
+  chain.current = null;
+  await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+  await setupStartNext(env, n);
+  return { skipped: prov, kind };
+}
+
 // v38 (R48, items 1+6): setup state + per-step progress for the app's
 // login-time check and chat mini-box. States: not-started / running /
 // paused-email / paused-sms / done / failed.
@@ -5488,10 +5579,16 @@ async function fetchVerifyLinkTok(tok, provider, job, chainAt, opts) {
       if (job && Number(msg.internalDate || 0) <= pauseStart) continue; // old mail from a previous run
       sawMatch = true;
       const text = gmailBodyText(msg);
+      // v104: a link/code the runner already reported REJECTED
+      // (job.fedBad) is consumed — never feed it twice; keep
+      // scanning for a NEWER mail carrying a different one (live
+      // 2026-11-16: the identical Groq Stytch link was fed twice,
+      // 11 s apart, after the first landing had already errored).
+      const bad = (job && Array.isArray(job.fedBad)) ? job.fedBad : [];
       const link = gmailPickLink(text, m.domains);
-      if (link) return { ok: true, link, from: gmailHeader(msg, "from"), subject: gmailHeader(msg, "subject") };
+      if (link && !bad.includes(link)) return { ok: true, link, from: gmailHeader(msg, "from"), subject: gmailHeader(msg, "subject") };
       const code = gmailPickCode(text);
-      if (code) return { ok: true, code, from: gmailHeader(msg, "from"), subject: gmailHeader(msg, "subject") };
+      if (code && !bad.includes("code:" + code)) return { ok: true, code, from: gmailHeader(msg, "from"), subject: gmailHeader(msg, "subject") };
     }
     if (sawMatch) break; // matched mails existed but none carried a usable link — a broader pass cannot fix extraction
   }
@@ -5587,7 +5684,7 @@ function stripJobSecrets(j) {
   // v41: the generated provider-account password (pass) must never
   // travel there either.
   if (!j) return j;
-  const { verifyLink, verifyCode, smsCode, pass, password, userInput, ...rest } = j;
+  const { verifyLink, verifyCode, smsCode, pass, password, userInput, fedBad, ...rest } = j;
   return rest;
 }
 function stripChainSecrets(c) {
@@ -5678,6 +5775,12 @@ async function appSetupUser(req, env, u, p, body, lang) {
       }
       chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     }
+    // v104: an over-budget pause is skipped (the chain advances) here
+    // too — a pause must never sit until the watchdog's stall verdict.
+    if (chain) {
+      const sk = await setupPauseSkip(env, u.n, chain).catch(() => null);
+      if (sk) chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
+    }
     // v24: when the chain is gone, report the recorded outcome (done/failed)
     // so the app can show it instead of the mini-box vanishing silently.
     if (!chain) {
@@ -5712,7 +5815,20 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // when there is no current job record yet, via chain.at).
     const SETUP_STALE_MS = 30 * 60 * 1000;
     const lastUpd = (cur && cur.upd) || chain.at || 0;
-    const stalled = state === "running" && lastUpd > 0 && (Date.now() - lastUpd) > SETUP_STALE_MS;
+    // v104: a job whose GitHub run is still QUEUED is reported as
+    // queued, never "stalled" — queue time is not silence (the
+    // watchdog applies the same rule before killing a chain). The
+    // display-staleness clock likewise runs from the run's START
+    // (ghRun.startedAt / GitHub's run_started_at), never dispatch.
+    let queuedRun = false;
+    let runStartAt = (cur && cur.ghRun && cur.ghRun.startedAt) || 0;
+    if (cur && cur.ghRun && cur.ghRun.id && state === "running") {
+      const rs = await ghRunState(env, cur.ghRun.id).catch(() => null);
+      queuedRun = !!(rs && rs.status === "queued");
+      if (rs && rs.startedAt) runStartAt = Math.max(runStartAt, rs.startedAt);
+    }
+    const effUpd = Math.max(lastUpd, runStartAt);
+    const stalled = state === "running" && !queuedRun && effUpd > 0 && (Date.now() - effUpd) > SETUP_STALE_MS;
     if (stalled) state = "stalled";
     let steps = setupSteps(chain, cur, null, keys, lang);
     if (stalled) steps = steps.map(s => s.state === "running" ? { ...s, state: "stalled", note: setupStepText(s.id, "stalled", lang), text: setupStepText(s.id, "stalled", lang) } : s);
@@ -5721,7 +5837,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // of a bare "Setup running…". Additive field; older app builds ignore it.
     const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang), tc: !!cur.tc } : null;
     const autoLog = await autoLogRead(env, u.n);
-    return { ok: true, active: true, consent: !!consent, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownCount, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, geminiVerify: chain.geminiNeedsVerify || null, autoLog: autoLog.slice(0, 10), browse };
+    return { ok: true, active: true, consent: !!consent, queued: queuedRun, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownKeyCount, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, geminiVerify: chain.geminiNeedsVerify || null, autoLog: autoLog.slice(0, 10), browse };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
@@ -5737,8 +5853,30 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // not lost when the new run replaces it.
     const prev = parseRec(await env.KV.get(`setupchain:${u.n}`));
     if (prev) {
-      const stalled = await setupWatchdog(env, u.n, prev);
-      if (!stalled) return { ok: false, error: en ? "Setup is already running — wait for it to finish." : "Setup already nadusthondhi — ayye varaku wait cheyu.", alreadyRunning: true };
+      // v104: an over-budget pause in the previous chain is skipped
+      // first (the chain may advance — or even finish — on its own).
+      await setupPauseSkip(env, u.n, prev).catch(() => null);
+      const prevNow = parseRec(await env.KV.get(`setupchain:${u.n}`));
+      const stalled = prevNow ? await setupWatchdog(env, u.n, prevNow) : { state: "done" };
+      if (!stalled) {
+        // v104 (startSetup idempotency): a start whose response was
+        // lost mid-flight is RETRIED by the app — the retry must
+        // return the chain the first attempt created, never error
+        // and never duplicate. Same startId = same tap; a same-
+        // provider-set chain younger than 120 s is the dropped-
+        // response shape even without one. (Live 2026-11-16: two
+        // start POSTs dropped mid-response; the retry hit
+        // alreadyRunning and a wrong 20-provider chain briefly
+        // existed alongside the real one.)
+        const sameSet = prevNow && (prevNow.providers || []).length === ids.length
+          && ids.every((x) => (prevNow.providers || []).includes(x));
+        if (prevNow && ((body.startId && prevNow.startId && String(body.startId) === String(prevNow.startId))
+            || (sameSet && Date.now() - (prevNow.at || 0) < 120000))) {
+          const curJ = prevNow.current ? parseRec(await env.KV.get(`setupjob:${prevNow.current}`)) : null;
+          return { ok: true, idempotent: true, job: prevNow.current, provider: (curJ && curJ.provider) || null };
+        }
+        return { ok: false, error: en ? "Setup is already running — wait for it to finish." : "Setup already nadusthondhi — ayye varaku wait cheyu.", alreadyRunning: true };
+      }
     }
     // v103 guard (profile serialization): a profile-mode chain must
     // not start over an active browse job — both drive the ONE sealed
@@ -5769,7 +5907,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // (flow_kaggle first) sign up as THIS person: profile name + the
     // verified phone from the account record, never invented data.
     // A missing field is asked in chat by the runner (kind=field).
-    const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: body.browser === "ephemeral" ? "ephemeral" : "profile", userName: (u.acct && u.acct.name) || "", userPhone: (u.acct && u.acct.phone) || "" };
+    const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: body.browser === "ephemeral" ? "ephemeral" : "profile", userName: (u.acct && u.acct.name) || "", userPhone: (u.acct && u.acct.phone) || "", startId: String(body.startId || "").slice(0, 64) || null };
     // v39 Phase 2: seal the generated provider-account password so a later
     // autonomous run can sign back in to the accounts this run creates
     // (replacement keys). Sealed with the app KEK, never returned by any API.
@@ -5784,6 +5922,12 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (chain && chain.current) { const j = parseRec(await env.KV.get(`setupjob:${chain.current}`)); if (j) { j.state = "stopped"; j.upd = Date.now(); await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 }); } }
     const bjStop = await browseJobFor(env, u.n).catch(() => null); // v101: the shared Stop button also halts a running browse
     if (bjStop && ["queued", "running", "paused"].includes(bjStop.state)) { bjStop.state = "stopped"; bjStop.upd = Date.now(); await env.KV.put(`setupjob:${bjStop.job}`, JSON.stringify(bjStop), { expirationTtl: 86400 * 2 }); }
+    // v104 (retention): record the outcome BEFORE deleting the chain —
+    // a stop used to discard chain.failReason entirely, so a stopped
+    // segment's per-provider terminal reasons vanished (live
+    // 2026-11-16 the run was driven by stop+restart segments and the
+    // reasons were lost on every rotation).
+    if (chain) { try { const cj = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null; await env.KV.put(`setupdone:${u.n}`, JSON.stringify({ state: "stopped", done: chain.done || [], failed: chain.failed || [], skipped: chain.skipped || null, provider: (cj && cj.provider) || null, note: "User stopped the setup.", at: Date.now(), failReason: chain.failReason || null }), { expirationTtl: 86400 }); } catch {} }
     await env.KV.delete(`setupchain:${u.n}`);
     return { ok: true };
   }
@@ -6033,7 +6177,7 @@ async function setupStartNext(env, n) {
   // v24: record the outcome before deleting the chain — otherwise the app has
   // nothing to show when the setup ends (the mini-box just vanished).
   // v38 merge fix: if NO provider produced a key, the run failed (not done).
-  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, failReason: chain.failReason || null, ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
+  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, skipped: chain.skipped || null, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, failReason: chain.failReason || null, ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
   // v70: Pexels is an enhancement key (stock footage), not a brain key —
   // a user who already has one sealed never re-runs the browser flow for
   // it: the step counts as done and the chain moves on. (No other
@@ -6103,8 +6247,8 @@ async function setupStartNext(env, n) {
     await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
     return setupStartNext(env, n); // advance to the next provider
   }
-  const ok = await setupDispatch(env, job, nextId, rec.browser);
-  if (!ok) {
+  const dsp = await setupDispatch(env, job, nextId, rec.browser);
+  if (!dsp.ok) {
     // v74: a failed dispatch must not strand the chain — chain.current
     // already points at this (now deleted) job, and the provider was
     // neither done nor failed, so only the 30-min stall watchdog ever
@@ -6119,6 +6263,12 @@ async function setupStartNext(env, n) {
     chain.current = null;
     await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
     return setupStartNext(env, n);
+  }
+  if (dsp.runId) {
+    // v104: remember the GitHub run so the watchdog can distinguish
+    // "queued in GitHub" from "runner silent" (see setupWatchdog).
+    rec.ghRun = { id: dsp.runId, at: dsp.runAt || Date.now() };
+    await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
   }
   return { ok: true, job, provider: nextId };
 }
@@ -6192,6 +6342,18 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     const prof = body.profile;
     if (!prof || typeof prof !== "object" || !Array.isArray(prof.cookies) || !Array.isArray(prof.origins)) return new Response("bad profile", { status: 400 });
     if (JSON.stringify(prof).length > 512000) return new Response("profile too large", { status: 400 });
+    // v104 (zombie backstop): only the LIVE job may write the shared
+    // profile. A runner for a stopped / chain-advanced / superseded
+    // job is refused — live 2026-11-16 a zombie runner pushed its
+    // stale session over the live one (cookies 227 -> 192). The
+    // runner checks job_alive() before pushing; this is the server
+    // half of the same guard (PR #109's profileJobActive covers the
+    // browse-vs-chain case; this is the stale-JOB case).
+    {
+      const ch = parseRec(await env.KV.get(`setupchain:${rec.user}`));
+      if (ch) { if (ch.current !== job) return new Response("stale job", { status: 409 }); }
+      else { const bj = await browseJobFor(env, rec.user).catch(() => null); if (!bj || bj.job !== job) return new Response("stale job", { status: 409 }); }
+    }
     if (!env.APP_KEK) return new Response("profile storage not ready", { status: 503 });
     try { await storeBrowserProfile(env, rec.user, prof); }
     catch (e) { return new Response("profile storage failed", { status: 500 }); }
@@ -6266,6 +6428,10 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     const prevPr = rec.pauseReason, prevVw = !!rec.verifyWait; // v95: sweep-marker transition check (below)
     const prevStep = rec.step, prevNote = rec.note, prevUpd = rec.upd || 0; // v64 write-budget: coalescing baseline
     rec.state = state; rec.step = String(body.step || rec.step || "").slice(0, 80); rec.note = String(body.note || "").slice(0, 300); rec.url = String(body.url || rec.url || "").slice(0, 500); rec.upd = Date.now();
+    // v104: the first progress post from the runner proves the GitHub
+    // run actually STARTED — stamp it so the watchdog's silence clock
+    // runs from run start, never from dispatch/queue time.
+    if (rec.ghRun && !rec.ghRun.startedAt && state !== "queued") rec.ghRun.startedAt = Date.now();
     // v38 merge fix: the runner reports pauses with a reason. Email/SMS are
     // the only two the user must act on; captcha/signin are last-resort
     // Take Control pauses (image challenge with no audio alternative;
@@ -6320,8 +6486,29 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
       if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
     }
-    if (state === "stopped") { const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`)); if (chain && chain.current === job) { await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state, done: chain.done, failed: chain.failed || [], provider: rec.provider, note: rec.note || "", at: Date.now() }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${rec.user}`); } }
+    if (state === "stopped") { const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`)); if (chain && chain.current === job) { await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state, done: chain.done, failed: chain.failed || [], skipped: chain.skipped || null, provider: rec.provider, note: rec.note || "", at: Date.now(), failReason: chain.failReason || null }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${rec.user}`); } }
     return Response.json({ ok: true });
+  }
+  if (p === "setup/runner/linkbad" && req.method === "POST") {
+    // v104 (chain robustness): the runner reports that the fed
+    // verification link/code was REJECTED by the provider (e.g. a
+    // Stytch redirect-error landing). Mark it consumed on the job
+    // (fedBad) so the feed hunts a NEWER mail instead of re-feeding
+    // the same dead link — live 2026-11-16 the identical Groq link
+    // was fed twice, 11 s apart. The job returns to its email pause
+    // so the feed machinery (status poll + cron sweep) resumes.
+    const kind = String(body.kind || "link") === "code" ? "code" : "link";
+    const bad = kind === "code" ? (rec.verifyCode ? "code:" + rec.verifyCode : "") : (rec.verifyLink || "");
+    rec.fedBad = Array.isArray(rec.fedBad) ? rec.fedBad : [];
+    if (bad && !rec.fedBad.includes(bad)) rec.fedBad.push(bad);
+    rec.fedBad = rec.fedBad.slice(-5);
+    if (kind === "code") delete rec.verifyCode; else delete rec.verifyLink;
+    if (rec.state === "running") { rec.state = "paused"; rec.pauseReason = "email"; rec.verifyWait = true; rec.pausedAt = Date.now(); }
+    rec.mailFetchAt = 0; // allow an immediate re-feed attempt
+    rec.upd = Date.now();
+    await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    try { await env.KV.put("verify:awaiting", "1"); } catch {}
+    return Response.json({ ok: true, consumed: !!bad });
   }
   if (p === "setup/runner/key" && req.method === "POST") {
     // v38 (R48, items 4+5): the runner posts the key it created (Cloudflare

@@ -292,11 +292,13 @@
             <p class="muted small" data-t="modelOwn"></p>
           </div>
           <!-- v84: Kaggle GPU connect — the user's OWN Kaggle account.
-               Guided only (R18): the user creates the account + phone
-               verification + API token themselves on kaggle.com; Julie
-               only stores the username + API key pair, sealed. Voice
-               batches run on this free GPU and fail over to GitHub
-               Actions automatically when Kaggle hits a limit. -->
+               v104: two doors — Julie can CREATE the account via
+               Automate (flow_kaggle; the user only supplies OTP /
+               captcha steps in chat), or the user creates it on
+               kaggle.com and pastes the username + API key pair here.
+               Either way the pair is stored sealed. Voice batches run
+               on this free GPU and fail over to GitHub Actions
+               automatically when Kaggle hits a limit. -->
           <div class="card" id="kaggleCard">
             <p><b data-t="kaggleTitle"></b></p>
             <p class="muted small" data-t="kaggleSub"></p>
