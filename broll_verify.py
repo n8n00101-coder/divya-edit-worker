@@ -91,7 +91,22 @@ def _default_verifier(frames, narration, why):
         "{\"match\": true/false, \"reason\": \"short reason\"}. "
         "If the frames are ambiguous, use {\"match\": \"uncertain\", "
         "\"reason\": \"why\"}.")
-    res = doc3.vjson(prompt, frames)
+    # NEXT-ROUND (Fix 2 — the bytes bug): doc3.vjson base64-encodes
+    # its jpgs argument, so it takes image BYTES (the doc3.py:1010
+    # convention: open(fp, "rb").read()). This verifier used to hand
+    # it the frame PATHS — every call died with "a bytes-like
+    # object is required, not 'str'", all 33 clips of the second
+    # film fell back to keyword-only selection, and wrong-semantics
+    # clips (an electric train for EV history, a crypto chart, a
+    # tax-form clip) shipped unverified.
+    jpgs = []
+    for fp in frames or []:
+        if isinstance(fp, (bytes, bytearray)):
+            jpgs.append(bytes(fp))
+        else:
+            with open(fp, "rb") as f:
+                jpgs.append(f.read())
+    res = doc3.vjson(prompt, jpgs)
     if not isinstance(res, dict):
         return {"verdict": "uncertain", "reason": "vision gave no verdict"}
     m = res.get("match")
@@ -121,6 +136,16 @@ class BrollVerifier:
         self.job_id = job_id
         self.verifier = verifier or _default_verifier
         self.log = []
+        # NEXT-ROUND (Fix 2): outage bookkeeping. A verifier that
+        # ERRORS is not the same as a verifier that answers
+        # "uncertain" — when every attempted call has errored, the
+        # job has a vision OUTAGE and every clip picked in that
+        # state was chosen by keyword score alone. That must be
+        # named in the report, never absorbed as per-clip
+        # "unverified" noise (the second film shipped 33/33
+        # errored clips with no outage ever declared).
+        self.errors = []
+        self.answers = 0
 
     def _save_cache(self):
         if not self.cache_path:
@@ -178,8 +203,10 @@ class BrollVerifier:
             res = self.verifier(frames, narration, why)
             verdict = res.get("verdict", "uncertain")
             reason = str(res.get("reason", ""))[:200]
+            self.answers += 1
         except Exception as e:
             verdict, reason = "unverified", f"vision unavailable: {str(e)[:100]}"
+            self.errors.append(reason)
         self.cache[key] = {"verdict": verdict, "reason": reason}
         self._save_cache()
         self.log.append({"candidate": cid, "verdict": verdict,
@@ -191,6 +218,26 @@ class BrollVerifier:
             except Exception:
                 pass
         return verdict, reason, False
+
+    def outage(self):
+        """True when the verifier was actually called and has
+        NEVER answered — every attempt errored. Selections made
+        in this state are keyword-only and must be flagged."""
+        return bool(self.errors) and self.answers == 0
+
+    def report(self):
+        """The job-level vision summary for footage.json / the
+        delivery report: calls, answers, errors, and the OUTAGE
+        declaration when the verifier never answered."""
+        rep = {"calls": self.calls_made, "answers": self.answers,
+               "errors": len(self.errors), "outage": self.outage()}
+        if self.outage():
+            rep["note"] = (
+                "VISION VERIFIER OUTAGE — the verifier errored on "
+                f"every call ({self.errors[0]}); clips flagged "
+                "keyword_only were picked by keyword score alone "
+                "and are NOT vision-verified")
+        return rep
 
     def verify_scene(self, candidates, narration, why, workdir=None):
         """Check up to MAX_CANDIDATES candidates for one scene.

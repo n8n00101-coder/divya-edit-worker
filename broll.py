@@ -632,6 +632,17 @@ class FootagePool:
                             workdir=workdir)
                         _verify = {"verdict": _v, "reason": _reason,
                                    "cached": _cached}
+                        # NEXT-ROUND (Fix 2): a clip kept while the
+                        # verifier ERRORED (this call, or an outage
+                        # across the job) was picked by keyword
+                        # score alone — the record must say so, so
+                        # the report never reads it as verified.
+                        if _v == "unverified" and (
+                                str(_reason).startswith(
+                                    "vision unavailable")
+                                or (hasattr(self.verifier, "outage")
+                                    and self.verifier.outage())):
+                            _verify["keyword_only"] = True
                         if _v == "fail":
                             self.rejected.append(
                                 {**cand, "scene": scene_no, "query": query,
@@ -679,4 +690,11 @@ class FootagePool:
                                                 "provider", "query",
                                                 "reason") if k in r}
                          for r in self.rejected],
+            # NEXT-ROUND (Fix 2): the job-level vision summary —
+            # present only when a verifier was attached. An outage
+            # is declared HERE, in the artifact, not left as 33
+            # identical per-clip "unverified" lines.
+            **({"vision": self.verifier.report()}
+               if self.verifier is not None
+               and hasattr(self.verifier, "report") else {}),
         }

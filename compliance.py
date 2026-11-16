@@ -157,7 +157,10 @@ def spoken_numbers(text):
     {'%', 'x', ''}. Digit forms and number words both count."""
     text = str(text or "")
     out = []
-    for m in re.finditer(r"(\d[\d,]*(?:\.\d+)?)\s*(%|percent|x\b|times)?", text):
+    # NEXT-ROUND Fix 4: digits glued to a letter are a formula or
+    # a model name (CO2, H2O), not a spoken number — the "2" in
+    # CO2 used to enter claim lists as a phantom statistic.
+    for m in re.finditer(r"(?<![A-Za-z])(\d[\d,]*(?:\.\d+)?)\s*(%|percent|x\b|times)?", text):
         try:
             v = float(m.group(1).replace(",", ""))
         except ValueError:

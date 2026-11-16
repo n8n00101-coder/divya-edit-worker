@@ -33,6 +33,15 @@ def load_job():
                     print(f"::add-mask::{v.strip()}")
     if j.get("SCOUT_MODELS"):
         os.environ["JULIE_SCOUT_MODELS"] = json.dumps(j["SCOUT_MODELS"])
+    # NEXT-ROUND (Fix 5b): the job owner's sealed Add-Model record
+    # (their own OpenAI-compatible endpoint, connected in Setup)
+    # rides the payload too — channel.py adds it to the film's
+    # failover pool as the "custom" slot. Key masked, never logged.
+    if j.get("CUSTOM_MODEL"):
+        _cm = j["CUSTOM_MODEL"]
+        if isinstance(_cm, dict) and _cm.get("key"):
+            print(f"::add-mask::{str(_cm['key']).strip()}")
+        os.environ["JULIE_CUSTOM_MODEL"] = json.dumps(_cm)
     # v69: stock B-roll keys (doc.py/broll.py). Optional — the Worker only
     # sends them when the secrets exist; absent/empty keeps today's
     # code-drawn-only behaviour.
@@ -100,6 +109,7 @@ async def edit_create_job(j, wa, note):
     try:
         import channel as _chan1e
         _chan1e.set_groq_leg(groq_chat)
+        _set_channel_mode(True)  # NEXT-ROUND Fix 5a: leg subordinated
         _chan1e.begin_film(deadline=time.monotonic() + 1200)
         _chat1e = _chan1e.chat
     except ImportError as _echan1e:
@@ -668,6 +678,22 @@ CHAT_MODELS = ["openai/gpt-oss-120b", "moonshotai/kimi-k2-instruct-0905", "opena
 
 _CHAT_BACKOFF_S = (5, 15, 45)
 
+# NEXT-ROUND (Fix 5a): CHANNEL MODE — when the channel layer owns
+# the call (create/edit jobs arm it together with set_groq_leg),
+# the leg's own retry loop is SUBORDINATED: at most one 1s retry,
+# then the failure surfaces to the channel, which owns backoff,
+# cooldown and failover policy. The second film burned ~65s
+# inside the 5/15/45 loop per rate-limited stage before the
+# channel could cool the leg and fail over. Direct callers (no
+# channel armed — CLI tools, tests) keep the v75 contract above;
+# v75test pins it.
+_CHAT_BACKOFF_CHANNEL_S = (1,)
+_CHANNEL_MODE = {"on": False}
+
+
+def _set_channel_mode(on=True):
+    _CHANNEL_MODE["on"] = bool(on)
+
 
 def _chat_sweep(messages):
     """One pass over every key x model (the historical behaviour).
@@ -723,15 +749,17 @@ def groq_chat(messages):
     print(f"groq_chat: prompt {_n_chars} chars "
           f"(~{_n_chars // 4} tok est) + 2500 max_tokens")
     last = ""
-    for attempt in range(len(_CHAT_BACKOFF_S) + 1):
+    _backoff = (_CHAT_BACKOFF_CHANNEL_S if _CHANNEL_MODE["on"]
+                else _CHAT_BACKOFF_S)
+    for attempt in range(len(_backoff) + 1):
         out, last, transient = _chat_sweep(messages)
         if out is not None:
             return out
-        if not transient or attempt == len(_CHAT_BACKOFF_S):
+        if not transient or attempt == len(_backoff):
             break
         print(f"groq_chat: transient LLM failure ({last}) — "
-              f"retry {attempt + 1} in {_CHAT_BACKOFF_S[attempt]}s")
-        time.sleep(_CHAT_BACKOFF_S[attempt])
+              f"retry {attempt + 1} in {_backoff[attempt]}s")
+        time.sleep(_backoff[attempt])
     raise RuntimeError("LLM failed: " + last)
 
 
@@ -1002,6 +1030,7 @@ async def create_job(j, wa, note):
         _chan1 = None
     if _chan1 is not None:
         _chan1.set_groq_leg(groq_chat)
+        _set_channel_mode(True)  # NEXT-ROUND Fix 5a: leg subordinated
         _chan1.begin_film(
             deadline=time.monotonic()
             + int(os.environ.get("DIVYA_LONG_BUDGET_S", "3000")

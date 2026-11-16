@@ -401,7 +401,14 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                     f"The main part of this chapter rendered only "
                     f"{int(dur)}s of its {budget['seconds']}s. Continue "
                     f"the SAME chapter with NEW scenes — do not repeat "
-                    f"the earlier content.\n"
+                    f"the earlier content. COMPRESSION PASS rule "
+                    f"(taste pack): this top-up may only add NEW "
+                    f"evidence, a NEW angle, or a NEW consequence — "
+                    f"a claim, fact or example that appears nowhere "
+                    f"earlier in the chapter. Restating the chapter's "
+                    f"argument in other words is rejected by the "
+                    f"length-honesty gate and the chapter ships at "
+                    f"honest length instead.\n"
                     f"FINAL VIDEO LENGTH: exactly {missing_s} seconds\n"
                     f"NARRATION BUDGET: the voice-over across all scenes "
                     f"must total about {missing_w} words "
@@ -424,6 +431,7 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                 # REJECTED: the chapter ships at its honest length
                 # and the film's total adjusts to reality.
                 _nov100 = None
+                _rest100 = None
                 try:
                     import anti_boring as _ab100t
                     _old_vo = [str(s.get("vo") or "") for s in
@@ -435,23 +443,51 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                     if _old_vo and _new_vo:
                         _nov100 = _ab100t.novelty_report(_new_vo,
                                                          _old_vo)
+                        # NEXT-ROUND (Fix 1): the 4-gram gate only
+                        # catches VERBATIM repetition — the second
+                        # film's top-up was a paraphrase and scored
+                        # 0.0. The semantic restatement report now
+                        # judges the same pair; EITHER gate can
+                        # reject.
+                        _rest100 = _ab100t.restatement_report(
+                            _new_vo, _old_vo)
                 except Exception as _e100t:
                     print(f"render_chapters: novelty check failed "
                           f"({str(_e100t)[:100]}) — top-up kept, "
                           f"novelty unverified")
+                _novelty_info = _nov100
+                if _rest100 is not None:
+                    _novelty_info = {"ngram": _nov100,
+                                     "restatement": _rest100}
+                _reject100 = None
+                # The citation rides every rejection (round-3
+                # ruling): the QC/teeth side names the taste-pack
+                # rule the top-up broke — the compression pass.
+                _cite100 = ("; taste pack, The compression pass: "
+                            "a top-up may only add NEW evidence, "
+                            "a NEW angle, or a NEW consequence")
                 if _nov100 is not None and not _nov100["novel"]:
+                    _reject100 = (
+                        f"restatement (mean overlap "
+                        f"{_nov100['mean_overlap']:.0%}, worst "
+                        f"scene {_nov100['worst_overlap']:.0%})"
+                        + _cite100)
+                elif _rest100 is not None and \
+                        _rest100["restatement"]:
+                    _reject100 = (
+                        f"restatement (paraphrase — mean content "
+                        f"containment "
+                        f"{_rest100['mean_containment']:.0%}, no "
+                        f"new claim/fact/angle)"
+                        + _cite100)
+                if _reject100 is not None:
                     res = {**res,
-                           "topup_rejected": (
-                               f"restatement (mean overlap "
-                               f"{_nov100['mean_overlap']:.0%}, worst "
-                               f"scene {_nov100['worst_overlap']:.0%})"),
+                           "topup_rejected": _reject100,
                            "honest_length": True,
-                           "topup_novelty": _nov100}
+                           "topup_novelty": _novelty_info}
                     print(f"render_chapters: chapter {i + 1} top-up "
-                          f"REJECTED — restatement, not new material "
-                          f"(overlap {_nov100['mean_overlap']:.0%}); "
-                          f"the chapter ships at its honest "
-                          f"{int(dur)}s")
+                          f"REJECTED — {_reject100}; the chapter "
+                          f"ships at its honest {int(dur)}s")
                 else:
                     joined = _join_clips(
                         [res["path"], ext["path"]],
@@ -465,8 +501,8 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                            "topup_seconds": missing_s,
                            "broll": (res.get("broll") or [])
                                     + (ext.get("broll") or [])}
-                    if _nov100 is not None:
-                        res["topup_novelty"] = _nov100
+                    if _novelty_info is not None:
+                        res["topup_novelty"] = _novelty_info
                     print(f"render_chapters: chapter {i + 1} topped "
                           f"up ({int(dur)}s -> {int(new_dur)}s of "
                           f"{budget['seconds']}s budget)")
@@ -1119,6 +1155,17 @@ async def make_long_video(brief, chat, workdir, target_minutes,
         _bsline = _bs_lv.line()
         if _bsline:
             summary += f"; {_bsline}"
+    except Exception:
+        pass
+    # NEXT-ROUND (Fix 5c): a single-provider film says so in its
+    # own delivery summary — "channel: single-provider (groq) —
+    # no failover possible" — instead of letting the failover
+    # machinery imply a second provider stood ready.
+    try:
+        import channel as _chan_lv
+        _cwarn = _chan_lv.channel_status().get("warning")
+        if _cwarn:
+            summary += f"; {_cwarn}"
     except Exception:
         pass
     # v71: honest voice label, aggregated from the chapter results.
