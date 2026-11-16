@@ -171,9 +171,9 @@ except FileNotFoundError:
 
 # ---------------------------------------------------------------- 4. doc routing
 ok("doc: tripti registered as an English clone voice",
-   doc.CLONE_VOICES.get("tripti", {}).get("langs") == ("en",))
+   doc.CLONE_VOICES.get("tripti", {}).get("langs") == ("en", "te"))  # v99: + fixed te
 ok("doc: clone note names it honestly",
-   doc.CLONE_VOICES["tripti"]["note"] == "tripti (clone of house sample)")
+   doc.CLONE_VOICES["tripti"]["note"] == "tripti (house voice: en clone + fixed te voice)")
 
 with tempfile.TemporaryDirectory() as td:
     asset = os.path.join(td, "asset.wav")
@@ -254,10 +254,19 @@ ok("spec: capability_check passes Tripti",
 
 spec = se.extract_spec("make a video in Telugu, Tripti voice")
 probs = se.capability_check(spec, "short")
-ok("spec: Tripti + Telugu stops upfront",
-   len(probs) == 1 and "English clone" in probs[0]["reason"])
+ok("spec: Tripti + Telugu passes the gate (v99 fixed te voice)",
+   probs == [])
+cfg = se.resolve_render_config(spec, "short")
+ok("spec: Tripti + Telugu records the indicf5-fixed engine",
+   (cfg.get("voice_choice") or {}).get("engine") == "indicf5-fixed")
+
+spec = se.extract_spec("make a video in Hindi, Tripti voice")
+probs = se.capability_check(spec, "short")
+ok("spec: Tripti + Hindi stops upfront",
+   len(probs) == 1 and "fixed" in probs[0]["reason"]
+   and "Telugu" in probs[0]["reason"])
 ok("spec: the upfront line offers the honest alternative",
-   "English narration in the Tripti voice" in se.upfront_line(probs))
+   "English or Telugu narration in the Tripti voice" in se.upfront_line(probs))
 
 spec = se.extract_spec("make a video, Telugu voice")
 cfg = se.resolve_render_config(spec, "short")

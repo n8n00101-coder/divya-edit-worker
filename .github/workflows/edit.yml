@@ -18,6 +18,15 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
+      # v99: the voice engine's ship gates live in their own repo
+      # (single source of truth) — indicf5_tts imports them from
+      # ./engine for the fixed Telugu house voice, exactly like
+      # voice.yml does for voice jobs.
+      - name: Checkout the locked voice engine
+        uses: actions/checkout@v4
+        with:
+          repository: n8n00101-coder/julie-ai-voice-engine
+          path: engine
       - name: Tools
         run: |
           sudo apt-get update -qq

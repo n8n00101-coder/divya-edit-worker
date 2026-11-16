@@ -1,0 +1,20 @@
+{
+ "note": "Canonical refs for Julie's FIXED Telugu house voice (fixed13, Ajju ear-approved 2026-11-16). Copied from julie-ai-voice-engine voice/refs/ (natspan2/3: Demucs-cleaned NATURAL-pace Telugu Part 2 vocals). The engine repo remains the source of truth; these copies ship in this repo so the edit runner always has the refs. Default = natspan2.",
+ "default": "natspan2",
+ "speed_anchors": {
+  "natspan2": 1.0,
+  "natspan3": 0.81
+ },
+ "refs": {
+  "natspan2": {
+   "wav": "voices/telugu-fixed/natspan2.wav",
+   "text": "లక్ష ఆడవాళ్ళకి 128.6 నేషనల్ 64.6 6 కి దాదాపు డబుల్ కానీ జాగ్రత్త ఈ నెంబర్స్ రిపోర్ట్ అయిన కేసులే కేసులు ఎక్కువ అంటే రిపోర్టింగ్ ఎక్కువ కావచ్చు నేరాలు కాదు పైగా జూలై 2024 లో కొత్త క్రిమినల్ చట్టాలు వచ్చాయి.",
+   "source": "Telugu Part 2 NATURAL-pace narration, Demucs-cleaned vocals, 470.85-487.15 s of the 827.81 s original; also the repo default voice/telugu-reference.wav"
+  },
+  "natspan3": {
+   "wav": "voices/telugu-fixed/natspan3.wav",
+   "text": "వన్ మార్కెటింగ్ ఈ పాటలు చాలాసార్లు రిలీజ్ కి ముందే సినిమాని ప్రమోట్ చేసే మార్కెటింగ్ టూల్ అని కంపోజర్స్ ప్రొడ్యూసర్స్ ఇండియా టుడే కి చెప్పారు. 2025 లో ఇలాంటి మూడు పాటలు ఉన్న థమ్మా సినిమా డైరెక్టర్ ఈ పాటలు ఆడియన్స్ ని సినిమాలోకి తీసుకొచ్చే మార్కెటింగ్ ఆసెట్స్ అన్నారు.",
+   "source": "Telugu Part 2 NATURAL-pace narration, Demucs-cleaned vocals, 637.5-656.28 s of the 827.81 s original"
+  }
+ }
+}
