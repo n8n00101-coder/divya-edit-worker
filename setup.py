@@ -476,9 +476,12 @@ def check_stop():
     """True if the user stopped the job. Waits while paused (up to 30 min).
 
     v39: while paused, re-posts the last progress as a heartbeat (every
-    poll, ~15s) so the Worker sees a LIVE runner waiting on the user —
+    poll, ~30s) so the Worker sees a LIVE runner waiting on the user —
     without it the Worker's staleness watchdog cannot tell a waiting run
     from a dead one, and the app would show "Setup running…" forever.
+    v95 (DO-burn): 15s -> 30s — the watchdog only calls a paused run
+    stale after 30 min, so a 30s heartbeat is far inside it, and each
+    poll+heartbeat costs the Worker several Durable Object requests.
     """
     deadline = time.time() + 1800
     while True:
@@ -488,7 +491,7 @@ def check_stop():
             return True
         if st == "paused":
             heartbeat()
-            time.sleep(15)
+            time.sleep(30)
             if time.time() > deadline:
                 return True
             continue
@@ -512,11 +515,14 @@ def fed_verify_link(job):
     return link if link.startswith("http") else ""
 
 
-def wait_for_fed_link(seconds=240, poll=10):
+def wait_for_fed_link(seconds=240, poll=20):
     """Poll the job until the server feeds a verification link, the job
     resumes or stops, or the deadline passes. Returns the link ("" when
     none arrived in time). Heartbeats keep the Worker watchdog aware that
-    a live runner is waiting (v39)."""
+    a live runner is waiting (v39).
+    v95 (DO-burn): poll 10s -> 20s — a magic link takes minutes to land,
+    not seconds; each poll costs the Worker several Durable Object
+    requests, and 12 min of waiting fell from ~72 polls to ~36."""
     deadline = time.time() + seconds
     while True:
         j = get_job()
@@ -1395,10 +1401,15 @@ def take_control(page, job, cfg, escape_when=None):
         if st == "running":
             page.wait_for_timeout(1500)
             return True
-        if time.time() - last_beat > 14:
+        if time.time() - last_beat > 29:
             heartbeat()
             last_beat = time.time()
-        time.sleep(1.2)
+        # v95 (DO-burn): poll 1.2s -> 3s — every poll is a get_job round-trip
+        # (several Durable Object requests on the Worker); a 25-min Take
+        # Control window fell from ~1,250 polls to ~500. tcInputs are human
+        # taps, so 3s latency is invisible; frames stay throttled + change-
+        # only inside tc_post_frame, and the 30-min watchdog is untouched.
+        time.sleep(3.0)
     print(f"take control timed out for {cfg['name']}", flush=True)
     LAST_TC_TIMEOUT = True
     return False

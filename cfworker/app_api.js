@@ -3572,7 +3572,17 @@ async function feedAwaitingVerifyLinks(env) {
   // runner polls the job (or a later run resumes it), the link is
   // already there and Julie opens it herself. Per-job throttling and
   // the recency guard live in maybeFeedVerifyLink / fetchVerifyLink.
+  // v95 (DO-burn): skip the per-chain scan when nothing awaits. The
+  // marker "verify:awaiting" is set to "1" whenever a job pauses on an
+  // email verification and reset to "0" after an idle scan; null (never
+  // set — e.g. a pause from before this deploy) still scans, so no job
+  // is ever skipped blind. The runner's own polls + setup/status still
+  // feed links, so a missed sweep is never fatal — the sweep is the
+  // third feed path, not the only one.
   try {
+    const awaiting = await env.KV.get("verify:awaiting");
+    if (awaiting === "0") return;
+    let foundAwaiting = false;
     const list = await env.KV.list({ prefix: "setupchain:" });
     for (const k of (list.keys || [])) {
       try {
@@ -3581,9 +3591,11 @@ async function feedAwaitingVerifyLinks(env) {
         const job = parseRec(await env.KV.get(`setupjob:${chain.current}`));
         if (!job || job.state !== "paused" || job.verifyLink || job.verifyCode) continue;
         if ((job.pauseReason || "email") !== "email" && !job.verifyWait) continue;
+        foundAwaiting = true;
         await maybeFeedVerifyLink(env, job, chain.at || 0);
       } catch {}
     }
+    try { await env.KV.put("verify:awaiting", foundAwaiting ? "1" : "0"); } catch {}
   } catch {}
 }
 async function gmailStateFor(env, n, job) {
@@ -3654,7 +3666,16 @@ async function appSetupUser(req, env, u, p, body, lang) {
     let chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     const consent = parseRec(await env.KV.get(`setupconsent:${u.n}`));
     const keys = {};
-    for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${u.n}:${id}`)) keys[id] = true;
+    // v95 (DO-burn): one batched read for all 24 provider keys instead of
+    // one DO request each — setup/status is polled every 5-10s while a
+    // setup box is open, so the old loop alone was ~24 DO requests per
+    // poll. mget falls back to single gets for keys the DO does not hold.
+    if (typeof env.KV.mget === "function") {
+      const uk = await env.KV.mget(Object.keys(SETUP_PROVIDERS).map(id => `ukey:${u.n}:${id}`));
+      for (const id of Object.keys(SETUP_PROVIDERS)) if (uk[`ukey:${u.n}:${id}`]) keys[id] = true;
+    } else {
+      for (const id of Object.keys(SETUP_PROVIDERS)) if (await env.KV.get(`ukey:${u.n}:${id}`)) keys[id] = true;
+    }
     if (await env.KV.get(`umodel:${u.n}`)) keys.custom = true; // v48 (R54): a saved own model counts as set up
     const keyList = await setupKeyList(env, u.n); // v51 (R55): rows for the Setup keys list
     const kt = await keyTierFor(env, u.n); // v88 (F11): own/inviter/shared resolution — same one chat uses
@@ -4187,6 +4208,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
   if (p === "setup/runner/progress" && req.method === "POST") {
     const state = ["queued", "running", "paused", "done", "failed", "stopped"].includes(body.state) ? body.state : "running";
     const prevState = rec.state;
+    const prevPr = rec.pauseReason, prevVw = !!rec.verifyWait; // v95: sweep-marker transition check (below)
     const prevStep = rec.step, prevNote = rec.note, prevUpd = rec.upd || 0; // v64 write-budget: coalescing baseline
     rec.state = state; rec.step = String(body.step || rec.step || "").slice(0, 80); rec.note = String(body.note || "").slice(0, 300); rec.url = String(body.url || rec.url || "").slice(0, 500); rec.upd = Date.now();
     // v38 merge fix: the runner reports pauses with a reason. Email/SMS are
@@ -4195,7 +4217,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // Gemini Google sign-in). Store the reason as-is — never coerce a
     // captcha/signin pause into an email pause (that would tell the user
     // to tap an email link that does not exist).
-    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); if (prevState !== "paused") rec.pausedAt = Date.now(); /* v40: job.upd at pause, for the mail recency guard */ rec.tc = !!body.tc; /* v48: Take Control live-view active for this pause */ if (body.verifyWait) rec.verifyWait = true; /* v92: this pause began as an email verification — the Gmail feed + cron sweep keep working even if the pause later flips to a Take Control sign-in */ }
+    if (state === "paused") { const fromStatus = String(body.status || "").startsWith("paused-") ? String(body.status).slice("paused-".length) : ""; const pr = String(body.reason || fromStatus || rec.pauseReason || "email").trim().toLowerCase(); rec.pauseReason = ["email", "sms", "captcha", "signin"].includes(pr) ? pr : "email"; if (!body.note) rec.note = setupPauseLine(rec.pauseReason, "te"); if (prevState !== "paused") rec.pausedAt = Date.now(); /* v40: job.upd at pause, for the mail recency guard */ rec.tc = !!body.tc; /* v48: Take Control live-view active for this pause */ if (body.verifyWait) rec.verifyWait = true; /* v92: this pause began as an email verification — the Gmail feed + cron sweep keep working even if the pause later flips to a Take Control sign-in */ if ((rec.verifyWait || rec.pauseReason === "email") && (prevState !== "paused" || prevPr !== rec.pauseReason || (!prevVw && rec.verifyWait))) { try { await env.KV.put("verify:awaiting", "1"); } catch {} } /* v95 (DO-burn): arm the cron sweep's skip-marker on the TRANSITION into an email wait only — never on every heartbeat, or the marker put itself would burn the budget it saves */ }
     else if (state === "running") { rec.pauseReason = ""; rec.tc = false; rec.verifyWait = false; delete rec.pausedAt; }
     // v64 WRITE-BUDGET (Ajju: server error must never come back): the runner
     // posts progress on every small step; identical heartbeats used to burn

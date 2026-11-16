@@ -1421,7 +1421,11 @@ async function pollSetup() {
     // v39: the poll itself must never die silently. 30 min with no
     // terminal state means the run is stalled — show that + Retry in the
     // box (and in chat) instead of leaving "Setup running…" on screen.
-    if (++tries > 360) { clearInterval(setupPoll); setupPoll = null; setupShowStalled(); return; } // 30 min
+    // v95 (DO-burn): 10s, not 5s — each status poll costs the Worker ~7
+    // Durable Object requests even after the v95 batching; halving the
+    // poll rate halves that burn, and setup progress does not need
+    // 5-second freshness. Cap stays 30 min (180 tries at 10s).
+    if (++tries > 180) { clearInterval(setupPoll); setupPoll = null; setupShowStalled(); return; } // 30 min
     let d = null;
     try { d = await api("setup/status"); } catch {}
     if (!d || !d.ok) return;
@@ -1473,7 +1477,7 @@ async function pollSetup() {
     if (d.active || d.steps || d.current) renderSetupBox(d);
   };
   tick();
-  setupPoll = setInterval(tick, 5000);
+  setupPoll = setInterval(tick, 10000); // v95 (DO-burn): 5s -> 10s, see cap note above
 }
 /* v39: app-side backstop when polling itself times out with no terminal
    state from the server — render the box as stalled with Retry, and say
