@@ -291,6 +291,23 @@
             <div class="btns" id="modelBtns" hidden><button class="act-btn alt" id="modelTestBtn" data-t="test"></button><button class="act-btn alt" id="modelDelBtn" data-t="remove"></button></div>
             <p class="muted small" data-t="modelOwn"></p>
           </div>
+          <!-- v84: Kaggle GPU connect — the user's OWN Kaggle account.
+               Guided only (R18): the user creates the account + phone
+               verification + API token themselves on kaggle.com; Julie
+               only stores the username + API key pair, sealed. Voice
+               batches run on this free GPU and fail over to GitHub
+               Actions automatically when Kaggle hits a limit. -->
+          <div class="card" id="kaggleCard">
+            <p><b data-t="kaggleTitle"></b></p>
+            <p class="muted small" data-t="kaggleSub"></p>
+            <p class="small" id="kaggleState"></p>
+            <label class="field"><span data-t="kaggleUserL"></span><input class="keyfield" id="kaggleUser" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" data-tp="kaggleUserPh"></label>
+            <label class="field"><span data-t="kaggleKeyL"></span><input class="keyfield" id="kaggleKey" type="password" autocomplete="off" spellcheck="false" data-tp="kaggleKeyPh"></label>
+            <button class="btn primary" id="kaggleBtn" data-t="testSave"></button>
+            <p class="muted small" id="kaggleMsg" aria-live="polite"></p>
+            <div class="btns" id="kaggleBtns" hidden><button class="act-btn alt" id="kaggleTestBtn" data-t="test"></button><button class="act-btn alt" id="kaggleDelBtn" data-t="remove"></button></div>
+            <p class="muted small" data-t="kaggleOwn"></p>
+          </div>
           <div class="card note small" id="autoLogCard" hidden>
             <p><b data-t="autoLogT"></b></p>
             <ul id="autoLog"></ul>

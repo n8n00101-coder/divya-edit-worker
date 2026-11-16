@@ -481,6 +481,32 @@ async function startEditCreate(env, user, projectJob, editText, origEntry) {
   }
 }
 
+// v84: a voice-batch job — voice a whole script's lines on the
+// compute providers (user's Kaggle GPU and/or GitHub Actions, hybrid
+// split + failover in the runner's voicecompute.py). Same discipline
+// as startCreate: job record first, edit.yml dispatch, jobown
+// registration; a failed dispatch returns null so the caller can
+// answer honestly (never a false "started").
+async function startVoiceBatch(env, user, lines, lang) {
+  const job = crypto.randomUUID().slice(0, 8);
+  await env.KV.put(`job:${job}`, JSON.stringify({ mode: "voicebatch", lines, lang, to: user }), { expirationTtl: 86400 });
+  const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/edit.yml/dispatches`, {
+    method: "POST",
+    headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" },
+    body: JSON.stringify({ ref: "main", inputs: { job } }),
+  }).catch(() => null);
+  if (!r || r.status !== 204) { await env.KV.delete(`job:${job}`).catch(() => {}); return null; }
+  try {
+    await env.KV.put(`curjob:${user}`, job, { expirationTtl: 86400 * 2 });
+    const num = await histNext(env, user);
+    await histPut(env, user, { n: num, job, title: `Voice batch: ${lines.length} lines`, topic: `Voice batch (${lang})`, kind: "short", lang, length: "short", at: Date.now(), state: "editing", name: "voice", src: "voicebatch", template: null, notes: `${lines.length} lines`, has_result: false, yt: null, ig: null });
+    await env.KV.put(`jobown:${job}`, user, { expirationTtl: 86400 * 3 });
+    return { job, num };
+  } catch (e) {
+    throw e;
+  }
+}
+
 async function startCreate(env, user, brief, userPrompt) {
   await env.KV.put(`busy:${user}`, "1", { expirationTtl: 1200 });
   const job = crypto.randomUUID().slice(0, 8);
@@ -1845,6 +1871,18 @@ async function appApi(req, env, url, ctx) {
   }
   if (p.startsWith("setup/")) return appJson(req, await appSetupUser(req, env, u, p, body, lang));
   if (p.startsWith("keys")) return appKeys(req, env, u, p, body, lang);
+  // v84: start a voice-batch job (script lines -> voiced mp3s on the
+  // Kaggle/Actions compute providers). Lines are the caller's script,
+  // one entry per line; the runner reports progress + the result zip
+  // through the normal runner channels.
+  if (p === "voicebatch" && req.method === "POST") {
+    const lines = (Array.isArray(body.lines) ? body.lines : []).map(s => String(s || "").trim()).filter(Boolean);
+    const vlang = ["en", "te", "hi"].includes(body.lang) ? body.lang : "en";
+    if (!lines.length || lines.length > 500 || lines.some(s => s.length > 1000)) return appJson(req, { ok: false, error: lang === "en" ? "Lines missing or too many (max 500)." : "Lines levu leda ekkuva unnayi (max 500)." }, 400);
+    const vb = await startVoiceBatch(env, u.n, lines, vlang).catch(() => null);
+    if (!vb) return appJson(req, { ok: false, error: lang === "en" ? "The voice machine didn't start (dispatch failed). Please try again." : "Voice machine start avvaledu (dispatch fail). Malli try cheyyi." }, 502);
+    return appJson(req, { ok: true, job: vb.job, num: vb.num });
+  }
   if (p === "model" || p.startsWith("model/")) return appModel(req, env, u, p, body, lang);
   if (p.startsWith("deploy/")) return appDeploy(req, env, u, p, body, lang);
   if (p === "history") return appJson(req, { ok: true, messages: (await history(env, u.n)).map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })) });
@@ -2285,6 +2323,15 @@ const KEYPROV = {
     return { ok: !!(j.success && j.result?.length), status: r.status, who: j.result?.[0]?.name ? String(j.result[0].name).slice(0, 30) : "" }; } },
   github: { name: "GitHub", test: async k => { const r = await fetch("https://api.github.com/user", { headers: { Authorization: `token ${k}`, "User-Agent": "divya", Accept: "application/vnd.github+json" } }); const j = r.ok ? await r.json().catch(() => ({})) : {}; return { ok: r.ok, status: r.status, who: j.login || "" }; } },
   huggingface: { name: "Hugging Face", test: async k => { const r = await fetch("https://huggingface.co/api/whoami-v2", { headers: { Authorization: `Bearer ${k}` } }); const j = r.ok ? await r.json().catch(() => ({})) : {}; return { ok: r.ok, status: r.status, who: j.name || "" }; } },
+  // v84: Kaggle is a COMPUTE provider (free GPU for voice batches), not
+  // a brain. Its credential is a PAIR (username + API key from the
+  // user's own kaggle.json), sealed as one JSON record via the
+  // keys/kaggle route — the test receives that sealed plaintext and
+  // verifies the pair against the Kaggle API (Basic auth). One account
+  // per person is Kaggle's rule: Julie never rotates accounts; when
+  // Kaggle hits its limit the job fails over to GitHub Actions
+  // (voicecompute.py), never to another Kaggle account.
+  kaggle: { name: "Kaggle", test: async k => { let c = null; try { c = JSON.parse(String(k || "")); } catch {} if (!c || !c.user || !c.key) return { ok: false, status: 0, who: "" }; const r = await fetch("https://www.kaggle.com/api/v1/datasets/list", { headers: { Authorization: "Basic " + btoa(`${c.user}:${c.key}`) } }).catch(() => null); return { ok: !!(r && r.ok), status: r ? r.status : 0, who: r && r.ok ? String(c.user).slice(0, 40) : "" }; } },
 };
 const te8 = s => new TextEncoder().encode(s);
 const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
@@ -3658,6 +3705,12 @@ async function appKeys(req, env, u, p, body, lang) {
     const list = await Promise.all(Object.entries(KEYPROV).map(async ([id, pr]) => { const r = JSON.parse((await env.KV.get(`ukey:${u.n}:${id}`)) || "null"); return { id, name: pr.name, set: !!r, ok: !!r?.ok, who: r?.who || "", tested: r?.tested || 0 }; }));
     return appJson(req, { ok: true, ready: !!env.APP_KEK, providers: list });
   }
+  // v84: Kaggle connect status — record metadata only (set + username);
+  // the API key itself never leaves the sealed record.
+  if (p === "keys/kaggle" && req.method === "GET") {
+    const r = JSON.parse((await env.KV.get(`ukey:${u.n}:kaggle`)) || "null");
+    return appJson(req, { ok: true, set: !!r, who: r?.who || "", tested: r?.tested || 0 });
+  }
   if (req.method !== "POST") return appJson(req, { ok: false, error: "method" }, 405);
   if (!env.APP_KEK) return appJson(req, { ok: false, error: en ? "Key storage isn't ready yet." : "Key storage inka ready ledu." }, 503);
   const prov = String(body.provider || "");
@@ -3672,8 +3725,25 @@ async function appKeys(req, env, u, p, body, lang) {
     await storeKey(env, u.n, "openrouter", j.key, res.ok ? { ...res, source: "manual" } : { who: "OpenRouter", source: "manual" });
     return appJson(req, { ok: true, provider: "openrouter", who: res.who || "OpenRouter" });
   }
+  // v84: Kaggle connect — the user pastes THEIR OWN Kaggle username +
+  // API key (Settings -> API -> Create New Token on kaggle.com, after
+  // creating the account + phone verification THEMSELVES — R18 guided
+  // only: Julie never creates the account, never sees a captcha). The
+  // pair is tested against the Kaggle API, then sealed as one record
+  // via storeKey — never logged, never returned by any endpoint.
+  if (p === "keys/kaggle") {
+    if (body.consent !== true) return appJson(req, { ok: false, error: en ? "Please allow first." : "Mundu permission ivvu." }, 400);
+    const kuser = String(body.username || "").trim(), kkey = String(body.key || "").trim();
+    if (!/^[A-Za-z0-9_.-]{2,64}$/.test(kuser) || kkey.length < 16 || kkey.length > 400 || /\s/.test(kkey)) return appJson(req, { ok: false, error: en ? "That doesn't look like a Kaggle username + API key. Copy both from your kaggle.json." : "Kaggle username + API key laaga levu. Nee kaggle.json nunchi rendu copy cheyyi." }, 400);
+    const plain = JSON.stringify({ user: kuser, key: kkey });
+    const res = await KEYPROV.kaggle.test(plain).catch(() => ({ ok: false, status: 0 }));
+    if (!res.ok) return appJson(req, { ok: false, error: en ? `Kaggle didn't accept these credentials (${res.status || "network"}). Check the token and paste again.` : `Kaggle ee credentials accept cheyyaledhu (${res.status || "network"}). Token check chesi malli paste cheyyi.` }, 400);
+    await storeKey(env, u.n, "kaggle", plain, { ...res, source: "manual" });
+    return appJson(req, { ok: true, provider: "kaggle", who: res.who });
+  }
   if (!KEYPROV[prov]) return appJson(req, { ok: false, error: "unknown provider" }, 400);
   if (p === "keys/save") {
+    if (prov === "kaggle") return appJson(req, { ok: false, error: en ? "Kaggle needs username + API key — use the Kaggle card in Setup." : "Kaggle ki username + API key rendu kavali — Setup lo Kaggle card use cheyyi." }, 400);
     if (body.consent !== true) return appJson(req, { ok: false, error: en ? "Please allow first." : "Mundu permission ivvu." }, 400);
     const key = String(body.key || "").trim();
     if (key.length < 16 || key.length > 400 || /\s/.test(key)) return appJson(req, { ok: false, error: en ? "That doesn't look like a key." : "Idi key laaga ledu." }, 400);
@@ -5414,7 +5484,10 @@ const KEYLIST_PROVIDERS = [["groq", "Groq"], ["openrouter", "OpenRouter"], ["gem
   // v81: the widened automate chain — a row appears for each once the
   // runner has created + verified the user's own key ("Divya added").
   ["cohere", "Cohere"], ["together", "Together AI"], ["sambanova", "SambaNova"], ["fireworks", "Fireworks AI"], ["cerebras", "Cerebras"], ["nvidia", "NVIDIA NIM"], ["mistral", "Mistral AI"], ["ai21", "AI21"], ["voyage", "Voyage AI"],
-  ["tavily", "Tavily"], ["serper", "Serper"], ["exa", "Exa"], ["deepgram", "Deepgram"], ["assemblyai", "AssemblyAI"], ["elevenlabs", "ElevenLabs"], ["stability", "Stability AI"], ["jina", "Jina AI"]];
+  ["tavily", "Tavily"], ["serper", "Serper"], ["exa", "Exa"], ["deepgram", "Deepgram"], ["assemblyai", "AssemblyAI"], ["elevenlabs", "ElevenLabs"], ["stability", "Stability AI"], ["jina", "Jina AI"],
+  // v84: Kaggle = the user's own GPU compute (connected manually via
+  // the Kaggle card, never part of the automate chain).
+  ["kaggle", "Kaggle (GPU compute)"]];
 async function setupKeyList(env, n) {
   const rows = [];
   for (const [id, name] of KEYLIST_PROVIDERS) {
@@ -6409,7 +6482,15 @@ export default {
           }
         }
       } catch {}
-      return Response.json({ ...jrec, WA_TOKEN: env.WA_TOKEN, GROQ_KEY: chanKeys.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: ownPexels || env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "", OPENROUTER_KEY: chanKeys.OPENROUTER_KEY, GEMINI_KEY: chanKeys.GEMINI_KEY, CEREBRAS_KEY: chanKeys.CEREBRAS_KEY, SAMBANOVA_KEY: chanKeys.SAMBANOVA_KEY, NVIDIA_KEY: chanKeys.NVIDIA_KEY, MISTRAL_KEY: chanKeys.MISTRAL_KEY, COHERE_KEY: chanKeys.COHERE_KEY, ZAI_KEY: chanKeys.ZAI_KEY, CUSTOM_MODEL: customModel, SCOUT_MODELS: scoutMdls, refvoice: rvMeta ? { present: true, wpm: rvMeta.wpm || 0, lang: rvMeta.lang || "" } : { present: false } });
+      // v84: the job owner's Kaggle compute creds (their OWN account,
+      // connected in Setup, sealed as ukey:<owner>:kaggle) — unsealed
+      // ONLY on this authenticated runner channel, exactly like the
+      // setup password (openSetupPass); never logged, never returned
+      // to the app. The runner's voicecompute uses them for GPU voice
+      // batches and fails over to the Actions route on any limit.
+      let kaggleCreds = null;
+      if (jrec.to) { try { const kp = await openKey(env, jrec.to, "kaggle"); if (kp) { const kj = JSON.parse(kp); if (kj && kj.user && kj.key) kaggleCreds = { user: String(kj.user), key: String(kj.key) }; } } catch {} }
+      return Response.json({ ...jrec, WA_TOKEN: env.WA_TOKEN, GROQ_KEY: chanKeys.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: ownPexels || env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "", OPENROUTER_KEY: chanKeys.OPENROUTER_KEY, GEMINI_KEY: chanKeys.GEMINI_KEY, CEREBRAS_KEY: chanKeys.CEREBRAS_KEY, SAMBANOVA_KEY: chanKeys.SAMBANOVA_KEY, NVIDIA_KEY: chanKeys.NVIDIA_KEY, MISTRAL_KEY: chanKeys.MISTRAL_KEY, COHERE_KEY: chanKeys.COHERE_KEY, ZAI_KEY: chanKeys.ZAI_KEY, CUSTOM_MODEL: customModel, SCOUT_MODELS: scoutMdls, refvoice: rvMeta ? { present: true, wpm: rvMeta.wpm || 0, lang: rvMeta.lang || "" } : { present: false }, KAGGLE: kaggleCreds, GH_TOKEN: env.GH_TOKEN || "", GH_REPO: env.GH_REPO || "", ENGINE_REPO: env.ENGINE_REPO || "n8n00101-coder/julie-ai-voice-engine" });
     }
     // v91: internal triggers for the model scout + limit warning
     // (RUNNER_KEY-guarded, same pattern as /job — test/proof only).

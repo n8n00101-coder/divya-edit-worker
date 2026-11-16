@@ -15,6 +15,11 @@ def load_job():
         for v in str(j.get(k, "")).split(","):
             if v.strip():
                 print(f"::add-mask::{v.strip()}")
+    # v84: mask the Kaggle API key too — it arrives on the job record
+    # (runner channel only) and must never survive into a log line.
+    _kag = j.get("KAGGLE") or {}
+    if _kag.get("key"):
+        print(f"::add-mask::{_kag['key']}")
     os.environ["WA_TOKEN"] = j["WA_TOKEN"]
     os.environ["WA_PHONE_ID"] = j["PHONE_ID"]
     os.environ["GROQ_KEY"] = j["GROQ_KEY"]
@@ -159,6 +164,67 @@ async def edit_create_job(j, wa, note):
         print("wa send_media failed (post-result, non-fatal):", str(e)[:200])
 
 
+async def voicebatch_job(j, wa, note):
+    """v84: voice a whole script's lines on the compute providers —
+    the owner's own Kaggle GPU and/or GitHub Actions runners (hybrid
+    split + automatic failover in voicecompute.py). Delivers ONE zip
+    (<nnn>.mp3 per passed line in global numbering + a merged
+    batch.qc.json) through the normal result channel."""
+    import io, zipfile
+    import voicecompute as vc
+    lines = [str(x) for x in (j.get("lines") or [])]
+    lang = j.get("lang") or "en"
+    kag = j.get("KAGGLE") or {}
+    kaggle = vc.KaggleClient(kag["user"], kag["key"]) if kag.get("user") and kag.get("key") else None
+    actions = vc.ActionsClient(j.get("GH_TOKEN") or "", repo=j.get("ENGINE_REPO") or vc.ENGINE_REPO,
+                               job_tag=JOB) if j.get("GH_TOKEN") else None
+    if kaggle is None and actions is None:
+        app_state("failed", "Voice compute provider ledu — Setup lo Kaggle connect cheyyi.")
+        await note("⚠️ Voice ki compute provider ledu. Setup lo Kaggle connect chesthe GPU meedha fast ga avthundhi; lekunte konchem sepu aagi malli try cheyyi.")
+        return
+    switch_lines = []
+
+    def on_status(t):
+        app_state("running", t)
+
+    def on_switch(t):
+        # voicecompute calls this at most once per failed provider;
+        # the line is mirrored to the live status immediately and sent
+        # as ONE chat message when the batch settles.
+        app_state("running", t)
+        switch_lines.append(t)
+
+    out = await asyncio.to_thread(vc.run_voice_batch, lines, lang,
+                                  kaggle=kaggle, actions=actions,
+                                  on_status=on_status, on_switch=on_switch)
+    for t in switch_lines:
+        await note("🔁 " + t)
+    done = out["done"]
+    if not done:
+        why = "; ".join(f"{k}: {v}" for k, v in list(out["errors"].items())[:2])[:240]
+        app_state("failed", f"Voice okka line kuda avvaledu. {why}")
+        await note("⚠️ Voice batch fail ayyindhi — okka line kuda avvaledu. Konchem sepu tarvatha malli try cheyyi.")
+        return
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for idx in sorted(done):
+            zf.writestr(f"{idx:03d}.mp3", done[idx])
+        zf.writestr("batch.qc.json", json.dumps({
+            "lines": [{"index": i, "ok": i in done, "reason": out["gate_failed"].get(i)}
+                      for i in range(1, len(lines) + 1)],
+            "switches": out["switches"], "errors": out["errors"],
+            "providers": list(out["qc"].keys())}, indent=1))
+    note_txt = (f"Voice batch: {len(done)}/{len(lines)} lines ready"
+                + (f"; {len(out['gate_failed'])} lines gates pass avvaledu" if out["gate_failed"] else "")
+                + (f"; switch {out['switches'][0]['from']} -> {out['switches'][0]['to']} ({out['switches'][0]['reason']})" if out["switches"] else ""))
+    rr = httpx.post(f"{WORKER}/api/runner/result", params={"job": JOB, "note": note_txt[:290]},
+                    content=buf.getvalue(), headers={"x-runner-key": KEY, "content-type": "application/zip"}, timeout=300)
+    print("voicebatch result upload", rr.status_code)
+    if rr.status_code == 200:
+        mark_result_delivered()
+    await note(f"🎙️ {note_txt}. Files History lo unnayi.")
+
+
 async def _run_job(j):
     import whatsapp as wa, autoedit  # import after env is set (config reads env)
     to = j["to"]
@@ -179,6 +245,8 @@ async def _run_job(j):
         await wa.send_text(to, t)
 
     try:
+        if j.get("mode") == "voicebatch":
+            return await voicebatch_job(j, wa, note)
         if j.get("mode") == "edit_create":
             return await edit_create_job(j, wa, note)
         if j.get("mode") == "create":
