@@ -35,6 +35,7 @@ spec excludes graphics, or JULIE_HYPERFRAMES_PRIMARY=0.
 """
 
 import os
+import re
 import subprocess
 
 import anti_boring
@@ -42,6 +43,77 @@ import compliance
 import hyperframes_codegen
 
 _PLACE_VISUALS = {"india_map", "world_dots", "map"}
+
+# NEXT-ROUND (Fix 3 — HF TEXT WHITELIST): the second film's
+# lower-thirds printed the plan's INTERNAL text — the Visual
+# Director's line-descriptions ("the line is about time
+# passing...") as microcopy, an internal emotion score as a data
+# card ("EMOTION 0.1"), and the structural marker "NEXT" as an
+# on-screen title. A composition may now only render
+# VIEWER-FACING text: the scene's spoken line, its (sanitised)
+# label, a number the line actually speaks together with its
+# resolved source, or packaging/topic fields. Internal fields —
+# the director's `why` rationale, analyst scores, structural
+# markers — are structurally unrenderable: beat_layers never
+# reads them, and a label that IS one is rejected, not printed.
+_STRUCTURAL_LABELS = {
+    "NEXT", "CHAPTER", "INTRO", "OUTRO", "TITLE", "END", "ENDING",
+    "HOOK", "CTA", "TEASE", "TRANSITION", "EMOTION", "SCORE",
+    "BEAT", "SCENE", "OPENING", "CLOSING", "INTERLUDE", "MONTAGE",
+    "TITLE CARD", "CHAPTER CARD", "END CARD",
+}
+_INTERNAL_MARKERS = (
+    "the line", "line is about", "line itself", "emotion",
+    "score", "stage direction", "writer's", "writer’s",
+    "description", "internal", "placeholder", "lorem",
+    "visual opportunity", "turning point",
+)
+
+
+def _viewer_label(scene):
+    """The scene's label, when it is fit to print — else ''.
+    A label is viewer-facing only when it is short, is not a
+    structural marker (NEXT / CHAPTER / EMOTION ...) and does
+    not read as plan prose (a sentence describing the line)."""
+    label = str((scene or {}).get("label") or "").strip()
+    if not label:
+        return ""
+    if label.upper() in _STRUCTURAL_LABELS:
+        return ""
+    low = label.lower()
+    if any(m in low for m in _INTERNAL_MARKERS):
+        return ""
+    if re.match(r"^(chapter|scene|beat|part)\s*\d*$", low):
+        return ""
+    if len(label) > 44 or len(label.split()) > 6:
+        return ""
+    return label
+
+
+def _spoken_value(scene, num):
+    """True when the scene's spoken line actually speaks this
+    number. A plan-side value the narration never says (an
+    analyst's emotion score, a counter nobody voices) is
+    internal data, not a claim — it may not become a chart."""
+    vo = str((scene or {}).get("vo") or "")
+    if not vo:
+        return False
+    try:
+        vals = {round(float(v), 4)
+                for v, _u in compliance.spoken_numbers(vo)}
+    except Exception:
+        vals = set()
+    return round(float(num), 4) in vals
+
+
+def _vo_excerpt(scene, limit=70):
+    """The scene's spoken line, trimmed — the one sub-line a
+    lower-third may always carry (it is the caption text)."""
+    vo = " ".join(str((scene or {}).get("vo") or "").split())
+    if len(vo) <= limit:
+        return vo
+    cut = vo[:limit].rsplit(" ", 1)[0].rstrip(",;:")
+    return cut + "…"
 
 
 def enabled_for(cfg):
@@ -76,11 +148,16 @@ def beat_layers(scene, plan, first=False):
     vis = compliance.effective_visual(scene)
     if vis == "document":
         return None
-    label = str(scene.get("label") or "").strip()
+    # NEXT-ROUND Fix 3: every string below comes from the
+    # whitelist — sanitised label, spoken number + resolved
+    # source, topic/title packaging fields, or the spoken line
+    # itself. scene["why"] (the director's rationale) and any
+    # unspoken plan value are never read here again.
+    label = _viewer_label(scene)
     value = str(scene.get("value") or "").strip()
     layers = []
     num = _number(value) if value else None
-    if num is not None:
+    if num is not None and _spoken_value(scene, num):
         src = _resolved_source(scene, plan)
         layers.append({
             "type": "data_chart",
@@ -111,10 +188,12 @@ def beat_layers(scene, plan, first=False):
             "sub": "",
         })
     elif label:
+        src = _resolved_source(scene, plan)
         layers.append({
             "type": "lower_third",
             "name": label.title(),
-            "role": str(scene.get("why") or "")[:70],
+            "role": (f"Source: {src}" if src
+                     else _vo_excerpt(scene)),
         })
     return layers or None
 

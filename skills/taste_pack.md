@@ -11,6 +11,11 @@ Every frame must have a reason, and the reason is the LINE being spoken at
 that moment. A visual that cannot be traced to words in its own line is
 wrong, however pretty it is. (Blind R2: the plan's "why" for a beat must
 share actual words with the beat's line.)
+ROUND 3 RULING: this law governs MEANING-trace, not depiction mode —
+a beat satisfies it by proving or widening the line's claim
+(evidence/context), not only by picturing its words. Literal
+depiction is budgeted (~20% of beats — see Evidence); read as a
+literal-illustration command, this law manufactures slideshows.
 
 ## Meaning first (asset priority)
 1. Real footage of the thing the line names (vision-verified, never
@@ -69,6 +74,22 @@ the user's SILENCE never does.
 - An enumeration is laid out as its items, in the line's own words.
 - Labels and headlines are the line's own words — never production
   internals, never a word from a different line.
+
+### Round 3: motion and title breaks
+- Stillness is a budget: **fully still frames ≤4% of runtime**
+  (Magnates, measured). Every still image carries a push, pan,
+  parallax or composite motion; a static widget on a static ground
+  spends the budget in one beat.
+- Music coverage is ~100% and level-shaped: the score ducks and
+  thins but does not EXIT between chapters. Silence is spent only
+  as designed events (below), never as gaps the mix forgot.
+- Title breaks (films >8 min): every few minutes the film may come
+  to a FULL STOP — a chapter title card over 10–16 s of near-
+  silence, carrying the chapter's QUESTION. This is chapter
+  grammar, not a recap and not an ending signal; the next beat
+  answers with motion and sound together.
+- A chapter transition is a sound event as much as a picture cut:
+  the first frame of a chapter and its first sound land together.
 
 ## Effects discipline (the Compromise failure: the same round graphic in
 ~40% of frames — variety is PLANNED here, never audited into existence)
@@ -338,6 +359,24 @@ Distilled from a 6-reel editing course; every rule below was checked against the
   in 3 videos becomes a standing fix in the next plan; a spike's
   structure becomes a reusable pattern.
 
+### Round 3: the 15-second promise
+- The value proposition lands by **0:15** (measured: +18% retention
+  at 1:00). The title's question is restated as a promise with its
+  stakes — not as a greeting, a logo, or a chapter list.
+- Hook construction: the film's most arresting TRUE moment inside
+  ~7 s, then a bridge of ≤10 s that connects it to the subject.
+  Reassure first (you clicked right), excite second.
+- The hook is graded at 0:30: target ≥60% still watching, aim 65%.
+  Below grade, the fix is the opening, not the body.
+- Every ~30 s segment must stand on its own: a viewer landing
+  anywhere can say what the film is about within 10 s of that
+  point. Chapter openings re-anchor the promise in new words —
+  never a recap.
+- Opening mode is chosen by anchor strength: a strong real moment
+  may open SLOW (one unbroken hold — the anti-retention opening);
+  a weak opening must open fast. What is banned is a slow opening
+  with no anchor: a title fading in over a gradient.
+
 ## Montage, with the honesty leash
 - Juxtaposition only where the line itself makes the comparison —
   the viewer builds the contrast the words already set up.
@@ -393,6 +432,25 @@ knowledge file, §6).
   description correction naming the timestamp, what was shown, and
   what should have been shown. (ColdFusion.)
 
+### Round 3: mix and depiction budgets
+- Media mix is a budget, counted at QC (fern, measured over 584
+  shots): evidence media (real footage, screenshots, documents,
+  photos) is the base — target ≥60% of beats on evidence media;
+  reconstruction/graphics ≤25–40% and only where the thing is
+  unfilmable; faces/presenter ≤5%.
+- Depiction is a budget too: each beat is tagged evidence (proves
+  the line), context (widens it), literal (repeats it) or metaphor.
+  **Literal is capped at ~20% of beats.** A film that illustrates
+  every line literally is a slideshow by definition, whatever its
+  cut rate.
+- Place 2–4 LONG HOLDS (20–41 s) on the strongest uncut evidence.
+  Cutting away from a hold early to "keep pace" is a defect; the
+  holds are where the film earns belief.
+- A number appears on screen ONLY as evidence: with its retrieved
+  source on the same frame, at reading size, for reading time.
+  Rhetorical numbers stay spoken. A counter that decorates a line
+  is the Compromise/2023% failure and is banned by name.
+
 ## Documentary structure at trending standard
 - State the mystery by 0:60: no intro, sponsor or promise-speech before
   it. The first narration sentence gives a precise date + place, or
@@ -419,6 +477,23 @@ knowledge file, §6).
   still unknown; the single end CTA follows the landing and nothing
   follows the CTA. Where the opening visual can return stripped of all
   labels and overlays for the close, use it. (LEMMiNO; fern; Harris.)
+
+### Round 3: anchors before words
+- Find the visual anchors BEFORE the script is locked. An anchor is
+  a piece of visual evidence that shows the thing without much
+  explanation. A chapter with no anchor is not written yet — it is
+  researched more, or cut.
+- Alternate anchor → context → anchor for the whole runtime.
+  Evidence before argument: show the thing, then interpret it. A
+  line that only *describes* an anchor the film never shows is a
+  promise the edit cannot cash.
+- Build the board early: the film's central graphic/map/evidence
+  frame is established inside the first ~2 minutes; after that,
+  footage and evidence carry the film and graphics return only to
+  update the board.
+- The closing thesis sentence is written before the chapters are
+  (Wendover law): the film argues toward one sentence, and the last
+  spoken line is that sentence.
 
 ## Loops and re-hooks, run as a ledger
 - Keep a loop ledger in the plan: at most 3 loops open at once — 1 main
@@ -561,6 +636,22 @@ knowledge file, §6).
   a defect. TTS pauses are built by function — comma, sentence and
   scene-change pauses at audibly different lengths; uniform pauses
   are a synthetic tell.
+
+### Round 3: the dynamics map
+- The cue sheet gains a DYNAMICS column: each chapter is planned
+  loud / medium / near-silent BEFORE the mix. A film whose chapters
+  share one level is flat by plan, whatever the meter says later
+  (Julie's LRA 2.4–3.1 films were flat at the plan stage first).
+- One hinge per chapter maximum: music + voice + picture thin to
+  near-black, then ONE sound event (a click, a door, a real-world
+  recording) restarts the film in a new register (Nexpo hinge).
+  Hinges sit at turns and forensic reveals, never at random.
+- Real-world audio is evidence: where the story has a recording
+  (a call, a clip, a room tone), the audience hears the thing
+  itself at natural volume before the narrator interprets it.
+- Score to the locked picture: music is fitted AFTER the picture
+  cut locks (Kurzgesagt order). Choosing the bed first and cutting
+  to it inverts the craft and is why beats land between phrases.
 
 ## Finish: matching, type roles, honest charts
 - Correct before grade, in order: normalise → exposure/white balance
@@ -1026,3 +1117,48 @@ practices live in the knowledge files and stay rejected.*
   face + dense type are sequenced, never simultaneous. The
   layer runs OVER real footage — full-frame type only at
   hooks, act turns and data beats, in short runs.
+
+# ADDITIONS — Round 3: measured craft (merged 2026-11-16)
+
+## Style selection
+- One style per film, chosen at intake and named in the plan, from
+  the style cards (Vox explainer / Harris investigation / fern
+  evidence / LEMMiNO slow burn / Nexpo dread / Magnates mini-movie /
+  Wendover system / Kurzgesagt metaphor). The card is chosen for
+  the CLICKING viewer and the topic's evidence type — receipts →
+  fern; a map → Harris; a system → Wendover; a giant name → Magnates;
+  an abstract mechanism → Kurzgesagt rules on a Vox/Wendover frame.
+- The chosen card's numbers bind the whole film (mix, cut curve,
+  sound shape, ending). Mixing cards mid-film is a defect unless
+  the plan names a deliberate act-break switch.
+- Subject scale is a preflight fact: a Magnates-shaped edit on a
+  small subject is the measured flop condition — if the subject is
+  small, shrink the card, not the truth.
+
+## The compression pass
+- After the writer's draft and before any top-up: one pass that may
+  ONLY cut, merge and reorder — never add. Target: remove every
+  sentence whose claim already exists earlier in the film. (The
+  studios' dozen drafts, at Julie's scale: draft → compression →
+  lock.)
+- A top-up may only add NEW evidence, a NEW angle, or a NEW
+  consequence — a claim, fact or example that appears nowhere
+  earlier. A top-up that restates is rejected at the plan, however
+  well written; the chapter ships at honest length instead.
+- Chapters are cumulative: each chapter's first beat names what the
+  previous chapter PROVED and what it left open. Parallel list
+  chapters (interchangeable order) are a structure defect.
+
+## The could/should audit
+- Every graphic, effect and counter in the plan names its job in
+  one clause ("shows the route the voice names", "proves the date
+  from the document"). A beat whose visual cannot name a job is
+  cut or replaced with evidence (Hillier-Smith's Jurassic Park
+  test: not "can I?" — "should I?").
+- Aim for the film 80% of the audience loves over the film 100%
+  tolerates: when a retention trick and the film's dignity
+  conflict, dignity wins and the QC note says so.
+- Post-film self-grade (until real analytics exist): scrub at 4× —
+  any 8 s stretch with no change of picture state, sound state or
+  information state is flagged as a drift point and counted in the
+  delivery note.

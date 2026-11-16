@@ -338,6 +338,123 @@ def _num_in_snippet(v, u, snippet):
     return False
 
 
+# NEXT-ROUND (Fix 4 — FACT GATE number sanity): digit containment
+# alone let "every EV mile cuts CO2 by about 2.5 kg" resolve
+# against a source whose 2.5 was TONNES OVER A LIFETIME — the
+# digits matched, the claim was ~10x too high. A number now only
+# supports a claim when an occurrence of that value in the
+# retrieved text agrees on UNIT, SCALE (thousand/million/...) and
+# BASIS (per-mile vs per-year vs lifetime vs total). A claim that
+# states a basis its source occurrence does not carry is
+# unresolved — it faces the same hedge-or-cut mechanics as any
+# unsourced claim.
+_UNIT_RES = (
+    (r"percent|per\s*cent|%", "%"),
+    (r"kilograms?|kg\b", "kg"),
+    (r"tonnes?|tons?\b", "tonne"),
+    (r"grams?\b", "g"),
+    (r"miles?\b", "mile"),
+    (r"kilometres?|kilometers?|km\b", "km"),
+    (r"litres?|liters?\b", "l"),
+    (r"kwh\b", "kwh"),
+    (r"mwh\b", "mwh"),
+    (r"hours?\b", "hour"),
+    (r"minutes?\b", "minute"),
+    (r"days?\b", "day"),
+    (r"years?\b", "year"),
+    (r"dollars?|usd\b", "usd"),
+)
+_MULT_RES = ((r"trillion", 1e12), (r"billion", 1e9),
+             (r"million", 1e6), (r"thousand", 1e3))
+_BASIS_NOUNS = ("mile", "kilometre", "kilometer", "km", "year",
+                "day", "hour", "month", "week", "vehicle", "car",
+                "person", "capita")
+
+
+def _ctx_unit(tail):
+    for pat, canon in _UNIT_RES:
+        if re.search(r"(?<![a-z])" + pat, tail):
+            return canon
+    return ""
+
+
+def _ctx_basis(window):
+    w = " " + str(window or "").lower() + " "
+    if re.search(r"life\s?time|lifespan|life\s*cycle", w):
+        return "lifetime"
+    if re.search(r"\bin\s+total\b|\btotal\s+of\b|\baltogether\b", w):
+        return "total"
+    if re.search(r"\bannually\b|\byearly\b", w):
+        return "per-year"
+    if re.search(r"\bdaily\b", w):
+        return "per-day"
+    nouns = "|".join(_BASIS_NOUNS)
+    m = re.search(rf"\b(?:per|every|each)\s+({nouns})\b", w)
+    if m:
+        return "per-" + (_ctx_unit(m.group(1)) or m.group(1))
+    m = re.search(rf"\ba\s+({nouns})\b", w)
+    if m:
+        return "per-" + (_ctx_unit(m.group(1)) or m.group(1))
+    return ""
+
+
+def _number_contexts(text, value):
+    """Every occurrence of `value` in `text`, each with the unit,
+    scale multiplier and basis its local context states:
+    [{unit, mult, basis}]. Empty when the value never appears in
+    digit form (word-numbers fall back to legacy containment)."""
+    text = str(text or "").replace(",", "")
+    forms = {f"{value:g}",
+             f"{value:.1f}".rstrip("0").rstrip("."),
+             f"{int(value)}" if float(value) == int(value)
+             else f"{value:g}"}
+    out = []
+    for f in sorted((x for x in forms if x), key=len, reverse=True):
+        for m in re.finditer(
+                rf"(?<![\d.]){re.escape(f)}(?!\d)(?!\.\d)", text):
+            tail = text[m.end():m.end() + 48]
+            window = text[max(0, m.start() - 48):m.end() + 64]
+            mult = 1.0
+            for pat, mv in _MULT_RES:
+                if re.search(rf"^\s*{pat}\b", tail) or \
+                        re.search(rf"\b{pat}\b", tail[:24]):
+                    mult = mv
+                    break
+            out.append({"unit": _ctx_unit(tail[:40]),
+                        "mult": mult,
+                        "basis": _ctx_basis(window)})
+        if out:
+            break
+    return out
+
+
+def _num_supported(v, u, vo, snippet):
+    """NEXT-ROUND Fix 4: does the retrieved text support THIS
+    claim's number — same value, compatible unit and scale, and
+    the same basis when the claim states one? Falls back to the
+    legacy containment check only when the claim's number never
+    appears in digit form in the line (word-numbers), where no
+    context can be parsed."""
+    claim_ctxs = _number_contexts(vo, v)
+    if not claim_ctxs:
+        return _num_in_snippet(v, u, snippet)
+    src_ctxs = _number_contexts(snippet, v)
+    if not src_ctxs:
+        return False
+    for c in claim_ctxs:
+        cu = c["unit"] or ("%" if u == "%" else "")
+        for s in src_ctxs:
+            su = s["unit"] or ("%" if u == "%" else "")
+            if cu and su != cu:
+                continue            # 2.5 kg is not 2.5 tonnes
+            if c["mult"] != s["mult"]:
+                continue            # 2.5 is not 2.5 million
+            if c["basis"] and s["basis"] != c["basis"]:
+                continue            # per-mile is not per-lifetime
+            return True
+    return False
+
+
 def scene_claims(scene, research=None):
     """The factual claims one scene makes, each judged:
     {kind: 'stat'|'event', text, sourced, hedged}.
@@ -364,14 +481,29 @@ def scene_claims(scene, research=None):
     # scripts sentence by sentence.
     nums = [(v, u) for v, u in _comp.spoken_numbers(vo)
             if u in ("%", "x", "ratio") or v >= 10]
+    # NEXT-ROUND Fix 4: a SMALL number carrying a physical unit is
+    # a statistic too ("cuts CO2 by about 2.5 kg" — the second
+    # film's wrong number slipped the gate partly because 2.5 < 10
+    # read as narrative). A bare small number with no unit stays
+    # narrative, exactly as before.
+    _seen_n = {v for v, _u in nums}
+    for v, u in _comp.spoken_numbers(vo):
+        if v not in _seen_n and not u:
+            if any(c["unit"] for c in _number_contexts(vo, v)):
+                nums.append((v, u))
+                _seen_n.add(v)
     if research is None:
         sourced = bool(str((scene or {}).get("source") or "").strip()) \
             or "according to" in low
         stat_sourced = sourced
     else:
         entry = resolve_source(scene, research)
+        # NEXT-ROUND Fix 4: containment is now basis-aware — the
+        # number must appear in the retrieved text with a
+        # compatible unit/scale and the claim's own basis.
         stat_sourced = bool(entry) and bool(nums) and all(
-            _num_in_snippet(v, u, entry.get("snippet")) for v, u in nums)
+            _num_supported(v, u, vo, entry.get("snippet"))
+            for v, u in nums)
         sourced = bool(entry)
     if nums:
         claims.append({"kind": "stat",
@@ -714,6 +846,151 @@ def novelty_report(new_texts, existing_texts):
             "worst_overlap": round(worst, 3),
             "offending": [i + 1 for i, r in enumerate(ratios)
                           if r > 0.6]}
+
+
+# NEXT-ROUND (Fix 1 — top-up restatement, semantic layer):
+# novelty_report's word 4-grams only catch VERBATIM repetition.
+# The second film's top-up ("The Rise of Electric Vehicles",
+# 59s -> 102s) was a compressed PARAPHRASE of the same chapter —
+# it scored 0.0 on the 4-gram gate and shipped, so the viewer
+# heard one 59-second argument twice. restatement_report judges
+# the top-up the way a viewer hears it: stemmed content words,
+# synonym/concept normalisation (declined == cheaper == ~down;
+# tax breaks == incentives), and fact novelty (a number or a
+# named entity the chapter does not already carry). A top-up
+# that adds no new claim/fact/angle is a restatement, however
+# fresh its wording.
+_STOPWORDS = frozenset("""
+the a an and or but if then else of at by for with about against
+between into through during before after above below to from up
+down in out on off over under again further once here there when
+where why how all any both each few more most other some such no
+nor not only own same so than too very can will just is are was
+were be been being have has had having do does did doing would
+should could ought i you he she it we they them his her its our
+their this that these those am an as are us now still yet also
+one two first second get gets got make makes made take takes
+""".split())
+
+_CONCEPTS = {}
+
+
+def _concept(*words, name):
+    for w in words:
+        _CONCEPTS[w] = "~" + name
+
+
+_concept("declin", "drop", "fell", "fall", "decreas", "reduc",
+         "cheaper", "lower", "plunge", "slump", name="down")
+_concept("cost", "price", name="cost")
+_concept("car", "vehicle", "automobile", name="vehicle")
+_concept("tax", "incentive", "subsidy", "rebate", "break",
+         name="incentive")
+_concept("charg", "charge", "charger", name="charging")
+_concept("lag", "barrier", "obstacle", "bottleneck",
+         name="obstacle")
+_concept("surge", "risen", "rise", "rose", "growth", "grow",
+         "momentum", "increas", "climb", name="growth")
+_concept("co2", "carbon", name="emissions")
+del _concept
+
+
+def _stem(w):
+    if len(w) > 4 and w.endswith("ies"):
+        w = w[:-3] + "y"
+    elif len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+        w = w[:-1]
+    if len(w) > 5 and w.endswith("ing"):
+        w = w[:-3]
+    elif len(w) > 4 and w.endswith("ed"):
+        w = w[:-2]
+    if len(w) > 4 and w.endswith("ly"):
+        w = w[:-2]
+    return w
+
+
+def _content_words(text):
+    out = set()
+    for w in re.findall(r"[a-z][a-z'-]*", str(text or "").lower()):
+        w = w.strip("'-")
+        if len(w) < 3 or w in _STOPWORDS:
+            continue
+        s = _stem(w)
+        out.add(_CONCEPTS.get(s, s))
+    return out
+
+
+def _entities(text):
+    """Named entities a line carries: capitalised words away from
+    a sentence start, plus acronyms. Crude by design — it only
+    has to notice when a top-up names something NEW."""
+    out = set()
+    for sent in _sentences(text):
+        toks = re.findall(r"[A-Za-z][A-Za-z'-]*", sent)
+        for i, t in enumerate(toks):
+            if i == 0:
+                continue
+            if len(t) >= 3 and t[0].isupper() and not t.isupper():
+                out.add(t.lower())
+            elif len(t) >= 2 and t.isupper():
+                out.add(t.lower())
+    return out
+
+
+def _numbers_of(text):
+    try:
+        import compliance as _comp
+        vals = {round(float(v), 4)
+                for v, _u in _comp.spoken_numbers(text)}
+    except Exception:
+        vals = {float(x.replace(",", ""))
+                for x in re.findall(r"\d[\d,]*(?:\.\d+)?",
+                                     str(text or ""))}
+    # "zero emission zones" speaks the WORD zero as an adjective,
+    # not a statistic — a lone 0 is never a top-up's new fact.
+    vals.discard(0.0)
+    return vals
+
+
+def restatement_report(new_texts, existing_texts):
+    """Is this proposed top-up a RESTATEMENT of the chapter it
+    extends? A scene counts as NEW material when it carries a
+    number or a named entity the chapter lacks, or when most of
+    its content is new to the chapter. The top-up is a
+    restatement when most scenes individually restate, or when
+    NOTHING in it is a new fact/entity and its mean content
+    containment in the chapter stays high, or when its mean
+    containment is overwhelming on its own."""
+    existing_words = set()
+    for t in existing_texts or []:
+        existing_words |= _content_words(t)
+    existing_nums = set()
+    existing_ents = set()
+    for t in existing_texts or []:
+        existing_nums |= _numbers_of(t)
+        existing_ents |= _entities(t)
+    containments, restating, any_new_fact = [], [], False
+    for i, t in enumerate(new_texts or []):
+        words = _content_words(t)
+        c = (len(words & existing_words) / len(words)) if words \
+            else 0.0
+        containments.append(round(c, 3))
+        new_fact = bool((_numbers_of(t) - existing_nums)
+                        or (_entities(t) - existing_ents))
+        any_new_fact = any_new_fact or new_fact
+        if not new_fact and c >= 0.5:
+            restating.append(i + 1)
+    n = len(containments)
+    mean = (sum(containments) / n) if n else 0.0
+    restatement = bool(n) and (
+        len(restating) >= 0.6 * n
+        or (not any_new_fact and mean >= 0.35)
+        or mean >= 0.6)
+    return {"restatement": restatement,
+            "mean_containment": round(mean, 3),
+            "scene_containments": containments,
+            "restating_scenes": restating,
+            "new_fact": any_new_fact}
 
 
 # ------------------------------------------------------------------

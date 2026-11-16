@@ -125,11 +125,19 @@ def begin_film(limit=None, deadline=None):
     print(f"channel: film budget armed — {_FILM['limit']} calls"
           + (f", deadline in {deadline - _monotonic():.0f}s"
              if deadline else ""))
+    # NEXT-ROUND (Fix 5c): the pool's shape is declared up front,
+    # in the log and (via film_stats) in the job report — a
+    # single-provider film must never read as if failover stood
+    # ready behind it.
+    _st = channel_status()
+    if _st["warning"]:
+        print(_st["warning"] + " for this film")
+        _LOG.append({"channel_warning": _st["warning"]})
 
 
 def film_stats():
     return {"limit": _FILM["limit"], "used": _FILM["used"],
-            "log": list(_LOG)}
+            "log": list(_LOG), "channel": channel_status()}
 
 
 def reset():
@@ -155,6 +163,24 @@ def _scout_models():
         return {}
 
 
+def _custom_model():
+    """NEXT-ROUND (Fix 5b): the job owner's sealed Add-Model
+    record, handed over in the job payload (JULIE_CUSTOM_MODEL:
+    {base, model, key}) — an OpenAI-compatible endpoint the owner
+    connected in Setup. It joins the pool as a "custom" slot so a
+    film can fail over to the owner's own model too."""
+    try:
+        import json as _json
+        d = _json.loads(os.environ.get("JULIE_CUSTOM_MODEL", "")
+                        or "null")
+        if isinstance(d, dict) and d.get("base") and d.get("model") \
+                and d.get("key"):
+            return d
+    except Exception:
+        pass
+    return None
+
+
 def _slots():
     """Configured (name, keys, base, models) per provider, in chain
     order. The Groq leg is served by the injected sweep, not here."""
@@ -169,11 +195,31 @@ def _slots():
                 if isinstance(m, str) and m and m not in ms:
                     ms.append(m)
             out.append((name, keys, base, ms))
+    cm = _custom_model()
+    if cm:
+        out.append(("custom", [str(cm["key"])],
+                    str(cm["base"]).rstrip("/"),
+                    [str(cm["model"])]))
     return out
 
 
 def configured_providers():
     return [s[0] for s in _slots()]
+
+
+def channel_status():
+    """NEXT-ROUND (Fix 5c): the pool's honest shape for the job
+    report. A one-provider pool has NO failover — the second film
+    burned ~70s per rate-limited stage while its report implied
+    failover stood ready, because production held exactly one
+    Groq key. When that is the shape, say so in plain words."""
+    names = configured_providers()
+    single = len(names) == 1
+    return {"providers": names,
+            "single_provider": single,
+            "warning": (f"channel: single-provider ({names[0]}) — "
+                        f"no failover possible"
+                        if single else None)}
 
 
 # ------------------------------------------------------------ the Groq leg

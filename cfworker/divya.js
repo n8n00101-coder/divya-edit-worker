@@ -6280,7 +6280,37 @@ export default {
       // when the free Groq quota died mid-film (429).
       let scoutMdls = { groq: [], openrouter: [], gemini: [] };
       try { scoutMdls = await scoutModels(env); } catch {}
-      return Response.json({ ...jrec, WA_TOKEN: env.WA_TOKEN, GROQ_KEY: env.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: ownPexels || env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "", OPENROUTER_KEY: env.OPENROUTER_KEY || "", GEMINI_KEY: env.GEMINI_KEY || "", CEREBRAS_KEY: env.CEREBRAS_KEY || "", SAMBANOVA_KEY: env.SAMBANOVA_KEY || "", NVIDIA_KEY: env.NVIDIA_KEY || "", MISTRAL_KEY: env.MISTRAL_KEY || "", COHERE_KEY: env.COHERE_KEY || "", ZAI_KEY: env.ZAI_KEY || "", SCOUT_MODELS: scoutMdls, refvoice: rvMeta ? { present: true, wpm: rvMeta.wpm || 0, lang: rvMeta.lang || "" } : { present: false } });
+      // NEXT-ROUND (Fix 5b): the channel-pool audit — this payload
+      // used to draw ONLY on Worker env keys, so an owner who had
+      // sealed their own provider keys in Setup (the automate
+      // chain seals ukey:<owner>:<provider>; Add-Model seals the
+      // "custom" slot plus a umodel record) gave the runner
+      // NOTHING extra to fail over to: the second film ran
+      // groq-only because production's env holds one key, while
+      // owner-sealed keys sat unused in KV. Owner keys now ride
+      // the payload owner-first — the same openKey || env pattern
+      // as ownPexels above and the chat brain — and the owner's
+      // Add-Model record rides as CUSTOM_MODEL for channel.py's
+      // custom slot. (The sys slots are mail-only — Resend/Brevo —
+      // and carry no LLM key to wire.)
+      const CHAN_PROVS = [["groq", "GROQ_KEY"], ["cerebras", "CEREBRAS_KEY"], ["gemini", "GEMINI_KEY"], ["openrouter", "OPENROUTER_KEY"], ["sambanova", "SAMBANOVA_KEY"], ["nvidia", "NVIDIA_KEY"], ["zai", "ZAI_KEY"], ["mistral", "MISTRAL_KEY"], ["cohere", "COHERE_KEY"]];
+      const chanKeys = {};
+      for (const [prov, envName] of CHAN_PROVS) {
+        let own = "";
+        try { own = jrec.to ? await openKey(env, jrec.to, prov) : ""; } catch {}
+        chanKeys[envName] = own || env[envName] || "";
+      }
+      let customModel = null;
+      try {
+        if (jrec.to) {
+          const crec = JSON.parse((await env.KV.get(`umodel:${jrec.to}`)) || "null");
+          if (crec && crec.base && crec.model) {
+            const ck = await openKey(env, jrec.to, "custom");
+            if (ck) customModel = { base: crec.base, model: crec.model, key: ck };
+          }
+        }
+      } catch {}
+      return Response.json({ ...jrec, WA_TOKEN: env.WA_TOKEN, GROQ_KEY: chanKeys.GROQ_KEY, PHONE_ID: env.PHONE_ID, PEXELS_KEY: ownPexels || env.PEXELS_KEY || "", PIXABAY_KEY: env.PIXABAY_KEY || "", OPENROUTER_KEY: chanKeys.OPENROUTER_KEY, GEMINI_KEY: chanKeys.GEMINI_KEY, CEREBRAS_KEY: chanKeys.CEREBRAS_KEY, SAMBANOVA_KEY: chanKeys.SAMBANOVA_KEY, NVIDIA_KEY: chanKeys.NVIDIA_KEY, MISTRAL_KEY: chanKeys.MISTRAL_KEY, COHERE_KEY: chanKeys.COHERE_KEY, ZAI_KEY: chanKeys.ZAI_KEY, CUSTOM_MODEL: customModel, SCOUT_MODELS: scoutMdls, refvoice: rvMeta ? { present: true, wpm: rvMeta.wpm || 0, lang: rvMeta.lang || "" } : { present: false } });
     }
     // v91: internal triggers for the model scout + limit warning
     // (RUNNER_KEY-guarded, same pattern as /job — test/proof only).

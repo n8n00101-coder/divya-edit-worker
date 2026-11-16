@@ -42,7 +42,17 @@ _PACK = os.path.join(_HERE, "skills", "taste_pack.md")
 # reservation and stays under the cap with a ~5x margin against
 # the size that died. Section lists are ordered so the decisive
 # sections fit inside the budget at the pack's current size.
-SLICE_BUDGET = 11000
+#
+# NEXT-ROUND (round-3 registration, 2026-11-16): raised to 12,600.
+# The round-3 sections (Style selection / The compression pass /
+# The could/should audit + the five in-section appends) grew the
+# story and qc slices past 11,000 with BOTH the proof-fix-pinned
+# sections (Loops in story, Finish in qc) and the new sections
+# inside — at 11,000 the trimmer had to evict one set or the
+# other. 12,600 chars ≈ 3.6K tokens: with a stage's own content
+# and the output reservation the request stays ~4.7x under the
+# ~59K-char size that died, so the safety argument is unchanged.
+SLICE_BUDGET = 12600
 
 GLOBAL_SECTIONS = ("The one law", "Format literacy", "Honesty contract")
 
@@ -50,10 +60,11 @@ GLOBAL_SECTIONS = ("The one law", "Format literacy", "Honesty contract")
 # drops from the end, so order is priority.
 STAGE_SECTIONS = {
     "story": (
-        "Story shape", "Documentary passes", "Documentary structure",
-        "Loops and re-hooks", "Empathy and story economy",
-        "Meaning first", "Phrasing", "Retention engineering",
-        "Narrative scenes",
+        "Style selection", "Story shape", "Documentary passes",
+        "Documentary structure", "The compression pass",
+        "Retention engineering", "Loops and re-hooks",
+        "Meaning first", "Empathy and story economy",
+        "Phrasing", "Narrative scenes",
     ),
     "visual": (
         "Meaning first", "Frame composition", "Evidence is an apparatus",
@@ -62,16 +73,20 @@ STAGE_SECTIONS = {
         "Finish: matching", "Vertical is its own frame", "Kinetic type",
     ),
     "editing": (
-        "Beat grammar", "Sound (planned AND executed", "Music is edited",
-        "Transitions are a vocabulary", "Pace by phase",
-        "Effects discipline", "Sound placement", "Sound decisions",
-        "Beat craft", "Restraint", "Moves with names",
-        "Sound design: layers", "Loops and re-hooks",
+        "Beat grammar", "The could/should audit",
+        "Sound (planned AND executed", "Music is edited",
+        "Effects discipline", "Pace by phase",
+        "Transitions are a vocabulary", "Sound placement",
+        "Sound decisions", "Beat craft", "Restraint",
+        "Moves with names", "Sound design: layers",
+        "Loops and re-hooks",
     ),
+
     "qc": (
-        "Frame composition", "Effects discipline", "Finish: matching",
-        "Evidence is an apparatus", "Numbers and anchors",
-        "Colour is meaning",
+        "Frame composition", "The could/should audit",
+        "Effects discipline", "Evidence is an apparatus",
+        "Numbers and anchors", "Colour is meaning",
+        "Finish: matching",
     ),
 }
 
