@@ -457,6 +457,36 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
     return paths
 
 
+def _designed_silence_windows(results, chapter_starts):
+    """v88/v98.1: the Editing Director's sanctioned silence windows
+    (silence_after_s on the chapter plans), mapped to absolute time
+    in the assembled file from each chapter's start offset. The
+    media meters report gaps inside these windows as DESIGNED
+    instead of failing them as dead air — v87 shipped 5 such false
+    FAILs and the correction loop re-rendered chapters over pauses
+    the director had chosen.
+
+    Shared by _correct_assembled and make_long_video's
+    spec-compliance audit. Until v98.1 this lived ONLY as a nested
+    helper inside _correct_assembled, so the compliance block's
+    call to it threw NameError, was swallowed by its except, and
+    spec jobs silently fell back to the unconditional QC report —
+    the designed-silence awareness in spec compliance was dead
+    code."""
+    wins = []
+    for ci, r in enumerate(results or []):
+        plan = (r or {}).get("plan") or {}
+        scs = plan.get("scenes") or []
+        st = plan.get("starts") or []
+        base = chapter_starts[ci] if ci < len(chapter_starts) else 0.0
+        for j, s in enumerate(scs):
+            sil = float(s.get("silence_after_s") or 0)
+            if sil > 0 and j < len(st):
+                a = base + float(st[j]) + float(s.get("d") or 0)
+                wins.append((round(a, 2), round(a + sil, 2)))
+    return wins
+
+
 async def _correct_assembled(final, paths, results, outline_data, chat,
                              workdir, titles, size, notify=None,
                              deadline=None, ref_voice=None,
@@ -502,32 +532,12 @@ async def _correct_assembled(final, paths, results, outline_data, chat,
             expected = (_inf["video"].get("width"),
                         _inf["video"].get("height"))
 
-    def _designed_silences():
-        """v88: the Editing Director's sanctioned silence windows
-        (silence_after_s on the chapter plans), mapped to absolute
-        time in the assembled file. media_qc reports gaps inside
-        these as DESIGNED instead of failing them as dead air —
-        v87 shipped 5 such false FAILs and the correction loop
-        re-rendered chapters over pauses the director had chosen."""
-        wins = []
-        starts = _starts()
-        for ci, r in enumerate(results or []):
-            plan = (r or {}).get("plan") or {}
-            scs = plan.get("scenes") or []
-            st = plan.get("starts") or []
-            base = starts[ci] if ci < len(starts) else 0.0
-            for j, s in enumerate(scs):
-                sil = float(s.get("silence_after_s") or 0)
-                if sil > 0 and j < len(st):
-                    a = base + float(st[j]) + float(s.get("d") or 0)
-                    wins.append((round(a, 2), round(a + sil, 2)))
-        return wins
-
     def check_fn():
         ch, _info = _mq.inspect_file(
             state["final"], cfg=mq_cfg, chapter_starts=_starts(),
             workdir=str(workdir), expected_size=expected,
-            designed_silences=_designed_silences())
+            designed_silences=_designed_silence_windows(results,
+                                                        _starts()))
         return ch
 
     async def correct_fn(failed, rnd):
@@ -957,7 +967,8 @@ async def make_long_video(brief, chat, workdir, target_minutes,
                 _t += _d + CARD_SECONDS
             mchecks, minfo = _comp.audit_media(
                 final, cfg, spec, chapter_breaks=_starts[1:],
-                designed_silences=_designed_silences(plans))
+                designed_silences=_designed_silence_windows(results,
+                                                            _starts))
             checks += mchecks
             diffs = _comp.sample_frame_diffs(final)
             frozen = 0
