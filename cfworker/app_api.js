@@ -28,7 +28,7 @@ function appSys(isOwner, lang) {
   if (lang === "en") s += "\nAPP LANGUAGE = ENGLISH: reply in simple English only (not Tenglish).";
   s += "\n\n" + VOICE_SAVE_RULE;
   s += "\n\n" + AMEND_RULE;
-  s += "\n\nCONVERSATION QUALITY (Ajju's standing order — reply like a sharp assistant, not a manual): (1) Answer FIRST, in 1-3 short lines. No preamble, no feature lists, no explaining how you work unless asked. (2) USE THE HISTORY: the messages above are this same conversation — refer to the topic, length, voice and language already decided; if the user says 'same topic / adhey topic / ade topic', take the topic from earlier in this conversation and proceed, never re-ask what was already told. (3) ONE reply only — never write the user's side of the chat, never continue the conversation yourself, never write that the user 'didn't respond'. (4) If a video is being made, questions about it ('ayindha?', 'ready na?') are about THAT video — answer from its topic and state, briefly. (5) When unsure, say so in one line and ask ONE clear question.";
+  s += "\n\nCONVERSATION QUALITY (Ajju's standing order — reply like a sharp assistant, not a manual): (1) Answer FIRST, in 1-3 short lines. No preamble, no feature lists, no explaining how you work unless asked. (2) USE THE HISTORY: the messages above are this same conversation — refer to the topic, length, voice and language already decided; if the user says 'same topic / adhey topic / ade topic', take the topic from earlier in this conversation and proceed, never re-ask what was already told. (3) ONE reply only — never write the user's side of the chat, never continue the conversation yourself, never write that the user 'didn't respond'. (4) If a video is being made, questions about it ('ayindha?', 'ready na?') are about THAT video — answer from its topic and state, briefly. (5) When unsure, say so in one line and ask ONE clear question. (6) NEVER defer work: no 'next video will…', no 'say X to…', no magic phrases, no 'I saved your preference' as a substitute for doing the thing — understand, act NOW, report in one line. A message with a NEW topic is a NEW video that starts at once, even while another renders.";
   return s;
 }
 async function appCode(env, n) {
@@ -351,6 +351,7 @@ async function appTalk(env, u, text, lang, voiceId) {
   // a video renders is saved as the next video's preference, said plainly.
   const busyNow = await env.KV.get(`busy:${u.n}`);
   const appjob = JSON.parse((await env.KV.get(`appjob:${u.n}`)) || "null");
+  const newOrder = isNewTopicOrder(cleanText); // v51 (G1): a NEW topic starts a NEW job — never an amendment, never a saved preference
   const isStatusQ = /(ayindha|ayyindha|ready|status|progress|ekkada\s*varaku|inka\s*(entha|emi)|ayipoyindha|vachindha|complete|done\s*ah|entha\s*dooram)/i.test(cleanText) && !isCreateOrder(cleanText);
   // v73: a status question first rescues any stuck job, so the answer
   // below can never call a dead job "still being made".
@@ -377,7 +378,7 @@ async function appTalk(env, u, text, lang, voiceId) {
   // language nextpref block below: production words win; a pure
   // voice/language change has no production vocabulary and still
   // falls through to nextpref exactly as in v67.
-  if (busyNow && isAmendment(cleanText)) {
+  if (busyNow && !newOrder && isAmendment(cleanText)) {
     const rj = await runningJob(env, u.n);
     if (rj) {
       await addAmendment(env, rj, cleanText);
@@ -386,12 +387,18 @@ async function appTalk(env, u, text, lang, voiceId) {
       return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
     }
   }
-  if (busyNow && !isCreateOrder(cleanText) && /(voice|male|female|telugu|hindi|english|language|sound)/i.test(cleanText)) {
+  if (busyNow && !newOrder && !isCreateOrder(cleanText) && /(voice|male|female|telugu|hindi|english|language|sound)/i.test(cleanText)) {
     const g = /female|aada/i.test(cleanText) ? "female" : /male|maga/i.test(cleanText) ? "male" : "";
     const lg2 = /telugu/i.test(cleanText) ? "Telugu" : /hindi/i.test(cleanText) ? "Hindi" : /english/i.test(cleanText) ? "English" : "";
     if (g || lg2) await env.KV.put(`nextpref:${u.n}`, JSON.stringify({ gender: g, langName: lg2, at: Date.now() }), { expirationTtl: 86400 });
+    // v51 (G2): the change is ALSO put on the running job itself (the
+    // runner reads amendments at its checkpoints) — Julie acts now and
+    // says so in one line. Never a deferral to a future video, never a
+    // phrase the user must recite.
+    const rj2 = await runningJob(env, u.n);
+    if (rj2) await addAmendment(env, rj2, cleanText);
     const what = [g, lg2].filter(Boolean).join(" ") || "that change";
-    const a2 = lang === "en" ? `This video is already rendering — its voice can't change midway. I've saved your preference (${what} voice); the NEXT video will use it. If you want this one redone instead, say "cancel and redo".` : `Ee video already tayaru avuthondi — madhyalo voice marchaledu. Nee preference (${what} voice) save chesa, NEXT video nunchi adhe vasthundhi. Idhe video malli cheyali ante "cancel chesi malli chey" ani cheppu.`;
+    const a2 = lang === "en" ? `Done — ${what} voice added to THIS video, and kept for your next ones too.` : `Done — ${what} voice ee video ki add chesa, next videos ki kuda adhe untundhi.`;
     h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
     return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
   }
@@ -437,7 +444,7 @@ async function appTalk(env, u, text, lang, voiceId) {
     // the user's side, or "User didn't respond yet..."). Cut everything
     // from the first fake turn — Julie sends ONE reply, hers only.
     ans = ans.split(/\n\s*(User|Nuvvu|Me|Customer)\s*:/i)[0].split(/user didn.t respond/i)[0].trim();
-    if (!mm && (forceCreate || isNoVideoEditOrder(text))) { mm = [null, cleanText]; ans = lang === "en" ? "Starting now — I'll make everything A to Z myself: script, visuals, voice, captions, edit." : "Sare, start chesa — script, visuals, voice, captions, edit, motham nene A to Z chestha. Ready ayyaka ikkade pampistha."; }
+    if (!mm && (forceCreate || newOrder || isNoVideoEditOrder(text))) { mm = [null, cleanText]; ans = lang === "en" ? "Starting now — I'll make everything A to Z myself: script, visuals, voice, captions, edit." : "Sare, start chesa — script, visuals, voice, captions, edit, motham nene A to Z chestha. Ready ayyaka ikkade pampistha."; }
     // R46 guard: if the reply still asks the user to attach/upload/send a video
     // and the user did not offer one, force a create instead — the rule holds
     // even if the model disobeys the prompt.
@@ -474,13 +481,19 @@ async function appTalk(env, u, text, lang, voiceId) {
   // plainly with the numbers — never start silently.
   let go = !!mm && !askOnly, started = false, sc = null;
   if (mm && askOnly) ans = lang === "en" ? "I can — shorts and long videos up to 60 min. Tell me topic, length and language and I'll start." : "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
+  // v51 (G1): a new-topic order starts NOW — the short/long question
+  // never stalls it; a sensible default length rides on the brief.
+  if (go && newOrder && !/(short|long|reel|9:16|16:9|30s|60s|\b3\s?min|\b10\s?min|documentary|face)/i.test(mm[1] || "")) mm = [mm[0], `${(mm[1] || cleanText).trim()} — short video (30s, 9:16), Julie voice-over, A to Z by Julie.`];
   // R40: a create order without short/long waits — ask ONCE, resume on the answer.
   if (go && !/(short|long|reel|9:16|16:9|30s|60s|\b3\s?min|\b10\s?min|documentary|face)/i.test(mm[1] || "")) {
     await env.KV.put(`crtpend:${u.n}`, JSON.stringify({ brief: mm[1], at: Date.now() }), { expirationTtl: 3600 });
     ans = lang === "en" ? "Short (30s, 9:16) or long (up to 60 min, 16:9)? Say short or long and I'll start." : "Short (30s, 9:16) na, long (60 min varaku, 16:9) na? Short/long ani cheppu, start chestha.";
     go = false;
   }
-  if (go && await env.KV.get(`busy:${u.n}`)) { ans = lang === "en" ? "One video is already being made. When it arrives, tell me and I'll start the next one." : "Okka video already tayaru avuthondi. Adi vachaka cheppu, next di start chestha."; go = false; }
+  // v51 (G1/G2): no busy refusal — a create order starts even while
+  // another video renders (each job is tracked by its own id and both
+  // deliver here). Julie never defers a job to "the next video" and
+  // never asks the user to recite a phrase to get work done.
   let premium_required = false;
   let tk = null, cost = 0;
   if (go) { cost = videoCost(parseMins(mm && mm[1])); tk = await tokSpend(env, u.n, cost); if (!tk.ok) { ans = tokMsg(lang, tk); go = false; } }
@@ -507,7 +520,17 @@ async function appTalk(env, u, text, lang, voiceId) {
     // A failed dispatch replaces it with an honest failure + token refund.
     else { await tokRefund(env, u.n, tk, cost); ans = lang === "en" ? "The video machine didn't start — try again in a few minutes. Your tokens were returned." : "Video machine start avvaledu — konchem sepu tarvatha malli try cheyyi. Nee tokens venakki ichesa."; }
   }
+  // v51 (G1/G2): started alongside an in-flight video — say exactly
+  // that, in one short line. Never "next video", never a magic phrase.
+  if (started && busyNow) { const tp = extractTopic(cleanText); ans = lang === "en" ? `Started your ${tp || "new"} video too — Julie voice, A to Z by me. The other one is still rendering; both will land here.` : `Nee ${tp || "kotha"} video kuda start chesa — Julie voice, motham A to Z nene chestha. Inko video inka render avuthondi; rendu ikkade vasthayi.`; }
   ans = await playbookGuard(env, ans, lang);
+  ans = busyWallGuard(ans, lang); // v51 (F2): a busy wall becomes one short line
+  { const prevA = [...h].reverse().find(m => m.role === "assistant"); if (ans && prevA && String(prevA.content || "") === ans) ans = antiRepeatLine(cleanText, lang); } // v51 (F3): never a verbatim repeat of the previous reply
+  // v91: proactive limit warning — appended to the reply itself (rides
+  // the chat path into the live response AND history), once per week,
+  // BEFORE the user hits the wall. Skipped when this very reply is the
+  // quota message (user already AT the wall) or the brain fully failed.
+  try { if (ans && !(tk && !tk.ok) && u.via !== "none") { const lw = await limitWarnMaybe(env, u, lang); if (lw) ans = ans + "\n\n" + lw; } } catch {}
   h.push({ role: "assistant", content: ans }); await remember(env, u.n, h);
   return { reply: ans, video_started: started, video_job: sc?.job || null, video_num: sc?.num || null, premium_required, brain: u.via || "shared" };
 }
@@ -667,18 +690,33 @@ async function chatUpload(env, u, text, lang) {
   }
   if (e.state !== "done") return { reply: en ? `Video ${e.n} is still being edited. I'll tell you when it's ready.` : `Video ${e.n} inka edit avthondi. Ready ayyaka cheptha.` };
   const targets = uploadTargets(low);
+  // v97 (MULTI-ACCOUNT): pick the YouTube account EXPLICITLY — a channel
+  // name or account email named in the message wins; otherwise the
+  // default account — and the confirmation below NAMES the channel so
+  // the owner can correct it before saying "cheyu".
+  let ytAcct = undefined, ytLabel = "";
+  if (targets.includes("yt")) {
+    const gidx3 = await gAccts(env, u.n);
+    const ytAccts = gidx3.list.filter(a => a.yt);
+    if (ytAccts.length) {
+      const hinted = ytAccts.find(a => (a.ytChannel && low.includes(a.ytChannel.toLowerCase())) || (a.email && low.includes(a.email.toLowerCase())));
+      const chosen = hinted || ytAccts.find(a => a.id === gidx3.def) || ytAccts[0];
+      ytAcct = chosen.id; ytLabel = chosen.ytChannel || chosen.email || "";
+    }
+  }
   const copy = await genUploadCopy(env, u, e, lang);
-  await env.KV.put(`uppend:${u.n}`, JSON.stringify({ num: e.n, job: e.job, targets, copy, privacy: "unlisted", at: Date.now() }), { expirationTtl: 1800 });
+  await env.KV.put(`uppend:${u.n}`, JSON.stringify({ num: e.n, job: e.job, targets, copy, privacy: "unlisted", ytAcct, at: Date.now() }), { expirationTtl: 1800 });
   const tNames = targets.map(t => t === "yt" ? "YouTube" : "Instagram").join(" + ");
+  const chanLine = targets.includes("yt") && ytLabel ? `\nYouTube channel: ${ytLabel}` : "";
   return { reply: en
-    ? `Video ${e.n} — ${inspectVideo(e)}.\nYouTube title: ${copy.yt_title}\nInstagram caption: ${copy.ig_caption.slice(0, 200)}${copy.ig_caption.length > 200 ? "…" : ""}\nUpload to ${tNames}? Say "cheyu" to post, or tell me what to change.`
-    : `Video ${e.n} — ${inspectVideo(e)}.\nYouTube title: ${copy.yt_title}\nInstagram caption: ${copy.ig_caption.slice(0, 200)}${copy.ig_caption.length > 200 ? "…" : ""}\n${tNames} lo upload cheyala? "cheyu" ani cheppu, leda em marchalo cheppu.` };
+    ? `Video ${e.n} — ${inspectVideo(e)}.\nYouTube title: ${copy.yt_title}\nInstagram caption: ${copy.ig_caption.slice(0, 200)}${copy.ig_caption.length > 200 ? "…" : ""}${chanLine}\nUpload to ${tNames}? Say "cheyu" to post, or tell me what to change.`
+    : `Video ${e.n} — ${inspectVideo(e)}.\nYouTube title: ${copy.yt_title}\nInstagram caption: ${copy.ig_caption.slice(0, 200)}${copy.ig_caption.length > 200 ? "…" : ""}${chanLine}\n${tNames} lo upload cheyala? "cheyu" ani cheppu, leda em marchalo cheppu.` };
 }
 async function runUpload(env, u, pend, lang) {
   const out = [];
   let allOk = true;
   if (pend.targets.includes("yt")) {
-    const r = await doPostYoutube(env, u.n, { job: pend.job, title: pend.copy.yt_title, description: pend.copy.yt_description, tags: pend.copy.yt_tags.join(","), privacy: pend.privacy });
+    const r = await doPostYoutube(env, u.n, { job: pend.job, title: pend.copy.yt_title, description: pend.copy.yt_description, tags: pend.copy.yt_tags.join(","), privacy: pend.privacy, account: pend.ytAcct });
     if (!r.ok) allOk = false;
     out.push(r.ok ? `YouTube ✓ ${r.url}` : `YouTube ✗ ${r.error || ""}`);
   }
@@ -756,7 +794,7 @@ async function appApi(req, env, url, ctx) {
   if (p === "me") { const a = u.acct; try { if (!(await env.KV.get(`joined:${u.n}`))) await env.KV.put(`joined:${u.n}`, String(Date.now())); } catch {} return appJson(req, { ok: true, number: a ? (a.phone || "") : u.n, owner: u.owner, premium: await isPremium(env, u.n), memory: JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null"), account: a ? { name: a.name, email: a.email, phone: a.phone || "", phone_pending: a.pphone || "" } : null }); }
   if (p.startsWith("account/") && req.method === "POST") return acctPrivate(req, env, u, p, body);
   if (p === "plan") { const bal = await tokBalance(env, u.n); const kt = await keyTierFor(env, u.n); const prem = await isPremium(env, u.n); const pid = await tokPlanId(env, u.n); const voice = PLANS[pid].voice; /* v37: voice assistant included in every plan (was a planvoice KV flag / ₹49 add-on) */ return appJson(req, { ok: true, plan: pid, premium: prem, voice, voice_monthly: VOICE_MONTHLY, plans: PLANS, tok: bal, period: "week", unlimited: bal.unlimited, brain: kt.tier, video_backend: "shared", pro: "soon" }); }
-  if (p === "assist" && req.method === "POST") return appJson(req, await appAssist(env, u, body, lang));
+  if (p === "assist" && req.method === "POST") { const r = await appAssist(env, u, body, lang); if (r && r.reply) r.reply = busyWallGuard(r.reply, lang); return appJson(req, r); }
   // v50 (Y3): per-user UI prefs, server-side (survive reinstall / new
   // phone). Today: lvMini — the floating mini message box over the live
   // view. Default ON when unset.
@@ -783,6 +821,12 @@ async function appApi(req, env, url, ctx) {
       const rec = parseRec(await env.KV.get(`vjob:${vid}`)); if (rec) { rec.state = "failed"; rec.error = "dispatch"; await env.KV.put(`vjob:${vid}`, JSON.stringify(rec), { expirationTtl: 3600 }); }
       return appJson(req, { ok: false, error: "house_engine_offline", detail: "Voice runner could not be started — tokens returned." }, 501);
     }
+    // v51 (V4 refund fix): record the spend against the job (same durable
+    // record video jobs use) so a TERMINAL runner failure can refund it
+    // exactly once via refundJobSpend. Recorded only after dispatch
+    // succeeded — the dispatch-failure path above already refunded from
+    // the in-memory receipt and leaves no record behind.
+    await recordSpend(env, vid, u.n, tk, TOK.COST.voice);
     return appJson(req, { ok: true, job: vid, state: "queued" });
   }
   if (p === "voice/status" && req.method === "GET") {
@@ -954,16 +998,76 @@ async function appApi(req, env, url, ctx) {
       const noAccount = !!t && (t.noChannel === true || /kanipinchaledu/i.test(t.who || ""));
       return { id, name: pr.title.replace(" connect", ""), desc: pr.desc, connected: !!t, who: t?.who || "", ready, noAccount };
     }));
-    return appJson(req, { ok: true, providers: list });
+    // v97: the Google accounts list (default first-class): the app
+    // renders one row per account + Add/Remove/Default controls.
+    const gidx = await gAccts(env, u.n);
+    const accounts = gidx.list.map(a => ({ id: a.id, email: a.email, ytChannel: a.ytChannel, ytNoChannel: a.ytNoChannel, gmail: a.gmail, yt: a.yt, state: a.state, def: a.id === gidx.def }));
+    return appJson(req, { ok: true, providers: list, accounts, acctCap: GACCT_CAP, acctDef: gidx.def });
   }
   if (p === "connect/link" && req.method === "POST") {
     const prov = String(body.provider || "");
     if (!PROVIDERS[prov]) return appJson(req, { ok: false, error: "unknown" }, 400);
     const ready = (GSCOPE[prov] && env.GOOGLE_CLIENT_ID) || (MSCOPE[prov] && env.FB_APP_SECRET) || (prov === "telegram" && env.TG_BOT);
     if (!ready) return appJson(req, { ok: false, ready: false, error: lang === "en" ? "Still being set up." : "Inka setup lo undi." });
+    // v97: account intent — "new" (add another account; soft cap check
+    // here, hard check at the OAuth callback where the email is known)
+    // or an existing account id (reconnect that account).
+    const acct = body.account ? String(body.account).slice(0, 80) : "";
+    if ((prov === "google" || prov === "youtube") && acct === "new") {
+      const idx = await gAccts(env, u.n);
+      if (idx.list.length >= GACCT_CAP) return appJson(req, { ok: false, cap: true, error: lang === "en" ? `${GACCT_CAP} Google accounts already connected — remove one first.` : `${GACCT_CAP} Google accounts already connect ayyi unnayi — mundhu okati remove cheyyi.` });
+    }
     const state = crypto.randomUUID().replace(/-/g, "");
-    await env.KV.put(`oauth:${state}`, JSON.stringify({ user: u.n, prov, app: true }), { expirationTtl: 900 });
-    return appJson(req, { ok: true, url: prov === "telegram" ? `https://t.me/${env.TG_BOT}?start=${state}` : `https://divya.n8n00101.workers.dev/c/${state}` });
+    await env.KV.put(`oauth:${state}`, JSON.stringify({ user: u.n, prov, app: true, acct: acct || undefined }), { expirationTtl: 900 });
+    // v97: the OAuth start goes through the APP origin (which proxies
+    // /c/ to this Worker) — the app origin is the host that demonstrably
+    // loads on the user's network (v60 dual-door); the old API-host URL
+    // is exactly the host some ISPs drop, which made Connect taps look
+    // dead ("open kuda avvatledhu" — Ajju 2026-11-16).
+    return appJson(req, { ok: true, url: prov === "telegram" ? `https://t.me/${env.TG_BOT}?start=${state}` : `https://divya-app.n8n00101.workers.dev/c/${state}` });
+  }
+  if (p === "connect/remove" && req.method === "POST") {
+    // v97: remove ONE Google account: its grants go; if it was the
+    // default, the next account is promoted and its grants are copied
+    // into the legacy slots so default-path consumers keep working.
+    const id = String(body.account || "");
+    const idx = await gAccts(env, u.n);
+    const i = idx.list.findIndex(a => a.id === id);
+    if (i < 0) return appJson(req, { ok: false, error: lang === "en" ? "Account not found." : "Account kanipinchaledu." }, 404);
+    const wasDef = idx.def === id;
+    for (const prov of ["google", "youtube"]) { await env.KV.delete(`tok:${u.n}:${prov}#${id}`); if (wasDef) await env.KV.delete(`tok:${u.n}:${prov}`); }
+    idx.list.splice(i, 1);
+    if (wasDef) {
+      idx.def = idx.list.length ? idx.list[0].id : null;
+      if (idx.def) for (const prov of ["google", "youtube"]) {
+        const rec = await env.KV.get(gTokKey(u.n, prov, idx.def, id));
+        if (rec) await env.KV.put(`tok:${u.n}:${prov}`, rec); else await env.KV.delete(`tok:${u.n}:${prov}`);
+      }
+    }
+    await gAcctsSave(env, u.n, idx);
+    return appJson(req, { ok: true, accounts: idx.list.map(a => ({ id: a.id, email: a.email, ytChannel: a.ytChannel, ytNoChannel: a.ytNoChannel, gmail: a.gmail, yt: a.yt, state: a.state, def: a.id === idx.def })), acctDef: idx.def });
+  }
+  if (p === "connect/default" && req.method === "POST") {
+    // v97: choose the default account: the old default's grants are
+    // snapshotted into its #-keys, the new default's grants are copied
+    // into the legacy slots. All other accounts stay untouched.
+    const id = String(body.account || "");
+    const idx = await gAccts(env, u.n);
+    if (!idx.list.some(a => a.id === id)) return appJson(req, { ok: false, error: lang === "en" ? "Account not found." : "Account kanipinchaledu." }, 404);
+    if (idx.def !== id) {
+      const oldDef = idx.def;
+      if (oldDef) for (const prov of ["google", "youtube"]) {
+        const rec = await env.KV.get(`tok:${u.n}:${prov}`);
+        if (rec) await env.KV.put(`tok:${u.n}:${prov}#${oldDef}`, rec);
+      }
+      for (const prov of ["google", "youtube"]) {
+        const rec = await env.KV.get(`tok:${u.n}:${prov}#${id}`);
+        if (rec) await env.KV.put(`tok:${u.n}:${prov}`, rec); else await env.KV.delete(`tok:${u.n}:${prov}`);
+      }
+      idx.def = id;
+      await gAcctsSave(env, u.n, idx);
+    }
+    return appJson(req, { ok: true, accounts: idx.list.map(a => ({ id: a.id, email: a.email, ytChannel: a.ytChannel, ytNoChannel: a.ytNoChannel, gmail: a.gmail, yt: a.yt, state: a.state, def: a.id === idx.def })), acctDef: idx.def });
   }
   // ---- Post to connected YouTube / Instagram (owner-OK gate: body.confirm must be true) ----
 
@@ -986,8 +1090,19 @@ async function postBytes(env, job, videoUrl) {
   return null;
 }
 async function doPostYoutube(env, n, o, en = false) {
-  // o: {job, video_url, title, description, tags, privacy, publishAt}
-  const t = await ytToken(env, n);
+  // o: {job, video_url, title, description, tags, privacy, publishAt, account}
+  // v97: o.account (id | email | channel substring) picks WHICH connected
+  // Google account's channel receives the upload; omitted = default.
+  let t = await ytToken(env, n, o.account ? await gResolveAcct(env, n, o.account) : undefined);
+  if (!t && !o.account) {
+    // v97: no account named — if the default account has no usable
+    // YouTube grant, use the first connected account that does (the
+    // chat flow names its pick explicitly in the owner-OK prompt). An
+    // EXPLICITLY named account never falls back: it works or fails
+    // honestly, so a video never lands on the wrong channel.
+    const idx = await gAccts(env, n);
+    for (const a of idx.list) { if (!a.yt) continue; const t2 = await ytToken(env, n, a.id); if (t2) { t = t2; break; } }
+  }
   if (!t) return { ok: false, code: 400, error: en ? "YouTube is not connected. Connect it first." : "YouTube connect avvaledu. Mundhu connect cheyyi." };
   const bytes = await postBytes(env, o.job, o.video_url);
   if (!bytes) return { ok: false, code: 400, error: en ? "Video not found. Give a job id or a video link." : "Video kanipinchaledu. Job id leda video link ivvu." };
@@ -1037,18 +1152,23 @@ async function doPostInstagram(env, n, o, en = false) {
   if (ref && ref.n === n) await histMarkPosted(env, n, ref.num, "ig", { mediaId: pub.id, url: res.url, at: Date.now() });
   return res;
 }
-  async function ytToken(env, n) {
-    const t = JSON.parse((await env.KV.get(`tok:${n}:youtube`)) || "null");
+  async function ytToken(env, n, acctId) {
+    // v97: acctId selects a non-default account's YouTube grant; omitted
+    // = the default account = the legacy slot (old behaviour).
+    const idx = acctId ? await gAccts(env, n) : null;
+    const key = acctId ? gTokKey(n, "youtube", acctId, idx && idx.def) : `tok:${n}:youtube`;
+    const t = JSON.parse((await env.KV.get(key)) || "null");
     if (!t || !t.access_token) return null;
     if (t.expires_in && t.at && Date.now() - t.at > (t.expires_in - 300) * 1000 && t.refresh_token) {
       const nt = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) })).json().catch(() => ({}));
-      if (nt.access_token) { const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in }; await env.KV.put(`tok:${n}:youtube`, JSON.stringify(merged)); return merged; }
+      if (nt.access_token) { const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in }; await env.KV.put(key, JSON.stringify(merged)); return merged; }
       // v74: the refresh grant failed — including the GCP Testing-mode
       // rule that refresh tokens expire after 7 days. Returning the
       // stale token made uploads fail with Google's raw error and the
       // user was never told the actual fix. Null routes callers to the
       // "not connected — connect first" message (a reconnect re-issues
       // the refresh token). The Gmail reader already behaves this way.
+      if (acctId) await gAcctMarkExpired(env, n, acctId);
       return null;
     }
     return t;
@@ -1064,7 +1184,7 @@ async function doPostInstagram(env, n, o, en = false) {
   }
   if (p === "post/youtube" && req.method === "POST") {
     if (!body.confirm) return appJson(req, { ok: false, needs_confirm: true, error: lang === "en" ? "Confirm to post this video to your YouTube channel." : "Ee video ni nee YouTube channel lo post cheyala? Confirm cheyyi." }, 400);
-    const r = await doPostYoutube(env, u.n, body, lang === "en");
+    const r = await doPostYoutube(env, u.n, { ...body, account: body.account }, lang === "en");
     return appJson(req, r, r.ok ? 200 : (r.code || 502));
   }
   if (p === "post/youtube/insights" && req.method === "GET") {
@@ -1803,12 +1923,14 @@ async function orChat(env, key, messages) {
     const r = await fetch("https://openrouter.ai/api/v1/models").catch(() => null);
     const ids = r && r.ok ? ((await r.json()).data || []).map(m => m.id).filter(id => id.endsWith(":free")) : [];
     const pref = ["openai/gpt-oss-120b:free", "deepseek/deepseek-chat-v3.1:free", "meta-llama/llama-3.3-70b-instruct:free", "qwen/qwen3-235b-a22b:free", "google/gemma-3-27b-it:free"];
-    free = [...pref.filter(m => ids.includes(m)), ...ids.filter(m => !pref.includes(m))].slice(0, 4);
+    const sc = await scoutList(env, "openrouter"); // v91: scout-added free models sit after the pref list, before the long tail
+    free = [...pref.filter(m => ids.includes(m)), ...sc.filter(m => ids.includes(m)), ...ids.filter(m => !pref.includes(m) && !sc.includes(m))].slice(0, 6);
     if (free.length) await env.KV.put("or:free", JSON.stringify(free), { expirationTtl: 3600 * 6 });
   }
   for (const model of free) {
     const r = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${key}`, "content-type": "application/json", "HTTP-Referer": "https://divya-app.n8n00101.workers.dev", "X-Title": "Julie" }, body: JSON.stringify({ model, messages, max_tokens: 900, temperature: 0.7 }) }).catch(() => null);
     if (r && r.ok) { const out = (((await r.json()).choices || [])[0]?.message?.content || "").replace(/<think>[\s\S]*?<\/think>/g, "").trim(); if (out) return out; }
+    if (r && r.status === 429) { try { env.__q429 = true; } catch {} } // v91: quota signal
     if (r && r.status === 401) break;
   }
   return "";
@@ -1817,9 +1939,10 @@ async function geminiChat(env, key, messages) {
   // Text chat via Gemini generateContent (OpenAI-style messages -> Gemini contents).
   const sys = (messages.find(m => m.role === "system")?.content || "");
   const contents = messages.filter(m => m.role !== "system").map(m => ({ role: m.role === "assistant" ? "model" : "user", parts: [{ text: String(typeof m.content === "string" ? m.content : (m.content?.[0]?.text || "")) }] }));
-  for (const gm of ["gemini-2.5-flash", "gemini-2.0-flash"]) {
+  for (const gm of ["gemini-2.5-flash", "gemini-2.0-flash", ...(await scoutList(env, "gemini"))]) { // v91: scout models last
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${gm}:generateContent?key=${encodeURIComponent(key)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ systemInstruction: { parts: [{ text: sys }] }, contents, generationConfig: { maxOutputTokens: 900, temperature: 0.7 } }), signal: AbortSignal.timeout(25000) }).catch(() => null);
     if (r && r.ok) { const out = ((await r.json()).candidates?.[0]?.content?.parts || []).map(x => x.text || "").join("").trim(); if (out) return out; }
+    if (r && r.status === 429) { try { env.__q429 = true; } catch {} } // v91: quota signal
     if (r && (r.status === 400 || r.status === 403)) break; // bad key / not enabled — don't retry the next model
   }
   return "";
@@ -1866,11 +1989,11 @@ async function chatWithFallback(env, u, messages) {
   // falls through to the next provider instead of aborting the chain,
   // exactly like the per-call .catch fallthrough below.
   try { const gk = await openKey(env, u.n, "groq");
-    if (gk) { const out = await groq({ ...env, GROQ_KEY: gk }, messages).catch(() => ""); if (out && !sorry.test(out)) { u.via = "own-groq"; return out; } } } catch {}
+    if (gk) { const genv = { ...env, GROQ_KEY: gk }; const out = await groq(genv, messages).catch(() => ""); if (genv.__q429 && !u.keyQuota) u.keyQuota = "groq"; if (out && !sorry.test(out)) { u.via = "own-groq"; return out; } } } catch {}
   try { const ok = await openKey(env, u.n, "openrouter");
-    if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (out) { u.via = "own-openrouter"; return out; } } } catch {}
+    if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "openrouter"; if (out) { u.via = "own-openrouter"; return out; } } } catch {}
   try { const gmk = await openKey(env, u.n, "gemini");
-    if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (out) { u.via = "own-gemini"; return out; } } } catch {}
+    if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "gemini"; if (out) { u.via = "own-gemini"; return out; } } } catch {}
   // v88 (F11): INVITER tier — own keys exhausted. A user who joined via a
   // referral code and still has FEWER than 5 own working models borrows
   // the INVITER's keys, in the same order as the own tier (custom model
@@ -1885,11 +2008,11 @@ async function chatWithFallback(env, u, messages) {
         try { const crec = JSON.parse((await env.KV.get(`umodel:${inv}`)) || "null");
           if (crec && crec.base && crec.model) { const ck = await openKey(env, inv, "custom"); if (ck) { const out = await customChat(ck, crec, messages).catch(() => ""); if (out) { u.via = "inviter-model"; return out; } } } } catch {}
         try { const gk = await openKey(env, inv, "groq");
-          if (gk) { const out = await groq({ ...env, GROQ_KEY: gk }, messages).catch(() => ""); if (out && !sorry.test(out)) { u.via = "inviter-groq"; return out; } } } catch {}
+          if (gk) { const genv = { ...env, GROQ_KEY: gk }; const out = await groq(genv, messages).catch(() => ""); if (genv.__q429 && !u.keyQuota) u.keyQuota = "groq"; if (out && !sorry.test(out)) { u.via = "inviter-groq"; return out; } } } catch {}
         try { const ok = await openKey(env, inv, "openrouter");
-          if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (out) { u.via = "inviter-openrouter"; return out; } } } catch {}
+          if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "openrouter"; if (out) { u.via = "inviter-openrouter"; return out; } } } catch {}
         try { const gmk = await openKey(env, inv, "gemini");
-          if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (out) { u.via = "inviter-gemini"; return out; } } } catch {}
+          if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "gemini"; if (out) { u.via = "inviter-gemini"; return out; } } } catch {}
       }
     }
   } catch {}
@@ -1920,6 +2043,43 @@ function setupGuideReply(lang) {
   // JULIE opens it herself; the user taps only inside Take Control.
   if (lang === "en") return "The shared AI is busy right now — its free limit is full, so it can't answer at the moment. It clears on its own in a bit; please try again shortly.";
   return "Shared AI ippudu busy ga undhi — free limit full ayyindhi, anduke ippudu answer ivvaledu. Konchem sepu lo thane clear avuthundi; appudu malli try cheyyi.";
+}
+// v51 (F2): a busy/limit answer in chat is ONE short line — never a
+// paragraph wall. The brain sometimes expands the setup pitch into a
+// multi-sentence wall ("give one allow in Setup... tap the verification
+// link..."); any reply that is recognisably that wall collapses back to
+// the short line. (That wall text also became a chat-tab title on the
+// user's phone — tab titles now come only from user messages, app.js.)
+function busyWallGuard(reply, lang) {
+  const r = String(reply || "");
+  if (/shared ai is busy|free limit is full|shared ai ippudu busy/i.test(r) && (r.length > 180 || /give one allow|#\/setup|tap the verification|sms code/i.test(r))) return setupGuideReply(lang);
+  return r;
+}
+// v51 (F3): never the same assistant reply twice back-to-back. When the
+// brain repeats its previous reply byte-for-byte (the double "Hello"
+// greeting Ajju hit), swap in a short varied line instead.
+function antiRepeatLine(text, lang) {
+  if (/^(hi+|hello|hey|helo|hai)\b/i.test(String(text || "").trim())) return lang === "en" ? "Hi again — tell me what to make and I'll start." : "Malli hi — em cheyalo cheppu, start chestha.";
+  return lang === "en" ? "Same as I just said above — tell me if you want me to go ahead." : "Paine cheppina answer ye — proceed avvala ante cheppu.";
+}
+// v51 (F3): edit-intent trigger, Romanized-Telugu + typo tolerant
+// ("Short videps okati edits chesi ivvu" routes like English "edit a
+// short video"). Song/play requests stay excluded.
+function editHintRoute(text) {
+  const t = String(text || "");
+  return /\b(edit|edits|video|videos|videps|reel|reels|short|shorts)\b|వీడియో|రీల్|ఎడిట్/i.test(t) && !/\b(play|song|paata|pata)\b/i.test(t);
+}
+// v51 (G1 — Ajju 2026-11-15): a message carrying a NEW topic (or an
+// A-to-Z self-do order) is a NEW create job that starts NOW, even while
+// another video renders. It is never a mid-flight amendment and never
+// a preference saved for "the next video". An amendment is only a
+// message pointing at the in-flight job itself ("ee video lo…",
+// "this one", "adhe video") with NO new topic in it.
+function isNewTopicOrder(text) {
+  const t = String(text || "").toLowerCase();
+  if (/\btopic\b\s*[:\-]?\s*[a-z0-9]/.test(t)) return true; // "topic loneliness", "topic: space"
+  if (/(a\s*to\s*z|nee\s*own\s*ga|anni\s+n(uv)?ve\s+chey|nuvve\s+chey|motham\s+n(uv)?ve)/.test(t) && /(video|reel|short|cheyu|cheyyi|chey|chesi|ivvu|create|make)/.test(t)) return true;
+  return false;
 }
 function isDidItText(t) {
   // v88 (G1): "I did it / login chesa / chesanu" in English or Romanized
@@ -2296,7 +2456,10 @@ async function vidCount(env, n) { const k = `vmon:${n}:${istMonth()}`; await env
 // no weekly count cap; the weekly grant is a token bucket, and tokSpend
 // already draws weekly -> pool -> plan (split) so a grant can never act
 // as a cap while the user holds pool/plan tokens.
-const editHint = lang => lang === "en" ? "Julie makes videos herself in chat — just tell me the topic. If you want your own video edited, attach it yourself with the attach button, say short, long or face video, and what to change — Julie edits it and tells you here when it's ready." : "Julie videos ni thane chat lo create chesthundi — topic cheppu chalu. Nee sontha video edit kavali ante, nuvve attach button tho video attach cheyyi, short, long leda face video ani cheppu, em marchalo cheppu — Julie edit chesi ready ayyaka ikkada chepthundi.";
+// v51 (F3): ONE short line when an edit is asked but no video is attached
+// yet — ask for the video (or offer to make one). Never the old paragraph,
+// never "attach it yourself" pushing the work back at the user.
+const editHint = lang => lang === "en" ? "Attach the video here and tell me what to change — I'll edit it. No video? Give me a topic and I'll make one." : "Video ikkade attach cheyyi, em marchalo cheppu — edit chestha. Video ledha? Topic cheppu, kotha video chestha.";
 async function appKeys(req, env, u, p, body, lang) {
   const en = lang === "en";
   if (p === "keys") {
@@ -2454,7 +2617,7 @@ async function appAssist(env, u, body, lang) {
     const hPrev = await history(env, u.n);
     if (hPrev.some(m => /video|reel|short|topic|CREATE/i.test(String(m.content || "")))) { const r = await appTalk(env, u, text, lang, body.voiceId); return { ok: true, intent: "chat", free: true, ...r }; }
   }
-  if (/\b(edit|video|videos|reel|reels|short|shorts)\b|వీడియో|రీల్|ఎడిట్/i.test(text) && !/\b(play|song|paata|pata)\b/i.test(text) && !isCreateOrder(text) && !isNoVideoEditOrder(text)) { const r = editHint(lang); const h = await history(env, u.n); h.push({ role: "user", content: text }, { role: "assistant", content: r }); await remember(env, u.n, h); return { ok: true, intent: "edit", free: true, reply: r }; }
+  if (editHintRoute(text) && !isCreateOrder(text) && !isNoVideoEditOrder(text)) { const r = editHint(lang); const h = await history(env, u.n); const lastA = [...h].reverse().find(m => m.role === "assistant"); if (!lastA || String(lastA.content || "") !== r) { h.push({ role: "user", content: text }, { role: "assistant", content: r }); await remember(env, u.n, h); return { ok: true, intent: "edit", free: true, reply: r }; } /* v51 (F3): the one-line ask was already the last reply — never repeat it verbatim; fall through and let the intent/brain flow answer instead. */ }
   let it = ruleIntent(text);
   if (!it && (ACTION_RX.test(text) || PREMIUM_RX.test(text))) it = await llmIntent(env, u.n, text);
   if (!it) it = { intent: "chat" };
@@ -2675,7 +2838,7 @@ async function acctPublic(req, env, p, body) {
   if (p === "auth/google") {
     const state = hexOf(crypto.getRandomValues(new Uint8Array(12)));
     await env.KV.put(`oauth:${state}`, JSON.stringify({ login: true, prov: "google" }), { expirationTtl: 900 });
-    return appJson(req, { ok: true, url: "https://divya.n8n00101.workers.dev/c/" + state });
+    return appJson(req, { ok: true, url: "https://divya-app.n8n00101.workers.dev/c/" + state });
   }
   if (p === "auth/signup") {
     const name = String(body.name || "").trim().replace(/\s+/g, " ").slice(0, 60), email = normEmail(body.email), raw = String(body.phone || "").trim();
@@ -3335,8 +3498,257 @@ async function autoCheckAll(env) {
       } catch {}
     }
   } catch {}
+  // v91: the model scout rides this same periodic path (globally
+  // throttled inside scoutSweep) — no separate cron exists today.
+  try { await scoutSweep(env, false); } catch {}
 }
+
+// ===== v91: MODEL SCOUT + PROACTIVE LIMIT WARNING (Ajju, 2026-11-15) =====
+// Scout: Julie keeps adding NEW free models to her own rotation. A
+// sweep (at most once per 24h, piggybacked on the v39 periodic paths —
+// autoCheckAll + the setup/status opportunistic check; NO cron trigger
+// is configured on this Worker) diffs the providers' live FREE model
+// lists against the rotation, ping-tests each new candidate with ONE
+// real chat call, and appends only the models that answer correctly —
+// always LAST in their provider's order. It never removes a model and
+// never adds a paid one. Every add/skip is logged to the owner's
+// auto-log (provider "scout") and to scout:log.
+const SCOUT_TOKEN = "SCOUT7OK";
+const SCOUT_MAX_ADD = 3, SCOUT_MAX_TEST = 6, SCOUT_MIN_MS = 24 * 60 * 60 * 1000;
+let _scoutCache = { at: 0, data: null };
+async function scoutModels(env) {
+  if (_scoutCache.data && Date.now() - _scoutCache.at < 300000) return _scoutCache.data;
+  let d = { groq: [], openrouter: [], gemini: [] };
+  try { const raw = JSON.parse((await env.KV.get("scout:models")) || "null"); if (raw) d = { groq: raw.groq || [], openrouter: raw.openrouter || [], gemini: raw.gemini || [] }; } catch {}
+  _scoutCache = { at: Date.now(), data: d };
+  return d;
+}
+async function scoutList(env, provider) { try { return (await scoutModels(env))[provider] || []; } catch { return []; } }
+async function scoutLog(env, entry) {
+  try { const log = JSON.parse((await env.KV.get("scout:log")) || "[]"); log.unshift({ at: Date.now(), ...entry }); await env.KV.put("scout:log", JSON.stringify(log.slice(0, 30)), { expirationTtl: 86400 * 30 }); } catch {}
+}
+function scoutOwnerNs(env) { return (env.OWNERS || "").split(",").map(s => s.trim()).filter(Boolean); }
+async function scoutTestKey(env, provider) {
+  // The scout's test calls ride an OWNER's sealed key (opened only here,
+  // inside the Worker — the same pattern chatWithFallback uses). Groq
+  // needs none: the shared env key is its test key.
+  for (const n of scoutOwnerNs(env)) { try { const k = await openKey(env, n, provider); if (k) return { n, key: k }; } catch {} }
+  return null;
+}
+const SCOUT_PING = [{ role: "user", content: `Reply with exactly this token and nothing else: ${SCOUT_TOKEN}` }];
+async function scoutPingGroq(key, model) {
+  try {
+    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify({ model, messages: SCOUT_PING, temperature: 0, max_tokens: 128, ...(model.startsWith("openai/gpt-oss") ? { reasoning_effort: "low" } : {}) }), signal: AbortSignal.timeout(20000) }).catch(() => null);
+    if (!r) return { pass: false, why: "no response" };
+    if (!r.ok) return { pass: false, why: `http ${r.status}` };
+    const out = (((await r.json()).choices || [])[0]?.message?.content || "");
+    return out.includes(SCOUT_TOKEN) ? { pass: true } : { pass: false, why: "wrong answer" };
+  } catch (e) { return { pass: false, why: String(e).slice(0, 80) }; }
+}
+async function scoutPingOpenRouter(key, model) {
+  try {
+    const r = await fetch("https://openrouter.ai/api/v1/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${key}`, "content-type": "application/json", "HTTP-Referer": "https://divya-app.n8n00101.workers.dev", "X-Title": "Julie" }, body: JSON.stringify({ model, messages: SCOUT_PING, max_tokens: 256, temperature: 0 }), signal: AbortSignal.timeout(25000) }).catch(() => null);
+    if (!r) return { pass: false, why: "no response" };
+    if (!r.ok) return { pass: false, why: `http ${r.status}` };
+    const out = (((await r.json()).choices || [])[0]?.message?.content || "");
+    return out.includes(SCOUT_TOKEN) ? { pass: true } : { pass: false, why: "wrong answer" };
+  } catch (e) { return { pass: false, why: String(e).slice(0, 80) }; }
+}
+async function scoutPingGemini(key, model) {
+  try {
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: SCOUT_PING[0].content }] }], generationConfig: { maxOutputTokens: 256, temperature: 0 } }), signal: AbortSignal.timeout(25000) }).catch(() => null);
+    if (!r) return { pass: false, why: "no response" };
+    if (!r.ok) return { pass: false, why: `http ${r.status}` };
+    const out = (((await r.json()).candidates?.[0]?.content?.parts) || []).map(x => x.text || "").join("");
+    return out.includes(SCOUT_TOKEN) ? { pass: true } : { pass: false, why: "wrong answer" };
+  } catch (e) { return { pass: false, why: String(e).slice(0, 80) }; }
+}
+async function scoutSweep(env, force) {
+  const now = Date.now();
+  const last = parseInt((await env.KV.get("scout:last")) || "0", 10) || 0;
+  if (!force && now - last < SCOUT_MIN_MS) return { ran: false, reason: "throttled" };
+  await env.KV.put("scout:last", String(now), { expirationTtl: 86400 * 8 });
+  const store = await scoutModels(env);
+  const summary = { ran: true, at: now, tested: [], added: [], skipped: [] };
+  let addBudget = SCOUT_MAX_ADD;
+  const logN = scoutOwnerNs(env)[0] || "";
+  const note = async (provider, model, action, why, result) => { if (logN) await autoLogAppend(env, logN, { provider: "scout", action, why: `${provider}/${model} — ${why}`, result }); };
+  const skip = async (provider, model, why) => { summary.skipped.push({ provider, model, why }); await note(provider, model, "model-skipped", why, "skipped"); await scoutLog(env, { provider, model, action: "skipped", why }); };
+  const add = async (provider, model) => { store[provider].push(model); summary.added.push({ provider, model }); addBudget--; await note(provider, model, "model-added", "passed the scout ping test — joined the rotation at the end", "added"); await scoutLog(env, { provider, model, action: "added" }); };
+  // ---- Groq: candidates = the shared key's live list, minus the rotation ----
+  try {
+    const gk = (env.GROQ_KEY || "").split(",").map(s => s.trim()).filter(Boolean)[0];
+    if (!gk) summary.skipped.push({ provider: "groq", model: "*", why: "no shared GROQ_KEY" });
+    else if (addBudget <= 0) await skip("groq", "*", "sweep add-cap reached");
+    else {
+      const live = await liveModels(env, gk);
+      const excl = /whisper|guard|tts|playai|orpheus|compound|prompt/i;
+      const cands = live.filter(id => !CHAT_MODELS.includes(id) && !VISION_MODELS.includes(id) && !store.groq.includes(id) && !excl.test(id)).slice(0, SCOUT_MAX_TEST);
+      if (!cands.length) summary.skipped.push({ provider: "groq", model: "*", why: "no new candidates" });
+      for (const m of cands) {
+        if (addBudget <= 0) { await skip("groq", "*", "sweep add-cap reached"); break; }
+        const t = await scoutPingGroq(gk, m); summary.tested.push({ provider: "groq", model: m, pass: t.pass });
+        if (t.pass) await add("groq", m); else await skip("groq", m, t.why);
+      }
+    }
+  } catch (e) { summary.skipped.push({ provider: "groq", model: "*", why: String(e).slice(0, 120) }); }
+  // ---- OpenRouter: candidates = the public :free list, minus the rotation ----
+  try {
+    const r = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(15000) }).catch(() => null);
+    const data = r && r.ok ? ((await r.json()).data || []) : [];
+    const pref = ["openai/gpt-oss-120b:free", "deepseek/deepseek-chat-v3.1:free", "meta-llama/llama-3.3-70b-instruct:free", "qwen/qwen3-235b-a22b:free", "google/gemma-3-27b-it:free"];
+    const curWin = JSON.parse((await env.KV.get("or:free")) || "[]");
+    const cands = data.filter(m => String(m.id).endsWith(":free") && ((m.architecture?.output_modalities || ["text"]).includes("text")) && !/image|audio|embed|rerank|moderation/i.test(m.id) && !pref.includes(m.id) && !curWin.includes(m.id) && !store.openrouter.includes(m.id)).map(m => m.id).slice(0, SCOUT_MAX_TEST);
+    if (!cands.length) summary.skipped.push({ provider: "openrouter", model: "*", why: "no new candidates" });
+    else if (addBudget <= 0) await skip("openrouter", "*", "sweep add-cap reached");
+    else {
+      const tk = await scoutTestKey(env, "openrouter");
+      if (!tk) { for (const m of cands) await skip("openrouter", m, "no owner test key"); }
+      else {
+        for (const m of cands) {
+          if (addBudget <= 0) { await skip("openrouter", "*", "sweep add-cap reached"); break; }
+          const t = await scoutPingOpenRouter(tk.key, m); summary.tested.push({ provider: "openrouter", model: m, pass: t.pass });
+          if (t.pass) await add("openrouter", m); else await skip("openrouter", m, t.why);
+        }
+        if (summary.added.some(a => a.provider === "openrouter")) await env.KV.delete("or:free").catch(() => {}); // rebuild the cached window with the new models in it
+      }
+    }
+  } catch (e) { summary.skipped.push({ provider: "openrouter", model: "*", why: String(e).slice(0, 120) }); }
+  // ---- Gemini: candidates = free-tier families only (flash / gemma) ----
+  try {
+    if (addBudget <= 0) await skip("gemini", "*", "sweep add-cap reached");
+    else {
+      const tk = await scoutTestKey(env, "gemini");
+      if (!tk) summary.skipped.push({ provider: "gemini", model: "*", why: "no owner test key" });
+      else {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(tk.key)}`, { signal: AbortSignal.timeout(15000) }).catch(() => null);
+        const data = r && r.ok ? ((await r.json()).models || []) : [];
+        const bad = /pro|imagen|veo|tts|audio|robotics|computer|deep-research|image/i;
+        const cands = data.filter(m => (m.supportedGenerationMethods || []).includes("generateContent")).map(m => String(m.name || "").replace(/^models\//, "")).filter(id => /(flash|gemma)/i.test(id) && !bad.test(id) && !["gemini-2.5-flash", "gemini-2.0-flash"].includes(id) && !store.gemini.includes(id)).slice(0, SCOUT_MAX_TEST);
+        if (!cands.length) summary.skipped.push({ provider: "gemini", model: "*", why: "no new candidates" });
+        for (const m of cands) {
+          if (addBudget <= 0) { await skip("gemini", "*", "sweep add-cap reached"); break; }
+          const t = await scoutPingGemini(tk.key, m); summary.tested.push({ provider: "gemini", model: m, pass: t.pass });
+          if (t.pass) await add("gemini", m); else await skip("gemini", m, t.why);
+        }
+      }
+    }
+  } catch (e) { summary.skipped.push({ provider: "gemini", model: "*", why: String(e).slice(0, 120) }); }
+  if (summary.added.length) { await env.KV.put("scout:models", JSON.stringify(store)); _scoutCache = { at: Date.now(), data: store }; }
+  await scoutLog(env, { action: "sweep", added: summary.added.length, tested: summary.tested.length, skipped: summary.skipped.length });
+  return summary;
+}
+// Part 2: the proactive limit warning. Fires (once per user per IST
+// week) when the weekly free tokens cross 80% used, or when the user's
+// own key just hit its provider's free limit (429 seen inside
+// chatWithFallback, recorded as u.keyQuota). Owners/friends are
+// unlimited and never warned. Text is Julie-short and conditional —
+// pool/referral lines appear only when they are true for this user.
+const LIMIT_WARN_PCT = 0.8;
+const LIMIT_PROV_NAME = { groq: "Groq", openrouter: "OpenRouter", gemini: "Gemini" };
+function limitWarnText(lang, bal, quotaProvider) {
+  const pct = Math.round((bal.weekSpent / TOK.WEEKLY_FREE) * 100);
+  const pname = quotaProvider ? (LIMIT_PROV_NAME[quotaProvider] || quotaProvider) : "";
+  if (quotaProvider && pct < 80) {
+    return lang === "en"
+      ? `Heads-up: your ${pname} key just hit its free limit, so I answered with a backup model. It resets on its own — nothing for you to do.`
+      : `Oka heads-up: nee ${pname} key ippude dhaani free limit ki cherindhi — anduke backup model tho answer icha. Adhi thane reset avuthundhi, nuvvu emi cheyyalsina pani ledhu.`;
+  }
+  const base = lang === "en"
+    ? `Heads-up: you've used ${pct}% of this week's free tokens (they reset Monday). If everything reaches zero, chat and videos pause until the reset.`
+    : `Oka heads-up: ee week free tokens lo ${pct}% ayipoyayi (Monday reset avuthayi). Anni zero ayithe, reset varaku chat/videos aagipothayi.`;
+  const poolLine = bal.pool > 0 ? (lang === "en" ? ` Your bonus pool has ${bal.pool.toLocaleString("en-IN")} tokens — they get used automatically after the weekly free.` : ` Nee bonus pool lo ${bal.pool.toLocaleString("en-IN")} tokens unnai — weekly free ayipoyaka avi automatic ga use avuthayi.`) : "";
+  const refLine = lang === "en" ? " Inviting a friend adds 1,000,000 bonus tokens to both of you." : " Friend ni invite cheste iddariki 1,000,000 bonus tokens vasthayi.";
+  const keyLine = quotaProvider ? (lang === "en" ? ` Also, your ${pname} key just hit its free limit — I used a backup model; it resets on its own.` : ` Mariyu nee ${pname} key kuda ippude free limit ki cherindhi — backup model use chesa; adhi thane reset avuthundhi.`) : "";
+  return base + poolLine + refLine + keyLine;
+}
+async function limitWarnMaybe(env, u, lang, opts = {}) {
+  try {
+    if (!opts.force && appAllowed(env, u.n).ok) return "";
+    const flag = `limitwarn:${u.n}:${istWeek()}`;
+    if (!opts.force && (await env.KV.get(flag))) return "";
+    const bal = await tokBalance(env, u.n);
+    const usageHit = bal.weekSpent >= LIMIT_WARN_PCT * TOK.WEEKLY_FREE;
+    const quotaHit = u.keyQuota || "";
+    if (!opts.force && !usageHit && !quotaHit) return "";
+    const text = limitWarnText(lang, bal, quotaHit);
+    await env.KV.put(flag, String(Date.now()), { expirationTtl: 86400 * 8 });
+    return text;
+  } catch { return ""; }
+}
+
 // ===== v40 (R19): Worker-side verification-mail reader =====
+// ---- v97 (MULTI-ACCOUNT — Ajju 2026-11-16: "at a time atleast 10
+// accounts manage cheyyali"): up to 10 Google accounts per user. ----
+// Storage model: the DEFAULT account's grants keep living in the legacy
+// slots tok:<n>:google / tok:<n>:youtube, so every pre-v97 consumer
+// (WhatsApp connect, default token paths, setup chains) keeps working
+// untouched. Extra accounts hold their grants at
+// tok:<n>:google#<acctId> / tok:<n>:youtube#<acctId>. The index
+// gaccts:<n> = {list: [{id, email, ytChannel, ytNoChannel, gmail, yt,
+// state}], def} is DERIVED from the legacy slots on first read when
+// absent (migration-on-read — an existing single-grant user simply
+// becomes account #1, the default) and persisted on mutation only, so
+// hot paths pay no extra writes. Account identity = the Google email
+// (stable across reconnects); id = a short hash of it.
+const GACCT_CAP = 10;
+function gAcctId(email) {
+  const e = String(email || "").toLowerCase();
+  let h = 0; for (let i = 0; i < e.length; i++) h = (h * 31 + e.charCodeAt(i)) >>> 0;
+  return "a" + h.toString(36);
+}
+function gYtTitle(who) { const m = /^channel "([\s\S]*)"$/.exec(String(who || "")); return m ? m[1] : String(who || ""); }
+function gTokKey(n, prov, id, def) { return id && def && id !== def ? `tok:${n}:${prov}#${id}` : `tok:${n}:${prov}`; }
+async function gAccts(env, n) {
+  const idx = parseRec(await env.KV.get(`gaccts:${n}`));
+  if (idx && Array.isArray(idx.list)) return idx;
+  const g = parseRec(await env.KV.get(`tok:${n}:google`));
+  const y = parseRec(await env.KV.get(`tok:${n}:youtube`));
+  const list = [];
+  if (g || y) {
+    const email = (g && g.who) || "";
+    list.push({ id: gAcctId(email || (y && y.who) || "acct1"), email, ytChannel: y && !y.noChannel ? gYtTitle(y.who) : "", ytNoChannel: !!(y && y.noChannel), gmail: !!g, yt: !!y, state: "ok", at: (g && g.at) || (y && y.at) || 0 });
+  }
+  return { list, def: list.length ? list[0].id : null };
+}
+async function gAcctsSave(env, n, idx) { try { await env.KV.put(`gaccts:${n}`, JSON.stringify(idx)); } catch {} }
+async function gAcctMarkExpired(env, n, id) {
+  try { const idx = await gAccts(env, n); const a = idx.list.find(x => x.id === id); if (a && a.state !== "expired") { a.state = "expired"; await gAcctsSave(env, n, idx); } } catch {}
+}
+// Resolve an account hint (id | email | channel-title substring) to an id.
+async function gResolveAcct(env, n, hint) {
+  if (!hint) return undefined;
+  const h = String(hint).toLowerCase();
+  const idx = await gAccts(env, n);
+  const a = idx.list.find(x => x.id === hint) || idx.list.find(x => x.email && x.email.toLowerCase() === h) || idx.list.find(x => (x.ytChannel && x.ytChannel.toLowerCase().includes(h)) || (x.email && x.email.toLowerCase().includes(h)));
+  return a ? a.id : undefined;
+}
+// Register (or refresh) one account's grant after an OAuth callback.
+// prov is "google" | "youtube"; rec is the token record; email is the
+// Google account email (for google connects rec.who IS the email; for
+// youtube connects oauthRoutes resolves it via userinfo and passes it).
+// Accounts are keyed by email — reconnecting the same email refreshes
+// that account in place. A NEW email beyond the cap is refused
+// ({ok:false, cap:true}) and NOTHING is stored.
+async function gAcctRegister(env, n, prov, rec, email) {
+  const idx = await gAccts(env, n);
+  const em = String(email || (prov === "google" ? rec.who : "") || "").toLowerCase();
+  let a = em ? idx.list.find(x => x.email && x.email.toLowerCase() === em) : null;
+  if (!a && !em) a = idx.list.find(x => x.id === idx.def) || null;
+  if (!a) {
+    if (idx.list.length >= GACCT_CAP) return { ok: false, cap: true };
+    a = { id: gAcctId(em || ("acct" + Date.now())), email: em, ytChannel: "", ytNoChannel: false, gmail: false, yt: false, state: "ok", at: Date.now() };
+    idx.list.push(a);
+    if (!idx.def) idx.def = a.id;
+  }
+  a.state = "ok"; a.at = Date.now();
+  if (em && !a.email) a.email = em;
+  if (prov === "google") a.gmail = true;
+  if (prov === "youtube") { a.yt = true; if (rec.noChannel) { a.ytNoChannel = true; a.ytChannel = ""; } else if (rec.who) { a.ytChannel = gYtTitle(rec.who); a.ytNoChannel = false; } }
+  await env.KV.put(gTokKey(n, prov, a.id, idx.def), JSON.stringify(rec));
+  await gAcctsSave(env, n, idx);
+  return { ok: true, id: a.id, def: idx.def };
+}
 // The setup runner pauses on an email verification (Groq/OpenRouter/
 // Cloudflare magic link). The agent's Gmail tool redacts sign-in links,
 // so the link can never travel agent -> runner. Instead the WORKER reads
@@ -3347,27 +3759,31 @@ async function autoCheckAll(env) {
 // client-facing API — the only place it appears is the job record
 // (setupjob:<job>, 2-day TTL) returned by setup/runner/job to the runner
 // (x-runner-key auth). setup/status strips it via stripJobSecrets().
-async function googleToken(env, n) {
+async function googleToken(env, n, acctId) {
   // Same refresh pattern as ytToken: expired + refresh_token -> refresh
   // via oauth2.googleapis.com/token, store back, return the fresh token.
   // No refresh token / refresh fails -> null (caller surfaces re-consent).
-  const t = parseRec(await env.KV.get(`tok:${n}:google`));
+  // v97: acctId selects a non-default account's grant; omitted = the
+  // default account = the legacy slot, byte-for-byte the old behaviour.
+  const idx = acctId ? await gAccts(env, n) : null;
+  const key = acctId ? gTokKey(n, "google", acctId, idx && idx.def) : `tok:${n}:google`;
+  const t = parseRec(await env.KV.get(key));
   if (!t || !t.access_token) return null;
   if (t.expires_in && t.at && Date.now() - t.at > (t.expires_in - 300) * 1000) {
-    if (!t.refresh_token) return null;
+    if (!t.refresh_token) { if (acctId) await gAcctMarkExpired(env, n, acctId); return null; }
     // v50: a network-level failure of the refresh fetch must read as
     // "no token" (callers surface re-consent), never as a thrown error
     // escaping to a 500 — the bare `await fetch` here used to do that.
     let nt = {};
     try { const resp = await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) }); nt = await resp.json().catch(() => ({})); } catch { return null; }
-    if (!nt.access_token) return null;
+    if (!nt.access_token) { if (acctId) await gAcctMarkExpired(env, n, acctId); return null; }
     const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in };
     // v50: persisting the refreshed token is best-effort — a KV write
     // failure (e.g. the daily write quota) must not fail the request;
     // the fresh token is still returned for THIS call. (Live 2026-11-12:
     // this bare put threw "KV put() limit exceeded for the day" and
     // gmail/verify returned HTTP 500.)
-    try { await env.KV.put(`tok:${n}:google`, JSON.stringify(merged)); } catch {}
+    try { await env.KV.put(key, JSON.stringify(merged)); } catch {}
     return merged;
   }
   return t;
@@ -3461,6 +3877,36 @@ function isApiDisabled(status, errObj) {
   return /accessNotConfigured|SERVICE_DISABLED|has not been used in project/i.test(s);
 }
 async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
+  // v97 (MULTI-ACCOUNT): the verification mail lands in the inbox of
+  // the Google account the setup used — job.email (the chain email).
+  // Candidate order: (1) the account whose email matches job.email,
+  // (2) the default account, (3) every other Gmail grant. A found link
+  // or a matched-mail outcome (mail-no-link) ends the search; account-
+  // level problems (needs-scope / api-not-enabled) are remembered and
+  // reported if no inbox yields the link, so the honest fix-it state
+  // still surfaces. With one account this is exactly the old behaviour.
+  const idx = await gAccts(env, n);
+  const want = String((job && job.email) || "").toLowerCase();
+  const order = [];
+  const push = a => { if (a && a.gmail && !order.includes(a.id)) order.push(a.id); };
+  push(idx.list.find(a => want && a.email && a.email.toLowerCase() === want));
+  push(idx.list.find(a => a.id === idx.def));
+  idx.list.forEach(push);
+  if (!order.length) return { ok: false, reason: "no-gmail-token" };
+  let last = { ok: false, reason: "no-gmail-token" };
+  let definitive = null;
+  for (const id of order) {
+    const tok = await googleToken(env, n, id);
+    if (!tok) continue;
+    const r = await fetchVerifyLinkTok(tok, provider, job, chainAt, opts);
+    if (r.ok) return r;
+    last = r;
+    if (r.reason === "mail-no-link") return r;
+    if ((r.reason === "needs-scope" || r.reason === "api-not-enabled") && !definitive) definitive = r;
+  }
+  return definitive || last;
+}
+async function fetchVerifyLinkTok(tok, provider, job, chainAt, opts) {
   // Server-side only. Returns {ok:true, link|code, from, subject} or
   // {ok:false, reason: "no-gmail-token"|"needs-scope"|"api-not-enabled"|"no-mail-yet"|"mail-no-link"|"gmail-error"}.
   // The link/code is returned ONLY to in-Worker callers (job feed /
@@ -3471,8 +3917,6 @@ async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
   // (provider query, then a broader sender-domain query over a 1d window),
   // 10 results each; (3) a mail that MATCHES sender+subject+recency but
   // yields no link/code reports the honest "mail-no-link", not "no-mail-yet".
-  const tok = await googleToken(env, n);
-  if (!tok) return { ok: false, reason: "no-gmail-token" };
   const m = VERIFY_PROVIDERS[String(provider || "").toLowerCase()] || VERIFY_PROVIDERS.generic;
   const window = (opts && opts.window) || "2h";
   const auth = { Authorization: "Bearer " + tok.access_token };
@@ -3610,8 +4054,9 @@ async function gmailStateFor(env, n, job) {
   if (mf === "no-mail-yet") return { state: "no-mail-yet", provider };
   if (mf === "mail-no-link") return { state: "no-link", provider }; // v50 (X4): mail arrived but carried no usable link — say so, never "no mail"
   if (mf === "gmail-error") return { state: "error", provider };
-  const tok = parseRec(await env.KV.get(`tok:${n}:google`));
-  if (!tok || !tok.access_token) return { state: "no-token", provider };
+  // v97: "has a Gmail grant" = ANY connected account grants Gmail.
+  const gidx2 = await gAccts(env, n);
+  if (!gidx2.list.some(a => a.gmail)) return { state: "no-token", provider };
   return { state: "no-mail-yet", provider };
 }
 function stripJobSecrets(j) {
@@ -3708,6 +4153,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       // — a failure here never breaks setup/status.
       let auto = null;
       try { auto = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", false); } catch {}
+      try { await scoutSweep(env, false); } catch {} // v91: model scout piggyback (24h global throttle inside)
       const autoLog = await autoLogRead(env, u.n);
       return { ok: true, active: false, consent: !!consent, finished: stripChainSecrets(fin), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownCount, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10) };
     }
@@ -3916,8 +4362,11 @@ async function gcpPollOp(tok, pollUrl) {
     await new Promise(res => setTimeout(res, GEMINI_POLL_MS));
   }
 }
-async function provisionGeminiKey(env, n) {
-  const tok = await googleToken(env, n);
+async function provisionGeminiKey(env, n, wantEmail) {
+  // v97: when the chain names an email that matches a connected Google
+  // account, provision under THAT account; otherwise the default.
+  const aid = wantEmail ? await gResolveAcct(env, n, wantEmail) : undefined;
+  const tok = aid ? await googleToken(env, n, aid) : await googleToken(env, n);
   if (!tok) return { ok: false, reason: "no-google-token" };
   const at = tok.access_token;
   const errMsg = e => String((e && (e.message || e.status)) || "");
@@ -4055,7 +4504,7 @@ async function setupStartNext(env, n) {
   if (nextId === "gemini") {
     rec.state = "running"; rec.step = "creating key"; rec.upd = Date.now();
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
-    const prov = await provisionGeminiKey(env, n).catch(e => ({ ok: false, reason: "provision-error", detail: String(e).slice(0, 200) }));
+    const prov = await provisionGeminiKey(env, n, chain.email).catch(e => ({ ok: false, reason: "provision-error", detail: String(e).slice(0, 200) }));
     rec.upd = Date.now();
     if (prov.ok) {
       rec.state = "done"; rec.step = "key saved"; rec.note = "";
@@ -4120,8 +4569,18 @@ async function appVoiceRunner(req, env, p, url, body) {
     return appJson(req, { ok: true });
   }
   if (p === "voice/runner/fail" && req.method === "POST") {
-    rec.state = "failed"; rec.error = String((body && body.error) || "runner").slice(0, 120);
-    await env.KV.put(`vjob:${job}`, JSON.stringify(rec), { expirationTtl: 3600 });
+    // v51 (V4 refund fix): a terminal failure refunds the speak charge
+    // exactly once — the spend was recorded against the job at dispatch
+    // (recordSpend in voice/speak) and refundJobSpend pays it back from
+    // that record, flagging it so a repeat fail callback can never pay
+    // twice. A job that already delivered audio (state done) is never
+    // flipped to failed and never refunded; an already-failed job is a
+    // no-op.
+    if (rec.state !== "done" && rec.state !== "failed") {
+      rec.state = "failed"; rec.error = String((body && body.error) || "runner").slice(0, 120);
+      await env.KV.put(`vjob:${job}`, JSON.stringify(rec), { expirationTtl: 3600 });
+      try { await refundJobSpend(env, job, rec.user); } catch {}
+    }
     return appJson(req, { ok: true });
   }
   return new Response("not found", { status: 404 });

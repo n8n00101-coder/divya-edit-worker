@@ -170,6 +170,9 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .pill.go{background:var(--accent);color:var(--on-accent);min-height:44px}
 .pill.ok{background:var(--surface2);color:var(--text)}
 .pill.wait{background:var(--surface2);color:var(--muted);min-height:28px;padding:0 10px;font-size:12.5px}
+.mini-link{display:inline;padding:0;background:none;border:0;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;text-align:left;white-space:nowrap}
+.acct-h{font-weight:700;font-size:15px;margin:18px 0 8px}
+#acctList .pill.go{margin-top:10px}
 .switch{position:relative;width:52px;height:32px;flex:none}
 .switch input{position:absolute;inset:0;opacity:0;margin:0;width:100%;height:100%;cursor:pointer;z-index:1}
 .switch span{position:absolute;inset:0;background:var(--surface2);border:1px solid var(--line);border-radius:999px;transition:background .2s}
