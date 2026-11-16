@@ -2819,6 +2819,112 @@ def _resend_after_auth(page, job, cfg):
     return _fail(f"{name} key kanipinchaledu — create dialog tarvatha kuda (step: key creation). Take Control tho try cheyyi.")
 
 
+def _dbg(page, tag):
+    """Generic redacted snapshot for the F7 self-create flows (URL +
+    a slice of visible text). Token-shaped strings are masked BEFORE
+    printing: a key value must never reach a log."""
+    try:
+        def red(s):
+            return re.sub(r"(re_|xkeysib-|sk-|gsk_)[A-Za-z0-9_\-]{4,}", r"\1...", str(s or ""))
+        txt = ""
+        try:
+            txt = red((page.inner_text("body") or "")[:400].replace("\n", " "))
+        except Exception:
+            pass
+        print(f"DBG {tag}: url={page.url} text={txt}", flush=True)
+    except Exception:
+        pass
+
+
+def _oauth_door(page, job, cfg):
+    """F7 self-create: try the provider's Google/GitHub OAuth door
+    from its signup page. In PROFILE mode the sealed profile may hold
+    a Google session (an earlier Take Control sign-in) — then this
+    completes with NO human step: account chooser -> consent ->
+    provider dashboard. Returns:
+      "ok"         — signed in at the provider afterwards
+      "no-session" — the door needs a fresh sign-in the profile lacks
+      "blocked"    — Google refused the browser / door unresolved
+      None         — no OAuth door offered, or not profile mode
+    A sign-in form or a secure-browser refusal is RECORDED, never
+    evaded; the caller falls back to the email path."""
+    if not PROFILE_MODE:
+        return None
+    name = cfg["name"]
+    progress("running", "oauth", f"{name} — OAuth door (Google/GitHub) try chesthunna; profile session unte human step lekunda complete avthundhi.", cfg["url"])
+    if not goto(page, cfg["url"]):
+        return None
+    page.wait_for_timeout(2500)
+    door = None
+    if click(page, ["button:has-text('Log in with Google')", "button:has-text('Continue with Google')",
+                    "button:has-text('Sign up with Google')", "a:has-text('Log in with Google')",
+                    "a:has-text('Continue with Google')", "a:has-text('Sign up with Google')"]):
+        door = "google"
+    elif click(page, ["button:has-text('Log in with GitHub')", "button:has-text('Continue with GitHub')",
+                      "button:has-text('Sign up with GitHub')", "a:has-text('GitHub')",
+                      "button:has-text('GitHub')"]):
+        door = "github"
+    if not door:
+        print(f"oauth door: no Google/GitHub button on the {name} signup page", flush=True)
+        return None
+    page.wait_for_timeout(4000)
+    _dbg(page, f"oauth-{door}-landed")
+    if check_stop():
+        return None
+    url = page.url or ""
+    if "accounts.google.com" in url:
+        if _page_says(page, ["may not be secure", "couldn't sign you in", "could not sign you in"]):
+            _dbg(page, "oauth-google-blocked")
+            print("oauth door: Google refused this browser (secure-browser wall) — recorded, not evaded", flush=True)
+            return "blocked"
+        email = (job.get("email") or "").strip().lower()
+        picked = False
+        try:
+            if email:
+                loc = page.locator(f"[data-email='{email}']")
+                if loc.count():
+                    loc.first.click(timeout=6000)
+                    picked = True
+        except Exception:
+            pass
+        if not picked:
+            try:
+                rows = page.locator("[data-email]")
+                if rows.count():
+                    rows.first.click(timeout=6000)
+                    picked = True
+            except Exception:
+                pass
+        if not picked:
+            if _visible(page, ["input[type='email']", "input[name='identifier']"]):
+                _dbg(page, "oauth-no-session")
+                print("oauth door: Google sign-in form — the sealed profile holds no Google session", flush=True)
+                return "no-session"
+            return "blocked"
+        page.wait_for_timeout(3500)
+        if "accounts.google.com" in (page.url or ""):
+            # First-grant consent screen for this provider's app.
+            click(page, ["button:has-text('Continue')", "button:has-text('Allow')",
+                         "#submit_approve_access", "button:has-text('Confirm')"])
+            page.wait_for_timeout(4000)
+    elif "github.com" in url:
+        if _visible(page, ["input[name='login']", "input#login_field"]):
+            _dbg(page, "oauth-github-no-session")
+            print("oauth door: GitHub login form — the sealed profile holds no GitHub session", flush=True)
+            return "no-session"
+        click(page, ["button:has-text('Authorize')", "button[name='authorize']"])
+        page.wait_for_timeout(4000)
+    for _ in range(3):
+        if check_stop():
+            return None
+        if _verify_signed_in(page, cfg, name):
+            print(f"oauth door: signed in at {name} via {door}", flush=True)
+            return "ok"
+        page.wait_for_timeout(1500)
+    _dbg(page, "oauth-unresolved")
+    return "blocked"
+
+
 def flow_resend(page, job, cfg):
     """v94 (F7): Resend — the mail channel's own key. Fully dedicated
     flow (Resend breaks the generic email flow's assumptions twice:
@@ -2832,6 +2938,18 @@ def flow_resend(page, job, cfg):
         key = _resend_create_key(page, cfg)
         if key:
             return _ok(key=key)
+    # F7 self-create: the OAuth door — the email form is anti-abuse
+    # refused for this runner (runs 6-7), but a saved Google session
+    # in the profile can complete signup with NO human step.
+    oauth = _oauth_door(page, job, cfg)
+    if oauth == "ok":
+        progress("running", "api-key", f"{name} key create chesthunna.", cfg["keys_url"])
+        key = _resend_create_key(page, cfg)
+        if key:
+            return _ok(key=key)
+        return _fail(f"{name} OAuth sign-in ayyindhi kaani key kanipinchaledu (step: key creation). Take Control tho try cheyyi.")
+    if oauth in ("no-session", "blocked"):
+        progress("running", "signup", f"{name} OAuth door {oauth} — email form path tho continue chesthunna.", cfg["url"])
     progress("running", "signup", f"{name} account create chesthunna.", cfg["url"])
     if not goto(page, cfg["url"]):
         return _fail(f"{name} sign-in page load avvaledu — site open avvaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
@@ -2931,6 +3049,145 @@ def flow_resend(page, job, cfg):
     # Dashboard straight away, or a redirect to /login (the account
     # already exists) — either way, finish through the auth tail.
     return _resend_after_auth(page, job, cfg)
+
+
+def _brevo_create_key(page, cfg):
+    """Brevo API-key creation (Settings -> API keys): the key
+    (xkeysib-...) is shown ONCE in the creation dialog. Returns the
+    key or None."""
+    goto(page, cfg["keys_url"])
+    page.wait_for_timeout(3000)
+    _dbg(page, "brevo-keys-page")
+    key = extract_key(page, cfg["key_patterns"])
+    if key:
+        return key
+    click(page, ["button:has-text('Create a new API key')", "button:has-text('Create an API key')",
+                 "a:has-text('Create a new API key')", "button:has-text('Create')"])
+    page.wait_for_timeout(2000)
+    # The dialog asks for a key name before generating.
+    try:
+        fill(page, ["[role='dialog'] input[type='text']", "[role='dialog'] input:not([type])",
+                    "input[name='name']", "input[placeholder*='name' i]"], "julie-mail")
+    except Exception:
+        pass
+    page.wait_for_timeout(600)
+    click(page, ["[role='dialog'] button:has-text('Generate')", "[role='dialog'] button:has-text('Create')",
+                 "button:has-text('Generate')", "button:has-text('Create')"])
+    key = None
+    for _ in range(10):
+        page.wait_for_timeout(1000)
+        key = extract_key(page, cfg["key_patterns"])
+        if key:
+            break
+        try:
+            m = re.search(r"(xkeysib-[A-Za-z0-9\-]{20,})", page.inner_text("body") or "")
+            if m:
+                key = m.group(1)
+                break
+        except Exception:
+            pass
+    if not key:
+        try:
+            for el in page.locator("input").all():
+                try:
+                    m = re.search(r"(xkeysib-[A-Za-z0-9\-]{20,})", el.input_value() or "")
+                except Exception:
+                    continue
+                if m:
+                    key = m.group(1)
+                    break
+        except Exception:
+            pass
+    _dbg(page, "brevo-after-create")
+    return key
+
+
+def flow_brevo(page, job, cfg):
+    """F7 self-create: Brevo — sendMailChannel's fallback, now with
+    its own creation chain (before this, Brevo existed only as a
+    send-side fallback, so its sys slot could never be filled by
+    Julie herself). Stages: live-session fast path -> OAuth door
+    (profile session) -> signup (name + email + password) -> the
+    server-fed email-validation pause -> keys page -> key dialog.
+    An already-existing account routes through the login tail."""
+    name = cfg["name"]
+    if _verify_signed_in(page, cfg, name):
+        key = _brevo_create_key(page, cfg)
+        if key:
+            return _ok(key=key)
+    oauth = _oauth_door(page, job, cfg)
+    if oauth == "ok":
+        key = _brevo_create_key(page, cfg)
+        if key:
+            return _ok(key=key)
+        return _fail(f"{name} OAuth sign-in ayyindhi kaani key kanipinchaledu (step: key creation). Take Control tho try cheyyi.")
+    if oauth in ("no-session", "blocked"):
+        progress("running", "signup", f"{name} OAuth door {oauth} — email form path tho continue chesthunna.", cfg["url"])
+    progress("running", "signup", f"{name} account create chesthunna.", cfg["url"])
+    if not goto(page, cfg["url"]):
+        return _fail(f"{name} sign-in page load avvaledu — site open avvaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
+    page.wait_for_timeout(2500)
+    _dbg(page, "brevo-signup-start")
+    if check_stop():
+        return _stopped()
+    maybe_captcha(page)
+    ctrls = wait_for_auth_form(page, cfg, timeout_s=45)
+    if ctrls is None:
+        if _verify_signed_in(page, cfg, name):
+            key = _brevo_create_key(page, cfg)
+            if key:
+                return _ok(key=key)
+        return _fail(f"{name} sign-in page load avvaledu — form kanipinchaledu (step: sign-in page, {cfg['url']}). Take Control tho try cheyyi.")
+    if ctrls.get("stopped"):
+        return _stopped()
+    if detect_auth_mode(ctrls) == "sso-only":
+        if not pause_for_signin(page, cfg):
+            return _stopped()
+        key = _brevo_create_key(page, cfg)
+        if key:
+            return _ok(key=key)
+        return _fail(f"{name} sign-in tarvatha kuda key kanipinchaledu (step: key creation).")
+    _fill_identity_fields(page, job)
+    ok = fill(page, _AUTH_EMAIL, job["email"])
+    ok = fill(page, _AUTH_PASS, job["pass"]) and ok
+    if not ok:
+        return _fail(f"{name} signup form kanipinchaledu — site layout marindhi (step: signup form). Take Control tho try cheyyi.")
+    tick_consent(page)
+    if not click_submit(page):
+        click(page, ["button:has-text('Create an account')", "button:has-text('Create account')",
+                     "button:has-text('Sign up')", "button:has-text('Register')"])
+    page.wait_for_timeout(4000)
+    maybe_captcha(page)
+    _dbg(page, "brevo-signup-after-submit")
+    if check_stop():
+        return _stopped()
+    err = _submit_error(page)
+    if err and "already" not in err.lower():
+        return _fail(f"{name} signup error: {err} (step: signup form).")
+    if err or _page_says(page, ["already exists", "already registered", "account already exists", "email already in use"]):
+        # The account exists — sign in with the job's password instead.
+        progress("running", "signin", f"{name} account already undhi — sign in chesthunna.", cfg.get("login_url") or cfg["url"])
+        if not try_login(page, job, cfg):
+            return _fail(f"{name} account undhi kaani sign-in avvaledu (step: sign-in). Take Control tho try cheyyi.", extra={"no_retry": True})
+    # Email-validation wall — the server-fed pause (Brevo mails a
+    # validation link; the Worker feeds it from the owner's Gmail and
+    # the runner opens it in THIS browser; the user never taps it).
+    if _page_says(page, VERIFY_NEEDLES) or _page_says(page, ["validate your email", "validation email", "confirm your account"]):
+        if not pause_for_email_verify(page, job, cfg):
+            return _fail(_verify_fail_msg(name), extra={"no_retry": True})
+    if check_stop():
+        return _stopped()
+    progress("running", "api-key", f"{name} key create chesthunna.", cfg["keys_url"])
+    key = _brevo_create_key(page, cfg)
+    if key:
+        return _ok(key=key)
+    # One login-and-retry if the keys page bounced us to a login form
+    # (Brevo can drop the session right after validation).
+    if try_login(page, job, cfg):
+        key = _brevo_create_key(page, cfg)
+        if key:
+            return _ok(key=key)
+    return _fail(f"{name} key kanipinchaledu — create dialog tarvatha kuda (step: key creation). Take Control tho try cheyyi.")
 
 
 def flow_jina(page, job, cfg):
@@ -3089,6 +3346,14 @@ FLOWS = {
                "login_url": "https://resend.com/login",
                "keys_url": "https://resend.com/api-keys", "flow": "resend",
                "key_patterns": [r"(re_[A-Za-z0-9_\-]{20,})"]},
+    # F7 self-create: Brevo — sendMailChannel's fallback gets its own
+    # creation chain (flow_brevo). Same status as Resend: a capability
+    # key created ONCE under the project identity, mirrored into the
+    # sys slot by setup/runner/key. Never in CHAIN_ORDER.
+    "brevo": {"name": "Brevo", "url": "https://app.brevo.com/account/register",
+              "login_url": "https://app.brevo.com/account/login",
+              "keys_url": "https://app.brevo.com/settings/keys/api", "flow": "brevo",
+              "key_patterns": [r"(xkeysib-[A-Za-z0-9\-]{20,})"]},
 }
 
 
@@ -3125,7 +3390,7 @@ def run_flow(page, job, cfg):
         # and similar walls show on FIRST load. Give the page ~6s to
         # clear a managed challenge; if the wall persists, fail in
         # seconds (no_retry) instead of grinding through the whole flow.
-        if flow in ("cloudflare", "token", "email", "pexels", "mistral", "jina", "resend"):
+        if flow in ("cloudflare", "token", "email", "pexels", "mistral", "jina", "resend", "brevo"):
             try:
                 page.goto(cfg["url"], wait_until="domcontentloaded", timeout=30000)
                 page.wait_for_timeout(2500)
@@ -3150,6 +3415,8 @@ def run_flow(page, job, cfg):
             return flow_jina(page, job, cfg)
         if flow == "resend":
             return flow_resend(page, job, cfg)
+        if flow == "brevo":
+            return flow_brevo(page, job, cfg)
         return flow_email_signup(page, job, cfg)
     except WallHit as w:
         return _fail(f"{cfg['name']} security wall ({w}) — Take Control tho nuvve okkasari sign in cheyyi, tarvatha Julie ne continue chesthundhi.", extra={"no_retry": True, "wall": str(w)})
