@@ -59,6 +59,46 @@ def line():
     return "Brain: " + " · ".join(parts)
 
 
+def mark():
+    """ROUND 5: a ledger position. Paired with outcomes_since(),
+    this attributes stage outcomes to ONE unit of work (a chapter
+    pass) inside a process that renders many — the job-level
+    summary() alone cannot say WHICH chapter's director fell
+    back, and film 3 shipped two fallback-directed passes under
+    a job-level shrug."""
+    return len(_records)
+
+
+def outcomes_since(mark, stages=None):
+    """{stage: {status, detail}} — the LAST outcome recorded for
+    each stage at or after `mark` (optionally restricted to
+    `stages`). A stage that never ran in the window is absent —
+    absence is not OK and not FALLBACK; callers decide what an
+    unrun stage means for their unit of work."""
+    out = {}
+    for rec in _records[int(mark):]:
+        if stages and rec["stage"] not in stages:
+            continue
+        out[rec["stage"]] = {"status": rec["status"],
+                             "detail": rec["detail"]}
+    return out
+
+
+def fallback_stages_since(mark, stages=None):
+    """[stage, ...] with at least ONE FALLBACK record at or
+    after `mark` (optionally restricted to `stages`). One real
+    run later in the window does not erase an earlier fallback:
+    a chapter whose main pass fell back WAS fallback-directed,
+    even if a later pass recovered."""
+    out = []
+    for rec in _records[int(mark):]:
+        if stages and rec["stage"] not in stages:
+            continue
+        if rec["status"] == "FALLBACK" and rec["stage"] not in out:
+            out.append(rec["stage"])
+    return out
+
+
 def reset():
     """Tests only — production processes are one-job-lived."""
     _records.clear()

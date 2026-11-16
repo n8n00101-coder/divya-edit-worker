@@ -346,7 +346,75 @@ def _fix_guidance100(failed):
     if "FIDELITY" in rules:
         g.append("FIDELITY: every visual must picture the words "
                  "of ITS OWN line")
+    if "DIR-FALLBACK" in rules:
+        g.append("DIRECTOR: the previous pass was directed by "
+                 "the deterministic FALLBACK because the brain "
+                 "director stage could not run — this pass must "
+                 "be directed in full (transitions, dynamics, "
+                 "visual rhythm); a flat repeat of the fallback "
+                 "plan does not clear this failure")
+    if "MOTION-STATIC" in rules:
+        g.append("MOTION: rendered beats must MOVE — animated "
+                 "graphics over the footage, push-ins on stills "
+                 "and static clips, speed accents on the number "
+                 "and hit beats; a static title card is not a "
+                 "beat")
+    if "PRESENTER-CARD" in rules:
+        g.append("PRESENTER: this is a faceless documentary — "
+                 "no avatar/presenter placeholder card on any "
+                 "beat; picture the line with footage, evidence "
+                 "or a composed graphic instead")
     return g
+
+
+def _director_check(stages, chapter_no):
+    """ROUND 5 (Fix 1): the compliance form of a director
+    fallback — boring-critical, so it rides the fix loop like
+    any other boring-critical FAIL."""
+    return {"rule": "DIR-FALLBACK", "status": "FAIL", "scene": None,
+            "detail": f"chapter {chapter_no}: director stage(s) "
+                      f"{', '.join(stages)} fell back (channel) — "
+                      f"the chapter was directed by the "
+                      f"deterministic fallback, not the brain "
+                      f"director"}
+
+
+def _round5_checks(res, presenter_allowed=False):
+    """ROUND 5 (Fixes 2 + 6): the chapter's MOTION-STATIC and
+    PRESENTER-CARD checks, computed from the plan that actually
+    rendered (the HF report's pixel motion audit + the scene
+    records' presenter audit). Returns (checks, info)."""
+    checks = []
+    plan = (res or {}).get("plan") or {}
+    scenes = plan.get("scenes") or []
+    flags = []
+    try:
+        import doc as _doc5
+        import motion_audit as _ma5
+        flags = _ma5.presenter_flags(
+            scenes, presenter_allowed=presenter_allowed,
+            mapped=_doc5._VIS_NAME_MAP)
+    except Exception:
+        flags = []
+    if flags:
+        checks.append({
+            "rule": "PRESENTER-CARD", "status": "FAIL",
+            "scene": flags[0]["scene"],
+            "detail": "presenter/avatar placeholder card "
+                      "(polaroid with no real photo) on scene(s) "
+                      + ", ".join(str(f["scene"]) for f in flags)
+                      + " of a faceless long-form documentary"})
+    audit = ((plan.get("hyperframes_primary") or {})
+             .get("motion_audit") or {})
+    static_beats = audit.get("static_beats") or []
+    if static_beats:
+        checks.append({
+            "rule": "MOTION-STATIC", "status": "FAIL",
+            "scene": static_beats[0],
+            "detail": f"{len(static_beats)} rendered beat(s) do "
+                      f"not move (pixel motion audit): scene(s) "
+                      + ", ".join(str(s) for s in static_beats)})
+    return checks, {"presenter_flags": flags, "motion_audit": audit}
 
 
 async def render_chapters(outline_data, chat, workdir, notify=None,
@@ -423,6 +491,15 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
         if cfg is not None:
             ch_cfg = dict(cfg)
             ch_cfg["allow_cta"] = (i == len(outline_data["chapters"]) - 1)
+        # ROUND 5 (Fix 1): the brain-ledger window for THIS
+        # chapter — the director-fallback verdict is per chapter,
+        # not per job (film 3's job-level ledger hid that BOTH
+        # passes of its only chapter were fallback-directed).
+        try:
+            import brain_status as _bs5m
+            _bs5_mark = _bs5m.mark()
+        except Exception:
+            _bs5_mark = None
         # v75: ONE retry per chapter — a transient sub-step failure
         # (LLM blip, TTS error) must not kill the chapter outright.
         # After the retry the old semantics hold: with finished
@@ -702,6 +779,45 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
         except Exception as _e4d:
             print(f"render_chapters: depiction count failed "
                   f"({str(_e4d)[:100]})")
+        # ROUND 5 (Fix 1 + 2 + 6): the director-fallback verdict
+        # for this chapter's passes, the pixel motion audit and
+        # the presenter audit — all boring-critical, all riding
+        # the fix loop below. Film 3 shipped a fallback-directed,
+        # static-card chapter as if it were directed work.
+        try:
+            import brain_status as _bs5f
+            _fb5 = (_bs5f.fallback_stages_since(
+                _bs5_mark,
+                stages=("editing-director", "visual-director"))
+                if _bs5_mark is not None else [])
+        except Exception:
+            _fb5 = []
+        if _fb5:
+            res["director_fallback"] = {"stages": _fb5}
+            _rep5 = dict(res.get("compliance") or {})
+            _rep5["checks"] = [
+                c for c in (_rep5.get("checks") or [])
+                if c.get("rule") != "DIR-FALLBACK"] + [
+                    _director_check(_fb5, i + 1)]
+            res["compliance"] = _rep5
+            print(f"render_chapters: chapter {i + 1} DIRECTOR "
+                  f"FALLBACK ({', '.join(_fb5)}) — labelled, "
+                  f"rides the fix loop")
+        _r5_checks, _r5_info = _round5_checks(
+            res, presenter_allowed=bool(
+                (ch_cfg or cfg or {}).get("presenter")))
+        if _r5_info["presenter_flags"]:
+            res["presenter_flags"] = _r5_info["presenter_flags"]
+        if _r5_checks:
+            _rep5b = dict(res.get("compliance") or {})
+            _rep5b["checks"] = list(_rep5b.get("checks") or []) \
+                + _r5_checks
+            _rep5b["checks_failed"] = sum(
+                1 for c in _rep5b["checks"]
+                if c.get("status") == "FAIL")
+            res["compliance"] = _rep5b
+            print(f"render_chapters: chapter {i + 1} round-5 "
+                  f"checks: {[c['rule'] for c in _r5_checks]}")
         # v79 (R12 + FIX 5): a chapter whose compliance report still
         # FAILs is re-rendered with the failures named in its brief —
         # fix only that chapter, keep the best attempt.
@@ -751,6 +867,14 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
             fix_dir = ch_dir / f"fix{_round + 1}"
             fix_dir.mkdir(parents=True, exist_ok=True)
             _pool_mark = len(pool.assignments) if pool is not None else 0
+            # ROUND 5 (Fix 1): this fix render's own ledger
+            # window — its director verdict is judged on ITS
+            # stages, not the chapter's earlier passes.
+            try:
+                import brain_status as _bs5fx
+                _fix_mark5 = _bs5fx.mark()
+            except Exception:
+                _fix_mark5 = None
             try:
                 res2 = await doc.make_video(
                     ch_brief + ("\nCOMPLIANCE FIXES REQUIRED — the "
@@ -785,6 +909,42 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
                     res2["compliance"] = _rep2b
             except Exception:
                 pass
+            # ROUND 5 (Fix 1): a fix round clears DIR-FALLBACK
+            # only if the brain director ACTUALLY RAN in this
+            # render — re-evaluate this pass's ledger window and
+            # re-inject the FAIL when it fell back again. A
+            # deterministic re-render is not a fix. The fix pass
+            # is re-audited for motion + presenter the same way.
+            try:
+                import brain_status as _bs5x
+                _fb2 = (_bs5x.fallback_stages_since(
+                    _fix_mark5,
+                    stages=("editing-director", "visual-director"))
+                    if _fix_mark5 is not None else [])
+            except Exception:
+                _fb2 = []
+            if _fb2:
+                res2["director_fallback"] = {"stages": _fb2}
+                _rep2c = dict(res2.get("compliance") or {})
+                _rep2c["checks"] = [
+                    c for c in (_rep2c.get("checks") or [])
+                    if c.get("rule") != "DIR-FALLBACK"] + [
+                        _director_check(_fb2, i + 1)]
+                res2["compliance"] = _rep2c
+            else:
+                res2.pop("director_fallback", None)
+            _r5c2, _r5i2 = _round5_checks(
+                res2, presenter_allowed=bool(
+                    (ch_cfg or cfg or {}).get("presenter")))
+            if _r5i2["presenter_flags"]:
+                res2["presenter_flags"] = _r5i2["presenter_flags"]
+            if _r5c2:
+                _rep2d = dict(res2.get("compliance") or {})
+                _rep2d["checks"] = [
+                    c for c in (_rep2d.get("checks") or [])
+                    if c.get("rule") not in
+                    ("MOTION-STATIC", "PRESENTER-CARD")] + _r5c2
+                res2["compliance"] = _rep2d
             rep2 = res2.get("compliance") or {}
             failed2 = [c for c in (rep2.get("checks") or [])
                        if c.get("status") == "FAIL"]
@@ -835,6 +995,34 @@ async def render_chapters(outline_data, chat, workdir, notify=None,
             res["compliance"] = _repF
         except Exception:
             pass
+        # ROUND 5: the shipped chapter's FINAL motion/presenter
+        # checks (recomputed on the plan that actually ships,
+        # like depiction above) and its director verdict.
+        try:
+            _r5F, _r5Fi = _round5_checks(
+                res, presenter_allowed=bool(
+                    (ch_cfg or cfg or {}).get("presenter")))
+            _repF2 = dict(res.get("compliance") or {})
+            _checksF2 = [c for c in (_repF2.get("checks") or [])
+                         if c.get("rule") not in
+                         ("MOTION-STATIC", "PRESENTER-CARD")]
+            _checksF2 += _r5F
+            _repF2["checks"] = _checksF2
+            _repF2["checks_failed"] = sum(
+                1 for c in _checksF2 if c.get("status") == "FAIL")
+            res["compliance"] = _repF2
+            if _r5Fi["presenter_flags"]:
+                res["presenter_flags"] = _r5Fi["presenter_flags"]
+            if _r5Fi["motion_audit"]:
+                res["motion_audit"] = _r5Fi["motion_audit"]
+        except Exception:
+            pass
+        res["director_fallback_final"] = bool(
+            res.get("director_fallback")) or any(
+            c.get("rule") == "DIR-FALLBACK"
+            and c.get("status") == "FAIL"
+            for c in ((res.get("compliance") or {})
+                      .get("checks") or []))
         if _long_ctx:
             res["fact_gate_passes"] = _gate_passes
         if deadline is not None:
@@ -1698,6 +1886,33 @@ async def make_long_video(brief, chat, workdir, target_minutes,
             f"correction round(s) — shipped with known defects "
             f"(see compliance_report.json)")
         summary += "; " + _comp_warn
+    # ROUND 5 (Fix 1): the director verdict and the taste-QC
+    # verdict state at DELIVERY level. Film 3's editing director
+    # fell back on both passes and its taste QC produced zero
+    # verdicts (UNVERIFIED x12) — neither fact reached the
+    # delivery line the owner reads.
+    _dir_fb5 = [i + 1 for i, r in enumerate(results)
+                if r.get("director_fallback_final")]
+    if _dir_fb5:
+        summary += (
+            f"; ⚠ director: the brain director did NOT run for "
+            f"chapter(s) {', '.join(map(str, _dir_fb5))} — the "
+            f"deterministic fallback directed them (labelled "
+            f"DIRECTOR-FALLBACK in the report)")
+    _taste_unv5 = 0
+    try:
+        for _ch5 in (_taste87.get("chapters") or []):
+            if _ch5.get("rounds"):
+                _taste_unv5 += int(
+                    (_ch5["rounds"][-1].get("counts") or {})
+                    .get("UNVERIFIED") or 0)
+    except Exception:
+        pass
+    if _taste87.get("vision") != "live" or _taste_unv5:
+        summary += (
+            f"; ⚠ taste QC: UNVERIFIED ({_taste_unv5} beat "
+            f"verdict(s); vision {_taste87.get('vision')}) — "
+            f"those beats shipped without a taste verdict")
     # v84 (Stage 5 / P3): Editing Director, LOG-ONLY. Reads the
     # chapter plans, writes director_log.json, changes NOTHING.
     _director_log = None
@@ -1865,6 +2080,11 @@ async def make_long_video(brief, chat, workdir, target_minutes,
               "footage": pool.footage_json() if pool else {},
               # PROOF-FIX 1/2: brain ledger + achieved footage share.
               "brain_status": _brain_status_summary_lv(),
+              # ROUND 5 (Fix 1): per-chapter director verdict +
+              # the taste-QC UNVERIFIED count, on the result dict
+              # next to the brain ledger — not only in logs.
+              "director_fallback_chapters": _dir_fb5,
+              "taste_unverified_beats": _taste_unv5,
               "footage_share": (round(_cov_sc / _tot_sc, 3)
                                 if _tot_sc else 0.0),
               "partial": partial, "chapters_done": len(paths),
