@@ -1489,9 +1489,63 @@ def requirement_verdicts(spec, cfg, plan_info, media_info):
                 status = "PASS" if cfg.get("no_graphics") else "FAIL"
                 evidence = "graphics disabled; footage carries the scenes"
         elif t == "topic":
-            topic = str(plan_info.get("topic") or "").lower()
-            status = "PASS" if any(w in topic for w in re.findall(r"[a-z]{3,}", vl)) else "UNVERIFIED"
-            evidence = f"video topic: {plan_info.get('topic')}"
+            # ROUND 4 (Fix 1b): judge the DELIVERED title/topic
+            # against the order — never a substring game. The old
+            # check passed when ANY word of the requirement
+            # appeared in the topic string: film 3's AUTO order
+            # marked PASS (evidence "video topic: Auto") while the
+            # film delivered the previous film's subject against
+            # an explicit exclusion. Now: an exclusion hit or an
+            # AUTO repeat of a delivered topic FAILs; a concrete
+            # topic must cover at least half its subject words in
+            # what was actually delivered; an AUTO pick with no
+            # history/exclusions on record is UNVERIFIED, never a
+            # free PASS.
+            import topic_lock as _tl4
+            delivered = " ".join(
+                str(x or "") for x in (plan_info.get("title"),
+                                       plan_info.get("topic"))).strip()
+            history = plan_info.get("topic_history") or []
+            exclusions = list(plan_info.get("topic_exclusions") or [])
+            ex_hit = _tl4.exclusion_hit(delivered, exclusions)
+            req_words = _tl4.content_words(v)
+            is_auto = (not req_words
+                       or str(v).strip().lower().startswith("auto"))
+            if ex_hit:
+                status = "FAIL"
+                evidence = (f"delivered '{delivered}' violates the "
+                            f"order's exclusion '{ex_hit}'")
+            elif is_auto:
+                hist_hit = _tl4.history_hit(delivered, history)
+                if hist_hit:
+                    status = "FAIL"
+                    evidence = (f"AUTO pick '{delivered}' repeats a "
+                                f"delivered film's topic: '{hist_hit}'")
+                elif history or exclusions:
+                    status = "PASS"
+                    evidence = (f"AUTO pick delivered '{delivered}' "
+                                f"— no clash with {len(history)} "
+                                f"delivered topic(s) or the order's "
+                                f"exclusions")
+                else:
+                    status = "UNVERIFIED"
+                    evidence = (f"AUTO pick delivered '{delivered}' "
+                                f"— no topic history or exclusions "
+                                f"on record to judge it against")
+            else:
+                tw = _tl4.content_words(delivered)
+                got = (len(req_words & tw) / len(req_words)
+                       if req_words else 0.0)
+                if got >= 0.5:
+                    status = "PASS"
+                    evidence = (f"delivered '{delivered}' covers "
+                                f"{got:.0%} of the ordered topic's "
+                                f"subject words")
+                else:
+                    status = "FAIL"
+                    evidence = (f"delivered '{delivered}' covers "
+                                f"only {got:.0%} of the ordered "
+                                f"topic '{v}'")
         out.append({"id": r.get("id"), "type": t, "value": v,
                     "quote": r.get("quote", ""), "status": status,
                     "evidence": evidence})

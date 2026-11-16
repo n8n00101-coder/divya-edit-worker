@@ -1170,6 +1170,27 @@ async def create_job(j, wa, note):
             _target_min = max(2, int(round(_target_s / 60)))
             _budget = int(os.environ.get("DIVYA_LONG_BUDGET_S", "3000") or 3000)
             print(f"long route: target {_target_min} min, budget {_budget}s")
+            # ROUND 4 (Fix 1 — TOPIC LOCK): the delivered-topic
+            # history (the Worker's `recent`, from the topics:
+            # record it keeps per user) and the owner's own
+            # exclusions (parsed from their EXACT words — the
+            # brief rewrite dropped film 3's "not electric
+            # vehicles", so the lock reads user_prompt, never the
+            # brief) ride into the long pipeline.
+            _topic_history = [t.strip() for t in
+                              str(j.get("recent") or "").split(";")
+                              if t.strip()]
+            _topic_exclusions = []
+            try:
+                import topic_lock as _tl_r4
+                _topic_exclusions = _tl_r4.parse_exclusions(
+                    str(j.get("user_prompt") or j.get("brief") or ""))
+            except Exception as _e:
+                print("topic lock: exclusion parse failed:",
+                      str(_e)[:100])
+            if _topic_history or _topic_exclusions:
+                print(f"topic lock: {len(_topic_history)} delivered "
+                      f"topic(s), exclusions {_topic_exclusions}")
             res = await long_video.make_long_video(
                 j.get("brief", ""), _chat,
                 workdir=os.path.join(os.environ.get("DATA_DIR", "/tmp/divya"),
@@ -1177,6 +1198,8 @@ async def create_job(j, wa, note):
                 target_minutes=_target_min, notify=note,
                 deadline=_time.monotonic() + _budget,
                 ref_voice=_ref, amendments=amend,
+                topic_history=_topic_history,
+                topic_exclusions=_topic_exclusions,
                 # spec rides only when a real contract exists (an
                 # empty spec is no contract), but v98: the resolved
                 # cfg rides UNCONDITIONALLY for long jobs — a long
