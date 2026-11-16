@@ -73,7 +73,10 @@ DEFAULT_VOICE_GENDER = "male"
 # another narration language stops upfront with the honest
 # alternative (FIX 6) — English with this voice, or a voice that
 # speaks the asked language — never a silent swap, never a fake.
-CLONE_VOICES = {"tripti": {"langs": ("en",), "display": "Tripti"}}
+# v99: Telugu joins the list — the FIXED Telugu house voice
+# (doc.indicf5_tts, IndicF5 from the canonical natspan refs, gated
+# by the voice engine's ship bar; Ajju ear-approved 2026-11-16).
+CLONE_VOICES = {"tripti": {"langs": ("en", "te"), "display": "Tripti"}}
 # edge-tts voices the engine will pass through: the doc.VOICES catalogue
 # plus any well-formed <lang>-<REGION>-<Name>Neural id (R-P5: a voice
 # named in the prompt is a renderer parameter, never re-chosen).
@@ -543,7 +546,8 @@ def resolve_render_config(spec, kind="short"):
                                  "a named edge-tts voice (e.g. en-US-AndrewNeural), "
                                  "male or female, a voice language the engine "
                                  "speaks (English, Telugu, Hindi), or the "
-                                 "Tripti clone voice (English)")
+                                 "Tripti house voice (English clone, "
+                                 "fixed Telugu)")
     if named_voice:
         voice_id = named_voice
     elif clone_voice:
@@ -559,15 +563,23 @@ def resolve_render_config(spec, kind="short"):
             _wl = _LANG_DISPLAY.get(_want, _want)
             raise SpecImpossible(
                 clone_req_id,
-                f"voice '{_disp}' is an English clone voice — it "
-                f"cannot speak {_wl}",
-                f"English narration in the {_disp} voice, or a "
-                f"{_wl} voice instead")
+                f"voice '{_disp}' is an English clone / fixed "
+                f"Telugu house voice — it cannot speak {_wl}",
+                f"English or Telugu narration in the {_disp} "
+                f"voice, or a {_wl} voice instead")
         voice_id = clone_voice
-        voice_choice = {"via": "clone", "voice_id": clone_voice,
-                        "engine": "chatterbox",
-                        "note": CLONE_VOICES[clone_voice]["display"].lower()
-                                + " (clone of house sample)"}
+        if (_want or _langs[0]) == "te":
+            # v99: the Telugu leg of the house voice is the FIXED
+            # IndicF5 voice, not the Chatterbox clone.
+            voice_choice = {"via": "clone", "voice_id": clone_voice,
+                            "engine": "indicf5-fixed",
+                            "note": CLONE_VOICES[clone_voice]["display"].lower()
+                                    + " (fixed telugu house voice)"}
+        else:
+            voice_choice = {"via": "clone", "voice_id": clone_voice,
+                            "engine": "chatterbox",
+                            "note": CLONE_VOICES[clone_voice]["display"].lower()
+                                    + " (clone of house sample)"}
         if lang is None:
             # A clone-voice ask fixes the narration language to the
             # clone's own when nothing else spoke (mirrors v79.1).

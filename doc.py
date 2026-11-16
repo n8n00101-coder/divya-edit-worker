@@ -799,15 +799,19 @@ VOICE_NOTE_REF = "reference-matched (pace + closest voice) — exact clone engin
 
 
 # ---------------- v83: house CLONE voices ----------------
-# A clone voice is a REAL zero-shot clone (Chatterbox, clone_tts.py)
-# of a consented house sample — not a built-in, and never labelled as
-# anything else. "tripti" is the WHO TAUGHT US channel voice, supplied
-# by the owner for exactly this use (2026-11-13: "ee voice ni Julie lo
-# pettu, same as it is undali"). English only: the clone engine has
-# no Telugu/Hindi, and the spec gate (spec_engine.CLONE_VOICES) says
+# A clone voice is a REAL zero-shot clone of a consented house sample
+# — not a built-in, and never labelled as anything else. "tripti" is
+# the WHO TAUGHT US channel voice, supplied by the owner for exactly
+# this use (2026-11-13: "ee voice ni Julie lo pettu, same as it is
+# undali"). English routes to Chatterbox (clone_tts.py). v99: Telugu
+# routes to the FIXED Telugu voice (indicf5_tts.py — IndicF5 from the
+# canonical natspan refs, gated by the voice engine's ship bar; Ajju
+# ear-approved it 2026-11-16, fixed13, and ordered Julie to use it).
+# Hindi has no clone: the spec gate (spec_engine.CLONE_VOICES) says
 # so upfront rather than faking it.
-CLONE_VOICES = {"tripti": {"langs": ("en",),
-                           "note": "tripti (clone of house sample)"}}
+CLONE_VOICES = {"tripti": {"langs": ("en", "te"),
+                           "note": "tripti (house voice: en clone + "
+                                   "fixed te voice)"}}
 
 # v83 delivery lock: per-line pace-guard records from clone_tts
 # (what correction, if any, each cloned line needed). synth_voice
@@ -868,6 +872,10 @@ async def synth_voice(text, voice, mood, out, ref=None):
     boundaries). A missing reference asset raises: the job fails
     honestly instead of silently falling back to a built-in voice.
 
+    v99: a Telugu line under the same voice id routes to
+    indicf5_tts (the FIXED Telugu voice, engine-gated) instead —
+    see the CLONE_VOICES note. Hindi raises: no Hindi clone exists.
+
     No ref (or no measured pace): exactly the old tts() call, and the
     plan's voice. With a ref: (a) closest built-in voice — a female
     English-India voice when the reference is English and a female
@@ -877,6 +885,31 @@ async def synth_voice(text, voice, mood, out, ref=None):
     adjustments, total rate clamped to ±25%). Returns (words, voice).
     """
     if voice in CLONE_VOICES:
+        # Language of THIS line: the script it is written in wins
+        # (a Telugu-script line is a Telugu line, whatever a stale
+        # ref says); else the job ref's lang; else English.
+        import indicf5_tts
+        lang = indicf5_tts.detect_script_lang(text)
+        if lang is None:
+            _rl = str((ref or {}).get("lang") or "").lower()
+            lang = _rl if _rl in CLONE_VOICES[voice]["langs"] else "en"
+        if lang == "te":
+            # v99: the FIXED Telugu house voice (indicf5_tts) — the
+            # engine-gated IndicF5 clone from the canonical natspan
+            # refs. Its own ref ships in this repo; a user refvoice
+            # never overrides the locked house voice.
+            import indicf5_tts
+            words = await asyncio.to_thread(
+                indicf5_tts.synth_to_file, text, out, lang)
+            for _rec in getattr(indicf5_tts, "LAST_TELUGU", []):
+                CLONE_PACE_RECORDS.append(
+                    {"voice": voice, "lang": "te", **_rec})
+            return words, voice
+        if lang != "en":
+            raise RuntimeError(
+                f"clone voice '{voice}': no {lang} clone exists — "
+                "the house voice speaks English (clone) and Telugu "
+                "(fixed voice) only; refusing to fake it")
         import clone_tts
         ref_path = _clone_ref_path(voice, ref)
         if not os.path.exists(ref_path):
@@ -884,7 +917,6 @@ async def synth_voice(text, voice, mood, out, ref=None):
                 f"clone voice '{voice}': reference sample not found at "
                 f"{ref_path} — the house voice asset is not attached "
                 "to this job")
-        lang = str((ref or {}).get("lang") or "en").lower()
         words = await asyncio.to_thread(
             clone_tts.synth_to_file, text, ref_path, out, lang)
         _pace = getattr(clone_tts, "LAST_PACE", None)
@@ -3164,6 +3196,13 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         voice = VOICES.get((p["lang"], cfg["voice_gender"]), VOICES[(p["lang"], "male")])
     else:
         voice = VOICES.get((p["lang"], p.get("voice", "male")), VOICES[(p["lang"], "male")])
+        # v99 (Ajju, 2026-11-16): a Telugu job with no voice named in
+        # the spec uses the FIXED house Telugu voice ("tripti" ->
+        # indicf5_tts), not a built-in edge voice — "ee voice ni
+        # julie ki use cheyamani chepu". A spec-named voice or gender
+        # (the branches above) still wins exactly, per the v79 rule.
+        if p["lang"] == "te":
+            voice = "tripti"
         # v32 (M12, Mark): ChristopherNeural (-8%, -4Hz, "calm, deep") for
         # calm/motivational English videos — majority-calm moods, or a brief
         # about motivation/discipline/calm. tts() applies the -8%/-4Hz override.
