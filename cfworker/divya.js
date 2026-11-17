@@ -823,6 +823,24 @@ async function handle(env, m) {
     // here (or the one missing fact, the email, is asked here too).
     { const af = await waAllowFlow(env, user, text).catch(() => null);
       if (af) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: af }); await remember(env, user, hh); return say(env, user, af); } }
+    // v115 SKIP: a skip instruction over a live chain EXECUTES here —
+    // the current provider settles as skipped and the chain advances
+    // in this same turn (Ajju 2026-11-17 17:32: "Leave groq conncer
+    // other keys" got a progress line and no skip). Deterministic —
+    // the brain never sees a job-control instruction.
+    { const skp = waSkipKind(text);
+      if (skp) { const a2 = await waSkipCurrent(env, user, skp.provider).catch(() => null); if (a2) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } } }
+    // v115 RUN-THE-REST: "Groq kakunda verey models try cheyu" on a
+    // finished/stopped chain starts the retry set minus the named
+    // exclusion, under the consent already on file — ONE line, no
+    // allow card, no lecture, never the brain (2026-11-17 17:38 got
+    // all three, including a brain line saying the opposite).
+    { const rr = waRunRestKind(text);
+      if (rr) { const a2 = await waRunRestStart(env, user, rr).catch(() => null); if (a2) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } } }
+    // v115: a bare speed emphasis ("Fasst") while a chain is live is
+    // a status nudge — the progress line, deterministically. Never a
+    // new order, never a brain guess.
+    if (/^\s*(fasst+|fast|speed|quick)(\s+ga|\s+cheyu|\s+cheyyi)?\s*[.!]*\s*$/i.test(text) && (await env.KV.get(`setupchain:${user}`))) { const a2 = await waJobStatusReply(env, user); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); }
     // v107: a factual state question (keys / models / setup / tokens)
     // is answered from the account's real records in one line — never
     // the setup lecture (the pre-fix isSetupQuestion block below sent
@@ -4407,6 +4425,96 @@ async function waRetryOffer(env, user) {
   try { wa(env, user, { type: "interactive", interactive: { type: "button", body: { text: `Fail ayina providers malli try cheyala? ${names}` }, action: { buttons: [{ type: "reply", reply: { id: "waallow:yes", title: "Allow ✓" } }, { type: "reply", reply: { id: "waallow:always", title: "Always allow" } }, { type: "reply", reply: { id: "waallow:no", title: "Don't allow" } }] } } }); } catch {}
   return `Fail ayinavi: ${names} — malli try cheyala? Allow nokku leda 'sare' ani cheppu.${r.captcha.length ? ` ${r.captcha.map(setupProvName).join(", ")} daggara captcha vasthe okkasari nee tap kavali — appudu ikkade cheptha.` : ""}`;
 }
+// v115 SKIP (Ajju 2026-11-17 17:32, verbatim: "Leave groq conncer
+// other keys" — Julie answered with a mere progress line and the skip
+// was NEVER executed; the Groq pause then spammed him for minutes and
+// the chain died on his Stop instead). A skip instruction during a
+// live chain is deterministic: settle the current provider as skipped
+// (user-ordered reason), advance the chain immediately, confirm in
+// ONE line with the new progress count. The job is marked "stopped" —
+// the exact signal the runner's pause waits abort on (the same
+// mechanism setupPauseSkip uses) — and v115's sticky-terminal relay
+// swallows its late posts.
+const WA_PROVIDER_RX = /\b(groq|openrouter|gemini|cloudflare|cohere|together|sambanova|fireworks|cerebras|nvidia|mistral|ai21|voyage|tavily|serper|exa|deepgram|assemblyai|elevenlabs|stability|jina|kaggle|pexels)\b/gi;
+function waSkipKind(text) {
+  const t = String(text || "").toLowerCase();
+  if (isCreateOrder(t) || isNoVideoEditOrder(t)) return null;
+  if (!/(skip|vaddu|vadilesey|vadile|vadali|leave|next\s*(ki|provider|di)|inkoti\s+try|vere\s+provider)/i.test(t)) return null;
+  const pm = t.match(new RegExp(WA_PROVIDER_RX.source, "i"));
+  return { provider: pm ? pm[1].toLowerCase() : null };
+}
+async function waSkipCurrent(env, user, named) {
+  const chain = parseRec(await env.KV.get(`setupchain:${user}`));
+  if (!chain || !chain.current) return null;
+  const job = parseRec(await env.KV.get(`setupjob:${chain.current}`));
+  if (!job || !["queued", "running", "paused"].includes(job.state)) return null;
+  const prov = job.provider;
+  // Naming a provider that is NOT the current one is not this chain's
+  // skip to execute — on a finished chain the run-rest path owns
+  // exclusions; here only the current provider (or an unnamed skip)
+  // settles.
+  if (named && named !== prov) return null;
+  const reason = "user-ordered skip — WA lo skip/vaddu ani cheppadu";
+  chain.failed = chain.failed || [];
+  if (!chain.failed.includes(prov)) chain.failed.push(prov);
+  chain.skipped = chain.skipped || {};
+  chain.skipped[prov] = { kind: "user", at: Date.now() };
+  chain.failReason = chain.failReason || {};
+  chain.failReason[prov] = reason;
+  chain.waTold = chain.waTold || {}; chain.waTold[prov] = "skipped";
+  job.state = "stopped"; job.step = "user-skipped"; job.note = reason; job.upd = Date.now();
+  await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(job), { expirationTtl: 86400 * 2 });
+  chain.current = null;
+  await env.KV.put(`setupchain:${user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+  const next = await setupStartNext(env, user);
+  const settled = new Set([...(chain.done || []), ...(chain.failed || [])]).size;
+  const total = (chain.providers || []).length;
+  if (next && next.done) return `${setupProvName(prov)} skip chesa ✓ — ${settled}/${total} ayyayi.`;
+  const nextName = next && next.provider ? setupProvName(next.provider) : null;
+  return `${setupProvName(prov)} skip chesa ✓ — ${settled}/${total} ayyayi.${nextName ? ` Next ${nextName} start chesthunna — progress ikkade cheptha.` : ""}`;
+}
+// v115 RUN-THE-REST (Ajju 2026-11-17 17:38, verbatim: "Groq kakunda
+// verey models try cheyu" + "Fasst" — Julie produced THREE replies:
+// the generic Allow card, the canned setup lecture, AND a brain line
+// "Ok, stop chesthanu." — the opposite of his instruction). A
+// run-the-rest instruction is a job-control order owned by this
+// deterministic router; the free-chat brain is never invoked for it.
+// On a finished/stopped chain it starts the retry set MINUS any named
+// exclusion, under the consent already on file for that set — no
+// card, no lecture, ONE line naming what started and what was left
+// out. (On a LIVE chain the same words are waSkipKind's case.)
+function waRunRestKind(text) {
+  const t = String(text || "").toLowerCase();
+  if (isCreateOrder(t) || isNoVideoEditOrder(t)) return null;
+  const rest = /(verey|vere|migatha|migilina|other|rest|remaining)\s*(models?|keys?|providers?|vi|di)?\s*(try|cheyu|cheyyi|start|connect|conncet)/i.test(t)
+    || /(try|start|connect|conncet|cheyu|cheyyi)\s+(verey|vere|migatha|other|rest)/i.test(t)
+    || /run\s+the\s+rest/i.test(t);
+  if (!rest) return null;
+  const exclude = [];
+  if (/(kakunda|lekunda|vadilesi|vadili|without|skip|leave|exclude)/i.test(t)) {
+    const rx = new RegExp(WA_PROVIDER_RX.source, "gi");
+    let m; while ((m = rx.exec(t))) exclude.push(m[1].toLowerCase());
+  }
+  return { exclude: [...new Set(exclude)] };
+}
+async function waRunRestStart(env, user, kind) {
+  const r = await waRetryableFailed(env, user);
+  if (!r) return null; // no finished set — not this path's instruction (a live chain is waSkipKind's; nothing at all flows on)
+  const ids = r.ids.filter(id => !kind.exclude.includes(id));
+  if (!ids.length) return `Try cheyadaniki migilinavi em levu — vadilesinavi thappa anni finish ayyayi.`;
+  // Door-class providers still need the Google connect they failed
+  // on: the connect card goes first and nothing is armed blind (the
+  // v111 rule). The reply stays ONE line; the card is the connect
+  // card, never the allow lecture.
+  const doorIds = ids.filter(id => r.door.includes(id));
+  if (doorIds.length) {
+    let hasGrant = false;
+    try { hasGrant = !!(await env.KV.get(`tok:${user}:google`)); if (!hasGrant) { const idx = await gAccts(env, user); hasGrant = (idx.list || []).length > 0; } } catch {}
+    if (!hasGrant) { try { await connectMenu(env, user); } catch {} return `${doorIds.map(setupProvName).join(", ")} ki Google connect kavali — paine card nunchi connect cheyyi; migathavi kuda appude kalisi start chestha.`; }
+  }
+  const label = kind.exclude.length ? `${kind.exclude.map(setupProvName).join(", ")} vadilesi migatha ${ids.length} models start chesa ✓ — progress ikkade cheptha.` : null;
+  return waRetryStart(env, user, ids, label);
+}
 // v112 IDENTITY (P1 — today's Kaggle failure): the user's name/phone
 // for creation flows, resolved from EVERY record he already gave
 // Julie — the account found by his WA phone, the account found by
@@ -4426,7 +4534,7 @@ async function waIdentityFor(env, user, email) {
   if (!phone && /^\d{7,15}$/.test(String(user))) phone = String(user);
   return { name: name.slice(0, 60), phone: phone.slice(0, 20) };
 }
-async function waRetryStart(env, user, ids) {
+async function waRetryStart(env, user, ids, label) {
   let fin = parseRec(await env.KV.get(`setupdone:${user}`));
   if (!fin) fin = parseRec(await env.KV.get(`setuphist:${user}`)); // v114: same fallback as the offer — the journal carries the done set too
   const prevDone = (fin && fin.done) || [];
@@ -4448,7 +4556,7 @@ async function waRetryStart(env, user, ids) {
   await env.KV.delete(`wafeed:${user}`).catch(() => {});
   const next = await setupStartNext(env, user);
   if (!next.ok) { await env.KV.delete(`setupchain:${user}`).catch(() => {}); return "Retry machine start avvaledu — konchem sepu tarvatha malli cheppu."; }
-  return `Retry start chesa ✓ — ${retryIds.map(setupProvName).join(", ")} malli try chesthunna (mundhu ready ayinavi alaage unnayi). Progress ikkade cheptha; code vasthe ikkade adugutha.`;
+  return label || `Retry start chesa ✓ — ${retryIds.map(setupProvName).join(", ")} malli try chesthunna (mundhu ready ayinavi alaage unnayi). Progress ikkade cheptha; code vasthe ikkade adugutha.`;
 }
 // v110 ALWAYS ALLOW (Ajju 2026-11-17: "allow, always allow, dont
 // allow lantivi asalu adagaledhu"): the standing grant lives in
@@ -4487,12 +4595,17 @@ async function waSetupRespond(env, user) {
   // same grant as typing "sare" (waGrantSetup). Fire-and-forget: the
   // text ask below stands on its own if the card cannot be sent.
   try { wa(env, user, { type: "interactive", interactive: { type: "button", body: { text: "Setup allow — accounts + API keys anni nene create chestha. Madhyalo code vasthe ikkade adugutha, type chesthe chaalu." }, action: { buttons: [{ type: "reply", reply: { id: "waallow:yes", title: "Allow ✓" } }, { type: "reply", reply: { id: "waallow:always", title: "Always allow" } }, { type: "reply", reply: { id: "waallow:no", title: "Don't allow" } }] } } }); } catch {}
-  return "Setup mariyu API keys pani naadhe — accounts, keys anni nene create chestha. Nee allow okkate kavali: 'sare' ani ikkade cheppu, setup ikkade nunchi start chestha. Madhyalo SMS code vasthe ikkade adugutha — type chesthe chaalu, migathadi motham nene chuskunta.";
+  return "Setup + API keys anni nene create chestha — Allow nokku leda 'sare' ani cheppu, ikkade nunchi start chestha.";
 }
 // Starts the chain from a WhatsApp allow — the same records the app's
 // setup/start writes (consent, sealed pass, chain), keyed to the WA
 // user exactly like every other WA feature (tokens, history, jobs).
 async function waSetupStart(env, user, email) {
+  // v115: the start is a single edge — with a chain already live, a
+  // grant (double-tap, a second "sare") reports the running chain's
+  // progress instead of starting a duplicate chain.
+  const live115 = parseRec(await env.KV.get(`setupchain:${user}`));
+  if (live115) return waSetupProgressLine(env, user, live115);
   const ids = WA_SETUP_PROVIDERS.filter(id => SETUP_PROVIDERS[id]);
   await env.KV.put(`setupconsent:${user}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ids, email }), { expirationTtl: 86400 * 7 });
   const pass = setupPass();
@@ -4526,6 +4639,20 @@ async function waAllowFlow(env, user, text) {
   // Always-allow button: standing grant recorded, then the grant.
   if (ask && /always\s*allow/i.test(t)) { await waSetAlwaysGrant(env, user).catch(() => {}); const r = await waGrantSetup(env, user); return `Always allow pettukunna ✓ — future lo setup/deploy asks malli adagakunda chestha, ayyina prathi pani ikkade cheptha.\n${r}`; }
   if (ask && WA_ALLOW_RX.test(t)) return waGrantSetup(env, user);
+  // v115 (consent is a SINGLE edge): after "start chesa", a stray
+  // acknowledgement ("sare", "ok", "K", "dheeniki ok chepa anthe") is
+  // NOT a new gate — pre-fix it fell through to the brain, which
+  // invented a second confirm ask ("Proceed cheyyadaniki 'sare' ani
+  // confirm cheppu") and then a second, fake start line (Ajju
+  // 2026-11-17 17:31). While a chain is live — or within 10 minutes
+  // of one finishing — the ack routes to the status reporter.
+  const ackRx = /^\s*(k|ok|okay|sare|sari|avunu|haa|yes|done|ayindhi|aipoyindhi)\s*[.!]*\s*$/i;
+  const ackPhrase = /(ok|okay|sare)\s+(chepa|cheppa|chepanu|anthe|antha|chaalu)/i;
+  if (ackRx.test(t) || (t.split(/\s+/).length <= 6 && ackPhrase.test(t))) {
+    if (await env.KV.get(`setupchain:${user}`)) return waJobStatusReply(env, user);
+    const fin = parseRec(await env.KV.get(`setupdone:${user}`));
+    if (fin && fin.at && Date.now() - fin.at < 10 * 60000) return waJobStatusReply(env, user);
+  }
   return null;
 }
 // The grant itself — shared by the typed "sare" (waAllowFlow) and
@@ -6187,6 +6314,38 @@ async function setupPauseSkip(env, n, chain) {
   await setupStartNext(env, n);
   return { skipped: prov, kind };
 }
+// v115: the chain bookkeeping for a job that reached "failed" OUTSIDE
+// the runner's progress post — the mail feed (maybeFeedVerifyLink)
+// settles the job record itself when the grant is dead (mailDead).
+// Pre-fix nothing advanced the chain at that moment: the job sat
+// failed-but-current, the runner's email wait never sends a terminal
+// post, its heartbeats flipped the job back to paused (the spam
+// loop), and the chain only moved if some later surface happened to
+// run the watchdog. This is the progress handler's failed branch,
+// shared for the feed paths: record the failure, tell the WA owner
+// once (chain.waTold), attach the connect card when the dead mail
+// feed is the reason, clear current. The CALLER runs setupStartNext
+// (each surface defers it its own way). Returns true when it acted.
+async function chainFailAdvance(env, rec) {
+  const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
+  if (!chain || chain.current !== rec.job) return false;
+  chain.failed = chain.failed || [];
+  if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider);
+  chain.failReason = chain.failReason || {};
+  if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80);
+  chain.waTold = chain.waTold || {};
+  const remaining = (chain.providers || []).filter(p => !(chain.done || []).includes(p) && !chain.failed.includes(p) && !(chain.skipped || []).includes(p));
+  if (!chain.waTold[rec.provider] && remaining.length && /^\d{7,15}$/.test(String(rec.user || ""))) {
+    chain.waTold[rec.provider] = "failed";
+    let msg = waChainOutcomeText(chain, rec.provider, false, String(rec.note || "").replace(/^paused-[a-z]+\s*/i, "").slice(0, 70));
+    if (rec.verifyWait || rec.mailFetch) msg += ` Mail feed: ${waFeedReasonText(rec.mailFetch)}.`;
+    try { await waSendText(env, String(rec.user), msg); } catch {}
+    if ((rec.verifyWait || rec.mailFetch === "no-gmail-token") && !(chain.feedCardAt && Date.now() - chain.feedCardAt < 30 * 60000)) { chain.feedCardAt = Date.now(); try { await connectMenu(env, String(rec.user)); } catch {} }
+  }
+  chain.current = null;
+  await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+  return true;
+}
 
 // v38 (R48, items 1+6): setup state + per-step progress for the app's
 // login-time check and chat mini-box. States: not-started / running /
@@ -7107,7 +7266,8 @@ async function feedAwaitingVerifyLinks(env) {
         if (!job || job.state !== "paused" || job.verifyLink || job.verifyCode) continue;
         if ((job.pauseReason || "email") !== "email" && !job.verifyWait) continue;
         foundAwaiting = true;
-        await maybeFeedVerifyLink(env, job, chain.at || 0);
+        const updF = await maybeFeedVerifyLink(env, job, chain.at || 0);
+        if (updF && updF.state === "failed") { try { if (await chainFailAdvance(env, updF)) await setupStartNext(env, updF.user); } catch {} }
       } catch {}
     }
     try { await env.KV.put("verify:awaiting", foundAwaiting ? "1" : "0"); } catch {}
@@ -7255,6 +7415,10 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // a failure here never breaks setup/status.
     if (cur && cur.state === "paused" && (cur.pauseReason || "email") === "email" && !cur.verifyLink && !cur.verifyCode) {
       try { cur = await maybeFeedVerifyLink(env, cur, chain.at || 0); } catch {}
+      // v115 (Fix 4): the feed may have just failed this job on a dead
+      // grant — advance the chain here too, then re-read both records
+      // so the status below reports the NEW current job, not the corpse.
+      if (cur && cur.state === "failed") { try { if (await chainFailAdvance(env, cur)) { await setupStartNext(env, u.n); chain = parseRec(await env.KV.get(`setupchain:${u.n}`)); if (chain && chain.current) cur = parseRec(await env.KV.get(`setupjob:${chain.current}`)) || cur; } } catch {} }
     }
     const gmail = await gmailStateFor(env, u.n, cur);
     let state = setupStateFor(chain, cur, null, keys);
@@ -7877,6 +8041,11 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       let chainAt = 0;
       try { const ch = parseRec(await env.KV.get(`setupchain:${rec.user}`)); chainAt = ch?.at || 0; } catch {}
       const updated = await maybeFeedVerifyLink(env, rec, chainAt);
+      // v115 (Fix 4): a mailDead fail inside the feed advances the
+      // chain in THIS cycle — the fail counts from the first pause
+      // cycle and the provider is settled within the guard's bound,
+      // not at the runner's 12-minute pause TTL.
+      if (updated && updated.state === "failed") { try { if (await chainFailAdvance(env, updated)) await deferAdvance(); } catch {} }
       return Response.json({ ok: true, job: { ...updated, tcInputs } });
     }
     return Response.json({ ok: true, job: { ...rec, tcInputs } });
@@ -7909,6 +8078,42 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
   if (p === "setup/runner/progress" && req.method === "POST") {
     const state = ["queued", "running", "paused", "done", "failed", "stopped"].includes(body.state) ? body.state : "running";
     const prevState = rec.state;
+    // v115 (spam loop + stop-silence — Ajju 2026-11-17 17:32–17:38):
+    // TERMINAL STATES ARE STICKY at this relay. Pre-fix the handler
+    // applied the posted state unconditionally, so a settled job was
+    // resurrected by the runner's next heartbeat: the mail feed failed
+    // the Groq job (mailDead), the heartbeat flipped it back to
+    // "paused", the flip manufactured a fresh pause "transition" and
+    // the pause text + screenshot were re-sent — six copies in two
+    // minutes. The same hole relayed a pause message AFTER the user's
+    // Stop (17:38): the stop had marked the job "stopped", a heartbeat
+    // flipped it to "paused", the next post "transitioned" and sent.
+    // A non-terminal post against a terminal record is now swallowed
+    // whole — no state write, no relay, nothing reaches WhatsApp.
+    const prevTerminal115 = ["done", "failed", "stopped"].includes(prevState);
+    // A STOPPED job is dead, full stop: the stop (user's, or the
+    // pause-skip's) already finalized or advanced everything it owned,
+    // so ANY later post — even a terminal one — is swallowed. Pre-fix
+    // a late "failed" post rewrote a user-stopped job to "failed",
+    // the same flip class as the resurrection above.
+    if (prevState === "stopped") {
+      return Response.json({ ok: true, swallowed: "stopped-final" });
+    }
+    if (prevTerminal115 && !["done", "failed", "stopped"].includes(state)) {
+      return Response.json({ ok: true, swallowed: "terminal-sticky" });
+    }
+    // Defect A (stop means silence): even a terminal-to-terminal post
+    // for a job whose chain was stop-finalized relays NOTHING — the
+    // outcome was already reported by the stop itself. Muted for the
+    // pause/ask/feed sends below (bookkeeping branches keep their own
+    // chain.current guards).
+    let relayMuted115 = prevTerminal115;
+    if (!relayMuted115) {
+      try {
+        const chM = parseRec(await env.KV.get(`setupchain:${rec.user}`));
+        if (!chM) { const finM = parseRec(await env.KV.get(`setupdone:${rec.user}`)); if (finM && finM.state === "stopped") relayMuted115 = true; }
+      } catch {}
+    }
     const prevPr = rec.pauseReason, prevVw = !!rec.verifyWait; // v95: sweep-marker transition check (below)
     const prevStep = rec.step, prevNote = rec.note, prevUpd = rec.upd || 0; // v64 write-budget: coalescing baseline
     rec.state = state; rec.step = String(body.step || rec.step || "").slice(0, 80); rec.note = String(body.note || "").slice(0, 300); rec.url = String(body.url || rec.url || "").slice(0, 500); rec.upd = Date.now();
@@ -7948,7 +8153,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
           // the ask must ARRIVE in that WhatsApp chat, not only sit in
           // the history store where the WA user never sees it. The
           // answer routes back through setupAwaitingReply in handle().
-          if (/^\d{7,15}$/.test(String(rec.user || ""))) { try { await waSendText(env, String(rec.user), clean.prompt); } catch {} try { await waSendJobFrame(env, String(rec.user), job, `⏸ ${setupProvName(rec.provider)} — ee screen meedha aagindhi`); } catch {} }
+          if (!relayMuted115 && /^\d{7,15}$/.test(String(rec.user || ""))) { try { await waSendText(env, String(rec.user), clean.prompt); } catch {} try { await waSendJobFrame(env, String(rec.user), job, `⏸ ${setupProvName(rec.provider)} — ee screen meedha aagindhi`); } catch {} }
         } else if (clean.id) {
           rec.awaiting = clean; // same ask re-posted — refresh only, no new chat line
         }
@@ -7957,18 +8162,35 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       if (rec.awaiting) { delete rec.awaiting; askChanged = true; }
       if (rec.userInput) delete rec.userInput;
     }
+    // v115: pause notifications are EDGE-TRIGGERED on the job's own
+    // told-mark — one text + one frame per pause SIGNATURE (kind +
+    // screen fingerprint + step + url), a single remind after
+    // >=10 minutes, never a third. State transitions no longer gate
+    // the send: record rewrites (the mail feed failing the job, a
+    // stop, a second handler) used to manufacture "transitions" and
+    // re-send the identical text + image (2026-11-17 17:32–17:34:
+    // six identical Groq pause messages in ~2 minutes).
+    let pauseDue115 = false;
+    if (state === "paused" && !body.awaiting && !relayMuted115 && /^\d{7,15}$/.test(String(rec.user || ""))) {
+      const frSig = parseRec(await env.KV.get(`tcframe:${job}`));
+      const sig115 = `${rec.pauseReason || "email"}|${(frSig && frSig.fp) || ""}|${rec.step || ""}|${rec.url || ""}`;
+      const told115 = rec.pauseTold || null;
+      if (!told115 || told115.sig !== sig115) { rec.pauseTold = { sig: sig115, at: Date.now(), n: 1 }; pauseDue115 = true; }
+      else if (Date.now() - (told115.at || 0) >= 10 * 60000 && (told115.n || 1) < 2) { rec.pauseTold = { sig: sig115, at: Date.now(), n: (told115.n || 1) + 1 }; pauseDue115 = true; }
+    }
+    if (state !== "paused" && rec.pauseTold) delete rec.pauseTold;
     // v64 WRITE-BUDGET (Ajju: server error must never come back): the runner
     // posts progress on every small step; identical heartbeats used to burn
     // one KV write each and eat the free daily budget. Write only when the
     // meaningful state changed, on terminal states, or at most every 20s.
-    const meaningful = state !== prevState || rec.step !== prevStep || rec.note !== prevNote || askChanged || state === "done" || state === "failed" || state === "stopped";
+    const meaningful = state !== prevState || rec.step !== prevStep || rec.note !== prevNote || askChanged || pauseDue115 || state === "done" || state === "failed" || state === "stopped";
     if (meaningful || Date.now() - prevUpd > 20000) await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     // v109: a pause with NO structured ask (an email-verification
     // wait — the feed machinery's territory) still tells the WA
     // owner where the chain is standing, once per transition. Ask
     // pauses already send their prompt above; terminal states send
     // their own lines below; the finalize sends the full list.
-    if (state === "paused" && prevState !== "paused" && !body.awaiting && /^\d{7,15}$/.test(String(rec.user || ""))) {
+    if (pauseDue115) {
       // v110: the pause text is per-kind and honest (waPauseText):
       // captcha is NAMED a captcha with the Take-Control action,
       // a Google-sign-in door carries the connect card AT the pause,
@@ -7993,7 +8215,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       const feed111 = parseRec(await env.KV.get(`wafeed:${rec.user}`));
       if (feed111 && feed111.job === job && /^\d{7,15}$/.test(String(rec.user || ""))) {
         if (state === "done" || state === "failed" || state === "stopped") await env.KV.delete(`wafeed:${rec.user}`);
-        else if (state !== prevState || rec.step !== prevStep) {
+        else if (!relayMuted115 && (state !== prevState || rec.step !== prevStep)) {
           await waSendText(env, String(rec.user), "▸ " + waJobStepLine(rec, rec.provider === "browse" ? "browse" : "setup"));
           const fr111 = parseRec(await env.KV.get(`tcframe:${job}`));
           if (fr111 && fr111.img && fr111.fp !== feed111.fp) { feed111.fp = fr111.fp; try { await env.KV.put(`wafeed:${rec.user}`, JSON.stringify(feed111), { expirationTtl: 86400 }); } catch {} await waSendImage(env, String(rec.user), fr111.img, ""); }

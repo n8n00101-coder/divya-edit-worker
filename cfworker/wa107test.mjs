@@ -1082,6 +1082,160 @@ async function oauthGet(world, path) {
   scoreState("S42", "stall outcome journaled", hist42.state === "stalled");
 }
 
+// ===== v115 scenarios: WA spam loop / unexecuted skip / double consent + stop-silence + run-the-rest (Ajju 2026-11-17 17:29–17:38) =====
+// S43 — the pause spam loop: N identical pause posts for ONE pause
+// produce exactly ONE WA text + ONE image. A new screen (frame fp
+// change) is a real state change -> one more. A record rewrite that
+// flips the job to a terminal state and back must NOT resurrect it
+// (sticky terminal) and must NOT re-send.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "openrouter"], done: [], failed: [], current: "jobp1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobp1`, JSON.stringify({ job: "jobp1", user: USER, provider: "groq", state: "running", step: "signing up", email: "t@example.com", at: Date.now(), upd: Date.now() }));
+  await seedFrame(w, "jobp1", "fpA");
+  const post = note => runnerPost(w, "progress", "jobp1", { state: "paused", step: "verify-email", note, reason: "email", verifyWait: true, url: "https://console.groq.com/login" });
+  const first = await post("Groq verification link kosam Gmail check chesthunna — check 1");
+  scoreState("S43a", "first pause post sends exactly one text", first.length === 1 && /Groq/.test(first[0]));
+  scoreState("S43a", "first pause post sends exactly one image", imgCount() === 1);
+  let extra = [];
+  for (let i = 2; i <= 6; i++) extra = extra.concat(await post(`Groq verification link kosam Gmail check chesthunna — check ${i}`));
+  scoreState("S43a", "5 identical pause posts send NOTHING more", extra.length === 0 && imgCount() === 1);
+  await seedFrame(w, "jobp1", "fpB"); // a genuinely new screen
+  const changed = await post("Groq verification link kosam Gmail check chesthunna — check 7");
+  scoreState("S43b", "new screen -> exactly one more text + image", changed.length === 1 && imgCount() === 2);
+  // the flip attack: the feed settles the job (terminal), the runner's
+  // next heartbeat tries to flip it back to paused
+  const jFlip = JSON.parse((await w.kv.get(`setupjob:jobp1`)) || "{}");
+  jFlip.state = "failed"; jFlip.note = "email verification — no viable Gmail grant";
+  await w.kv.put(`setupjob:jobp1`, JSON.stringify(jFlip));
+  const flip = await post("Groq verification link kosam Gmail check chesthunna — check 8");
+  const jAfter = JSON.parse((await w.kv.get(`setupjob:jobp1`)) || "{}");
+  scoreState("S43c", "terminal state is sticky — heartbeat swallowed, nothing sent", flip.length === 0 && imgCount() === 2);
+  scoreState("S43c", "job stays failed (no resurrection)", jAfter.state === "failed");
+}
+// S43b — the single remind: same pause, >=10 min later -> ONE remind;
+// after that, silence (never a third).
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "openrouter"], done: [], failed: [], current: "jobp2", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobp2`, JSON.stringify({ job: "jobp2", user: USER, provider: "groq", state: "running", step: "signing up", email: "t@example.com", at: Date.now(), upd: Date.now() }));
+  await seedFrame(w, "jobp2", "fpA");
+  const post = () => runnerPost(w, "progress", "jobp2", { state: "paused", step: "verify-email", note: "wait", reason: "email", verifyWait: true, url: "https://console.groq.com/login" });
+  await post();
+  const j1 = JSON.parse((await w.kv.get(`setupjob:jobp2`)) || "{}");
+  j1.pauseTold.at = Date.now() - 11 * 60000; // the one pause is now 11 minutes old
+  await w.kv.put(`setupjob:jobp2`, JSON.stringify(j1));
+  const remind = await post();
+  scoreState("S43d", "one remind after >=10 min", remind.length === 1);
+  const again = await post();
+  scoreState("S43d", "never a third message for the same pause", again.length === 0);
+}
+// S44 — Ajju's 17:32 skip, verbatim: "Leave groq conncer other keys"
+// must SETTLE Groq and ADVANCE — never a mere progress report.
+{
+  const w = makeWorld(); brainImpl = async () => "Ok, stop chesthanu.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "openrouter", "cohere"], done: [], failed: [], current: "jobsk1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobsk1`, JSON.stringify({ job: "jobsk1", user: USER, provider: "groq", state: "paused", pauseReason: "email", verifyWait: true, email: "t@example.com", pausedAt: Date.now(), at: Date.now(), upd: Date.now() }));
+  const r = await send(w, "Leave groq conncer other keys");
+  scoreReply("S44", "Leave groq conncer other keys", r, { must: /Groq skip chesa/, maxLen: 220 });
+  scoreState("S44", "reply carries the new progress count", /1\/3/.test(r.join(" ")));
+  scoreState("S44", "brain never answered (no stop line)", !/stop chesthanu/.test(r.join(" ")));
+  const chain = JSON.parse((await w.kv.get(`setupchain:${USER}`)) || "{}");
+  scoreState("S44", "groq settled as user-skipped on the chain", (chain.failed || []).includes("groq") && ((chain.skipped || {}).groq || {}).kind === "user");
+  scoreState("S44", "chain advanced to a new job", !!chain.current && chain.current !== "jobsk1" && dispatches.length >= 1);
+  const j = JSON.parse((await w.kv.get(`setupjob:jobsk1`)) || "{}");
+  scoreState("S44", "skipped job marked stopped/user-skipped (runner aborts its wait)", j.state === "stopped" && j.step === "user-skipped");
+}
+// S45 — the 17:29–17:31 consent transcript, replayed: exactly ONE
+// allow card, at most ONE email ask, exactly ONE start line, zero
+// re-asks. Post-start acknowledgements route to status, never to a
+// brain-invented second gate.
+{
+  const w = makeWorld(); brainImpl = async () => "Proceed cheyyadaniki 'sare' ani confirm cheppu.";
+  const r1 = await send(w, "Api keys conncet chesko");
+  scoreState("S45a", "setup ask = exactly one allow card", cards.filter(c => c.ids.some(i => i.includes("waallow:yes"))).length === 1);
+  scoreState("S45a", "setup ask text is ONE short line — no canned lecture", r1.length === 1 && !/pani naadhe/.test(r1.join(" ")) && r1.join(" ").length <= 160);
+  const r2 = await sendInteractive(w, "waallow:yes");
+  scoreState("S45b", "allow tap -> the ONE email ask (no email on file)", r2.length === 1 && /email/.test(r2.join(" ")) && /Allow theeskunna/.test(r2.join(" ")));
+  const r3 = await send(w, "mike0123l098@gmail.com");
+  scoreState("S45c", "email answer starts the chain — exactly one start line", r3.length === 1 && /Setup start chesa/.test(r3.join(" ")) && !!(await w.kv.get(`setupchain:${USER}`)));
+  const chainAt = JSON.parse((await w.kv.get(`setupchain:${USER}`)) || "{}").at;
+  const dispAt = dispatches.length;
+  const r4 = await send(w, "K");
+  scoreState("S45d", "'K' after start -> status line, no re-ask, no second start", r4.length === 1 && /Setup progress/.test(r4.join(" ")) && !/confirm cheppu/.test(r4.join(" ")) && !/Setup start chesa/.test(r4.join(" ")));
+  const r5 = await send(w, "Dheeniki ok chepa anthe");
+  scoreState("S45e", "'dheeniki ok chepa anthe' -> status line, no re-ask, no second start", r5.length === 1 && /Setup progress/.test(r5.join(" ")) && !/confirm cheppu/.test(r5.join(" ")) && !/Setup start chesa/.test(r5.join(" ")));
+  const chainEnd = JSON.parse((await w.kv.get(`setupchain:${USER}`)) || "{}");
+  scoreState("S45f", "still the SAME single chain (no duplicate start)", chainEnd.at === chainAt && dispatches.length === dispAt);
+  const allTxt = [...r1, ...r2, ...r3, ...r4, ...r5].join("\n");
+  scoreState("S45g", "whole transcript: one start line, zero confirm re-asks", (allTxt.match(/Setup start chesa/g) || []).length === 1 && !/confirm cheppu/.test(allTxt));
+}
+// S46 — mailDead consistency (Fix 4): with no viable Google grant the
+// provider fails within the guard's bound FROM THE FIRST pause cycle
+// and the chain ADVANCES in the same cycle; one outcome line, no
+// pause spam afterwards, the corpse cannot be resurrected.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "openrouter"], done: [], failed: [], current: "jobm1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobm1`, JSON.stringify({ job: "jobm1", user: USER, provider: "groq", state: "paused", pauseReason: "email", verifyWait: true, email: "t@example.com", pausedAt: Date.now(), at: Date.now(), upd: Date.now() }));
+  for (let i = 0; i < 3; i++) {
+    await runnerPost(w, "job", "jobm1", {});
+    const j = JSON.parse((await w.kv.get(`setupjob:jobm1`)) || "{}");
+    if (j.state === "paused") { j.mailFetchAt = 0; await w.kv.put(`setupjob:jobm1`, JSON.stringify(j)); } // simulate the 20s feed throttle elapsing
+  }
+  const jEnd = JSON.parse((await w.kv.get(`setupjob:jobm1`)) || "{}");
+  scoreState("S46a", "provider failed within the guard bound (3 dead outcomes)", jEnd.state === "failed" && (jEnd.mailDead || 0) === 3 && (jEnd.mailTries || 0) <= 3);
+  const chain = JSON.parse((await w.kv.get(`setupchain:${USER}`)) || "{}");
+  scoreState("S46b", "chain advanced in the same cycle (groq failed, new current job)", (chain.failed || []).includes("groq") && !!chain.current && chain.current !== "jobm1" && dispatches.length >= 1);
+  const groqLines = outbox.filter(o => /Groq/.test(o.text));
+  scoreState("S46c", "exactly ONE outcome line for the failure, zero pause texts", groqLines.length === 1 && !outbox.some(o => /email verification kosam wait/.test(o.text)));
+  const late = await runnerPost(w, "progress", "jobm1", { state: "paused", step: "verify-email", note: "check 9", reason: "email", verifyWait: true, url: "https://console.groq.com/login" });
+  const jLate = JSON.parse((await w.kv.get(`setupjob:jobm1`)) || "{}");
+  scoreState("S46d", "late heartbeat on the corpse is swallowed (still failed, nothing sent)", late.length === 0 && jLate.state === "failed");
+}
+// S47 — Defect A: STOP MEANS SILENCE. After the user's Stop, every
+// further runner post for the chain is swallowed — no pause text, no
+// image, no ask prompt, no resurrection.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "openrouter"], done: [], failed: [], current: "jobst1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobst1`, JSON.stringify({ job: "jobst1", user: USER, provider: "groq", state: "running", step: "signing up", email: "t@example.com", at: Date.now(), upd: Date.now() }));
+  await seedFrame(w, "jobst1", "fpA");
+  const stop = await send(w, "Stop");
+  scoreState("S47a", "stop confirmed in one line", stop.length === 1 && /Aapesa/.test(stop[0]));
+  const p1 = await runnerPost(w, "progress", "jobst1", { state: "paused", step: "verify-email", note: "check 3", reason: "email", verifyWait: true, url: "https://console.groq.com/login" });
+  scoreState("S47b", "post-stop pause post relays NOTHING (no text, no image)", p1.length === 0 && imgCount() === 0);
+  const p2 = await runnerPost(w, "progress", "jobst1", { state: "paused", step: "await-otp", note: "code", reason: "sms", url: "https://console.groq.com/login", awaiting: { id: "a1", provider: "groq", kind: "otp", prompt: "Groq code ikkade pampu", at: Date.now(), expires: Date.now() + 600000, attempts: 1 } });
+  scoreState("S47c", "post-stop ask post relays NOTHING", p2.length === 0 && imgCount() === 0);
+  const p3 = await runnerPost(w, "progress", "jobst1", { state: "failed", step: "error", note: "late fail" });
+  scoreState("S47d", "post-stop terminal post relays NOTHING", p3.length === 0 && imgCount() === 0);
+  const jEnd = JSON.parse((await w.kv.get(`setupjob:jobst1`)) || "{}");
+  scoreState("S47e", "job stays stopped (no resurrection)", jEnd.state === "stopped");
+}
+// S48 — Defect B, verbatim: "Groq kakunda verey models try cheyu" +
+// "Fasst" over a stopped chain with the 23-failure retry set. ONE
+// reply: the run starts with Groq excluded. No allow card, no canned
+// lecture, no brain stop line — the brain is never invoked.
+{
+  const w = makeWorld(); brainImpl = async () => "Ok, stop chesthanu.";
+  const ALL23 = ["groq", "openrouter", "gemini", "cloudflare", "cohere", "together", "sambanova", "fireworks", "cerebras", "nvidia", "mistral", "ai21", "voyage", "tavily", "serper", "exa", "deepgram", "assemblyai", "elevenlabs", "stability", "jina", "kaggle", "pexels"];
+  await w.kv.put(`setupdone:${USER}`, JSON.stringify({ state: "stopped", done: [], failed: ALL23, skipped: { serper: { kind: "captcha", at: Date.now() }, deepgram: { kind: "captcha", at: Date.now() }, elevenlabs: { kind: "captcha", at: Date.now() } }, failReason: { groq: "email verification — no viable Gmail grant", cohere: "email verification — no viable Gmail grant", together: "paused-signin", fireworks: "paused-signin", serper: "paused-captcha", deepgram: "paused-captcha", elevenlabs: "paused-captcha" }, provider: "groq", note: "User stopped the setup.", at: Date.now() }));
+  await w.kv.put(`setupconsent:${USER}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ALL23, email: "mike0123l098@gmail.com" }));
+  await w.kv.put(`gaccts:${USER}`, JSON.stringify({ list: [{ id: "g1", email: "mike0123l098@gmail.com", ytChannel: "", ytNoChannel: false, gmail: true, yt: false, state: "ok", at: Date.now() }], def: "g1" }));
+  await w.kv.put(`tok:${USER}:google`, JSON.stringify({ access_token: "tok-fresh", refresh_token: "rt", at: Date.now(), expires_in: 3600, who: "mike0123l098@gmail.com" }));
+  const r1 = await send(w, "Groq kakunda verey models try cheyu");
+  scoreState("S48a", "run-the-rest = exactly ONE reply", r1.length === 1);
+  scoreReply("S48a", "Groq kakunda verey models try cheyu", r1, { must: /Groq vadilesi migatha 22 models start chesa/, maxLen: 200 });
+  scoreState("S48b", "no allow card, no connect card, no lecture, no stop line", cards.length === 0 && !/pani naadhe/.test(r1.join(" ")) && !/stop chesthanu/.test(r1.join(" ")));
+  const chain = JSON.parse((await w.kv.get(`setupchain:${USER}`)) || "{}");
+  scoreState("S48c", "chain started with Groq EXCLUDED (22 providers)", Array.isArray(chain.providers) && chain.providers.length === 22 && !chain.providers.includes("groq") && dispatches.length >= 1);
+  const chainAt = chain.at;
+  const r2 = await send(w, "Fasst");
+  scoreState("S48d", "'Fasst' -> one progress line, same chain, no new card", r2.length === 1 && /Setup progress/.test(r2.join(" ")) && cards.length === 0);
+  const chain2 = JSON.parse((await w.kv.get(`setupchain:${USER}`)) || "{}");
+  scoreState("S48e", "still the same chain (no duplicate start)", chain2.at === chainAt);
+}
+
 const byFlag = {};
 for (const r of results) byFlag[r.flag] = (byFlag[r.flag] || 0) + 1;
 console.log("\n==== WA PROCESS BATTERY ====");

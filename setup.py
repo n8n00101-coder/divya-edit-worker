@@ -841,7 +841,12 @@ def wait_for_fed_link(seconds=240, poll=20, page=None, name=""):
     while True:
         j = get_job()
         st = str(j.get("state") or "")
-        if st == "stopped":
+        if st in ("stopped", "failed"):
+            # v115: a server-side terminal state (user skip, or the
+            # mail feed's dead-grant fail) ends this wait NOW — the
+            # Worker has already settled the provider and advanced
+            # the chain; sitting out the deadline only re-posts the
+            # pause the user is trying to leave.
             if page is not None:
                 set_pill(page, "")
             return ""
@@ -1996,9 +2001,9 @@ def pause_for_email_verify(page, job, cfg, _link_retries=0):
         link = wait_for_fed_link(240, page=page, name=name)
         if link:
             break
-        if str(get_job().get("state") or "") in ("stopped", "running"):
+        if str(get_job().get("state") or "") in ("stopped", "running", "failed"):
             break
-    if str(get_job().get("state") or "") == "stopped":
+    if str(get_job().get("state") or "") in ("stopped", "failed"):
         return False
     if not link:
         link = fed_verify_link(get_job())
