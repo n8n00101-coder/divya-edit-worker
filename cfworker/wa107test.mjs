@@ -34,12 +34,13 @@ class KVStub {
   async mget(keys) { const o = {}; for (const k of keys) o[k] = this.m.has(k) ? this.m.get(k) : null; return o; }
 }
 
-let outbox = [], dispatches = [], brainImpl = async () => "Sare, ardham ayyindhi.";
+let outbox = [], cards = [], dispatches = [], brainImpl = async () => "Sare, ardham ayyindhi.";
 globalThis.fetch = async (url, opts = {}) => {
   const u = String(url);
   if (u.includes("graph.facebook.com")) {
     let body = {}; try { body = JSON.parse(opts.body || "{}"); } catch {}
     if (body.type === "text" && body.text && body.text.body) outbox.push({ to: body.to, text: body.text.body });
+    if (body.type === "interactive") cards.push({ to: body.to, kind: body.interactive && body.interactive.type, ids: JSON.stringify(body.interactive || {}).match(/"(conn:[a-z]+|waallow:(yes|no))"/g) || [] });
     return Response.json({ messages: [{ id: "wamid.test" }] });
   }
   if (u.includes("api.groq.com") && u.includes("/models")) {
@@ -67,8 +68,27 @@ function makeWorld() {
     GH_TOKEN: "gh-test", GH_REPO: "test/repo", RUNNER_KEY: "rk-test", VERIFY_TOKEN: "vt",
     APP_KEK: Buffer.alloc(32, 7).toString("base64"), FORWARD_SECRET: "",
   };
-  outbox = []; dispatches = [];
+  outbox = []; cards = []; dispatches = [];
   return { kv, env };
+}
+async function sendInteractive(world, id) {
+  const before = outbox.length;
+  const promises = [];
+  const ctx = { waitUntil(p) { promises.push(Promise.resolve(p)); } };
+  const body = { entry: [{ changes: [{ field: "messages", value: { messages: [{ from: USER, id: "m" + (++seq), type: "interactive", interactive: { type: "button_reply", button_reply: { id, title: "Allow" } } }] } }] }] };
+  const req = new Request("https://worker.test/webhook", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  await worker.fetch(req, world.env, ctx);
+  for (let i = 0; i < 5; i++) { const ps = promises.splice(0); if (!ps.length) break; await Promise.all(ps); }
+  return outbox.slice(before).filter(o => o.to === USER).map(o => o.text);
+}
+async function runnerPost(world, path, job, payload) {
+  const before = outbox.length;
+  const promises = [];
+  const ctx = { waitUntil(p) { promises.push(Promise.resolve(p)); } };
+  const req = new Request(`https://worker.test/api/setup/runner/${path}?job=${job}`, { method: "POST", headers: { "content-type": "application/json", "x-runner-key": "rk-test" }, body: JSON.stringify(payload) });
+  await worker.fetch(req, world.env, ctx);
+  for (let i = 0; i < 6; i++) { const ps = promises.splice(0); if (!ps.length) break; await Promise.all(ps); }
+  return outbox.slice(before).filter(o => o.to === USER).map(o => o.text);
 }
 async function send(world, text) {
   const before = outbox.length;
@@ -82,6 +102,7 @@ async function send(world, text) {
 }
 
 const ERRAND_RX = /open the julie app|julie app lo|in the menu|tap setup|app lo setup open|setup open chesi|#\/setup/i;
+const FABRICATED_RX = /\b\d{1,3}\s?%\s*(complete|ayindhi|done|finished)|script outline|voice-?over recording queued|visuals sourcing|\bsingle instance\b/i;
 const LIMIT_RX = /limit full|free limit/i;
 const CANNED_RX = /pani naadhe, needhi kaadhu/i;
 const TE_MARK = /(nenu|nee|neeku|cheyu|cheyyi|undhi|unnay|ledhu|ayyindhi|ayindhi|chestha|chesthunna|ikkade|malli|sare|emi|enni|ayindha|theeskunna|start chesa)/i;
@@ -94,6 +115,7 @@ function scoreReply(scn, userText, reply, expect) {
   if (expect.must && !expect.must.test(joined)) flags.push("NOT-ANSWERED");
   if (ERRAND_RX.test(joined)) flags.push("ERRAND");
   if (CANNED_RX.test(joined)) flags.push("CANNED");
+  if (FABRICATED_RX.test(joined)) flags.push("FABRICATED");
   if (LIMIT_RX.test(joined)) flags.push("STATE-CLAIM");
   if (expect.maxLen && joined.length > expect.maxLen) flags.push("LECTURE");
   if (joined.length > 120 && !TE_MARK.test(joined)) flags.push("ENGLISH");
@@ -209,6 +231,82 @@ async function seedAccount(w, email) {
   await seedKeys(w, ["groq", "openrouter", "gemini"]);
   await w.kv.put(`setupdone:${USER}`, JSON.stringify({ state: "done", done: ["groq", "openrouter", "gemini"], failed: [], at: Date.now() }));
   scoreReply("S9", "Groq down ayindha, AI pani cheyyatledu", await send(w, "Groq down ayindha, AI pani cheyyatledu"), { must: /ready|check/i, maxLen: 280 });
+}
+
+// ===== v109 scenarios: the 2026-11-17 real-phone transcript + a stubbed chain run =====
+// S10 — the EXACT morning flow: keys question (truthful state), "shared brains
+// ante enti" (truth sheet, no invented architecture), WA allow, email in chat,
+// then the two questions that fabricated live: "Chesava" + "Entha percent
+// complete ayindhi" — both must be answered from the CHAIN record (23
+// providers, 0 settled at that point), never from the brain. The brain stub
+// below returns the RECORDED live fabrications, so pre-fix code fails here
+// exactly the way the phone did.
+{
+  const w = makeWorld();
+  await seedAccount(w, "markk34200@gmail.com");
+  brainImpl = async () => "\"Shared brains\" ante nenu (Julie) okka centralized AI service lo run avuthunna system. Single instance — neeku separate personal server, API keys create cheyyalani avasaram ledu. So, \"shared brains\" means nenu oka common AI engine (OpenAI, TTS, stock-footage library, etc.) use chesthunna.";
+  scoreReply("S10a", "Ipudu nee dhaggara enni api keys unnay?", await send(w, "Ipudu nee dhaggara enni api keys unnay?"), { must: /own API keys levu/, maxLen: 300 });
+  const rShared = await send(w, "Shared brains ante enti artham ayela chepu");
+  scoreReply("S10b", "Shared brains ante enti artham ayela chepu", rShared, { must: /free-model pool/, maxLen: 340 });
+  scoreState("S10b", "no OpenAI claim", !/openai/i.test(rShared.join(" ")));
+  const r1 = await send(w, "Free ai models ni brain ki api keys create pettu, brain lo");
+  scoreReply("S10c", "Free ai models ni brain ki api keys create pettu", r1, { must: /allow/i, maxLen: 400 });
+  scoreState("S10c", "allow card sent", cards.some(c => c.ids.some(i => i.includes("waallow:yes"))));
+  const r2 = await send(w, "Sare");
+  scoreReply("S10d", "Sare (allow, email on file)", r2, { must: /start chesa/i, maxLen: 340 });
+  scoreState("S10d", "chain created via wa", ((await w.kv.get(`setupchain:${USER}`)) || "").includes('"via":"wa"'));
+  scoreState("S10d", "setup dispatched", dispatches.some(d => d.url.includes("setup.yml")));
+  brainImpl = async () => "Sare, start chesa. Ready ayyaka ikkade pampistha.";
+  scoreReply("S10e", "Chesava (setup running)", await send(w, "Chesava"), { must: /Setup progress: 0\/23/, maxLen: 500 });
+  brainImpl = async () => "Sare, 30% complete. Next step: script outline finished, voice-over recording queued, visuals sourcing underway. I will keep you updated.";
+  scoreReply("S10f", "Entha percent complete ayindhi", await send(w, "Entha percent complete ayindhi"), { must: /Setup progress: 0\/23 ayyayi \(0%\)/, maxLen: 500 });
+}
+// S11 — the Allow BUTTON tap is the same grant as typing "sare"
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await seedAccount(w, "tap@example.com");
+  await send(w, "Setup cheyu");
+  scoreState("S11", "allow card sent", cards.some(c => c.ids.some(i => i.includes("waallow:yes"))));
+  const r = await sendInteractive(w, "waallow:yes");
+  scoreReply("S11", "[tap Allow ✓]", r, { must: /start chesa/i, maxLen: 340 });
+  scoreState("S11", "consent recorded", !!(await w.kv.get(`setupconsent:${USER}`)));
+  scoreState("S11", "chain created", !!(await w.kv.get(`setupchain:${USER}`)));
+  scoreState("S11", "setup dispatched", dispatches.some(d => d.url.includes("setup.yml")));
+}
+// S12 — stubbed chain run: per-provider progress reaches the WA chat as it
+// happens, and the finalize message is the full created/failed list
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "cohere"], done: [], failed: [], current: "joba01", email: "t@example.com", pass: "x", at: Date.now(), browser: "profile", via: "wa" }));
+  await w.kv.put(`setupjob:joba01`, JSON.stringify({ job: "joba01", user: USER, provider: "groq", state: "running", step: "creating key", at: Date.now(), upd: Date.now() }));
+  await runnerPost(w, "key", "joba01", { provider: "groq", key: "gsk-test-key-0123456789" }); // keys travel sealed via runner/key, never in the result post
+  const p1 = await runnerPost(w, "result", "joba01", { provider: "groq", status: "done" });
+  scoreReply("S12a", "[runner: groq done]", p1, { must: /Groq.*ready.*\(1\/2\)/, maxLen: 200 });
+  const chain1 = JSON.parse((await w.kv.get(`setupchain:${USER}`)) || "{}");
+  scoreState("S12a", "chain advanced to cohere", chain1.current && chain1.current !== "joba01");
+  await w.kv.put(`setupjob:${chain1.current}`, JSON.stringify({ job: chain1.current, user: USER, provider: "cohere", state: "running", step: "creating key", at: Date.now(), upd: Date.now() }));
+  const p2 = await runnerPost(w, "result", chain1.current, { provider: "cohere", status: "failed", error: "signup wall — email verification failed" });
+  scoreReply("S12b", "[runner: cohere failed -> finalize list]", p2, { must: /Setup complete.*Groq/, maxLen: 400 });
+  scoreState("S12b", "final list names the failure", /Cohere/.test(p2.join(" ")));
+  scoreState("S12b", "chain cleared", !(await w.kv.get(`setupchain:${USER}`)));
+  const fin = JSON.parse((await w.kv.get(`setupdone:${USER}`)) || "{}");
+  scoreState("S12b", "setupdone recorded", fin.state === "done" && (fin.done || []).includes("groq"));
+  scoreState("S12b", "connect card followed (google/youtube missing)", cards.some(c => c.ids.some(i => i.includes("conn:"))));
+}
+// S13 — fabrication guard: even an UNROUTED brain fabrication is replaced
+{
+  const w = makeWorld();
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "cohere", "together"], done: ["groq"], failed: [], current: "jobb02", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobb02`, JSON.stringify({ job: "jobb02", user: USER, provider: "cohere", state: "running", step: "signing up", at: Date.now(), upd: Date.now() }));
+  brainImpl = async () => "Sare, 30% complete. Next step: script outline finished, voice-over recording queued, visuals sourcing underway.";
+  const r = await send(w, "Em chesthunnav ippudu, ela velthondhi pani");
+  scoreReply("S13", "Em chesthunnav ippudu (brain fabricates)", r, { must: /Setup progress: 1\/3/, maxLen: 500 });
+}
+// S14 — status question with NOTHING running: one honest line, no invention
+{
+  const w = makeWorld();
+  brainImpl = async () => "Sare, 45% complete ayindhi, script outline finished.";
+  scoreReply("S14", "Chesava (nothing running)", await send(w, "Chesava"), { must: /em job run avvatledhu/, maxLen: 300 });
 }
 
 const byFlag = {};
