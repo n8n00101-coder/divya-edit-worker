@@ -8336,8 +8336,10 @@ export default {
       for (const s of seeds) { keyspaces.add(s); for (const id of await linkedUserIds(env, s).catch(() => [])) keyspaces.add(String(id)); }
       const out = [];
       const seenEmail = new Set();
+      const dbg = [];
       for (const ks of keyspaces) {
         const idx = await gAccts(env, ks).catch(() => null);
+        dbg.push({ ks, listLen: idx ? (idx.list || []).length : null, hasYtTok: !!(await env.KV.get(`tok:${ks}:youtube`).catch(() => null)), hasGoogleTok: !!(await env.KV.get(`tok:${ks}:google`).catch(() => null)) });
         if (!idx) continue;
         for (const a of idx.list || []) {
           if (!a.yt) continue;
@@ -8351,7 +8353,7 @@ export default {
           out.push({ keyspace: ks, before, recheck: rc, after: a2 ? { channel: a2.ytChannel || "", noChannel: !!a2.ytNoChannel, channelId: a2.ytChannelId || "" } : null });
         }
       }
-      return Response.json({ ok: true, accounts: out });
+      return Response.json({ ok: true, accounts: out, keyspaces: [...keyspaces], dbg });
     }
     // Call media server fetches WA/Groq creds here (shared FORWARD_SECRET).
     if (url.pathname === "/callcreds" && req.method === "POST") {
