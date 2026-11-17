@@ -1003,6 +1003,39 @@ function legalPage(kind) {
   return new Response(kind === "privacy" ? PRIVACY_HTML : TERMS_HTML, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=3600" } });
 }
 
+// ---------- Public landing page (/ — required for Google OAuth brand verification) ----------
+// GOOGLE SITE VERIFICATION HOOKS (Search Console property for this Worker's domain):
+// - GOOGLE_SITE_VERIFICATION: when non-empty, the landing page <head> emits
+//   <meta name="google-site-verification" content="...">. Armed 2026-11-17.
+// - SITE_VERIFY_FILES: filename -> exact body, served at /<filename> as text/html
+//   (the HTML-file verification method, kept as a backup). Armed 2026-11-17.
+// To disarm either hook: empty the constant / delete the map entry and redeploy.
+const GOOGLE_SITE_VERIFICATION = "HXCIZ4PFWQF6DEvACAOuqeJqO4t7eDvsFW8SLfvzOWE";
+const SITE_VERIFY_FILES = {
+  "google3553c5c01c041649.html": "google-site-verification: google3553c5c01c041649.html",
+};
+const LANDING_STYLE = "body{font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;margin:0;color:#1c1e21;background:#fbfaf8;line-height:1.6;font-size:16px}.wrap{max-width:820px;margin:0 auto;padding:40px 20px 56px}.hero{text-align:center;padding:24px 0 8px}.hero h1{font-size:40px;margin:14px 0 6px;letter-spacing:.2px}.tag{font-size:19px;color:#444;font-weight:600}.sub{color:#606770;max-width:640px;margin:10px auto 0}h2{font-size:22px;margin:36px 0 8px}.cards{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}@media(max-width:640px){.cards{grid-template-columns:1fr}}.card{background:#fff;border:1px solid #e6e2dc;border-radius:12px;padding:16px 18px}.card b{display:block;font-size:17px;margin-bottom:4px}.card p{margin:0;color:#333}a{color:#0b5ed7}.accent{color:#e8710a}footer{margin-top:44px;padding-top:16px;border-top:1px solid #ddd;color:#606770;font-size:14px;text-align:center}";
+const PENGUIN_SVG = "<svg width=\"104\" height=\"104\" viewBox=\"0 0 100 100\" role=\"img\" aria-label=\"Julie penguin logo\"><ellipse cx=\"50\" cy=\"54\" rx=\"30\" ry=\"41\" fill=\"#14181d\"/><ellipse cx=\"50\" cy=\"63\" rx=\"19\" ry=\"29\" fill=\"#ffffff\"/><ellipse cx=\"50\" cy=\"31\" rx=\"16\" ry=\"13\" fill=\"#ffffff\"/><circle cx=\"44\" cy=\"30\" r=\"2.6\" fill=\"#14181d\"/><circle cx=\"56\" cy=\"30\" r=\"2.6\" fill=\"#14181d\"/><polygon points=\"44,36 56,36 50,43\" fill=\"#f59e0b\"/><ellipse cx=\"20\" cy=\"58\" rx=\"6\" ry=\"16\" fill=\"#14181d\" transform=\"rotate(12 20 58)\"/><ellipse cx=\"80\" cy=\"58\" rx=\"6\" ry=\"16\" fill=\"#14181d\" transform=\"rotate(-12 80 58)\"/><ellipse cx=\"38\" cy=\"95\" rx=\"8\" ry=\"3.5\" fill=\"#f59e0b\"/><ellipse cx=\"62\" cy=\"95\" rx=\"8\" ry=\"3.5\" fill=\"#f59e0b\"/></svg>";
+const LANDING_HTML = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Julie — your personal AI assistant</title>"
++ (GOOGLE_SITE_VERIFICATION ? "<meta name=\"google-site-verification\" content=\"" + GOOGLE_SITE_VERIFICATION + "\">" : "")
++ "<meta name=\"description\" content=\"Julie is a personal AI assistant you talk to in the Julie app and on WhatsApp. She creates and edits videos, connects your accounts with one allow, browses the web for you, and sets up her own tools.\">"
++ "<style>" + LANDING_STYLE + "</style></head><body><div class=\"wrap\">"
++ "<div class=\"hero\">" + PENGUIN_SVG + "<h1>Julie</h1><div class=\"tag\">Your personal AI assistant — in the Julie app and on WhatsApp.</div>"
++ "<p class=\"sub\">You talk to Julie in plain chat, in your own words. Julie does the work herself — start to finish — and reports back in the same chat. One allow from you is all she needs; there is no server for you to run and nothing to configure by hand.</p></div>"
++ "<h2>What Julie does</h2><div class=\"cards\">"
++ "<div class=\"card\"><b>Creates &amp; edits videos, end to end</b><p>Give Julie a topic and she makes the finished video herself — script, voice, footage, editing, captions — and publishes it to your own channels when you ask her to.</p></div>"
++ "<div class=\"card\"><b>Connects your accounts &amp; API keys with one allow</b><p>Connect Google, YouTube, Instagram and more with a single approval. Julie keeps every connection sealed and uses it only for the actions you requested.</p></div>"
++ "<div class=\"card\"><b>Browses the web for you</b><p>Julie works in a real browser while you watch the live view, and you can take control at any moment. If a sign-in or a code is needed, she asks you in chat — one pause, then she finishes on her own.</p></div>"
++ "<div class=\"card\"><b>Sets up her own tools</b><p>With your permission, Julie creates accounts and API keys at free AI services on your behalf, so her abilities keep growing without you doing the legwork.</p></div>"
++ "</div>"
++ "<h2>How Julie uses Google data</h2>"
++ "<p>When you connect Google, Julie uses your basic profile and email address only to identify which account you connected. During a setup you approved, Julie reads Gmail in <b>read-only</b> mode to find the verification email or sign-in link a service sent you, and uses Google Cloud for exactly one thing: creating a Gemini API key inside <b>your own</b> Google Cloud project. YouTube access lets Julie confirm which channel is yours and upload videos you asked her to publish. Your tokens and API keys are stored encrypted, are never sold, and are never used for advertising. Julie's use of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements. Full details are in the <a href=\"/privacy\">Privacy Policy</a>.</p>"
++ "<h2>Talk to Julie</h2><p>Julie is available in the Julie app and on WhatsApp. Ask her for a video, a setup, or a web task — and watch her do it. Questions: <a href=\"mailto:n8n00101@gmail.com\">n8n00101@gmail.com</a></p>"
++ "<footer>Julie · <a href=\"/privacy\">Privacy Policy</a> · <a href=\"/terms\">Terms of Service</a></footer></div></body></html>";
+function landingPage() {
+  return new Response(LANDING_HTML, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=3600" } });
+}
+
 // ---------- /connect: account linking via OAuth links ----------
 const PROVIDERS = {
   youtube:   { title: "YouTube connect",   desc: "Videos upload cheyadaniki" },
@@ -7852,6 +7885,9 @@ export default {
     if (url.pathname.startsWith("/c/") || url.pathname.startsWith("/oauth/")) { const r = await oauthRoutes(env, url); if (r) return r; }
     if (url.pathname === "/privacy") return legalPage("privacy");
     if (url.pathname === "/terms") return legalPage("terms");
+    if (url.pathname === "/") return landingPage();
+    const svf = SITE_VERIFY_FILES[url.pathname.slice(1)];
+    if (svf !== undefined) return new Response(svf, { headers: { "content-type": "text/html; charset=utf-8" } });
     if (url.pathname === "/health") return Response.json({ ok: true, name: "divya" });
     return new Response("Julie is awake.");
   },
