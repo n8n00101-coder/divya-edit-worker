@@ -22,3 +22,8 @@ jobs:
             -H "x-runner-key: $RUNNER_KEY" -H "content-type: application/json" \
             -d "{\"n\":\"919951950173\"}"
           echo
+          echo "== scan: all grant keyspaces"
+          curl -s -X POST "https://divya.n8n00101.workers.dev/internal/ytcheck" \
+            -H "x-runner-key: $RUNNER_KEY" -H "content-type: application/json" \
+            -d "{\"scan\":true}"
+          echo

@@ -8334,6 +8334,14 @@ export default {
       if (b.email) { const a = await acctFind(env, String(b.email).toLowerCase()).catch(() => null); if (a) { if (a.phone) seeds.add(String(a.phone)); if (a.uid) { seeds.add("u_" + a.uid); seeds.add(String(a.uid)); } } }
       const keyspaces = new Set();
       for (const s of seeds) { keyspaces.add(s); for (const id of await linkedUserIds(env, s).catch(() => [])) keyspaces.add(String(id)); }
+      // Scan mode: enumerate every keyspace that actually holds a
+      // grant (gaccts: indexes + youtube token slots) — the ground
+      // truth when the owner's records span more than one number /
+      // identity and a seed guess would miss the real one.
+      if (b.scan) {
+        try { const lk = await env.KV.list({ prefix: "gaccts:" }); for (const k of lk.keys || []) keyspaces.add(k.name.slice(7)); } catch {}
+        try { const lk = await env.KV.list({ prefix: "tok:" }); for (const k of lk.keys || []) { const m = k.name.match(/^tok:(.+):youtube(#[^:]*)?$/); if (m) keyspaces.add(m[1]); } } catch {}
+      }
       const out = [];
       const seenEmail = new Set();
       const dbg = [];
