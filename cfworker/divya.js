@@ -33,7 +33,7 @@ Voice gurinchi nijam: idi best free neural voice, chala natural ga untundi kani 
 YouTube/Instagram upload: chat lone — user "upload video N" ani adigithe, video history nunchi video teesukoni, captions rasi, owner OK ("upload cheyala?") adigi, "cheyu" ante maatrame upload cheyyi.
 VIDEO START RULE: Video CREATE ONLY when the user clearly ORDERS it (cheyyi / chey / create / make / pampu + topic or "nuve topic select chey"). Question laaga adigithe ("cheyagalava?", "can you?", "chestava?") START CHEYAKU: nijayithi ga answer chey (shorts mariyu 60 min varaku LONG videos rendU chestham — user length adigithe adhe length CREATE lo rayi, "only short videos" ani refuse cheyaku) and topic, length, language adugu. Okka message ki okka video maatrame. Mundu history lo "start chesa" unte adi already start ayyindi, malli start cheyaku. Order clear ga unnappudu maatrame chinna reply: "Sare, start chesa. Ready ayyaka ikkade pampistha." (time promise vaddu) and chivara separate line lo exactly [[CREATE: <request details in English: topic or AUTO, voice language, male/female, length (short 30s 9:16, or long up to 60 min 16:9, as the user said it in chat)>]] rayi.
 Nijayithi: pani avvakunda "aipoyindi" anaku. Leni tools unnayi ani cheppaku. Secrets/keys evariki cheppaku.
-API KEYS / SETUP / PROVIDERS (hard rule, v38 R48 — R48 WINS over R18): user API keys, AI providers, "AI down", setup gurinchi adigithe EPPUDU "Sorry, I can't help" ani cheppaku — refuse cheyaku. Plain ga explain cheyyi: Julie anni chesthundhi — accounts, API keys, server setup — nee allow tho. Neeku emi cheyalsina pani undadhu. Shared AI busy ga unte, Setup lo (#/setup) okka allow ivvu, migilina anni Julie background lo chesesthundhi. Key VALUES eppudu adagaku, chupinchaku. User cheyyalsindhi okkate matrame, avasaram vasthe: phone ki vachina SMS code ni okkasari type cheyyadam. Verification link email ki vasthundhi — danini Julie ne open chesthundhi, user danini tap cheyyakudadhu (single-use link); sign-in avasaram aithe Take Control lo Julie browser lone cheyyali — migilina anni Julie chesthundhi.
+API KEYS / SETUP / PROVIDERS (hard rule, v38 R48 — R48 WINS over R18): user API keys, AI providers, "AI down", setup gurinchi adigithe EPPUDU "Sorry, I can't help" ani cheppaku — refuse cheyaku. Plain ga explain cheyyi: Julie anni chesthundhi — accounts, API keys, server setup — nee allow tho. Neeku emi cheyalsina pani undadhu. Shared AI busy ga unte, ee chat lone allow adugu — user 'sare' ante Julie ikkade setup start chesthundhi, migilina anni background lo chesesthundhi. User ni vere app ki, menu ki, screen ki vellamani EPPUDU cheppaku — anni asks ee chat lone jaruguthayi. Key VALUES eppudu adagaku, chupinchaku. User cheyyalsindhi okkate matrame, avasaram vasthe: phone ki vachina SMS code ni okkasari type cheyyadam. Verification link email ki vasthundhi — danini Julie ne open chesthundhi, user danini tap cheyyakudadhu (single-use link); sign-in avasaram aithe Take Control lo Julie browser lone cheyyali — migilina anni Julie chesthundhi.
 ACTIONS NIJAYITHI (R28, hard rule): App/website open, call, WhatsApp message, reminder lanti panulu nuvvu direct ga cheyalevu — app/link dwara jaruguthayi. "Opened / sent / posted / saved / called / reminder set" ani EPPUDU cheppaku. User open adigithe "open chesthunna" ani cheppi link ivvu; jaragani pani ni jariginattu cheppaku. Images chudalenu — adigithe nijam cheppu, fake description ivvaku.
 ${VOICE_SAVE_RULE}
 ${AMEND_RULE}
@@ -742,9 +742,35 @@ async function handle(env, m) {
       const a2 = r.ok ? modelSavedLine(r, "te") : modelErrText(r, "te");
       const hh = await history(env, user); hh.push({ role: "user", content: text.split(mk.key).join("••••••") }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2);
     }
-    // v38 (R48): API-key / provider / "AI down" questions never reach the
-    // model — answer with the R48 one-allow Setup flow instead.
-    if (isSetupQuestion(text)) { const sg = setupGuideReply("te"); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: sg }); await remember(env, user, hh); return say(env, user, sg); }
+    // v107: an answer to a waiting setup/browse ask (OTP code, a
+    // missing identity field) is routed to the job — appTalk has done
+    // this since v103/v106, but the WA flow never called it, so a
+    // code typed on WhatsApp vanished into the brain while the job
+    // timed out. Non-answers return null and flow on untouched.
+    { const awr = await setupAwaitingReply(env, { n: user }, text, "te").catch(() => null);
+      if (awr) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: awr }); await remember(env, user, hh); return say(env, user, awr); } }
+    // v107: the WA allow flow — Julie asked the allow in THIS chat;
+    // the user's "sare" is the grant and the setup chain starts from
+    // here (or the one missing fact, the email, is asked here too).
+    { const af = await waAllowFlow(env, user, text).catch(() => null);
+      if (af) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: af }); await remember(env, user, hh); return say(env, user, af); } }
+    // v107: a factual state question (keys / models / setup / tokens)
+    // is answered from the account's real records in one line — never
+    // the setup lecture (the pre-fix isSetupQuestion block below sent
+    // "enni api keys unnay" to setupGuideReply verbatim) and never a
+    // brain guess at state the Worker can simply read.
+    { const sk = waStateKind(text);
+      if (sk) { const a2 = await waStateReply(env, user, sk); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } }
+    // v107: "ikade adugu allow chestha" — the user explicitly asks
+    // Julie to take the allow HERE. That is a setup-need expression:
+    // answer with the in-chat allow ask, never an app-menu errand.
+    if (/(ik+ade|ikkade)\s+adugu|ask\s+(me\s+)?here/i.test(text)) { const a2 = await waSetupRespond(env, user); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); }
+    // v38 (R48) + v107: API-key / provider / "AI down" messages never
+    // reach the model — but the WA answer is state-aware now: already
+    // set up -> one truthful line; chain running -> progress; setup
+    // actually needed -> the allow is asked in THIS chat and the
+    // grant starts the chain from here (waAllowFlow above).
+    if (isSetupQuestion(text)) { const a2 = await waSetupRespond(env, user); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); }
     // v102: a HOW / process question is answered structurally with the
     // real process, in the user's language mix — it never reaches the
     // brain (which turned it into a CREATE on 2026-11-16) and never
@@ -1015,7 +1041,14 @@ async function appAuth(env, req) {
 function isCreateOrder(text) {
   const t = String(text || "").toLowerCase();
   if (/(naa\s+video\s*ni|ee\s+video\s*ni|upload\s*chesa(nu)?|link\s*pampanu|nenu\s*pampina|nenu\s*upload)/i.test(t)) return false;
-  if (/(em\s*ledhu|ledhu|ledu|nee\s*istam|nuvve|motham\s*nve|scratch|kotha\s+video)/i.test(t)) return true;
+  // v107: bare "ledhu/ledu" anywhere is NOT a create order — it is
+  // usually a NEGATION ("AI pani cheyyatLEDU" = AI is NOT working),
+  // and reading a complaint as an order both armed the CREATE gate
+  // and disabled isSetupQuestion for that message. The no-video
+  // meaning this shortcut was written for ("raw video em ledhu")
+  // requires a video/footage word near the negation.
+  if (/(nee\s*istam|nuvve|motham\s*nve|scratch|kotha\s+video)/i.test(t)) return true;
+  if (/\b(video|reel|short|footage|raw\s*video|video\s*file)\b.{0,30}\b(ledhu|ledu)\b/i.test(t) || /\b(em\s*)?(ledhu|ledu)\b.{0,20}\b(video|reel|short)\b/i.test(t)) return true;
   // v102: "starting nundi / last varaku" ALONE is not an order — a HOW
   // question uses the same words to describe the process ("first
   // starting nundi last output ready aye varaku ela chesthav"). Those
@@ -3332,8 +3365,12 @@ function setupGuideReply(lang) {
   // at 22:22). A fallback must never state a cause it did not check or a
   // job state it did not read. This is the R48 SETUP answer now: what
   // Julie does herself, and the one allow that is the user's only step.
-  if (lang === "en") return "Setup and API keys are my job, not yours — I create the accounts and keys myself and keep them working. If setup is not finished yet, open Setup in the Julie app and give one allow; everything else runs in the background. You never have to create a key or watch a limit.";
-  return "Setup mariyu API keys pani naadhe, needhi kaadhu — accounts, keys anni nene create chesi pani chesela chuskunta. Setup inka complete avvakapothe Julie app lo Setup open chesi okka allow ivvu; migilina pani motham background lo jaruguthundi. Nuvvu key create cheyyalsina pani ledhu, limit chuskone pani asalu ledhu.";
+  // v107: no app/menu errand in this text — on WhatsApp there IS no
+  // Setup screen to send the user to, and the allow is taken in the
+  // chat the user is standing in (waSetupRespond / waAllowFlow own
+  // that flow on WA; this text remains only as the app-side fallback).
+  if (lang === "en") return "Setup and API keys are my job, not yours — I create the accounts and keys myself and keep them working. If setup is not finished yet, just say 'sare' here — I take your allow in this chat and start it myself; everything else runs in the background. You never have to create a key or watch a limit.";
+  return "Setup mariyu API keys pani naadhe, needhi kaadhu — accounts, keys anni nene create chesi pani chesela chuskunta. Setup inka complete avvakapothe ikkade 'sare' ani cheppu — allow ikkade theeskoni nene start chestha; migilina pani motham background lo jaruguthundi. Nuvvu key create cheyyalsina pani ledhu, limit chuskone pani asalu ledhu.";
 }
 // v102: the ONLY user-facing text when every brain in the pool failed.
 // It claims nothing about limits, quotas or job state — none of which
@@ -3342,6 +3379,119 @@ function setupGuideReply(lang) {
 function brainDownReply(lang) {
   if (lang === "en") return "My brain is unreachable for a moment — your message is with me and nothing is needed from you. Please try once more in a little while.";
   return "Naa brain okka nimisham andubatulo ledhu — nee message naa daggara undhi, nuvvu emi cheyyalsina pani ledhu. Konchem sepu lo malli okkasari cheppu.";
+}
+// v107 (WA process battery — Ajju 2026-11-17): WhatsApp-native state
+// answers + allow. The WA user has no app screen: a factual question
+// ("enni api keys unnay") is answered from the account's REAL records
+// in one short line — never the setup lecture, never a brain guess —
+// and a setup allow is taken IN THIS CHAT: the same consent record +
+// chain the app's setup/start writes, started from here, with
+// progress and OTP asks staying in this chat. The pre-fix WA path had
+// neither: SETUP_Q_RX swallowed every keys/provider mention into
+// setupGuideReply's lecture (which sent the user to the app's Setup
+// screen), question-form state asks fell to the brain, and a user's
+// "sare" allow in WA started nothing at all.
+const WA_SETUP_PROVIDERS = ["groq", "openrouter", "gemini", "cloudflare", "cohere", "together", "sambanova", "fireworks", "cerebras", "nvidia", "mistral", "ai21", "voyage", "tavily", "serper", "exa", "deepgram", "assemblyai", "elevenlabs", "stability", "jina", "kaggle", "pexels"];
+function waStateKind(text) {
+  const t = String(text || "").toLowerCase();
+  if (isCreateOrder(t) || isNoVideoEditOrder(t)) return null; // an order is an order
+  const q = /(enni|entha|ayindha|ayinda|status|unnay|unnaya|migilayi)/.test(t) || /\?\s*$/.test(t.trim());
+  if (!q) return null;
+  if (/\btokens?\b/.test(t)) return "tokens";
+  if (/\bmodels?\b/.test(t)) return "models";
+  if (/\b(api\s*)?keys?\b/.test(t)) return "keys";
+  if (/\bsetup\b/.test(t)) return "setup";
+  return null;
+}
+async function waSetupStatusLine(env, user) {
+  const chain = parseRec(await env.KV.get(`setupchain:${user}`));
+  if (chain) {
+    const cur = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null;
+    const prov = cur && cur.provider ? ((SETUP_PROVIDERS[cur.provider] || {}).name || cur.provider) : "";
+    return `Setup nadusthondhi — ${chain.done.length}/${chain.providers.length} providers ayyayi${prov ? `, ippudu ${prov}` : ""}. Progress ikkade cheptha.`;
+  }
+  const fin = parseRec(await env.KV.get(`setupdone:${user}`));
+  if (fin && fin.state === "done") return `Setup complete ayyindhi ✓ — ${(fin.done || []).length} providers ready, keys anni save ayyayi.`;
+  if (fin && ["failed", "stalled", "stopped"].includes(fin.state)) return `Setup complete avvaledu — ${(fin.done || []).length} providers ayyayi. Malli start cheyala? 'setup cheyu' ani cheppu, ikkade nunchi chestha.`;
+  const kl = await setupKeyList(env, user).catch(() => ({ count: 0 }));
+  if (kl.count) return `Setup complete ayyindhi ✓ — nee ${kl.count} keys ready ga unnayi.`;
+  return null; // not started, no keys
+}
+async function waStateReply(env, user, kind) {
+  try {
+    if (kind === "tokens") { const b = await tokBalance(env, user); return `Tokens: ee week lo ${b.weekLeft.toLocaleString("en-IN")} migilayi (reset ${b.weekEnds}), pool ${b.pool.toLocaleString("en-IN")}, plan ${b.planLeft.toLocaleString("en-IN")}. Ee week lo ${b.videosWeek} videos cheyachu.`; }
+    if (kind === "keys") {
+      const kl = await setupKeyList(env, user);
+      if (!kl.count) return "Ippudu nee dhaggara own API keys levu — shared brains tho pani chesthunna. Nee own keys kavali ante 'setup cheyu' ani cheppu, ikkade adigi start chestha.";
+      const names = kl.keys.filter(k => k.ok).map(k => k.name).join(", ");
+      return `Ippudu nee dhaggara ${kl.count} API keys ready ga unnayi: ${names}.`;
+    }
+    if (kind === "models") {
+      const sc = await scoutList(env, "groq").catch(() => []);
+      const um = parseRec(await env.KV.get(`umodel:${user}`));
+      const n = CHAT_MODELS.length + (sc || []).length + (um ? 1 : 0);
+      return `Chat kosam ippudu ${n} models pool lo unnayi — okati down ayina silent ga inkodhi answer isthundhi, neeku theliyadu.`;
+    }
+    const st = await waSetupStatusLine(env, user);
+    if (st) return st;
+    return "Setup inka start avvaledu. Start cheyala? 'sare' ani cheppu — allow ikkade theeskoni nene start chestha.";
+  } catch { return "Ippudu state check cheyyaleka pothunna — konchem sepu tarvatha malli adugu."; }
+}
+// The setup-need responder for the WA surface: state first (never
+// pitch setup at a user who is already set up), else ask the allow
+// HERE and arm the pending-allow record the grant is matched against.
+async function waSetupRespond(env, user) {
+  const chain = parseRec(await env.KV.get(`setupchain:${user}`));
+  if (chain) return waSetupStatusLine(env, user);
+  const kl = await setupKeyList(env, user).catch(() => ({ count: 0 }));
+  const fin = parseRec(await env.KV.get(`setupdone:${user}`));
+  if (kl.count > 0 || (fin && fin.state === "done")) return `Nee keys ready ga unnayi (${kl.count || (fin.done || []).length}) — setup complete. Provider down ani anipisthe backup brains silent ga pani chesthayi; nenu check chesi cheptha.`;
+  await env.KV.put(`wasetupask:${user}`, JSON.stringify({ at: Date.now() }), { expirationTtl: 1800 });
+  return "Setup mariyu API keys pani naadhe — accounts, keys anni nene create chestha. Nee allow okkate kavali: 'sare' ani ikkade cheppu, setup ikkade nunchi start chestha. Madhyalo SMS code vasthe ikkade adugutha — type chesthe chaalu, migathadi motham nene chuskunta.";
+}
+// Starts the chain from a WhatsApp allow — the same records the app's
+// setup/start writes (consent, sealed pass, chain), keyed to the WA
+// user exactly like every other WA feature (tokens, history, jobs).
+async function waSetupStart(env, user, email) {
+  const ids = WA_SETUP_PROVIDERS.filter(id => SETUP_PROVIDERS[id]);
+  await env.KV.put(`setupconsent:${user}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ids, email }), { expirationTtl: 86400 * 7 });
+  const pass = setupPass();
+  try { await env.KV.put(`upass:${user}`, JSON.stringify({ ct: await sealKey(env, user, "setup", pass) }), { expirationTtl: 86400 * 365 }); } catch {}
+  let userName = "";
+  try { const a = await acctFind(env, user); if (a && a.name) userName = a.name; } catch {}
+  const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: "profile", userName, userPhone: user, startId: null, via: "wa" };
+  await env.KV.put(`setupchain:${user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+  const next = await setupStartNext(env, user);
+  if (!next.ok) { await env.KV.delete(`setupchain:${user}`).catch(() => {}); return "Setup machine start avvaledu — konchem sepu tarvatha malli 'setup cheyu' ani cheppu."; }
+  return "Allow theeskunna ✓ Setup start chesa — accounts, keys anni nene create chestha. Progress ikkade cheptha; code vasthe ikkade adugutha, type cheyyi chaalu.";
+}
+const WA_ALLOW_RX = /^\s*(sare|sari|ok|okay|allow|avunu|haa|cheyu|cheyyi|start\s*cheyu|proceed|yes)\s*[.!]*\s*$/i;
+// The WA allow flow: Julie asked the allow in this chat -> the user's
+// bare "sare/ok/allow" IS the grant (recorded as setupconsent, the
+// one allow) -> the chain starts. If no email is on file, that ONE
+// fact is asked here too and its answer starts the chain. Returns
+// Julie's reply, or null when the message is not part of the flow.
+async function waAllowFlow(env, user, text) {
+  const t = String(text || "").trim();
+  const mailPend = parseRec(await env.KV.get(`wasetupmail:${user}`));
+  if (mailPend) {
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t) && t.length <= 120) {
+      await env.KV.delete(`wasetupmail:${user}`); await env.KV.delete(`wasetupask:${user}`);
+      return waSetupStart(env, user, t.toLowerCase());
+    }
+    return null; // not an email — flows on untouched; the ask stays open
+  }
+  const ask = parseRec(await env.KV.get(`wasetupask:${user}`));
+  if (ask && WA_ALLOW_RX.test(t)) {
+    await env.KV.delete(`wasetupask:${user}`);
+    const consent = parseRec(await env.KV.get(`setupconsent:${user}`));
+    let email = (consent && consent.email) || "";
+    if (!email) { try { const a = await acctFind(env, user); if (a && a.email) email = a.email; } catch {} }
+    if (email) return waSetupStart(env, user, email);
+    await env.KV.put(`wasetupmail:${user}`, JSON.stringify({ at: Date.now() }), { expirationTtl: 1800 });
+    return "Allow theeskunna ✓ — okka detail kavali: kotha accounts kosam nee email ikkade pampu, danitho setup start chestha.";
+  }
+  return null;
 }
 // v51 (F2): a busy/limit answer in chat is ONE short line — never a
 // paragraph wall. The brain sometimes expands the setup pitch into a
@@ -6192,7 +6342,12 @@ async function setupStartNext(env, n) {
   // v24: record the outcome before deleting the chain — otherwise the app has
   // nothing to show when the setup ends (the mini-box just vanished).
   // v38 merge fix: if NO provider produced a key, the run failed (not done).
-  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, skipped: chain.skipped || null, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, failReason: chain.failReason || null, ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`); return { ok: true, done: true }; }
+  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, skipped: chain.skipped || null, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, failReason: chain.failReason || null, ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`);
+    // v107: a WhatsApp-started chain reports its outcome IN the
+    // WhatsApp chat (the owner id is the phone number) — the WA user
+    // has no Setup screen to watch. Exactly once: the chain is gone.
+    if (/^\d{7,15}$/.test(String(n))) { try { await waSendText(env, String(n), anyKey ? `Setup complete ayyindhi ✓ — ${chain.done.length} providers ready, keys anni save ayyayi.` : `Setup ayyindhi kaani okka key kuda complete avvaledu${(chain.failed || []).length ? ` — fail ayinavi: ${chain.failed.join(", ")}` : ""}. Malli try cheyala? 'setup cheyu' ani cheppu.`); } catch {} }
+    return { ok: true, done: true }; }
   // v70: Pexels is an enhancement key (stock footage), not a brain key —
   // a user who already has one sealed never re-runs the browser flow for
   // it: the step counts as done and the chain moves on. (No other
@@ -6475,6 +6630,11 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
         if (clean.id && prevAw.id !== clean.id || clean.id && prevAw.attempts !== clean.attempts) {
           rec.awaiting = clean; askChanged = true;
           try { const h = await history(env, rec.user); h.push({ role: "assistant", content: clean.prompt }); await remember(env, rec.user, h); } catch {}
+          // v107: a WhatsApp-started chain's owner IS a phone number —
+          // the ask must ARRIVE in that WhatsApp chat, not only sit in
+          // the history store where the WA user never sees it. The
+          // answer routes back through setupAwaitingReply in handle().
+          if (/^\d{7,15}$/.test(String(rec.user || ""))) { try { await waSendText(env, String(rec.user), clean.prompt); } catch {} }
         } else if (clean.id) {
           rec.awaiting = clean; // same ask re-posted — refresh only, no new chat line
         }
