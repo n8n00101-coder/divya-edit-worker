@@ -152,10 +152,42 @@ function b64(buf) {
   return btoa(s);
 }
 
+async function mediaMeta(env, id) {
+  try { return await (await fetch(`${G}/${id}`, { headers: { Authorization: `Bearer ${env.WA_TOKEN}` } })).json(); } catch { return {}; }
+}
 async function media(env, id) {
-  const meta = await (await fetch(`${G}/${id}`, { headers: { Authorization: `Bearer ${env.WA_TOKEN}` } })).json();
+  const meta = await mediaMeta(env, id);
   const r = await fetch(meta.url, { headers: { Authorization: `Bearer ${env.WA_TOKEN}` } });
   return { buf: await r.arrayBuffer(), mime: meta.mime_type || "image/jpeg" };
+}
+
+// v113 (WA→YouTube audit #2): a video the user SENDS in the WA chat is
+// staged as an UPLOADABLE source, not only an edit job. Small files
+// (<= 16 MB) are downloaded by the Worker into upl:<stageId> so the
+// Worker upload leg can post them at once; larger ones keep only the
+// Meta media id on the history entry — the runner leg downloads them
+// at upload time (no KV-sized copy ever exists). Either way a history
+// entry (src "wa-upload", state done) exists, so a follow-up "YouTube
+// lo upload cheyu" finds the video instead of "Aa video
+// kanipinchaledu".
+const WA_STAGE_DL_MAX = 16 * 1024 * 1024;
+async function stageWaVideo(env, user, mediaId, caption) {
+  const meta = await mediaMeta(env, mediaId);
+  const size = Number(meta.file_size) || 0;
+  const stageId = crypto.randomUUID().slice(0, 8);
+  let bytes = false;
+  if (size > 0 && size <= WA_STAGE_DL_MAX && meta.url) {
+    try {
+      const r = await fetch(meta.url, { headers: { Authorization: `Bearer ${env.WA_TOKEN}` } });
+      if (r.ok) { const buf = await r.arrayBuffer(); if (buf.byteLength) { await env.KV.put(`upl:${stageId}`, buf, { expirationTtl: 86400 * 3 }); bytes = true; } }
+    } catch {}
+  }
+  const title = (String(caption || "").split(/[\n.!?]/)[0] || "WhatsApp video").trim().slice(0, 80) || "WhatsApp video";
+  const num = await histNext(env, user);
+  const e = { n: num, job: stageId, title, topic: title, kind: "upload", lang: "", length: "", at: Date.now(), state: "done", name: "video", src: "wa-upload", template: null, notes: "WhatsApp lo pampina video", has_result: bytes, size, mediaId: String(mediaId), yt: null, ig: null };
+  await histPut(env, user, e);
+  await env.KV.put(`lastupload:${user}`, String(num), { expirationTtl: 86400 * 2 });
+  return e;
 }
 
 // ---------- v71: reference voice (the user's own saved sample) ----------
@@ -611,6 +643,9 @@ async function handle(env, m) {
   if (/^\s*my\s*code\s*$/.test(tx0)) { const info = await refInfo(env, user); return say(env, user, `Nee referral code: ${info.code}\nLink: ${info.link}\nOkkaru join aithe iddariki 10,00,000 tokens (10 shorts leda 1× 10-min video).`); }
   if (/^\s*\/?(login|app login|app code)\s*$/.test(tx0)) { if (await env.KV.get(`otpcool:${user}`)) return; await env.KV.put(`otpcool:${user}`, "1", { expirationTtl: 60 }); return say(env, user, `🔐 Julie app login code: ${await appCode(env, user)}\n10 min lo expire avuthundi.`); }
   if (m.type === "interactive") { const id = m.interactive?.list_reply?.id || m.interactive?.button_reply?.id || ""; if (id.startsWith("conn:") && PROVIDERS[id.slice(5)]) return connectLink(env, user, id.slice(5));
+    // v113: the YouTube channel picker card's rows — the tap fixes the
+    // pending upload's account and the full summary follows.
+    if (id.startsWith("ytpick:")) { const r = await chatUploadPick(env, { n: user }, id.slice(7), "te", "wa").catch(() => null); if (r) return say(env, user, r.reply); }
     // v109: the setup Allow card's buttons — a tap is the same grant
     // as typing "sare" (waGrantSetup), or a clean refusal that disarms.
     if (id === "waallow:yes") { const r = await waGrantSetup(env, user).catch(() => "Setup start cheyyaleka poyanu — 'setup cheyu' ani malli cheppu."); return say(env, user, r); }
@@ -634,8 +669,18 @@ async function handle(env, m) {
   if (m.type === "video" || (m.type === "document" && (m.document?.mime_type || "").startsWith("video"))) {
     const id = (m.video || m.document).id, cap = (m.video || m.document).caption || "";
     await env.KV.put(`lastvideo:${user}`, id, { expirationTtl: 86400 * 2 });
+    // v113 (audit #2): EVERY WA-sent video is also staged as an
+    // uploadable source (history entry + bytes when small, media
+    // pointer when large) — a later "YouTube lo upload cheyu" finds
+    // it. An upload caption enters the upload flow directly; any
+    // other caption keeps today's edit routing.
+    const staged = await stageWaVideo(env, user, id, cap).catch(() => null);
+    if (cap.trim() && /(upload|post)/i.test(cap) && /youtube/i.test(cap) && staged) {
+      const up = await chatUpload(env, { n: user }, `upload video ${staged.n} to YouTube`, "te", { via: "wa" }).catch(() => null);
+      if (up) { const hh = await history(env, user); hh.push({ role: "user", content: cap }, { role: "assistant", content: up.reply }); await remember(env, user, hh); await uploadSideSend(env, user, up); return say(env, user, up.reply); }
+    }
     if (cap.trim()) return startEdit(env, user, id, cap);
-    return say(env, user, "Video vachindi 👍 Em edit cheyyali? (ex: \"edit: 30s reel, Telugu captions, music\")");
+    return say(env, user, "Video vachindi 👍 Em edit cheyyali? (ex: \"edit: 30s reel, Telugu captions, music\") — leda \"YouTube lo upload cheyu\" anna upload chestha.");
   }
 
   if (m.type === "image" || (m.type === "document" && (m.document?.mime_type || "").startsWith("image"))) {
@@ -719,8 +764,8 @@ async function handle(env, m) {
     }
     // R23/R24/R25: chat-first video flow (WhatsApp) — upload intents, style lists
     // and reference blueprints are handled before the brain, so the user never opens a form.
-    const up = await chatUpload(env, { n: user }, text, "te");
-    if (up) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: up.reply }); await remember(env, user, hh); return say(env, user, up.reply); }
+    const up = await chatUpload(env, { n: user }, text, "te", { via: "wa" });
+    if (up) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: up.reply }); await remember(env, user, hh); await uploadSideSend(env, user, up); return say(env, user, up.reply); }
     // R47: styles branch deleted — Julie chooses the aesthetic itself and never asks the user to pick a template.
     // R46: a reference mention (not a question) becomes a create in that style.
     let forceCreateWA = false;
@@ -1095,7 +1140,7 @@ async function oauthRoutes(env, url) {
     if (url.pathname === "/oauth/google") {
       tok = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ code, client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, redirect_uri: base + "/oauth/google", grant_type: "authorization_code" }) })).json();
       if (!tok.access_token) return page("Google connect fail: " + (tok.error_description || tok.error || "unknown"));
-      if (s.prov === "youtube") { const c = await (await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); const chTitle = c.items?.[0]?.snippet?.title; who = chTitle ? `channel "${chTitle}"` : "(ee account lo YouTube channel kanipinchaledu)"; if (!chTitle) tok.noChannel = true; /* v39 (D3): token held, no channel behind it */ }
+      if (s.prov === "youtube") { const c = await (await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); const chTitle = c.items?.[0]?.snippet?.title; who = chTitle ? `channel "${chTitle}"` : "(ee account lo YouTube channel kanipinchaledu)"; if (!chTitle) tok.noChannel = true; /* v39 (D3): token held, no channel behind it */ else tok.ytChannelId = c.items[0].id || ""; /* v113: the channel ID is stored too — v39 discarded it, leaving only the title */ }
       if (s.prov === "youtube") { try { const ui = await (await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); gEmail = String(ui.email || "").toLowerCase(); } catch {} /* v97: key the account by its Google email (scope already carries openid email) */ }
       else { prof = await (await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: "Bearer " + tok.access_token } })).json(); who = prof.email || ""; }
     } else {
@@ -1583,7 +1628,7 @@ async function appTalk(env, u, text, lang, voiceId) {
   // R23/R24/R25: chat-first video flow — handled before the brain so the user never
   // has to open a form. Upload intents, style lists, reference blueprints and
   // topic plans are answered here; everything else falls through to the brain.
-  const upFlow = await chatUpload(env, u, text, lang);
+  const upFlow = await chatUpload(env, u, text, lang, { via: "app" });
   if (upFlow) { const a2 = upFlow.reply; h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h); return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" }; }
   // v24: a bare approval ("cheyu") with NO pending upload must never reach the
   // brain — it invents a success ("Uploaded successfully") for an upload that
@@ -2003,22 +2048,108 @@ function uploadTargets(low) {
 function topicQuery(text) {
   return text.toLowerCase().replace(/upload|post|cheyu|cheyyi|chey|video|youtube|instagram|insta|yt|both|renditlo|rendu|idhariki|iddariki|ni|lo|ki|ku|please|cheyandi|cheyyandi|\bthe\b|\bto\b|\ba\b|\ban\b|\bon\b|\bin\b|\bof\b|\bfor\b|\bwith\b|\band\b|\bthat\b|\bthis\b|\bee\b|\baa\b|\boka\b/g, " ").replace(/[^a-z0-9\u0c00-\u0c7f\u0900-\u097f ]/g, " ").replace(/\s+/g, " ").trim();
 }
-async function chatUpload(env, u, text, lang) {
+// v113 (audit #6): the confirmation summary shows EVERYTHING the
+// owner is approving — title, the description's head, the tag count,
+// the PRIVACY (a real choice: public/unlisted/private, unlisted the
+// stated default) and the channel. Pre-fix only the title + IG
+// caption showed; description/tags were invisible and privacy was
+// hardcoded unlisted without ever being mentioned.
+function uploadConfirmText(e, copy, targets, privacy, ytLabel, en) {
+  const tNames = targets.map(t => t === "yt" ? "YouTube" : "Instagram").join(" + ");
+  const lines = [`Video ${e.n} — ${inspectVideo(e)}.`];
+  if (targets.includes("yt")) {
+    lines.push(`YouTube title: ${copy.yt_title}`);
+    const descHead = String(copy.yt_description || "").split("\n").filter(s => s.trim()).slice(0, 2).join(" ").slice(0, 160);
+    if (descHead) lines.push(`Description: ${descHead}${String(copy.yt_description || "").length > descHead.length ? "…" : ""}`);
+    lines.push(`Tags: ${(copy.yt_tags || []).length} · Privacy: ${privacy}`);
+    if (ytLabel) lines.push(`YouTube channel: ${ytLabel}`);
+  }
+  if (targets.includes("ig")) lines.push(`Instagram caption: ${copy.ig_caption.slice(0, 200)}${copy.ig_caption.length > 200 ? "…" : ""}`);
+  lines.push(en ? `Upload to ${tNames}? Say "cheyu" to post — or say "public"/"private" for the privacy, "title marchu: …" to change the title.` : `${tNames} lo upload cheyala? "cheyu" ani cheppu — privacy kosam "public"/"private" ani cheppu, title kosam "title marchu: …" ani cheppu.`);
+  return lines.join("\n");
+}
+// v113 (audit #3): after the owner picks a channel (WA card tap or a
+// text pick), the pending upload is built for THAT account and the
+// full summary is shown — the OK gate arms only now.
+async function chatUploadPick(env, u, acctId, lang, via) {
+  const en = lang === "en";
+  const pick = JSON.parse((await env.KV.get(`uppick:${u.n}`)) || "null");
+  const chosen = pick && (pick.channels || []).find(c => c.id === acctId);
+  if (!pick || !chosen) return { reply: en ? "That channel list expired. Say \"upload video N to YouTube\" again." : "Aa channel list expire ayyindhi. \"upload video N to YouTube\" ani malli cheppu." };
+  await env.KV.delete(`uppick:${u.n}`);
+  const e = await histGet(env, u.n, pick.num);
+  if (!e) return { reply: en ? "That video is no longer there." : "Aa video ippudu kanipinchaledhu." };
+  const copy = await genUploadCopy(env, u, e, lang);
+  await env.KV.put(`uppend:${u.n}`, JSON.stringify({ num: e.n, job: e.job, mediaId: e.mediaId || "", size: e.size || 0, targets: pick.targets, copy, privacy: "unlisted", ytAcct: chosen.id, ytLabel: chosen.channel || "", ytEmail: chosen.email || "", at: Date.now() }), { expirationTtl: 1800 });
+  return { reply: uploadConfirmText(e, copy, pick.targets, "unlisted", chosen.channel || "", en) };
+}
+// v113: WA side-sends a chatUpload result can ask for — the connect
+// card (no-channel / expired outcomes) or the channel picker card.
+// Awaited BEFORE the reply text, the established waConnReply order.
+async function uploadSideSend(env, user, up) {
+  try {
+    if (up.card === "connect") { await connectMenu(env, user); return; }
+    if (up.pickCard && up.pickCard.length) {
+      await wa(env, user, { type: "interactive", interactive: { type: "list",
+        header: { type: "text", text: "YouTube channel" },
+        body: { text: "Ye channel ki upload cheyyali? Select cheyyi." },
+        action: { button: "Channels", sections: [{ title: "Channels", rows: up.pickCard.map(a => ({ id: `ytpick:${a.id}`, title: String(a.channel || a.email || "Channel").slice(0, 24), description: String(a.email || "").slice(0, 72) })) }] } } });
+    }
+  } catch {}
+}
+async function chatUpload(env, u, text, lang, opts = {}) {
   const low = text.toLowerCase().trim();
   const en = lang === "en";
+  const via = opts.via || "";
   const pend = JSON.parse((await env.KV.get(`uppend:${u.n}`)) || "null");
   if (pend && UPLOAD_OK_RX.test(low)) {
+    // v113 (audit #10): on WhatsApp the transfer announces its start
+    // BEFORE the result line — no silent gap while the bytes move.
+    if (via === "wa" && pend.targets.includes("yt")) { try { await say(env, u.n, `Upload start chesa — ${pend.ytLabel || pend.ytEmail || "YouTube"}`); } catch {} }
     // v24: keep the pending upload when the upload FAILS, so "cheyu" retries it
     // instead of the brain inventing a success. Delete only on full success.
     const res = await runUpload(env, u, pend, lang);
     if (res.ok) await env.KV.delete(`uppend:${u.n}`);
-    return { reply: res.reply };
+    else if (res.extendTtl) { try { await env.KV.put(`uppend:${u.n}`, JSON.stringify(pend), { expirationTtl: 21600 }); } catch {} }
+    return res;
   }
-  if (!/(upload|post)/i.test(low) || !/video/.test(low)) return null;
+  if (pend) {
+    // v113 (audit #6): pre-post corrections patch the pending copy —
+    // a privacy word or "title marchu: …" — and re-show the summary.
+    const privM = low.match(/\b(public|private|unlisted)\b/);
+    const titleM = text.match(/title\s*(?:marchu|change|marchandi)\s*[:\-]?\s*(.+)/i) || text.match(/title\s*[:=]\s*(.+)/i);
+    if (privM || titleM) {
+      if (privM) pend.privacy = privM[1];
+      if (titleM && titleM[1]) pend.copy.yt_title = titleM[1].trim().slice(0, 100);
+      pend.at = Date.now();
+      await env.KV.put(`uppend:${u.n}`, JSON.stringify(pend), { expirationTtl: 1800 });
+      const e2 = await histGet(env, u.n, pend.num);
+      return { reply: uploadConfirmText(e2 || { n: pend.num }, pend.copy, pend.targets, pend.privacy, pend.ytLabel, en) };
+    }
+  }
+  // v113 (audit #3): a channel pick is waiting and this is not a new
+  // upload request — a channel name / email / number picks it, on
+  // both surfaces (the WA card tap lands in chatUploadPick directly).
+  const pick = JSON.parse((await env.KV.get(`uppick:${u.n}`)) || "null");
+  if (pick && !/(upload|post)/i.test(low)) {
+    const numM2 = low.match(/^\s*(?:channel\s*)?(\d)\s*$/);
+    const byName = (pick.channels || []).find(c => (c.channel && low.includes(c.channel.toLowerCase())) || (c.email && low.includes(c.email.toLowerCase())));
+    const byNum = numM2 ? (pick.channels || [])[parseInt(numM2[1], 10) - 1] : null;
+    if (byName || byNum) return chatUploadPick(env, u, (byName || byNum).id, lang, via);
+    return { reply: en ? `Which channel? ${pick.channels.map((c, i) => `${i + 1}. ${c.channel || c.email}`).join("  ")} — say the number or the channel name.` : `Ye channel? ${pick.channels.map((c, i) => `${i + 1}. ${c.channel || c.email}`).join("  ")} — number leda channel peru cheppu.` };
+  }
+  if (!/(upload|post)/i.test(low) || !/video|youtube|instagram|insta/i.test(low)) { if (pick) await env.KV.delete(`uppick:${u.n}`); return null; }
+  if (pick) await env.KV.delete(`uppick:${u.n}`); // a fresh upload request supersedes a stale pick (the picker below re-arms it when needed)
   const numM = low.match(/video\s*(\d+)/);
   let e = null;
   if (numM) e = await histGet(env, u.n, parseInt(numM[1], 10));
   else { const q = topicQuery(text); if (q) e = await histFind(env, u.n, q); }
+  if (!e) {
+    // v113 (audit #2): "YouTube lo upload cheyu" right after sending a
+    // video in this chat — the staged entry is the referent.
+    const lu = await env.KV.get(`lastupload:${u.n}`);
+    if (lu && /youtube|this|ee video|aa video|last|ippudu/i.test(low)) e = await histGet(env, u.n, parseInt(lu, 10));
+  }
   if (!e) {
     const list = await histList(env, u.n, 5);
     const lines = list.map(x => `video ${x.n} — ${x.title || x.topic || x.kind || ""} (${x.state})`).join("\n");
@@ -2028,40 +2159,71 @@ async function chatUpload(env, u, text, lang) {
   const targets = uploadTargets(low);
   // v97 (MULTI-ACCOUNT): pick the YouTube account EXPLICITLY — a channel
   // name or account email named in the message wins; otherwise the
-  // default account — and the confirmation below NAMES the channel so
+  // default account — and the confirmation NAMES the channel so
   // the owner can correct it before saying "cheyu".
-  let ytAcct = undefined, ytLabel = "";
+  // v113 (audit #4/#5): the pick is made on CHANNEL TRUTH, not on the
+  // grant flag alone: every still-flagged account is re-checked ONCE
+  // (a channel created after the connect heals here); accounts with
+  // no channel are excluded, and when none bears a channel — or the
+  // NAMED one doesn't — the answer is named guidance + the connect
+  // card, never a blind API attempt.
+  let ytAcct = undefined, ytLabel = "", ytEmail = "";
   if (targets.includes("yt")) {
-    const gidx3 = await gAccts(env, u.n);
-    const ytAccts = gidx3.list.filter(a => a.yt);
-    if (ytAccts.length) {
-      const hinted = ytAccts.find(a => (a.ytChannel && low.includes(a.ytChannel.toLowerCase())) || (a.email && low.includes(a.email.toLowerCase())));
-      const chosen = hinted || ytAccts.find(a => a.id === gidx3.def) || ytAccts[0];
-      ytAcct = chosen.id; ytLabel = chosen.ytChannel || chosen.email || "";
+    let gidx3 = await gAccts(env, u.n);
+    let ytAccts = gidx3.list.filter(a => a.yt);
+    if (!ytAccts.length) return { reply: en ? "YouTube is not connected yet. I'm sending the connect card — tap the YouTube row and log in." : "YouTube inka connect avvaledu. Connect card pampisthunna — YouTube row tap chesi login chesthe upload cheyagalanu.", card: "connect" };
+    let healed = false;
+    for (const a of ytAccts) if (a.ytNoChannel) { const rc = await ytRecheckChannel(env, u.n, a.id).catch(() => null); if (rc && rc.ok) healed = true; }
+    if (healed) { gidx3 = await gAccts(env, u.n); ytAccts = gidx3.list.filter(a => a.yt); }
+    const bearing = ytAccts.filter(a => a.ytChannel);
+    const hinted = ytAccts.find(a => (a.ytChannel && low.includes(a.ytChannel.toLowerCase())) || (a.email && low.includes(a.email.toLowerCase())));
+    if (hinted && !hinted.ytChannel) {
+      return { reply: en ? `That account (${hinted.email}) has no YouTube channel behind it — I re-checked just now. Create a channel on that account, or connect an account that has one (when Google asks, pick the channel identity).` : `Aa account (${hinted.email}) ki YouTube channel ledhu — ippude malli check chesa. Aa account lo channel create cheyyi, leda channel unna account connect cheyyi (Google adiginappudu channel identity select cheyyi).`, card: "connect" };
     }
+    if (!bearing.length) {
+      const names = ytAccts.map(a => a.email).filter(Boolean).join(", ");
+      return { reply: en ? `No connected account has a YouTube channel (${names}) — I re-checked just now. Create a channel on one of them, or connect the account that holds your channel; then say "upload" again.` : `Connect aina account okka daniki kuda YouTube channel ledhu (${names}) — ippude malli check chesa. Oka account lo channel create cheyyi, leda nee channel unna account connect cheyyi; tarvatha "upload" ani malli cheppu.`, card: "connect" };
+    }
+    if (!hinted && bearing.length > 1) {
+      await env.KV.put(`uppick:${u.n}`, JSON.stringify({ num: e.n, targets, channels: bearing.map(a => ({ id: a.id, channel: a.ytChannel, email: a.email })), at: Date.now() }), { expirationTtl: 1800 });
+      const listTxt = bearing.map((a, i) => `${i + 1}. ${a.ytChannel} (${a.email})`).join("\n");
+      return { reply: en ? `Video ${e.n} — which channel?\n${listTxt}\nSay the number or the channel name.` : `Video ${e.n} — ye channel ki upload cheyyali?\n${listTxt}\nNumber leda channel peru cheppu.`, pickCard: bearing.map(a => ({ id: a.id, channel: a.ytChannel, email: a.email })) };
+    }
+    const chosen = hinted || bearing[0];
+    ytAcct = chosen.id; ytLabel = chosen.ytChannel || ""; ytEmail = chosen.email || "";
   }
   const copy = await genUploadCopy(env, u, e, lang);
-  await env.KV.put(`uppend:${u.n}`, JSON.stringify({ num: e.n, job: e.job, targets, copy, privacy: "unlisted", ytAcct, at: Date.now() }), { expirationTtl: 1800 });
-  const tNames = targets.map(t => t === "yt" ? "YouTube" : "Instagram").join(" + ");
-  const chanLine = targets.includes("yt") && ytLabel ? `\nYouTube channel: ${ytLabel}` : "";
-  return { reply: en
-    ? `Video ${e.n} — ${inspectVideo(e)}.\nYouTube title: ${copy.yt_title}\nInstagram caption: ${copy.ig_caption.slice(0, 200)}${copy.ig_caption.length > 200 ? "…" : ""}${chanLine}\nUpload to ${tNames}? Say "cheyu" to post, or tell me what to change.`
-    : `Video ${e.n} — ${inspectVideo(e)}.\nYouTube title: ${copy.yt_title}\nInstagram caption: ${copy.ig_caption.slice(0, 200)}${copy.ig_caption.length > 200 ? "…" : ""}${chanLine}\n${tNames} lo upload cheyala? "cheyu" ani cheppu, leda em marchalo cheppu.` };
+  const privacy = /\bpublic\b/.test(low) ? "public" : /\bprivate\b/.test(low) ? "private" : "unlisted";
+  await env.KV.put(`uppend:${u.n}`, JSON.stringify({ num: e.n, job: e.job, mediaId: e.mediaId || "", size: e.size || 0, targets, copy, privacy, ytAcct, ytLabel, ytEmail, at: Date.now() }), { expirationTtl: 1800 });
+  return { reply: uploadConfirmText(e, copy, targets, privacy, ytLabel, en) };
 }
 async function runUpload(env, u, pend, lang) {
+  const en = lang === "en";
   const out = [];
-  let allOk = true;
+  let allOk = true, pending = false, card = null, extendTtl = false;
   if (pend.targets.includes("yt")) {
-    const r = await doPostYoutube(env, u.n, { job: pend.job, title: pend.copy.yt_title, description: pend.copy.yt_description, tags: pend.copy.yt_tags.join(","), privacy: pend.privacy, account: pend.ytAcct });
-    if (!r.ok) allOk = false;
-    out.push(r.ok ? `YouTube ✓ ${r.url}` : `YouTube ✗ ${r.error || ""}`);
+    const r = await doPostYoutube(env, u.n, { job: pend.job, mediaId: pend.mediaId || "", size: pend.size || 0, num: pend.num, title: pend.copy.yt_title, description: pend.copy.yt_description, tags: pend.copy.yt_tags.join(","), privacy: pend.privacy, account: pend.ytAcct }, en);
+    const who = pend.ytLabel ? ` (${pend.ytLabel})` : pend.ytEmail ? ` (${pend.ytEmail})` : "";
+    if (r.ok && r.pending) { pending = true; extendTtl = true; out.push(en ? `YouTube: upload started${who} — I'll report progress here and send the link when it's done.` : `YouTube: upload start ayyindhi${who} — progress ikkade cheptha, ayipogane link pampistha.`); }
+    else if (r.ok) out.push(`YouTube ✓ ${r.url}`);
+    else {
+      allOk = false;
+      // v113 (audit #6/#12/#13): every failure names the account /
+      // channel it concerned; quota is its own honest fact; an
+      // expired connection attaches the connect card and the pending
+      // upload survives the reconnect (TTL extended here).
+      if (r.kind === "quota") out.push(en ? `YouTube ✗${who} The Julie app's daily YouTube upload quota is exhausted — try again tomorrow. Your video is safe and the pending upload is kept.` : `YouTube ✗${who} Julie app YouTube daily upload quota ayipoyindhi — repu malli try chedam. Nee video safe ga undhi, pending upload alaage unchindhi.`);
+      else if (r.kind === "expired" || r.kind === "notconnected") { card = "connect"; extendTtl = true; out.push(en ? `YouTube ✗${who} The connection has expired. Reconnect from the card I'm sending — then say "cheyu" again and this same upload will post.` : `YouTube ✗${who} Connection expire ayyindhi. Pampisthunna card nunchi reconnect cheyyi — tarvatha "cheyu" ante ide upload post avuthundhi.`); }
+      else if (r.kind === "nochchannel") out.push(`YouTube ✗ ${r.error}`);
+      else out.push(`YouTube ✗${who} ${r.error || ""}`);
+    }
   }
   if (pend.targets.includes("ig")) {
     const r = await doPostInstagram(env, u.n, { job: pend.job, caption: pend.copy.ig_caption + (pend.copy.ig_hashtags.length ? "\n" + pend.copy.ig_hashtags.join(" ") : "") });
     if (!r.ok && !r.pending) allOk = false;
     out.push(r.ok ? `Instagram ✓ ${r.url}` : r.pending ? `Instagram: processing (container ${r.container}) — konchem sepu tarvatha status check chestha.` : `Instagram ✗ ${r.error || ""}`);
   }
-  return { ok: allOk, reply: out.join("\n") };
+  return { ok: allOk && !pending, pending, card, extendTtl, reply: out.join("\n") };
 }
 // R24: reference-video blueprint — built ONLY from the user's description (and a
 // link/title when given). Groq vision is dead, so Julie NEVER claims to have watched
@@ -2092,6 +2254,177 @@ function chatFirst(text) {
   if (/(styles|templates)/i.test(t) && /(chupinchu|choopinchu|show|list|cheppu|chudu)/i.test(t)) return true;
   return false;
 }
+  // ---- Post to connected YouTube / Instagram (owner-OK gate: body.confirm must be true) ----
+
+// R23: shared YouTube / Instagram upload used by the post endpoints AND the chat
+// upload flow. The endpoints are thin wrappers now; the chat flow calls these
+// directly after the owner says "cheyu".
+async function postBytes(env, job, videoUrl) {
+  // Finished app edits: the result lives in res:<job> (upl: is deleted on
+  // completion). Uploads still in progress: upl:<job>. Returns bytes or null.
+  if (job) {
+    const id = String(job).replace(/[^a-z0-9]/g, "");
+    if (id) {
+      const b = await env.KV.get(`upl:${id}`, "arrayBuffer").catch(() => null);
+      if (b) return b;
+      const r = await env.KV.get(`res:${id}`, "arrayBuffer").catch(() => null);
+      if (r) return r;
+    }
+  }
+  if (videoUrl) { const r = await fetch(String(videoUrl)).catch(() => null); if (r && r.ok) return r.arrayBuffer(); }
+  return null;
+}
+async function doPostYoutube(env, n, o, en = false) {
+  // o: {job, mediaId, size, num, video_url, title, description, tags, privacy, publishAt, account}
+  // v97: o.account (id | email | channel substring) picks WHICH connected
+  // Google account's channel receives the upload; omitted = default.
+  // v113 (WA→YouTube audit): outcomes are STRUCTURED — kind is one of
+  // ok | quota | expired | notconnected | nochannel | error — so the
+  // chat layer can answer honestly (named guidance / quota line /
+  // reconnect card) instead of surfacing Google's raw error.
+  const idx0 = await gAccts(env, n);
+  let acctId = o.account ? await gResolveAcct(env, n, o.account) : undefined;
+  let entry = acctId ? idx0.list.find(a => a.id === acctId) : (idx0.list.find(a => a.id === idx0.def && a.yt) || idx0.list.find(a => a.yt));
+  // v113 (audit #4/#14): the CHANNEL GUARD. An account still flagged
+  // noChannel is re-checked ONCE (the channel may exist by now); if
+  // the flag stands, the upload is refused HERE with named guidance
+  // and the YouTube upload endpoint is never called for it.
+  if (entry && entry.yt && !entry.ytChannel) {
+    const rc = await ytRecheckChannel(env, n, entry.id).catch(() => null);
+    if (rc && rc.ok) { const idx1 = await gAccts(env, n); entry = idx1.list.find(a => a.id === entry.id) || entry; acctId = entry.id; }
+    else if (!o.account) {
+      // No account was explicitly chosen: a channel-bearing account
+      // (v97's fallback intent) wins over refusing on the default.
+      const alt = (await gAccts(env, n)).list.find(a => a.yt && a.ytChannel);
+      if (alt) { entry = alt; acctId = alt.id; }
+      else return { ok: false, kind: "nochchannel", code: 400, error: en ? `The account ${entry.email} has no YouTube channel behind it — I re-checked just now. Create a channel on that account, or connect the account that holds your channel (pick the channel identity when Google asks), then try again.` : `Aa account (${entry.email}) ki YouTube channel ledhu — ippude malli check chesa. Aa account lo channel create cheyyi, leda nee channel unna account connect cheyyi (Google adiginappudu channel identity select cheyyi), tarvatha malli try cheyyi.` };
+    }
+    else return { ok: false, kind: "nochchannel", code: 400, error: en ? `The account ${entry.email} has no YouTube channel behind it — I re-checked just now. Create a channel on that account, or connect the account that holds your channel (pick the channel identity when Google asks), then try again.` : `Aa account (${entry.email}) ki YouTube channel ledhu — ippude malli check chesa. Aa account lo channel create cheyyi, leda nee channel unna account connect cheyyi (Google adiginappudu channel identity select cheyyi), tarvatha malli try cheyyi.` };
+  }
+  let t = await ytToken(env, n, acctId);
+  if (!t && !o.account) {
+    // v97: no account named — if the default account has no usable
+    // YouTube grant, use the first connected account that does (the
+    // chat flow names its pick explicitly in the owner-OK prompt). An
+    // EXPLICITLY named account never falls back: it works or fails
+    // honestly, so a video never lands on the wrong channel.
+    // v113: channel-less accounts are skipped here too (guard above).
+    const idx = await gAccts(env, n);
+    for (const a of idx.list) { if (!a.yt || !a.ytChannel) continue; const t2 = await ytToken(env, n, a.id); if (t2) { t = t2; acctId = a.id; entry = a; break; } }
+  }
+  if (!t) {
+    const anyYt = (await gAccts(env, n)).list.some(a => a.yt);
+    return { ok: false, kind: anyYt ? "expired" : "notconnected", code: 400, error: en ? "YouTube is not connected. Connect it first." : "YouTube connect avvaledu. Mundhu connect cheyyi." };
+  }
+  const title = String(o.title || "").slice(0, 100) || "Julie video";
+  const desc = String(o.description || "").slice(0, 5000);
+  const tags = String(o.tags || "").split(",").map(s => s.trim()).filter(Boolean).slice(0, 15);
+  const privacy = ["public", "unlisted", "private"].includes(o.privacy) ? o.privacy : "unlisted";
+  const meta = { snippet: { title, description: desc, tags, categoryId: "22" }, status: { privacyStatus: privacy, selfDeclaredMadeForKids: false } };
+  const publishAt = String(o.publishAt || "").trim();
+  if (publishAt && !isNaN(Date.parse(publishAt)) && Date.parse(publishAt) > Date.now()) { meta.status.privacyStatus = "private"; meta.status.publishAt = new Date(publishAt).toISOString(); }
+  let bytes = await postBytes(env, o.job, null);
+  if (!bytes && o.video_url && !o.mediaId) {
+    // A remote URL small enough for the Worker is fetched as before;
+    // a big one goes to the runner leg (HEAD first — never pull a
+    // long video into Worker memory blind).
+    let len = 0;
+    try { const h = await fetch(o.video_url, { method: "HEAD" }); len = Number(h.headers.get("content-length")) || 0; } catch {}
+    if (!(len > EDIT_MAX)) bytes = await postBytes(env, null, o.video_url);
+  }
+  if (bytes) {
+    // v113 (audit #8): RESUMABLE upload (uploadType=resumable) — a
+    // network drop resumes from the session's held offset instead of
+    // restarting, and a failure names its stage (session / transfer).
+    const init = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", { method: "POST", headers: { Authorization: "Bearer " + t.access_token, "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Length": String(bytes.byteLength), "X-Upload-Content-Type": "video/mp4" }, body: JSON.stringify(meta) }).catch(() => null);
+    if (!init) return { ok: false, kind: "error", code: 502, error: en ? "YouTube upload failed at the session stage (network)." : "YouTube upload session stage lo fail ayyindhi (network)." };
+    if (!init.ok) { const j = await init.json().catch(() => ({})); const kind = ytErrKind(j, init.status); return { ok: false, kind, code: 502, error: kind === "quota" ? "quota" : (j.error?.message || (en ? "YouTube upload failed at the session stage." : "YouTube upload session stage lo fail ayyindhi.")) }; }
+    const session = init.headers.get("location");
+    if (!session) return { ok: false, kind: "error", code: 502, error: en ? "YouTube upload failed at the session stage (no session)." : "YouTube upload session stage lo fail ayyindhi (session raledhu)." };
+    const putHeaders = { "Content-Type": "video/mp4", "Content-Length": String(bytes.byteLength) };
+    let up = await fetch(session, { method: "PUT", headers: putHeaders, body: bytes }).catch(() => null);
+    if (!up || up.status >= 500) {
+      // Resume: ask the session how much it already holds (a 308 with
+      // a Range header), then send only the remainder.
+      const q = await fetch(session, { method: "PUT", headers: { "Content-Length": "0", "Content-Range": `bytes */${bytes.byteLength}` } }).catch(() => null);
+      let off = 0;
+      if (q && q.status === 308) { const mm = (q.headers.get("range") || "").match(/bytes=0-(\d+)/); if (mm) off = parseInt(mm[1], 10) + 1; }
+      if (off > 0 && off < bytes.byteLength) up = await fetch(session, { method: "PUT", headers: { "Content-Type": "video/mp4", "Content-Length": String(bytes.byteLength - off), "Content-Range": `bytes ${off}-${bytes.byteLength - 1}/${bytes.byteLength}` }, body: new Uint8Array(bytes).subarray(off) }).catch(() => null);
+      else if (off === 0) up = await fetch(session, { method: "PUT", headers: putHeaders, body: bytes }).catch(() => null);
+    }
+    const j = up ? await up.json().catch(() => ({})) : {};
+    if (!up || !up.ok || !j.id) { const kind = up ? ytErrKind(j, up.status) : "error"; return { ok: false, kind, code: 502, error: kind === "quota" ? "quota" : (j.error?.message || (en ? "YouTube upload failed at the transfer stage." : "YouTube upload transfer stage lo fail ayyindhi.")) }; }
+    const res = { ok: true, videoId: j.id, url: `https://www.youtube.com/watch?v=${j.id}`, scheduled: !!meta.status.publishAt };
+    const ref = await histNumForJob(env, o.job);
+    if (ref && ref.n === n) await histMarkPosted(env, n, ref.num, "yt", { videoId: j.id, url: res.url, at: Date.now() });
+    else if (o.num) await histMarkPosted(env, n, o.num, "yt", { videoId: j.id, url: res.url, at: Date.now() });
+    return res;
+  }
+  // v113 (audit #9): no bytes in the Worker's world — the source is a
+  // WhatsApp media id (any size) or a remote URL too big for KV. The
+  // RUNNER leg carries it: a fresh access token rides the job record
+  // (the authenticated runner channel only — never logged, never in
+  // history), the runner resumable-uploads in chunks and posts
+  // progress + the terminal state back to /api/runner/yt.
+  if (o.mediaId || o.video_url) return startYtRunnerUpload(env, n, o, t, entry, meta, en);
+  return { ok: false, kind: "error", code: 400, error: en ? "Video not found. Give a job id or a video link." : "Video kanipinchaledu. Job id leda video link ivvu." };
+}
+async function doPostInstagram(env, n, o, en = false) {
+  // o: {job, video_url, caption}
+  const ig = await igAccount(env, n);
+  if (!ig) return { ok: false, code: 400, error: en ? "Instagram is not connected (needs a linked Facebook Page)." : "Instagram connect avvaledu (Facebook Page link kavali)." };
+  const videoUrl = o.video_url || (o.job ? `https://divya.n8n00101.workers.dev/v/${String(o.job).replace(/[^a-z0-9]/g, "")}` : "");
+  if (!videoUrl) return { ok: false, code: 400, error: "video_url leda job kavali." };
+  const G = "https://graph.facebook.com/v21.0";
+  const caption = String(o.caption || "").slice(0, 2200);
+  const c = await (await fetch(`${G}/${ig.ig}/media`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ media_type: "REELS", video_url: videoUrl, caption, share_to_feed: true, access_token: ig.token }) })).json().catch(() => ({}));
+  if (!c.id) return { ok: false, code: 502, error: c.error?.message || (en ? "Instagram container could not be created." : "Instagram container create avvaledu.") };
+  let finished = false;
+  for (let i = 0; i < 6; i++) {
+    await new Promise(r => setTimeout(r, 5000));
+    const s = await (await fetch(`${G}/${c.id}?fields=status_code&access_token=${ig.token}`)).json().catch(() => ({}));
+    if (s.status_code === "FINISHED") { finished = true; break; }
+    if (s.status_code === "ERROR") return { ok: false, code: 502, error: en ? "Instagram could not process the video." : "Instagram video process avvaledu." };
+  }
+  if (!finished) return { ok: true, pending: true, container: c.id };
+  const pub = await (await fetch(`${G}/${ig.ig}/media_publish`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creation_id: c.id, access_token: ig.token }) })).json().catch(() => ({}));
+  if (!pub.id) return { ok: false, code: 502, error: pub.error?.message || (en ? "Instagram publish failed." : "Instagram publish avvaledu.") };
+  const res = { ok: true, mediaId: pub.id, url: `https://www.instagram.com/reel/${pub.id}/` };
+  const ref = await histNumForJob(env, o.job);
+  if (ref && ref.n === n) await histMarkPosted(env, n, ref.num, "ig", { mediaId: pub.id, url: res.url, at: Date.now() });
+  return res;
+}
+  async function ytToken(env, n, acctId) {
+    // v97: acctId selects a non-default account's YouTube grant; omitted
+    // = the default account = the legacy slot (old behaviour).
+    const idx = acctId ? await gAccts(env, n) : null;
+    const key = acctId ? gTokKey(n, "youtube", acctId, idx && idx.def) : `tok:${n}:youtube`;
+    const t = JSON.parse((await env.KV.get(key)) || "null");
+    if (!t || !t.access_token) return null;
+    if (t.expires_in && t.at && Date.now() - t.at > (t.expires_in - 300) * 1000 && t.refresh_token) {
+      const nt = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) })).json().catch(() => ({}));
+      if (nt.access_token) { const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in }; await env.KV.put(key, JSON.stringify(merged)); return merged; }
+      // v74: the refresh grant failed — including the GCP Testing-mode
+      // rule that refresh tokens expire after 7 days. Returning the
+      // stale token made uploads fail with Google's raw error and the
+      // user was never told the actual fix. Null routes callers to the
+      // "not connected — connect first" message (a reconnect re-issues
+      // the refresh token). The Gmail reader already behaves this way.
+      if (acctId) await gAcctMarkExpired(env, n, acctId);
+      return null;
+    }
+    return t;
+  }
+  async function igAccount(env, n) {
+    const t = JSON.parse((await env.KV.get(`tok:${n}:instagram`)) || "null");
+    if (!t || !t.access_token) return null;
+    const G = "https://graph.facebook.com/v21.0";
+    const pg = await (await fetch(`${G}/me/accounts?fields=instagram_business_account&access_token=${t.access_token}`)).json().catch(() => ({}));
+    const ig = (pg.data || []).map(p => p.instagram_business_account?.id).filter(Boolean)[0];
+    if (!ig) return null;
+    return { token: t.access_token, ig };
+  }
+
 async function appApi(req, env, url, ctx) {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: appCors(req) });
   const p = url.pathname.slice(5);
@@ -2416,119 +2749,6 @@ async function appApi(req, env, url, ctx) {
       await gAcctsSave(env, u.n, idx);
     }
     return appJson(req, { ok: true, accounts: idx.list.map(a => ({ id: a.id, email: a.email, ytChannel: a.ytChannel, ytNoChannel: a.ytNoChannel, gmail: a.gmail, yt: a.yt, state: a.state, def: a.id === idx.def })), acctDef: idx.def });
-  }
-  // ---- Post to connected YouTube / Instagram (owner-OK gate: body.confirm must be true) ----
-
-// R23: shared YouTube / Instagram upload used by the post endpoints AND the chat
-// upload flow. The endpoints are thin wrappers now; the chat flow calls these
-// directly after the owner says "cheyu".
-async function postBytes(env, job, videoUrl) {
-  // Finished app edits: the result lives in res:<job> (upl: is deleted on
-  // completion). Uploads still in progress: upl:<job>. Returns bytes or null.
-  if (job) {
-    const id = String(job).replace(/[^a-z0-9]/g, "");
-    if (id) {
-      const b = await env.KV.get(`upl:${id}`, "arrayBuffer").catch(() => null);
-      if (b) return b;
-      const r = await env.KV.get(`res:${id}`, "arrayBuffer").catch(() => null);
-      if (r) return r;
-    }
-  }
-  if (videoUrl) { const r = await fetch(String(videoUrl)).catch(() => null); if (r && r.ok) return r.arrayBuffer(); }
-  return null;
-}
-async function doPostYoutube(env, n, o, en = false) {
-  // o: {job, video_url, title, description, tags, privacy, publishAt, account}
-  // v97: o.account (id | email | channel substring) picks WHICH connected
-  // Google account's channel receives the upload; omitted = default.
-  let t = await ytToken(env, n, o.account ? await gResolveAcct(env, n, o.account) : undefined);
-  if (!t && !o.account) {
-    // v97: no account named — if the default account has no usable
-    // YouTube grant, use the first connected account that does (the
-    // chat flow names its pick explicitly in the owner-OK prompt). An
-    // EXPLICITLY named account never falls back: it works or fails
-    // honestly, so a video never lands on the wrong channel.
-    const idx = await gAccts(env, n);
-    for (const a of idx.list) { if (!a.yt) continue; const t2 = await ytToken(env, n, a.id); if (t2) { t = t2; break; } }
-  }
-  if (!t) return { ok: false, code: 400, error: en ? "YouTube is not connected. Connect it first." : "YouTube connect avvaledu. Mundhu connect cheyyi." };
-  const bytes = await postBytes(env, o.job, o.video_url);
-  if (!bytes) return { ok: false, code: 400, error: en ? "Video not found. Give a job id or a video link." : "Video kanipinchaledu. Job id leda video link ivvu." };
-  const title = String(o.title || "").slice(0, 100) || "Julie video";
-  const desc = String(o.description || "").slice(0, 5000);
-  const tags = String(o.tags || "").split(",").map(s => s.trim()).filter(Boolean).slice(0, 15);
-  const privacy = ["public", "unlisted", "private"].includes(o.privacy) ? o.privacy : "unlisted";
-  const meta = { snippet: { title, description: desc, tags, categoryId: "22" }, status: { privacyStatus: privacy, selfDeclaredMadeForKids: false } };
-  const publishAt = String(o.publishAt || "").trim();
-  if (publishAt && !isNaN(Date.parse(publishAt)) && Date.parse(publishAt) > Date.now()) { meta.status.privacyStatus = "private"; meta.status.publishAt = new Date(publishAt).toISOString(); }
-  const boundary = "divya" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
-  const enc = new TextEncoder();
-  const head = enc.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: video/mp4\r\n\r\n`);
-  const tail = enc.encode(`\r\n--${boundary}--`);
-  const bodyBuf = new Uint8Array(head.length + bytes.byteLength + tail.length);
-  bodyBuf.set(head, 0); bodyBuf.set(new Uint8Array(bytes), head.length); bodyBuf.set(tail, head.length + bytes.byteLength);
-  const up = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=multipart&part=snippet,status", { method: "POST", headers: { Authorization: "Bearer " + t.access_token, "Content-Type": `multipart/related; boundary=${boundary}` }, body: bodyBuf }).catch(() => null);
-  const j = up ? await up.json().catch(() => ({})) : {};
-  if (!up || !up.ok || !j.id) return { ok: false, code: 502, error: j.error?.message || (en ? "YouTube upload failed." : "YouTube upload fail ayyindi.") };
-  const res = { ok: true, videoId: j.id, url: `https://www.youtube.com/watch?v=${j.id}`, scheduled: !!meta.status.publishAt };
-  const ref = await histNumForJob(env, o.job);
-  if (ref && ref.n === n) await histMarkPosted(env, n, ref.num, "yt", { videoId: j.id, url: res.url, at: Date.now() });
-  return res;
-}
-async function doPostInstagram(env, n, o, en = false) {
-  // o: {job, video_url, caption}
-  const ig = await igAccount(env, n);
-  if (!ig) return { ok: false, code: 400, error: en ? "Instagram is not connected (needs a linked Facebook Page)." : "Instagram connect avvaledu (Facebook Page link kavali)." };
-  const videoUrl = o.video_url || (o.job ? `https://divya.n8n00101.workers.dev/v/${String(o.job).replace(/[^a-z0-9]/g, "")}` : "");
-  if (!videoUrl) return { ok: false, code: 400, error: "video_url leda job kavali." };
-  const G = "https://graph.facebook.com/v21.0";
-  const caption = String(o.caption || "").slice(0, 2200);
-  const c = await (await fetch(`${G}/${ig.ig}/media`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ media_type: "REELS", video_url: videoUrl, caption, share_to_feed: true, access_token: ig.token }) })).json().catch(() => ({}));
-  if (!c.id) return { ok: false, code: 502, error: c.error?.message || (en ? "Instagram container could not be created." : "Instagram container create avvaledu.") };
-  let finished = false;
-  for (let i = 0; i < 6; i++) {
-    await new Promise(r => setTimeout(r, 5000));
-    const s = await (await fetch(`${G}/${c.id}?fields=status_code&access_token=${ig.token}`)).json().catch(() => ({}));
-    if (s.status_code === "FINISHED") { finished = true; break; }
-    if (s.status_code === "ERROR") return { ok: false, code: 502, error: en ? "Instagram could not process the video." : "Instagram video process avvaledu." };
-  }
-  if (!finished) return { ok: true, pending: true, container: c.id };
-  const pub = await (await fetch(`${G}/${ig.ig}/media_publish`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ creation_id: c.id, access_token: ig.token }) })).json().catch(() => ({}));
-  if (!pub.id) return { ok: false, code: 502, error: pub.error?.message || (en ? "Instagram publish failed." : "Instagram publish avvaledu.") };
-  const res = { ok: true, mediaId: pub.id, url: `https://www.instagram.com/reel/${pub.id}/` };
-  const ref = await histNumForJob(env, o.job);
-  if (ref && ref.n === n) await histMarkPosted(env, n, ref.num, "ig", { mediaId: pub.id, url: res.url, at: Date.now() });
-  return res;
-}
-  async function ytToken(env, n, acctId) {
-    // v97: acctId selects a non-default account's YouTube grant; omitted
-    // = the default account = the legacy slot (old behaviour).
-    const idx = acctId ? await gAccts(env, n) : null;
-    const key = acctId ? gTokKey(n, "youtube", acctId, idx && idx.def) : `tok:${n}:youtube`;
-    const t = JSON.parse((await env.KV.get(key)) || "null");
-    if (!t || !t.access_token) return null;
-    if (t.expires_in && t.at && Date.now() - t.at > (t.expires_in - 300) * 1000 && t.refresh_token) {
-      const nt = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: t.refresh_token, grant_type: "refresh_token" }) })).json().catch(() => ({}));
-      if (nt.access_token) { const merged = { ...t, access_token: nt.access_token, at: Date.now(), expires_in: nt.expires_in || t.expires_in }; await env.KV.put(key, JSON.stringify(merged)); return merged; }
-      // v74: the refresh grant failed — including the GCP Testing-mode
-      // rule that refresh tokens expire after 7 days. Returning the
-      // stale token made uploads fail with Google's raw error and the
-      // user was never told the actual fix. Null routes callers to the
-      // "not connected — connect first" message (a reconnect re-issues
-      // the refresh token). The Gmail reader already behaves this way.
-      if (acctId) await gAcctMarkExpired(env, n, acctId);
-      return null;
-    }
-    return t;
-  }
-  async function igAccount(env, n) {
-    const t = JSON.parse((await env.KV.get(`tok:${n}:instagram`)) || "null");
-    if (!t || !t.access_token) return null;
-    const G = "https://graph.facebook.com/v21.0";
-    const pg = await (await fetch(`${G}/me/accounts?fields=instagram_business_account&access_token=${t.access_token}`)).json().catch(() => ({}));
-    const ig = (pg.data || []).map(p => p.instagram_business_account?.id).filter(Boolean)[0];
-    if (!ig) return null;
-    return { token: t.access_token, ig };
   }
   if (p === "post/youtube" && req.method === "POST") {
     if (!body.confirm) return appJson(req, { ok: false, needs_confirm: true, error: lang === "en" ? "Confirm to post this video to your YouTube channel." : "Ee video ni nee YouTube channel lo post cheyala? Confirm cheyyi." }, 400);
@@ -5410,6 +5630,50 @@ async function appRunner(req, env, p, url, body) {
   // v71: the job owner's saved reference-voice bytes (job-scoped, same
   // x-runner-key + jobown gate as runner/src). 404 when none is saved.
   if (p === "runner/refvoice") { const b = await env.KV.get(`refvoice:${n}`, "arrayBuffer"); return b ? new Response(b, { headers: { "content-type": "application/octet-stream" } }) : new Response("gone", { status: 404 }); }
+  // v113 (audit #9/#10): the YouTube runner leg reports here. Progress
+  // posts are relayed to WhatsApp at coarse steps only (start, 25,
+  // 50, 75 — the runner posts per chunk, this endpoint throttles);
+  // the terminal post stamps the history entry, sends the watch link
+  // (done) or the honest failure line naming the stage + channel
+  // (failed), and settles the pending upload exactly like the Worker
+  // leg does — success clears it, failure keeps it for a "cheyu"
+  // retry.
+  if (p === "runner/yt" && req.method === "POST") {
+    const rec = JSON.parse((await env.KV.get(`ytup:${job}`)) || "null");
+    if (!rec || rec.n !== n) return new Response("missing", { status: 404 });
+    const b = body || {};
+    const chan = rec.channel || rec.email || "YouTube";
+    if (b.state === "progress") {
+      const pct = Math.max(0, Math.min(100, Number(b.pct) || 0));
+      const step = pct <= 0 ? 0 : pct < 50 ? 25 : pct < 75 ? 50 : 75;
+      if (step > (rec.lastStep ?? -1)) {
+        rec.lastStep = step;
+        await env.KV.put(`ytup:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+        await say(env, n, step === 0 ? `Upload start chesa — ${chan}` : `Upload avthondhi — ${step}% (${chan})`).catch(() => {});
+      }
+      return Response.json({ ok: true });
+    }
+    if (b.state === "done" && b.videoId) {
+      const url = `https://www.youtube.com/watch?v=${String(b.videoId).replace(/[^A-Za-z0-9_-]/g, "")}`;
+      if (rec.num) await histMarkPosted(env, n, rec.num, "yt", { videoId: String(b.videoId), url, at: Date.now() });
+      const pend = JSON.parse((await env.KV.get(`uppend:${n}`)) || "null");
+      if (pend && pend.num === rec.num) await env.KV.delete(`uppend:${n}`);
+      await env.KV.delete(`ytup:${job}`);
+      await say(env, n, `YouTube ✓ ${url} (${chan})`).catch(() => {});
+      return Response.json({ ok: true });
+    }
+    if (b.state === "failed") {
+      const stage = String(b.stage || "transfer").slice(0, 40);
+      const kind = String(b.kind || "error");
+      await env.KV.delete(`ytup:${job}`);
+      const line = kind === "quota"
+        ? `YouTube ✗ (${chan}) Julie app YouTube daily upload quota ayipoyindhi — repu malli try chedam. Video safe ga undhi, pending upload alaage unchindhi — "cheyu" ante malli try chestha.`
+        : `YouTube ✗ (${chan}) Upload ${stage} stage lo fail ayyindhi${b.error ? ` — ${String(b.error).slice(0, 160)}` : ""}. Pending upload alaage unchindhi — "cheyu" ante malli try chestha.`;
+      await say(env, n, line).catch(() => {});
+      return Response.json({ ok: true });
+    }
+    return Response.json({ ok: false }, { status: 400 });
+  }
   // v79 (FIX 1/4/5): the video's contract artifacts — prompt_spec,
   // footage record, compliance report, saved project — uploaded by
   // the runner after delivery, read back via /api/artifacts (owner)
@@ -6295,7 +6559,7 @@ async function gAccts(env, n) {
   const list = [];
   if (g || y) {
     const email = (g && g.who) || "";
-    list.push({ id: gAcctId(email || (y && y.who) || "acct1"), email, ytChannel: y && !y.noChannel ? gYtTitle(y.who) : "", ytNoChannel: !!(y && y.noChannel), gmail: !!g, yt: !!y, state: "ok", at: (g && g.at) || (y && y.at) || 0 });
+    list.push({ id: gAcctId(email || (y && y.who) || "acct1"), email, ytChannel: y && !y.noChannel ? gYtTitle(y.who) : "", ytChannelId: (y && !y.noChannel && y.ytChannelId) || "", ytNoChannel: !!(y && y.noChannel), gmail: !!g, yt: !!y, state: "ok", at: (g && g.at) || (y && y.at) || 0 });
   }
   return { list, def: list.length ? list[0].id : null };
 }
@@ -6332,10 +6596,82 @@ async function gAcctRegister(env, n, prov, rec, email) {
   a.state = "ok"; a.at = Date.now();
   if (em && !a.email) a.email = em;
   if (prov === "google") a.gmail = true;
-  if (prov === "youtube") { a.yt = true; if (rec.noChannel) { a.ytNoChannel = true; a.ytChannel = ""; } else if (rec.who) { a.ytChannel = gYtTitle(rec.who); a.ytNoChannel = false; } }
+  if (prov === "youtube") { a.yt = true; if (rec.noChannel) { a.ytNoChannel = true; a.ytChannel = ""; a.ytChannelId = ""; } else if (rec.who) { a.ytChannel = gYtTitle(rec.who); a.ytChannelId = rec.ytChannelId || ""; a.ytNoChannel = false; } }
   await env.KV.put(gTokKey(n, prov, a.id, idx.def), JSON.stringify(rec));
   await gAcctsSave(env, n, idx);
   return { ok: true, id: a.id, def: idx.def };
+}
+// v113 (WA→YouTube audit #5): channel RE-CHECK. Connect time is no
+// longer the only word on whether an account has a channel: for an
+// account still flagged ytNoChannel, re-query with its (refreshed)
+// token. mine=true first; if that stays empty, probe managedByMe=true
+// — the Brand-Account case, where the channel is MANAGED BY the
+// signed-in identity rather than owned by it, so mine=true can return
+// empty for an account that demonstrably has a channel. Whichever
+// query finds the channel is recorded (via) and the index + token
+// record heal in place; the channel ID is stored alongside the title.
+async function ytChannelQuery(t, qs) {
+  try {
+    const r = await fetch(`https://www.googleapis.com/youtube/v3/channels?part=snippet&${qs}`, { headers: { Authorization: "Bearer " + t.access_token } });
+    const j = await r.json().catch(() => ({}));
+    return { status: r.status, items: Array.isArray(j.items) ? j.items : [] };
+  } catch { return { status: 0, items: [] }; }
+}
+async function gAcctSetChannel(env, n, id, channel) {
+  try {
+    const idx = await gAccts(env, n);
+    const a = idx.list.find(x => x.id === id);
+    if (!a) return;
+    if (channel) { a.ytChannel = channel.title || ""; a.ytChannelId = channel.id || ""; a.ytNoChannel = false; }
+    else { a.ytChannel = ""; a.ytChannelId = ""; a.ytNoChannel = true; }
+    await gAcctsSave(env, n, idx);
+    const key = gTokKey(n, "youtube", id, idx.def);
+    const t = parseRec(await env.KV.get(key));
+    if (t) {
+      if (channel) { delete t.noChannel; t.ytChannelId = channel.id || ""; t.who = `channel "${channel.title || ""}"`; }
+      else { t.noChannel = true; delete t.ytChannelId; }
+      await env.KV.put(key, JSON.stringify(t));
+    }
+  } catch {}
+}
+async function ytRecheckChannel(env, n, acctId) {
+  const idx = await gAccts(env, n);
+  const a = idx.list.find(x => x.id === acctId);
+  if (!a || !a.yt) return { ok: false, kind: "notyt" };
+  const t = await ytToken(env, n, acctId);
+  if (!t) return { ok: false, kind: "expired" };
+  const mine = await ytChannelQuery(t, "mine=true");
+  if (mine.items.length) { const channel = { id: mine.items[0].id || "", title: mine.items[0].snippet?.title || "" }; await gAcctSetChannel(env, n, acctId, channel); return { ok: true, channel, via: "mine", probe: { mine: mine.items.length } }; }
+  const mgd = await ytChannelQuery(t, "managedByMe=true");
+  if (mgd.items.length) { const channel = { id: mgd.items[0].id || "", title: mgd.items[0].snippet?.title || "" }; await gAcctSetChannel(env, n, acctId, channel); return { ok: true, channel, via: "managedByMe", probe: { mine: 0, managedByMe: mgd.items.length } }; }
+  return { ok: false, kind: "nochchannel", probe: { mine: 0, managedByMe: mgd.status } };
+}
+// v113: map a YouTube API error body to an honest outcome kind — a
+// quota 403 is its own fact (the app's daily upload quota is gone),
+// never Google's raw message and never a retry loop.
+function ytErrKind(j, status) {
+  const reason = (j && j.error && Array.isArray(j.error.errors) && j.error.errors[0] && j.error.errors[0].reason) || "";
+  if (/quota|dailyLimit|uploadLimit/i.test(reason)) return "quota";
+  if (status === 401) return "expired";
+  return "error";
+}
+// v113 (audit #9): the RUNNER leg of a YouTube upload. The Worker
+// mints the access token (ytToken refreshed it) and hands it to the
+// runner on the job record — the same authenticated runner channel
+// the setup password and Kaggle creds already ride (POST /job,
+// x-runner-key); the token is never logged and never stored in
+// history. The runner resumable-uploads in chunks and reports back
+// to /api/runner/yt. A failed dispatch stores nothing and fails
+// honestly.
+async function startYtRunnerUpload(env, n, o, t, entry, meta, en) {
+  const job = crypto.randomUUID().slice(0, 8);
+  const rec = { mode: "ytupload", to: n, media_id: o.mediaId || "", src_job: o.job || "", video_url: o.video_url || "", yt_token: t.access_token, yt_meta: { title: meta.snippet.title, description: meta.snippet.description, tags: meta.snippet.tags, privacy: meta.status.privacyStatus }, channel: { id: (entry && entry.ytChannelId) || "", title: (entry && entry.ytChannel) || "" }, account: (entry && entry.email) || "", histNum: o.num || 0, at: Date.now() };
+  await env.KV.put(`job:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+  await env.KV.put(`jobown:${job}`, n, { expirationTtl: 86400 * 3 });
+  await env.KV.put(`ytup:${job}`, JSON.stringify({ n, num: o.num || 0, channel: rec.channel.title, email: rec.account, lastStep: -1, at: Date.now() }), { expirationTtl: 86400 * 2 });
+  const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/edit.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs: { job } }) }).catch(() => null);
+  if (!r || r.status !== 204) { await env.KV.delete(`job:${job}`).catch(() => {}); await env.KV.delete(`ytup:${job}`).catch(() => {}); await env.KV.delete(`jobown:${job}`).catch(() => {}); return { ok: false, kind: "error", code: 502, error: en ? "The upload machine didn't start. Try again." : "Upload machine start avvaledu. Malli try cheyyi." }; }
+  return { ok: true, pending: true, via: "runner", job };
 }
 // The setup runner pauses on an email verification (Groq/OpenRouter/
 // Cloudflare magic link). The agent's Gmail tool redacts sign-in links,
@@ -7981,6 +8317,41 @@ export default {
       const text = await limitWarnMaybe(env, uu, b.lang === "en" ? "en" : "te", { force: !!b.force });
       if (text) { const hh = await history(env, uu.n); hh.push({ role: "assistant", content: text }); await remember(env, uu.n, hh); }
       return Response.json({ ok: true, notice: text, balance: await tokBalance(env, uu.n) });
+    }
+    // v113: one-shot YouTube channel re-check across ALL of a user's
+    // keyspaces (RUNNER_KEY-guarded, proof only — the /internal/scout
+    // pattern). Resolves seeds from an email (account record -> phone
+    // + uid forms) and/or a raw user id, bridges via linkedUserIds,
+    // and runs ytRecheckChannel for every YouTube grant it finds.
+    // Returns account emails + channel facts + the probe detail —
+    // NEVER token material. The only write is the re-check's own
+    // heal (a found channel updates the index + token record).
+    if (url.pathname === "/internal/ytcheck" && req.method === "POST") {
+      if (req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
+      const b = await req.json().catch(() => ({}));
+      const seeds = new Set();
+      if (b.n) seeds.add(String(b.n));
+      if (b.email) { const a = await acctFind(env, String(b.email).toLowerCase()).catch(() => null); if (a) { if (a.phone) seeds.add(String(a.phone)); if (a.uid) { seeds.add("u_" + a.uid); seeds.add(String(a.uid)); } } }
+      const keyspaces = new Set();
+      for (const s of seeds) { keyspaces.add(s); for (const id of await linkedUserIds(env, s).catch(() => [])) keyspaces.add(String(id)); }
+      const out = [];
+      const seenEmail = new Set();
+      for (const ks of keyspaces) {
+        const idx = await gAccts(env, ks).catch(() => null);
+        if (!idx) continue;
+        for (const a of idx.list || []) {
+          if (!a.yt) continue;
+          const em = (a.email || "").toLowerCase();
+          if (em && seenEmail.has(em)) continue;
+          if (em) seenEmail.add(em);
+          const before = { email: a.email || "", channel: a.ytChannel || "", noChannel: !!a.ytNoChannel, channelId: a.ytChannelId || "" };
+          const rc = await ytRecheckChannel(env, ks, a.id).catch(e => ({ ok: false, kind: "throw", error: String(e).slice(0, 120) }));
+          const idx2 = await gAccts(env, ks).catch(() => null);
+          const a2 = idx2 && idx2.list.find(x => x.id === a.id);
+          out.push({ keyspace: ks, before, recheck: rc, after: a2 ? { channel: a2.ytChannel || "", noChannel: !!a2.ytNoChannel, channelId: a2.ytChannelId || "" } : null });
+        }
+      }
+      return Response.json({ ok: true, accounts: out });
     }
     // Call media server fetches WA/Groq creds here (shared FORWARD_SECRET).
     if (url.pathname === "/callcreds" && req.method === "POST") {

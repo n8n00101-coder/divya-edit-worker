@@ -20,6 +20,10 @@ def load_job():
     _kag = j.get("KAGGLE") or {}
     if _kag.get("key"):
         print(f"::add-mask::{_kag['key']}")
+    # v113: the YouTube access token rides the job record for the
+    # ytupload leg (runner channel only) — mask it like every secret.
+    if j.get("yt_token"):
+        print(f"::add-mask::{str(j['yt_token']).strip()}")
     os.environ["WA_TOKEN"] = j["WA_TOKEN"]
     os.environ["WA_PHONE_ID"] = j["PHONE_ID"]
     os.environ["GROQ_KEY"] = j["GROQ_KEY"]
@@ -225,6 +229,122 @@ async def voicebatch_job(j, wa, note):
     await note(f"🎙️ {note_txt}. Files History lo unnayi.")
 
 
+async def ytupload_job(j, wa):
+    """v113 (WA->YouTube audit #9): the RUNNER leg of a YouTube upload.
+    The Worker minted a fresh access token onto the job record; the
+    file lives on this side (a WhatsApp media id the runner downloads
+    itself, a KV source job, or a remote URL) and can be far bigger
+    than the Worker's 24 MB world. Resumable upload in 8 MB chunks;
+    progress + the terminal state go to /api/runner/yt (the Worker
+    relays progress to WhatsApp at coarse steps and sends the final
+    line itself). The token is never printed. Never raises: every
+    failure is reported through the yt channel with its stage."""
+    token = str(j.get("yt_token") or "")
+    meta = j.get("yt_meta") or {}
+
+    def report(payload):
+        try:
+            httpx.post(f"{WORKER}/api/runner/yt", params={"job": JOB},
+                       json=payload, headers={"x-runner-key": KEY}, timeout=30)
+        except Exception:
+            pass
+
+    def fail(stage, kind, error):
+        globals()["_FAILED_POSTED"] = True  # main() must not double-report via the edit channel
+        report({"state": "failed", "stage": stage, "kind": kind, "error": str(error)[:200]})
+
+    def err_kind(resp):
+        try:
+            errs = (resp.json().get("error") or {}).get("errors") or []
+            reason = str((errs[0] or {}).get("reason") or "")
+        except Exception:
+            reason = ""
+        return "quota" if ("quota" in reason or "dailyLimit" in reason or "uploadLimit" in reason) else "error"
+
+    def err_msg(resp):
+        try:
+            return str((resp.json().get("error") or {}).get("message") or "")[:200]
+        except Exception:
+            return f"HTTP {resp.status_code}"
+
+    try:
+        # --- source: get the file onto this disk ---
+        path = None
+        if j.get("media_id"):
+            path = await wa.download_media(str(j["media_id"]), "mp4")
+        elif j.get("src_job"):
+            r = httpx.get(f"{WORKER}/api/runner/src", params={"job": str(j["src_job"])},
+                          headers={"x-runner-key": KEY}, timeout=300)
+            if r.status_code != 200:
+                return fail("source", "error", f"source video dorakaledu (HTTP {r.status_code})")
+            path = os.path.join(os.environ.get("DATA_DIR", "/tmp/divya"), f"ytup_{JOB}.mp4")
+            with open(path, "wb") as f:
+                f.write(r.content)
+        elif j.get("video_url"):
+            path = os.path.join(os.environ.get("DATA_DIR", "/tmp/divya"), f"ytup_{JOB}.mp4")
+            with httpx.stream("GET", str(j["video_url"]), timeout=600, follow_redirects=True) as s:
+                if s.status_code != 200:
+                    return fail("source", "error", f"video URL fetch fail (HTTP {s.status_code})")
+                with open(path, "wb") as f:
+                    for chunk in s.iter_bytes(1 << 20):
+                        f.write(chunk)
+        if not path or not os.path.exists(path):
+            return fail("source", "error", "video source dorakaledu")
+        size = os.path.getsize(path)
+        if size <= 0:
+            return fail("source", "error", "video file empty ga undhi")
+        if not token:
+            return fail("session", "expired", "YouTube token raledhu — reconnect kavali")
+
+        # --- resumable session ---
+        body = {"snippet": {"title": str(meta.get("title") or "Julie video")[:100],
+                            "description": str(meta.get("description") or "")[:5000],
+                            "tags": [str(t) for t in (meta.get("tags") or [])][:15],
+                            "categoryId": "22"},
+                "status": {"privacyStatus": str(meta.get("privacy") or "unlisted"),
+                           "selfDeclaredMadeForKids": False}}
+        init = httpx.post("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+                          headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=UTF-8",
+                                   "X-Upload-Content-Length": str(size), "X-Upload-Content-Type": "video/mp4"},
+                          json=body, timeout=120)
+        if init.status_code not in (200, 201) or not init.headers.get("location"):
+            return fail("session", err_kind(init), err_msg(init) or "session start avvaledu")
+        session = init.headers["location"]
+        report({"state": "progress", "pct": 0})
+
+        # --- chunked transfer ---
+        CH = 8 * 1024 * 1024
+        offset = 0
+        with open(path, "rb") as f:
+            while offset < size:
+                f.seek(offset)
+                chunk = f.read(min(CH, size - offset))
+                if not chunk:
+                    break
+                r = httpx.put(session, content=chunk,
+                              headers={"Content-Type": "video/mp4", "Content-Length": str(len(chunk)),
+                                       "Content-Range": f"bytes {offset}-{offset + len(chunk) - 1}/{size}"},
+                              timeout=600)
+                if r.status_code in (200, 201):
+                    try:
+                        vid = str((r.json() or {}).get("id") or "")
+                    except Exception:
+                        vid = ""
+                    if not vid:
+                        return fail("transfer", "error", "YouTube video id ivvaledu")
+                    globals()["_FAILED_POSTED"] = True  # terminal state is ours; main() stays silent
+                    report({"state": "done", "videoId": vid})
+                    return
+                if r.status_code == 308:
+                    offset += len(chunk)
+                    report({"state": "progress", "pct": int(offset * 100 / size)})
+                    continue
+                return fail("transfer", err_kind(r), err_msg(r))
+        return fail("transfer", "error", "upload madhyalo aagipoyindhi")
+    except Exception as e:
+        return fail("transfer", "error", str(e)[:200])
+
+
 async def _run_job(j):
     import whatsapp as wa, autoedit  # import after env is set (config reads env)
     to = j["to"]
@@ -233,6 +353,10 @@ async def _run_job(j):
     if j.get("cancelled"):
         app_state("cancelled", "User stop chepparu — video cancel chesa.")
         return
+    # v113: a YouTube upload leg — fully self-contained (its own
+    # Worker channel), never touches the edit state machinery.
+    if j.get("mode") == "ytupload":
+        return await ytupload_job(j, wa)
 
     async def note(t):
         # v99 (WA discipline): progress sends are gated on the job NOT
