@@ -40,7 +40,7 @@ globalThis.fetch = async (url, opts = {}) => {
   if (u.includes("graph.facebook.com")) {
     let body = {}; try { body = JSON.parse(opts.body || "{}"); } catch {}
     if (body.type === "text" && body.text && body.text.body) outbox.push({ to: body.to, text: body.text.body });
-    if (body.type === "interactive") cards.push({ to: body.to, kind: body.interactive && body.interactive.type, ids: JSON.stringify(body.interactive || {}).match(/"(conn:[a-z]+|waallow:(yes|no))"/g) || [] });
+    if (body.type === "interactive") cards.push({ to: body.to, kind: body.interactive && body.interactive.type, ids: JSON.stringify(body.interactive || {}).match(/"(conn:[a-z]+|waallow:(yes|no|always))"/g) || [] });
     return Response.json({ messages: [{ id: "wamid.test" }] });
   }
   if (u.includes("api.groq.com") && u.includes("/models")) {
@@ -102,10 +102,10 @@ async function send(world, text) {
 }
 
 const ERRAND_RX = /open the julie app|julie app lo|in the menu|tap setup|app lo setup open|setup open chesi|#\/setup/i;
-const FABRICATED_RX = /\b\d{1,3}\s?%\s*(complete|ayindhi|done|finished)|script outline|voice-?over recording queued|visuals sourcing|\bsingle instance\b/i;
+const FABRICATED_RX = /\b\d{1,3}\s?%\s*(complete|ayindhi|done|finished)|script outline|voice-?over recording queued|visuals sourcing|\bsingle instance\b|text-generation|neural[-\s]?voice|stock[-\s]?footage|\b\d+\s+service connections\b/i;
 const LIMIT_RX = /limit full|free limit/i;
 const CANNED_RX = /pani naadhe, needhi kaadhu/i;
-const TE_MARK = /(nenu|nee|neeku|cheyu|cheyyi|undhi|unnay|ledhu|ayyindhi|ayindhi|chestha|chesthunna|ikkade|malli|sare|emi|enni|ayindha|theeskunna|start chesa)/i;
+const TE_MARK = /(nenu|nee|neeku|cheyu|cheyyi|undhi|unnay|ledhu|ayyindhi|ayindhi|ayyayi|ippudu|nadusth|chestha|chesthunna|ikkade|malli|sare|emi|enni|ayindha|theeskunna|start chesa)/i;
 
 const results = [];
 function scoreReply(scn, userText, reply, expect) {
@@ -307,6 +307,132 @@ async function seedAccount(w, email) {
   const w = makeWorld();
   brainImpl = async () => "Sare, 45% complete ayindhi, script outline finished.";
   scoreReply("S14", "Chesava (nothing running)", await send(w, "Chesava"), { must: /em job run avvatledhu/, maxLen: 300 });
+}
+
+// ===== v110 scenarios: the 2026-11-17 14:03–14:45 screenshot, verbatim =====
+// S15 — "Enni conncet chesav ipati varaku" (14:03). Live, Julie answered
+// with the fabrication stubbed below ("I've established 3 service
+// connections so far: the text-generation model, the neural-voice TTS
+// engine, and the stock-footage library."). The truth in this world:
+// 2 keys under the WA number (Groq, OpenRouter) + 1 under the linked
+// app account (Gemini) + a chain with 3/4 settled. The answer must be
+// the reporter's: 3 keys BY NAME + the chain's settled list.
+{
+  const w = makeWorld();
+  await seedAccount(w, "markk34200@gmail.com");
+  await seedKeys(w, ["groq", "openrouter"]);
+  await w.kv.put(`ukey:u_test1:gemini`, JSON.stringify({ ct: "aa.bb", ok: true, at: Date.now(), source: "divya" }));
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "openrouter", "cohere", "together"], done: ["groq", "openrouter"], failed: ["cohere"], failReason: { cohere: "email verification failed" }, current: "jobc03", email: "markk34200@gmail.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobc03`, JSON.stringify({ job: "jobc03", user: USER, provider: "together", state: "running", step: "signing up", at: Date.now(), upd: Date.now() }));
+  brainImpl = async () => "I've established 3 service connections so far: the text-generation model, the neural-voice TTS engine, and the stock-footage library.";
+  const r = await send(w, "Enni conncet chesav ipati varaku");
+  scoreReply("S15a", "Enni conncet chesav ipati varaku", r, { must: /3 API keys ready/, maxLen: 560 });
+  scoreReply("S15a", "Enni conncet chesav ipati varaku", r, { must: /Groq, OpenRouter, Gemini/, maxLen: 560 });
+  scoreReply("S15a", "Enni conncet chesav ipati varaku", r, { must: /Setup chain.*3\/4/, maxLen: 560 });
+  // S15b — the same fabrication behind an UNROUTED message: the guard
+  // replaces it with the real state reporter, never lets it through.
+  const r2 = await send(w, "Okay cheppu");
+  scoreReply("S15b", "Okay cheppu (brain fabricates connections)", r2, { must: /Setup progress: 3\/4/, maxLen: 560 });
+}
+// S16 — the allow card carries all THREE options (Ajju: "allow, always
+// allow, dont allow lantivi asalu adagaledhu"); each tap's state
+// semantics are verified.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await seedAccount(w, "tap@example.com");
+  await send(w, "Setup cheyu");
+  scoreState("S16a", "card has Allow", cards.some(c => c.ids.some(i => i.includes("waallow:yes"))));
+  scoreState("S16a", "card has Always allow", cards.some(c => c.ids.some(i => i.includes("waallow:always"))));
+  scoreState("S16a", "card has Don't allow", cards.some(c => c.ids.some(i => i.includes("waallow:no"))));
+  const r = await sendInteractive(w, "waallow:always");
+  scoreReply("S16a", "[tap Always allow]", r, { must: /Always allow/, maxLen: 460 });
+  scoreReply("S16a", "[tap Always allow]", r, { must: /start chesa/i, maxLen: 460 });
+  scoreState("S16a", "standing grant recorded", !!(await w.kv.get(`setupalways:${USER}`)));
+  scoreState("S16a", "grant mirrored to app account", !!(await w.kv.get(`setupalways:u_test1`)));
+  scoreState("S16a", "consent recorded", !!(await w.kv.get(`setupconsent:${USER}`)));
+  scoreState("S16a", "chain created", !!(await w.kv.get(`setupchain:${USER}`)));
+  scoreState("S16a", "setup dispatched", dispatches.some(d => d.url.includes("setup.yml")));
+}
+{
+  // S16b — with a standing grant on file, a fresh setup ask does NOT
+  // re-ask: it proceeds (and still reports the start).
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await seedAccount(w, "tap@example.com");
+  await w.kv.put(`setupalways:${USER}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", via: "wa" }));
+  const r = await send(w, "Setup cheyu");
+  scoreReply("S16b", "Setup cheyu (always-allow on file)", r, { must: /start chesa/i, maxLen: 340 });
+  scoreState("S16b", "no allow card re-sent", !cards.some(c => c.ids.some(i => i.includes("waallow"))));
+  scoreState("S16b", "chain created", !!(await w.kv.get(`setupchain:${USER}`)));
+}
+{
+  // S16c — Don't allow: stop + disarm + nothing starts.
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await seedAccount(w, "tap@example.com");
+  await send(w, "Setup cheyu");
+  const r = await sendInteractive(w, "waallow:no");
+  scoreReply("S16c", "[tap Don't allow]", r, { must: /start cheyyaledhu/, maxLen: 300 });
+  scoreState("S16c", "ask disarmed", !(await w.kv.get(`wasetupask:${USER}`)));
+  scoreState("S16c", "no consent", !(await w.kv.get(`setupconsent:${USER}`)));
+  scoreState("S16c", "no chain", !(await w.kv.get(`setupchain:${USER}`)));
+  scoreState("S16c", "no dispatch", dispatches.length === 0);
+}
+// S17 — pause honesty (the 14:45 screenshot's ⏸️ messages): each kind
+// is labelled truthfully, carries its action or its scheduled skip,
+// and a Google-door / unreadable-mail pause sends the connect card
+// AT the pause.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["together", "serper"], done: [], failed: [], current: "jobt1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobt1`, JSON.stringify({ job: "jobt1", user: USER, provider: "together", state: "running", step: "signing up", at: Date.now(), upd: Date.now() }));
+  const p = await runnerPost(w, "progress", "jobt1", { state: "paused", reason: "signin", step: "waiting for sign-in" });
+  scoreReply("S17a", "[runner: together paused signin]", p, { must: /Google sign-in maatrame/, maxLen: 800 });
+  scoreReply("S17a", "[runner: together paused signin]", p, { must: /skip chesi chain continue/, maxLen: 800 });
+  scoreState("S17a", "connect card sent AT the pause", cards.some(c => c.ids.some(i => i.includes("conn:google"))));
+}
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["serper"], done: [], failed: [], current: "jobs1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobs1`, JSON.stringify({ job: "jobs1", user: USER, provider: "serper", state: "running", step: "signing up", at: Date.now(), upd: Date.now() }));
+  const p = await runnerPost(w, "progress", "jobs1", { state: "paused", reason: "captcha", step: "waiting" });
+  scoreReply("S17b", "[runner: serper paused captcha]", p, { must: /captcha \(bot check\)/, maxLen: 800 });
+  scoreReply("S17b", "[runner: serper paused captcha]", p, { must: /Take Control/, maxLen: 800 });
+  scoreState("S17b", "never the generic sign-in label", !/sign-in kosam aagindhi/.test(p.join(" ")));
+}
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["cohere"], done: [], failed: [], current: "jobe1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobe1`, JSON.stringify({ job: "jobe1", user: USER, provider: "cohere", state: "running", step: "signing up", at: Date.now(), upd: Date.now() }));
+  const p = await runnerPost(w, "progress", "jobe1", { state: "paused", reason: "email", step: "waiting for verification" });
+  scoreReply("S17c", "[runner: cohere paused email, no gmail grant]", p, { must: /feed cheyyalenu/, maxLen: 800 });
+  scoreState("S17c", "connect card sent AT the pause", cards.some(c => c.ids.some(i => i.includes("conn:google"))));
+}
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`tok:${USER}:google`, JSON.stringify({ at: Date.now(), who: "t@example.com" }));
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["cohere"], done: [], failed: [], current: "jobe2", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobe2`, JSON.stringify({ job: "jobe2", user: USER, provider: "cohere", state: "running", step: "signing up", at: Date.now(), upd: Date.now() }));
+  const p = await runnerPost(w, "progress", "jobe2", { state: "paused", reason: "email", step: "waiting for verification" });
+  scoreReply("S17d", "[runner: cohere paused email, gmail connected]", p, { must: /nene feed chestha/, maxLen: 800 });
+  scoreState("S17d", "no card needed when the feed works", !cards.some(c => c.ids.some(i => i.includes("conn:"))));
+}
+// S18 — per-provider outcome lines fire in the REAL post order
+// (terminal progress FIRST, result second — setup.py v104): the
+// progress post tells the user; the result post must NOT repeat it.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "cohere"], done: [], failed: [], current: "jobd1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobd1`, JSON.stringify({ job: "jobd1", user: USER, provider: "groq", state: "running", step: "signing up", at: Date.now(), upd: Date.now() }));
+  const p1 = await runnerPost(w, "progress", "jobd1", { state: "failed", note: "paused-captcha time ayipoyindhi — user complete cheyyaledhu" });
+  scoreReply("S18a", "[runner progress: groq failed]", p1, { must: /Groq fail.*\(1\/2\)/, maxLen: 400 });
+  const chain1 = JSON.parse((await w.kv.get(`setupchain:${USER}`)) || "{}");
+  scoreState("S18a", "chain advanced to cohere", !!chain1.current && chain1.current !== "jobd1");
+  const p2 = await runnerPost(w, "result", "jobd1", { provider: "groq", status: "failed", error: "paused-captcha time ayipoyindhi" });
+  scoreState("S18a", "result post does NOT repeat the line", !p2.some(t => /✗|fail ayyindhi/.test(t)));
+  await runnerPost(w, "key", chain1.current, { provider: "cohere", key: "cohere-test-key-0123456789" }); // production order: verified key lands before the terminal progress event
+  const p3 = await runnerPost(w, "progress", chain1.current, { state: "done", note: "ready" });
+  scoreReply("S18b", "[runner progress: cohere done]", p3, { must: /Cohere.*ready.*\(2\/2\)/, maxLen: 900 });
+  scoreReply("S18b", "[runner progress: cohere done]", p3, { must: /Setup complete/, maxLen: 900 });
+  scoreState("S18b", "chain cleared at finalize", !(await w.kv.get(`setupchain:${USER}`)));
 }
 
 const byFlag = {};

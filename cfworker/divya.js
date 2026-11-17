@@ -614,6 +614,12 @@ async function handle(env, m) {
     // v109: the setup Allow card's buttons — a tap is the same grant
     // as typing "sare" (waGrantSetup), or a clean refusal that disarms.
     if (id === "waallow:yes") { const r = await waGrantSetup(env, user).catch(() => "Setup start cheyyaleka poyanu — 'setup cheyu' ani malli cheppu."); return say(env, user, r); }
+    // v110: Always allow — the standing grant is recorded FIRST
+    // (setupalways:, mirrored to the linked app account), then this
+    // request proceeds exactly like an Allow tap. Future setup /
+    // deploy asks on WA skip the card (waSetupRespond honours the
+    // grant) but every piece of work is still reported in chat.
+    if (id === "waallow:always") { await waSetAlwaysGrant(env, user).catch(() => {}); const r = await waGrantSetup(env, user).catch(() => "Setup start cheyyaleka poyanu — 'setup cheyu' ani malli cheppu."); return say(env, user, `Always allow pettukunna ✓ — future lo setup/deploy asks malli adagakunda chestha, ayyina prathi pani ikkade cheptha.\n${r}`); }
     if (id === "waallow:no") { await env.KV.delete(`wasetupask:${user}`).catch(() => {}); return say(env, user, "Sare, setup start cheyyaledhu. Kavali ante 'setup cheyu' ani cheppu, ikkade adugutha."); } }
   if (isOwner && /system prompt|full prompt|instructions paste|nee prompt|your prompt/.test(tx0)) return say(env, user, SYSTEM);
 
@@ -765,6 +771,14 @@ async function handle(env, m) {
     // brain guess at state the Worker can simply read.
     { const sk = waStateKind(text);
       if (sk) { const a2 = await waStateReply(env, user, sk); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } }
+    // v110: a how-many-done-SO-FAR question ("Enni conncet chesav
+    // ipati varaku") is answered by the count reporter — real counts
+    // + provider NAMES merged across the WA number and the linked
+    // app account — never by the brain (2026-11-17 14:04: "I've
+    // established 3 service connections… the text-generation model,
+    // the neural-voice TTS engine, the stock-footage library").
+    { const ck = waCountKind(text);
+      if (ck) { const a2 = await waCountReply(env, user); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } }
     // v107: "ikade adugu allow chestha" — the user explicitly asks
     // Julie to take the allow HERE. That is a setup-need expression:
     // answer with the in-chat allow ask, never an app-menu errand.
@@ -874,7 +888,7 @@ async function handle(env, m) {
     // 2026-11-17 12:00 fabrication) never reaches the user: the real
     // state reporter answers instead. A genuine create start (mm)
     // carries its own verified text and is untouched.
-    if (!mm && waFabricationHit(ans)) { const rep = await waJobStatusReply(env, user).catch(() => null); if (rep) ans = rep; }
+    if (!mm && waFabricationHit(ans)) { const rep = (waCountKind(text) ? await waCountReply(env, user).catch(() => null) : null) || await waJobStatusReply(env, user).catch(() => null); if (rep) ans = rep; }
     const askOnly = /(gala(va|ra|vu)|cheya(gala|lava)|chesta(va|ra)|can you|could you|possible\s*a|avuthunda)\s*\??\s*$/i.test(text) && !/\b(chey(yi|i)?|create|make)\b\s*$/i.test(text);
     let go = !!mm && !askOnly;
     if (mm && askOnly) ans = "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
@@ -1016,6 +1030,11 @@ async function oauthRoutes(env, url) {
     } else {
       await env.KV.put(`tok:${s.user}:${s.prov}`, JSON.stringify(rec97));
     }
+    // v110: a Google connect landing while a chain job waits on an
+    // email verification IS the unblock — the grant was just stored
+    // under this same user, so feed the link NOW instead of waiting
+    // for the runner's next poll, and tell the chat it resumed.
+    if (s.prov === "google") { try { const chain110 = parseRec(await env.KV.get(`setupchain:${s.user}`)); if (chain110 && chain110.current) { const job110 = parseRec(await env.KV.get(`setupjob:${chain110.current}`)); if (job110 && job110.state === "paused" && ((job110.pauseReason || "email") === "email" || job110.verifyWait)) { const upd110 = await maybeFeedVerifyLink(env, job110, chain110.at || 0); if (upd110 && upd110.state === "running" && !s.app) await say(env, s.user, `Google connect ayyindhi ✓ — ${setupProvName(job110.provider)} verification link feed chesa, setup continue avuthundhi.`); } } } catch {} }
     // v61: app-originated connects return INTO the app (the old plain
     // page dead-ended app users on the API host, outside Julie).
     if (s.app) return Response.redirect("https://divya-app.n8n00101.workers.dev/?connected=" + encodeURIComponent(s.prov), 302);
@@ -3564,6 +3583,100 @@ function waSetupDoneLine(fin) {
   // — the created names are still reported, never hidden.
   return `Setup ayyindhi — ready: ${readyList}.${failed.length ? ` Fail ayinavi: ${failed.map(setupProvName).join(", ")}.` : ""} Migatha pani nene chuskunta.`;
 }
+// v110 COUNT ROUTING (Ajju 2026-11-17 14:03): "Enni conncet chesav
+// ipati varaku" — a how-many-done-SO-FAR question. It is about the
+// PERSON, not about one state record: his keys can sit under this
+// WhatsApp number AND under the linked app account (the 2026-11-16
+// 22:31 run stored its keys under the app account, which is why the
+// WA record alone read "0 keys"). Pre-fix the phrasing matched
+// neither waStateKind nor waStatusKind, fell to the brain, and got a
+// fabricated count in generic category words. The reporter merges
+// both keyspaces (deduped by provider, NAMES only) plus whichever
+// record holds the chain / the last finalize.
+function waCountKind(text) {
+  const t = String(text || "").toLowerCase();
+  if (isCreateOrder(t) || isNoVideoEditOrder(t)) return null;
+  // possession questions ("enni api keys unnay") belong to waStateKind
+  // unless they also carry a done-so-far marker (connect / chesav /
+  // ipati varaku) — today's phrasing carries all three.
+  if (waStateKind(t) && !/(connect|connet|conncet|chesav|chesaav|ayyay|ayindh|ip+ati\s*varaku|so\s*far)/i.test(t)) return null;
+  if (/percent|%/.test(t)) return null; // "entha percent complete" is the status reporter's (waStatusKind)
+  if (!/(enni|entha|how\s*many|ip+ati\s*varaku|so\s*far)/i.test(t)) return null;
+  if (/(connect|connet|conncet|conection|keys?|providers?|accounts?|setup|services?)/i.test(t)) return "count";
+  if (/(chesav|chesaav|ayyay|ayindh|complete|done|established|ready|ayipoy)/i.test(t)) return "count";
+  return null;
+}
+async function waCountReply(env, user) {
+  try {
+    const ids = [String(user)];
+    try { const a = await acctFind(env, user); if (a) { if (a.phone && !ids.includes(String(a.phone))) ids.push(String(a.phone)); if (a.uid && !ids.includes(String(a.uid))) ids.push(String(a.uid)); } } catch {}
+    const byProv = new Map();
+    let chain = null, fin = null;
+    for (const id of ids) {
+      const kl = await setupKeyList(env, id).catch(() => null);
+      if (kl) for (const k of kl.keys) if (k.ok && !byProv.has(k.id)) byProv.set(k.id, k.name);
+      if (!chain) chain = parseRec(await env.KV.get(`setupchain:${id}`));
+      if (!fin) fin = parseRec(await env.KV.get(`setupdone:${id}`));
+    }
+    const names = [...byProv.values()];
+    const L = [];
+    if (names.length) L.push(`Ippati varaku nee ${names.length} API keys ready ga unnayi: ${names.join(", ")}.`);
+    if (chain) {
+      const done = chain.done || [], failed = chain.failed || [], skipped = chain.skipped || [];
+      const settled = done.length + failed.length + skipped.length;
+      const cur = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null;
+      L.push(`Setup chain nadusthundhi: ${settled}/${(chain.providers || []).length} ayyayi${done.length ? ` — ready: ${done.map(setupProvName).join(", ")}` : ""}${failed.length ? `; fail: ${failed.map(setupProvName).join(", ")}` : ""}${cur ? `; ippudu ${setupProvName(cur.provider)} ${cur.state === "paused" ? "aagindhi" : "nadusthundhi"}` : ""}.`);
+    } else if (fin && Date.now() - (fin.at || 0) < 86400000) {
+      L.push(`Ayyina setup result: ready ${(fin.done || []).length} (${(fin.done || []).map(setupProvName).join(", ") || "levu"})${(fin.failed || []).length ? `; fail: ${(fin.failed || []).map(setupProvName).join(", ")}` : ""}.`);
+    }
+    if (!L.length) return "Ippati varaku okka connection kuda complete avvaledu — own API keys levu, setup chain kuda ledu. Start cheyala? 'setup cheyu' ani cheppu, ikkade allow adigi chestha.";
+    return L.join("\n");
+  } catch { return "State chadhavadam lo chinna issue — konchem sepu tarvatha malli adugu."; }
+}
+function waChainOutcomeText(chain, provider, okStatus, reason) {
+  const settled = (chain.done || []).length + (chain.failed || []).length + (chain.skipped || []).length;
+  const total = (chain.providers || []).length;
+  return okStatus ? `✓ ${setupProvName(provider)} ready — key save ayyindhi. (${settled}/${total})` : `✗ ${setupProvName(provider)} fail ayyindhi${reason ? ` — ${reason}` : ""}. Next provider ki velthunna. (${settled}/${total})`;
+}
+// v110 PAUSE HONESTY (Ajju 2026-11-17): a ⏸️ message must carry its
+// action or its scheduled automatic continuation — never a bare
+// "sign-in kosam aagindhi" for a captcha, never "nene feed chestha"
+// when the feed cannot possibly read the mail (a WA-born chain's
+// owner is the phone number, which holds no Google grant — the
+// grants live under the app account, so fetchVerifyLink returns
+// no-gmail-token forever and the provider burns its whole wait).
+// The skip budgets named here are the runner's own (setup.py
+// PAUSE_SKIP_S: signin 15m, captcha 25m, sms 10m, field 15m); the
+// server backstop mirrors them. The connect LIST card is sent AT
+// the pause (once per chain per 30 min), not only after finalize.
+function waFeedReasonText(r) {
+  switch (String(r || "")) {
+    case "no-gmail-token": return "nee Google connect ee account ki ledu — mail chadhavaledu";
+    case "no-mail-yet": return "verification mail inka raledu";
+    case "mail-no-link": return "mail vachindhi kani andulo verification link dorakaledu";
+    case "needs-scope": return "Gmail permission scope ledu";
+    case "api-not-enabled": return "Gmail API enable avvaledu";
+    case "gmail-error": return "Gmail fetch fail ayyindhi";
+    case "": return "feed try cheyyaledhu";
+    default: return String(r).slice(0, 60);
+  }
+}
+async function waPauseText(env, rec) {
+  const user = String(rec.user || ""); const name = setupProvName(rec.provider); const kind = rec.pauseReason || "email";
+  const chain = parseRec(await env.KV.get(`setupchain:${user}`));
+  const card = async () => {
+    if (!chain || (chain.pauseCardAt && Date.now() - chain.pauseCardAt < 30 * 60000)) return false;
+    try { await connectMenu(env, user); chain.pauseCardAt = Date.now(); await env.KV.put(`setupchain:${user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); return true; } catch { return false; }
+  };
+  if (kind === "sms") return `⏸ ${name}: SMS code kosam wait chesthundhi — code vasthe ikkade adugutha, type chesthe chaalu. 10 min lo code rakapothe ee provider skip chesi chain continue chestha — final list lo reason tho cheptha.`;
+  if (kind === "captcha") return `⏸ ${name}: ikkada image captcha (bot check) undhi — adhi nenu cross cheyyalenu. Nuvvu complete cheyyali ante Take Control open chesi okkasari cheyyi; lekunte 25 min lo ee provider skip chesi chain continue chestha — final list lo captcha ani reason tho cheptha.`;
+  if (kind === "signin") { const sent = await card(); return `⏸ ${name}: ee provider ki Google sign-in maatrame undhi — naa browser profile lo Google session ledu.${sent ? " Paine connect card pampisthunna: Google connect chesthe nee verification mails nene feed cheyyagalanu; sign-in providers kosam app lo okkasari Take Control tho sign-in chesthe profile gurthupettukuntundhi." : ""} 15 min lo avakapothe ee provider skip chesi chain continue chestha — final list lo reason tho cheptha.`; }
+  if (kind === "field") return `⏸ ${name}: oka detail kosam wait chesthundhi — adhi ikkade adugutha. 15 min lo answer rakapothe ee provider skip chesi chain continue chestha — final list lo cheptha.`;
+  let hasGmail = false; try { const idx = await gAccts(env, user); hasGmail = (idx.list || []).some(a => a.gmail); } catch {}
+  if (hasGmail) return `⏸ ${name}: email verification kosam wait chesthundhi — nee Gmail nunchi link nene feed chestha, nuvvu em cheyalsina pani ledu. Link rakapothe ee provider fail ga final list lo cheptha.`;
+  const sent = await card();
+  return `⏸ ${name}: email verification kosam wait chesthundhi — kani nee Google connect ee account ki ledu, anduke nee Gmail chadhavalenu, link feed cheyyalenu.${sent ? " Paine connect card undhi: Google connect chesthe feed automatic avuthundhi." : ""} Connect cheyyakapothe ee provider fail avuthundhi — final list lo reason tho cheptha.`;
+}
 // A generic progress/status/completion question ("Chesava", "Entha
 // percent complete ayindhi", "ayindha", "ekkada varaku") — routed to
 // the state reporter, never the brain. State-noun questions (keys /
@@ -3574,6 +3687,7 @@ function waStatusKind(text) {
   const t = String(text || "").toLowerCase();
   if (isCreateOrder(t) || isNoVideoEditOrder(t)) return null;
   if (waStateKind(t) || isSetupQuestion(t)) return null;
+  if (waCountKind(t)) return null; // v110: count questions have their own reporter
   if (/\bpercent\b|%/.test(t)) return "status";
   if (/(chesava|cheysava|chesaava|ayindha|ayyindha|ayipoyindha|vachindha|status|progress|complete|ekkada\s*varaku|entha\s*dooram|inka\s*entha|em\s*ayindi|emayindi|done\s*ah|ready\s*ah)/i.test(t)) return "status";
   return null;
@@ -3624,7 +3738,34 @@ function waFabricationHit(ans) {
   if (/script outline|voice-?over recording queued|visuals sourcing/i.test(a)) return true;
   if (/\bsingle instance\b/i.test(a)) return true;
   if (/\bopenai\b/i.test(a) && /(engine|backend|use chesth|run avuth|powers)/i.test(a)) return true;
+  // v110: generic CATEGORY names standing in for providers — the
+  // 2026-11-17 14:04 fabrication ("I've established 3 service
+  // connections so far: the text-generation model, the neural-voice
+  // TTS engine, and the stock-footage library"). A connections claim
+  // in category words, or any numeric "established" count, is never
+  // a real state answer — real answers name providers.
+  if (/(text-generation|neural[-\s]?voice|stock[-\s]?footage)/i.test(a) && /(established|connections?|connect)/i.test(a)) return true;
+  if (/\bi'?ve established\s+\d+/i.test(a)) return true;
+  if (/\b\d+\s+service connections\b/i.test(a)) return true;
   return false;
+}
+// v110 ALWAYS ALLOW (Ajju 2026-11-17: "allow, always allow, dont
+// allow lantivi asalu adagaledhu"): the standing grant lives in
+// shared state (`setupalways:`), written under the WA number AND
+// mirrored under the linked app account, so the record is one fact
+// whichever surface asks. Honoured here (WA setup asks proceed
+// without re-asking, still reported line by line) — the app's own
+// setup/start tap remains that surface's consent moment.
+async function waAlwaysGrant(env, user) {
+  const g = parseRec(await env.KV.get(`setupalways:${user}`));
+  if (g) return g;
+  try { const a = await acctFind(env, user); if (a) { if (a.uid) { const g2 = parseRec(await env.KV.get(`setupalways:${a.uid}`)); if (g2) return g2; } if (a.phone && a.phone !== user) { const g3 = parseRec(await env.KV.get(`setupalways:${a.phone}`)); if (g3) return g3; } } } catch {}
+  return null;
+}
+async function waSetAlwaysGrant(env, user) {
+  const rec = JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", via: "wa" });
+  await env.KV.put(`setupalways:${user}`, rec);
+  try { const a = await acctFind(env, user); if (a && a.uid) await env.KV.put(`setupalways:${a.uid}`, rec); if (a && a.phone && a.phone !== user) await env.KV.put(`setupalways:${a.phone}`, rec); } catch {}
 }
 // The setup-need responder for the WA surface: state first (never
 // pitch setup at a user who is already set up), else ask the allow
@@ -3635,13 +3776,16 @@ async function waSetupRespond(env, user) {
   const kl = await setupKeyList(env, user).catch(() => ({ count: 0 }));
   const fin = parseRec(await env.KV.get(`setupdone:${user}`));
   if (kl.count > 0 || (fin && fin.state === "done")) return `Nee keys ready ga unnayi (${kl.count || (fin.done || []).length}) — setup complete. Provider down ani anipisthe backup brains silent ga pani chesthayi; nenu check chesi cheptha.`;
+  // v110: a standing Always-allow grant means no re-ask — proceed
+  // exactly like a fresh Allow tap (the work is still reported).
+  if (await waAlwaysGrant(env, user)) return waGrantSetup(env, user);
   await env.KV.put(`wasetupask:${user}`, JSON.stringify({ at: Date.now() }), { expirationTtl: 1800 });
   // v109: the allow ALSO arrives as a tap card (Meta Cloud API reply
   // buttons — the same channel the connect list already uses). The
   // tap lands back in handle() as an interactive reply and is the
   // same grant as typing "sare" (waGrantSetup). Fire-and-forget: the
   // text ask below stands on its own if the card cannot be sent.
-  try { wa(env, user, { type: "interactive", interactive: { type: "button", body: { text: "Setup allow — accounts + API keys anni nene create chestha. Madhyalo code vasthe ikkade adugutha, type chesthe chaalu." }, action: { buttons: [{ type: "reply", reply: { id: "waallow:yes", title: "Allow ✓" } }, { type: "reply", reply: { id: "waallow:no", title: "Vaddu" } }] } } }); } catch {}
+  try { wa(env, user, { type: "interactive", interactive: { type: "button", body: { text: "Setup allow — accounts + API keys anni nene create chestha. Madhyalo code vasthe ikkade adugutha, type chesthe chaalu." }, action: { buttons: [{ type: "reply", reply: { id: "waallow:yes", title: "Allow ✓" } }, { type: "reply", reply: { id: "waallow:always", title: "Always allow" } }, { type: "reply", reply: { id: "waallow:no", title: "Don't allow" } }] } } }); } catch {}
   return "Setup mariyu API keys pani naadhe — accounts, keys anni nene create chestha. Nee allow okkate kavali: 'sare' ani ikkade cheppu, setup ikkade nunchi start chestha. Madhyalo SMS code vasthe ikkade adugutha — type chesthe chaalu, migathadi motham nene chuskunta.";
 }
 // Starts the chain from a WhatsApp allow — the same records the app's
@@ -3677,6 +3821,9 @@ async function waAllowFlow(env, user, text) {
     return null; // not an email — flows on untouched; the ask stays open
   }
   const ask = parseRec(await env.KV.get(`wasetupask:${user}`));
+  // v110: a typed "always allow" while the ask is armed = the card's
+  // Always-allow button: standing grant recorded, then the grant.
+  if (ask && /always\s*allow/i.test(t)) { await waSetAlwaysGrant(env, user).catch(() => {}); const r = await waGrantSetup(env, user); return `Always allow pettukunna ✓ — future lo setup/deploy asks malli adagakunda chestha, ayyina prathi pani ikkade cheptha.\n${r}`; }
   if (ask && WA_ALLOW_RX.test(t)) return waGrantSetup(env, user);
   return null;
 }
@@ -6860,19 +7007,32 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // pauses already send their prompt above; terminal states send
     // their own lines below; the finalize sends the full list.
     if (state === "paused" && prevState !== "paused" && !body.awaiting && /^\d{7,15}$/.test(String(rec.user || ""))) {
-      try { await waSendText(env, String(rec.user), `⏸ ${setupProvName(rec.provider)}: ${rec.pauseReason === "sms" ? "SMS code kosam wait chesthundhi — code vasthe ikkade adugutha, type chesthe chaalu" : (rec.pauseReason === "captcha" || rec.pauseReason === "signin") ? "sign-in kosam aagindhi — ikkade nunchi continue chestha" : "email verification kosam wait chesthundhi — link vachaka nene feed chesi continue chestha"}.`); } catch {}
+      // v110: the pause text is per-kind and honest (waPauseText):
+      // captcha is NAMED a captcha with the Take-Control action,
+      // a Google-sign-in door carries the connect card AT the pause,
+      // an email wait states whether the mail feed can actually read
+      // this user's Gmail — and every line names its scheduled
+      // automatic continuation (the runner's pause-skip budget).
+      try { await waSendText(env, String(rec.user), await waPauseText(env, rec)); } catch {}
     }
     // Chain: provider done → auto-start the next one with the same consent.
     if (state === "done") {
       const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
-      if (chain && chain.current === job) { if (!chain.done.includes(rec.provider)) chain.done.push(rec.provider); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
+      // v110: the per-provider ✓ line is sent HERE. setup.py posts the
+      // terminal progress event FIRST (v104 silent-death fix) and
+      // report_result second — so this handler advances the chain and
+      // the v109 sends in the result handler never ran (its guard
+      // `chain.current === job` was already false). chain.waTold makes
+      // the two handlers share one send: whichever lands first tells,
+      // the other sees the mark and stays silent.
+      if (chain && chain.current === job) { if (!chain.done.includes(rec.provider)) chain.done.push(rec.provider); chain.waTold = chain.waTold || {}; if (!chain.waTold[rec.provider] && /^\d{7,15}$/.test(String(rec.user || ""))) { chain.waTold[rec.provider] = "done"; try { await waSendText(env, String(rec.user), waChainOutcomeText(chain, rec.provider, true, "")); } catch {} } await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
     }
     // v38 merge fix: a failed provider must ADVANCE the chain, not end it
     // (one provider's broken signup flow must not kill the other three).
     // Only "stopped" (the user stopped the setup) ends the whole chain.
     if (state === "failed") {
       const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
-      if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
+      if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80); chain.waTold = chain.waTold || {}; const remaining110 = (chain.providers || []).filter(p => !(chain.done || []).includes(p) && !chain.failed.includes(p) && !(chain.skipped || []).includes(p)); if (!chain.waTold[rec.provider] && remaining110.length && /^\d{7,15}$/.test(String(rec.user || ""))) { chain.waTold[rec.provider] = "failed"; let msg110 = waChainOutcomeText(chain, rec.provider, false, String(rec.note || "").replace(/^paused-[a-z]+\s*/i, "").slice(0, 70)); if (rec.verifyWait || rec.mailFetch) msg110 += ` Mail feed: ${waFeedReasonText(rec.mailFetch)}.`; try { await waSendText(env, String(rec.user), msg110); } catch {} if ((rec.verifyWait || rec.mailFetch === "no-gmail-token") && !(chain.feedCardAt && Date.now() - chain.feedCardAt < 30 * 60000)) { chain.feedCardAt = Date.now(); try { await connectMenu(env, String(rec.user)); } catch {} } } await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
     }
     if (state === "stopped") { const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`)); if (chain && chain.current === job) { await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state, done: chain.done, failed: chain.failed || [], skipped: chain.skipped || null, provider: rec.provider, note: rec.note || "", at: Date.now(), failReason: chain.failReason || null }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${rec.user}`); } }
     return Response.json({ ok: true });
@@ -6940,19 +7100,21 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     if (!chain || chain.current !== job) return Response.json({ ok: true, advanced: false });
     chain.failed = chain.failed || [];
     // v109: per-provider progress INTO the WhatsApp chat as it
-    // happens — this result post is the authoritative outcome (it
-    // precedes the terminal progress event, whose chain guard then
-    // no-ops), so the sends live here and cannot double. Pre-fix the
-    // chain advanced in total silence and the user "never once saw
-    // a key being created" (Ajju, 2026-11-17). The finalize message
-    // (setupStartNext) still carries the full created/failed list.
+    // happens. v110 CORRECTION: the post order is the REVERSE of
+    // what v109 assumed — setup.py sends the terminal progress event
+    // FIRST (v104 silent-death fix), so the progress handler usually
+    // advances the chain before this post arrives and this handler
+    // returns {advanced:false} above without ever reaching the
+    // sends. The sends therefore live in BOTH handlers behind the
+    // chain.waTold mark: whichever post lands first tells the user,
+    // the other stays silent. The finalize message (setupStartNext)
+    // still carries the full created/failed list.
     const waOwner = /^\d{7,15}$/.test(String(rec.user || "")) ? String(rec.user) : "";
-    if (status === "done") { if (!chain.done.includes(provider)) chain.done.push(provider); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
-      if (waOwner) { try { await waSendText(env, waOwner, `✓ ${setupProvName(provider)} ready — key save ayyindhi. (${chain.done.length + chain.failed.length}/${chain.providers.length})`); } catch {} }
+    if (status === "done") { if (!chain.done.includes(provider)) chain.done.push(provider); chain.waTold = chain.waTold || {}; const tellDone = waOwner && !chain.waTold[provider]; if (tellDone) chain.waTold[provider] = "done"; await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+      if (tellDone) { try { await waSendText(env, waOwner, waChainOutcomeText(chain, provider, true, "")); } catch {} }
       await deferAdvance(); return Response.json({ ok: true, advanced: true }); }
-    if (status === "failed") { if (!chain.failed.includes(provider)) chain.failed.push(provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[provider]) chain.failReason[provider] = String(body.error || rec.note || "").slice(0, 80); await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
-      const remaining = (chain.providers || []).filter(id => !chain.done.includes(id) && !chain.failed.includes(id));
-      if (waOwner && remaining.length) { try { await waSendText(env, waOwner, `✗ ${setupProvName(provider)} fail ayyindhi${chain.failReason[provider] ? ` — ${chain.failReason[provider]}` : ""}. Next provider ki velthunna. (${chain.done.length + chain.failed.length}/${chain.providers.length})`); } catch {} }
+    if (status === "failed") { if (!chain.failed.includes(provider)) chain.failed.push(provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[provider]) chain.failReason[provider] = String(body.error || rec.note || "").slice(0, 80); chain.waTold = chain.waTold || {}; const remaining = (chain.providers || []).filter(id => !chain.done.includes(id) && !chain.failed.includes(id)); const tellFail = waOwner && remaining.length && !chain.waTold[provider]; if (tellFail) chain.waTold[provider] = "failed"; await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+      if (tellFail) { try { await waSendText(env, waOwner, waChainOutcomeText(chain, provider, false, chain.failReason[provider])); } catch {} }
       await deferAdvance(); return Response.json({ ok: true, advanced: true }); }
     // stopped: the user stopped the setup — end the whole chain.
     await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state: "stopped", done: chain.done, failed: chain.failed, provider, note: rec.note || "", at: Date.now() }), { expirationTtl: 86400 });
