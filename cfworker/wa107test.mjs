@@ -606,6 +606,93 @@ async function seedAccount(w, email) {
   scoreState("S26b", "job running again", j2.state === "running" && !j2.pauseReason);
 }
 
+// ===== v112 scenarios: total-failure forensic (Ajju 2026-11-17 16:10-16:11) =====
+// S27 — BUG A verbatim: a quote-reply to the Connect card, "Inko youtube
+// acc conncet cheyocha", got the bare refusal "Sorry, I can't help."
+// live. The brain stub returns the RECORDED refusal; the structural
+// connections router must answer instead (yes + connect card), and on
+// a non-connect question the refusal family must never reach the user
+// (pool re-ask, then the honest brain-down line).
+{
+  const w = makeWorld();
+  await w.kv.put(`gaccts:${USER}`, JSON.stringify({ list: [{ id: "g1", email: "a@example.com", ytChannel: "", ytNoChannel: true, gmail: false, yt: true, state: "ok", at: Date.now() }], def: "g1" }));
+  brainImpl = async () => "Sorry, I can't help.";
+  const r = await send(w, "Inko youtube acc conncet cheyocha");
+  scoreState("S27a", "refusal never reaches the user", !/can(?:'|’)?t help/i.test(r.join(" ")));
+  scoreReply("S27a", "Inko youtube acc conncet cheyocha", r, { must: /Inko account connect cheyoche/, maxLen: 700 });
+  scoreState("S27a", "connect card sent", cards.some(c => c.ids.some(i => i.includes("conn:youtube"))));
+  // S27b — the refusal family on a NON-connect question: first pool
+  // answer refuses, the re-ask answers; a pool that only refuses
+  // yields the brain-down line, never the refusal.
+  const w2 = makeWorld(); let calls = 0;
+  brainImpl = async () => (++calls === 1 ? "Sorry, I can't help." : "Muse ante Meta valla AI assistant — code, content, chala panulalo help chesthundhi.");
+  const r2 = await send(w2, "Muse ante enti?");
+  scoreState("S27b", "pool re-ask replaced the refusal", !/can(?:'|’)?t help/i.test(r2.join(" ")) && /Muse ante/i.test(r2.join(" ")));
+  const w3 = makeWorld();
+  brainImpl = async () => "I cannot assist with that request.";
+  const r3 = await send(w3, "Muse ante enti?");
+  scoreState("S27c", "always-refusing pool -> brain-down line, never the refusal", !/cannot assist/i.test(r3.join(" ")) && /brain okka nimisham/i.test(r3.join(" ")));
+}
+// S28 — BUG B verbatim: "Neeku enni youtube accs conncet ayi unnay"
+// answered live with the SETUP fail list. Seed BOTH states — 2 YouTube
+// grants (both no-channel, the 16:10/16:11 ground truth) and the
+// finished 0/23 setup record — the answer must be the YouTube count
+// and contain NO setup fail list.
+{
+  const w = makeWorld();
+  await w.kv.put(`gaccts:${USER}`, JSON.stringify({ list: [
+    { id: "g1", email: "a@example.com", ytChannel: "", ytNoChannel: true, gmail: false, yt: true, state: "ok", at: Date.now() },
+    { id: "g2", email: "b@example.com", ytChannel: "", ytNoChannel: true, gmail: false, yt: true, state: "ok", at: Date.now() },
+  ], def: "g1" }));
+  await w.kv.put(`setupdone:${USER}`, JSON.stringify({ state: "failed", done: [], failed: ["groq", "openrouter", "gemini", "cloudflare", "cohere", "together", "sambanova", "fireworks", "cerebras", "nvidia", "mistral", "ai21", "voyage", "tavily", "serper", "exa", "deepgram", "assemblyai", "elevenlabs", "stability", "jina", "kaggle", "pexels"], at: Date.now() }));
+  brainImpl = async () => "Sare, ardham ayyindhi.";
+  const r = await send(w, "Neeku enni youtube accs conncet ayi unnay");
+  scoreReply("S28", "Neeku enni youtube accs conncet ayi unnay", r, { must: /YouTube: 2 accounts connect ayyayi/, maxLen: 800 });
+  scoreReply("S28", "Neeku enni youtube accs conncet ayi unnay", r, { must: /channel kanipinchaledu/, maxLen: 800 });
+  scoreState("S28", "NO setup fail list in a connections answer", !/Ayyina setup result/.test(r.join(" ")) && !/Groq/.test(r.join(" ")));
+  // Neighbouring phrasings from the amendment audit:
+  const r2 = await send(w, "enni google accs connect ayyayi");
+  scoreState("S28b", "google phrasing -> connections reporter, asked service leads with its zero", /Google: inka okka account kuda connect avvaledu/.test(r2.join(" ")) && !/Ayyina setup result/.test(r2.join(" ")));
+  const r3 = await send(w, "naa channel connect lo undha");
+  scoreState("S28c", "channel phrasing -> YouTube connections answer", /YouTube: 2 accounts/.test(r3.join(" ")));
+}
+// S29 — P1 identity: NO ph: index (acctFind by phone finds nothing —
+// today's production state), the name lives ONLY on the account the
+// chain email resolves to. The chain must start with that name on the
+// record, so the runner never asks in chat. Pre-fix userName was "".
+{
+  const w = makeWorld();
+  await w.kv.put(`em:peru@example.com`, "u_test9");
+  await w.kv.put(`acct:u_test9`, JSON.stringify({ uid: "u_test9", name: "Peru Test", email: "peru@example.com", phone: "", pphone: "" }));
+  brainImpl = async () => "Sare, ardham ayyindhi.";
+  await send(w, "Free ai models ni brain ki api keys create pettu");
+  await send(w, "Sare");
+  const r = await send(w, "peru@example.com");
+  const chain = JSON.parse((await w.kv.get(`setupchain:${USER}`)) || "null");
+  scoreState("S29", "chain created", !!chain);
+  scoreState("S29", "userName resolved from the email account record", !!chain && chain.userName === "Peru Test");
+  scoreState("S29", "userPhone is the WA number itself", !!chain && chain.userPhone === USER);
+  scoreState("S29", "setup dispatched", dispatches.some(d => d.url.includes("setup.yml")));
+}
+// S30 — mail-feed keyspace bridge: the Gmail grant lives ONLY under
+// the linked app account (u_test1); the paused job's user is the WA
+// phone. Pre-fix the feed recorded no-gmail-token forever (Groq +
+// Cohere today). Post-fix the feed must REACH the grant — any outcome
+// except no-gmail-token proves the bridge (the stub 404s the Gmail
+// API, so the recorded reason is a fetch outcome, not a found link).
+{
+  const w = makeWorld();
+  await seedAccount(w, "markk@example.com");
+  await w.kv.put(`gaccts:u_test1`, JSON.stringify({ list: [{ id: "g1", email: "markk@example.com", ytChannel: "", ytNoChannel: false, gmail: true, yt: false, state: "ok", at: Date.now() }], def: "g1" }));
+  await w.kv.put(`tok:u_test1:google`, JSON.stringify({ access_token: "tok-fresh", refresh_token: "rt", at: Date.now(), expires_in: 3600, who: "markk@example.com" }));
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq"], done: [], failed: [], current: "jobf1", email: "markk@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobf1`, JSON.stringify({ job: "jobf1", user: USER, provider: "groq", state: "paused", pauseReason: "email", verifyWait: true, email: "markk@example.com", pausedAt: Date.now(), at: Date.now(), upd: Date.now() }));
+  brainImpl = async () => "Sare, ardham ayyindhi.";
+  await runnerPost(w, "job", "jobf1", {});
+  const j = JSON.parse((await w.kv.get(`setupjob:jobf1`)) || "{}");
+  scoreState("S30", "feed reached the linked account's Gmail grant", !!j.mailFetch && j.mailFetch !== "no-gmail-token");
+}
+
 const byFlag = {};
 for (const r of results) byFlag[r.flag] = (byFlag[r.flag] || 0) + 1;
 console.log("\n==== WA PROCESS BATTERY ====");

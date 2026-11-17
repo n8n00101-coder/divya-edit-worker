@@ -791,6 +791,8 @@ async function handle(env, m) {
     // app account — never by the brain (2026-11-17 14:04: "I've
     // established 3 service connections… the text-generation model,
     // the neural-voice TTS engine, the stock-footage library").
+    { const cn = waConnKind(text);
+      if (cn) { const a2 = await waConnReply(env, user, cn); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); try { await connectMenu(env, user); } catch {} return say(env, user, a2); } }
     { const ck = waCountKind(text);
       if (ck) { const a2 = await waCountReply(env, user); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } }
     // v111: "failed vi malli try cheyu" — the finished chain's failed
@@ -925,7 +927,12 @@ async function handle(env, m) {
     // 2026-11-17 12:00 fabrication) never reaches the user: the real
     // state reporter answers instead. A genuine create start (mm)
     // carries its own verified text and is untouched.
-    if (!mm && waFabricationHit(ans)) { const rep = (waCountKind(text) ? await waCountReply(env, user).catch(() => null) : null) || await waJobStatusReply(env, user).catch(() => null); if (rep) ans = rep; }
+    if (!mm && waFabricationHit(ans)) { const cnk = waConnKind(text); const rep = (cnk ? await waConnReply(env, user, cnk).catch(() => null) : null) || (waCountKind(text) ? await waCountReply(env, user).catch(() => null) : null) || await waJobStatusReply(env, user).catch(() => null); if (rep) ans = rep; }
+    // v112 REFUSAL NET: a canned model refusal that survived the pool
+    // re-ask (waChatAnswer) still never reaches the user — the neutral
+    // brain-down line replaces it. Live leak 2026-11-17 16:10: the bare
+    // "Sorry, I can't help." (no "with that") slipped the old regex.
+    if (!mm && isRefusalText(ans, true)) ans = brainDownReply("te");
     const askOnly = /(gala(va|ra|vu)|cheya(gala|lava)|chesta(va|ra)|can you|could you|possible\s*a|avuthunda)\s*\??\s*$/i.test(text) && !/\b(chey(yi|i)?|create|make)\b\s*$/i.test(text);
     let go = !!mm && !askOnly;
     if (mm && askOnly) ans = "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
@@ -3703,9 +3710,60 @@ function waSetupDoneLine(fin) {
 // fabricated count in generic category words. The reporter merges
 // both keyspaces (deduped by provider, NAMES only) plus whichever
 // record holds the chain / the last finalize.
+// v112 CONNECTIONS REPORTER (total-failure forensic, Bug B): "connect"
+// names TWO different states — OAuth account connects (YouTube /
+// Google / Instagram / Facebook / Telegram grants) and the API-key
+// setup chain. v110's count router sent every "enni … connect"
+// question to the SETUP reporter: live 2026-11-17 16:11, "Neeku enni
+// youtube accs conncet ayi unnay" was answered with the setup fail
+// list while the real state was 2 YouTube accounts connected minutes
+// earlier. A question naming a connectable service (or asking about
+// connected ACCOUNTS) belongs HERE, answered from grant state only
+// (the gaccts: index + tok: records, merged across the WA phone
+// keyspace and the linked app account — linkedUserIds).
+const WA_CONN_SERVICES = [["youtube", /\byoutube\b|\byt\b|\bchannel\b/i], ["google", /\bgoogle\b|\bgmail\b|\bdrive\b/i], ["instagram", /\binsta(gram)?\b/i], ["facebook", /\bfacebook\b|\bfb\b/i], ["telegram", /\btelegram\b/i]];
+function waConnKind(text) {
+  const t = String(text || "").toLowerCase();
+  if (isCreateOrder(t) || isNoVideoEditOrder(t)) return null;
+  const svc = WA_CONN_SERVICES.find(([, rx]) => rx.test(t));
+  const connWord = /(connect|connet|conncet|conection|link)/i.test(t);
+  if (svc && connWord) return svc[0];
+  if (svc && /(enni|entha|how\s*many|unda|unnaya|unnay|ayindha|ayyaya|chesava|chesaava|cheyocha|chevacha|cheyyocha)/i.test(t)) return svc[0];
+  if (/(enni|entha|how\s*many)/i.test(t) && /\baccounts?\b/i.test(t) && connWord) return "accounts";
+  return null;
+}
+async function waConnReply(env, user, svc) {
+  try {
+    const ids = await linkedUserIds(env, user);
+    const gseen = new Map();
+    const toks = {};
+    for (const id of ids) {
+      const idx = await gAccts(env, id).catch(() => null);
+      if (idx) for (const a of idx.list || []) { const k = String(a.email || a.id || "").toLowerCase(); if (k && !gseen.has(k)) gseen.set(k, a); }
+      for (const p of Object.keys(PROVIDERS)) { if (!toks[p] && await env.KV.get(`tok:${id}:${p}`)) toks[p] = true; }
+    }
+    const accts = [...gseen.values()];
+    const yt = accts.filter(a => a.yt), ytCh = yt.filter(a => a.ytChannel), ytNo = yt.filter(a => a.ytNoChannel);
+    const gm = accts.filter(a => a.gmail);
+    const L = [];
+    if (yt.length) L.push(`YouTube: ${yt.length} account${yt.length > 1 ? "s" : ""} connect ayyayi${ytCh.length ? ` — channel: ${ytCh.map(a => a.ytChannel).join(", ")}` : ""}${ytNo.length ? `${ytCh.length ? "; " : " — "}${ytNo.length} account lo YouTube channel kanipinchaledu (channel unna account connect chesthe uploads avuthayi)` : ""}.`);
+    if (gm.length) L.push(`Google: ${gm.length} account${gm.length > 1 ? "s" : ""} connect ayyayi (${gm.map(a => a.email).filter(Boolean).join(", ")}) — Gmail kuda chadhavagalanu.`);
+    for (const p of ["instagram", "facebook", "telegram"]) if (toks[p]) L.push(`${PROVIDERS[p].title.replace(/ connect$/, "")}: connect ayyindhi.`);
+    if (!L.length) return "Inka okka account kuda connect avvaledu. Connect card pampisthunna — oka row tap chesi, aa site lo login chesthe ayipothundhi.";
+    // The ASKED service leads: if he named one and it has no grant,
+    // say so for THAT service first (the other lines stay as context).
+    if (svc && svc !== "accounts") {
+      const has = svc === "youtube" ? yt.length : svc === "google" ? gm.length : !!toks[svc];
+      if (!has) L.unshift(`${PROVIDERS[svc].title.replace(/ connect$/, "")}: inka okka account kuda connect avvaledu.`);
+    }
+    L.push("Inko account connect cheyoche — multiple accounts kuda ok. Connect card pampisthunna, row tap chesi login chesthe add avuthundhi.");
+    return L.join("\n");
+  } catch { return "Connection state chadhavadam lo chinna issue — konchem sepu tarvatha malli adugu."; }
+}
 function waCountKind(text) {
   const t = String(text || "").toLowerCase();
   if (isCreateOrder(t) || isNoVideoEditOrder(t)) return null;
+  if (waConnKind(t)) return null; // v112: service-named connect questions are the connections reporter's, never the setup count's
   // possession questions ("enni api keys unnay") belong to waStateKind
   // unless they also carry a done-so-far marker (connect / chesav /
   // ipati varaku) — today's phrasing carries all three.
@@ -4066,6 +4124,25 @@ async function waRetryOffer(env, user) {
   try { wa(env, user, { type: "interactive", interactive: { type: "button", body: { text: `Fail ayina providers malli try cheyala? ${names}` }, action: { buttons: [{ type: "reply", reply: { id: "waallow:yes", title: "Allow ✓" } }, { type: "reply", reply: { id: "waallow:always", title: "Always allow" } }, { type: "reply", reply: { id: "waallow:no", title: "Don't allow" } }] } } }); } catch {}
   return `Fail ayinavi: ${names} — malli try cheyala? Allow nokku leda 'sare' ani cheppu.${r.captcha.length ? ` ${r.captcha.map(setupProvName).join(", ")} daggara captcha vasthe okkasari nee tap kavali — appudu ikkade cheptha.` : ""}`;
 }
+// v112 IDENTITY (P1 — today's Kaggle failure): the user's name/phone
+// for creation flows, resolved from EVERY record he already gave
+// Julie — the account found by his WA phone, the account found by
+// the chain email, his chat-memory name (umem:) — before anyone asks
+// in chat. Pre-fix, chain start consulted ONLY acctFind(phone),
+// which needs the verified-phone index; with no ph: record the name
+// came back "" and the runner burned a 15-minute chat ask for a name
+// the account record held all along. A WA chain's phone needs no
+// lookup at all: the user is messaging from that very number.
+async function waIdentityFor(env, user, email) {
+  let name = "", phone = "";
+  const cands = [];
+  try { const a = await acctFind(env, user); if (a) cands.push(a); } catch {}
+  if (email) { try { const a = await acctFind(env, email); if (a && !cands.includes(a)) cands.push(a); } catch {} }
+  for (const a of cands) { if (!name && a.name) name = String(a.name); if (!phone && (a.phone || a.pphone)) phone = String(a.phone || a.pphone); }
+  if (!name) { try { const um = JSON.parse((await env.KV.get(`umem:${user}`)) || "null") || {}; if (um.name) name = String(um.name); } catch {} }
+  if (!phone && /^\d{7,15}$/.test(String(user))) phone = String(user);
+  return { name: name.slice(0, 60), phone: phone.slice(0, 20) };
+}
 async function waRetryStart(env, user, ids) {
   const fin = parseRec(await env.KV.get(`setupdone:${user}`));
   const prevDone = (fin && fin.done) || [];
@@ -4081,9 +4158,8 @@ async function waRetryStart(env, user, ids) {
   await env.KV.put(`setupconsent:${user}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: [...prevDone, ...retryIds], email }), { expirationTtl: 86400 * 7 });
   const pass = setupPass();
   try { await env.KV.put(`upass:${user}`, JSON.stringify({ ct: await sealKey(env, user, "setup", pass) }), { expirationTtl: 86400 * 365 }); } catch {}
-  let userName = "";
-  try { const a = await acctFind(env, user); if (a && a.name) userName = a.name; } catch {}
-  const chain = { providers: [...prevDone, ...retryIds], done: [...prevDone], failed: [], skipped: null, failReason: {}, current: null, email, pass, at: Date.now(), browser: "profile", userName, userPhone: user, startId: null, via: "wa", retry: { at: Date.now(), of: retryIds } };
+  const idn = await waIdentityFor(env, user, email).catch(() => ({ name: "", phone: "" }));
+  const chain = { providers: [...prevDone, ...retryIds], done: [...prevDone], failed: [], skipped: null, failReason: {}, current: null, email, pass, at: Date.now(), browser: "profile", userName: idn.name || "", userPhone: idn.phone || user, startId: null, via: "wa", retry: { at: Date.now(), of: retryIds } };
   await env.KV.put(`setupchain:${user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
   await env.KV.delete(`wafeed:${user}`).catch(() => {});
   const next = await setupStartNext(env, user);
@@ -4137,9 +4213,8 @@ async function waSetupStart(env, user, email) {
   await env.KV.put(`setupconsent:${user}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ids, email }), { expirationTtl: 86400 * 7 });
   const pass = setupPass();
   try { await env.KV.put(`upass:${user}`, JSON.stringify({ ct: await sealKey(env, user, "setup", pass) }), { expirationTtl: 86400 * 365 }); } catch {}
-  let userName = "";
-  try { const a = await acctFind(env, user); if (a && a.name) userName = a.name; } catch {}
-  const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: "profile", userName, userPhone: user, startId: null, via: "wa" };
+  const idn = await waIdentityFor(env, user, email).catch(() => ({ name: "", phone: "" }));
+  const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: "profile", userName: idn.name || "", userPhone: idn.phone || user, startId: null, via: "wa" };
   await env.KV.put(`setupchain:${user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
   await env.KV.delete(`wafeed:${user}`).catch(() => {}); // v111: a new job starts quiet — a feed never carries over
   const next = await setupStartNext(env, user);
@@ -4321,12 +4396,28 @@ async function setupFallbackReply(env, n, lang) {
 // and the pool is asked once more (a different model usually answers);
 // if the pool still yields nothing usable, returns "" and the caller
 // substitutes brainDownReply. The user never sees a limit message.
+// v112: the refusal FAMILY — a canned model refusal in ANY of its
+// shapes is that model's failure, never an answer: the pool is asked
+// again, and a refusal that survives is dropped ("") so the caller
+// substitutes an honest line. The pre-v112 regex required the words
+// "with that", so the bare "Sorry, I can't help." leaked live
+// (2026-11-17 16:10, a YouTube-connect question). strict=true (the
+// handler's final screen) only fires on refusal-SHAPED answers — a
+// short reply, or one that opens with the refusal — so a long answer
+// that merely contains the words once is never nuked.
+function isRefusalText(s, strict) {
+  const a = String(s || "").trim();
+  if (!a) return false;
+  const fam = /\bcan(?:['’])?t help\b|\bcannot help\b|\bunable to help\b|\bcan(?:['’])?t assist\b|\bcannot assist\b|\bunable to assist\b|\bnot able to (?:help|assist)\b|\bcan(?:['’])?t comply\b/i;
+  if (!fam.test(a)) return false;
+  if (!strict) return true;
+  return a.length <= 240 || /^sorry\b/i.test(a) || /^i (?:can(?:['’])?t|cannot|am unable)\b/i.test(a);
+}
 async function waChatAnswer(env, user, messages) {
-  const refusal = /can[’']t help with that|cannot help with that|i can[’']t assist with that/i;
   const u = { n: user };
   let out = await chatWithFallback(env, u, messages).catch(() => "");
-  if (out && refusal.test(out)) out = await chatWithFallback(env, u, messages).catch(() => "");
-  if (!out || /^Sorry ra, naa AI brain/.test(out) || refusal.test(out)) return "";
+  if (out && isRefusalText(out)) out = await chatWithFallback(env, u, messages).catch(() => "");
+  if (!out || /^Sorry ra, naa AI brain/.test(out) || isRefusalText(out)) return "";
   return out;
 }
 async function userBrain(env, u, messages, lang = "te") {
@@ -6375,7 +6466,34 @@ function isApiDisabled(status, errObj) {
   try { s = JSON.stringify(errObj || {}); } catch { s = String((errObj && errObj.message) || ""); }
   return /accessNotConfigured|SERVICE_DISABLED|has not been used in project/i.test(s);
 }
+// v112 (total-failure forensic): the WA phone user and the app
+// account are ONE person in TWO keyspaces — grants land under
+// whichever surface the user touched. Every grant/state read that
+// matters resolves across the link: the id itself, the account found
+// by verified phone (acctFind), and that account's uid + phone.
+async function linkedUserIds(env, user) {
+  const ids = [String(user)];
+  try { const a = await acctFind(env, user); if (a) { if (a.uid && !ids.includes(String(a.uid))) ids.push(String(a.uid)); if (a.phone && !ids.includes(String(a.phone))) ids.push(String(a.phone)); } } catch {}
+  return ids;
+}
 async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
+  // v112: the job's user may be the WA phone while the Gmail grant
+  // lives under the linked app account — pre-fix this returned
+  // no-gmail-token forever and every magic-link provider burned its
+  // full 12-minute wait + Take Control window (Groq + Cohere in
+  // today's chain). The job user's own accounts keep first priority
+  // (single-keyspace behaviour unchanged); each linked keyspace is
+  // tried in turn. A found link or a matched-mail outcome ends it.
+  const owners = await linkedUserIds(env, n);
+  let last = { ok: false, reason: "no-gmail-token" };
+  for (const owner of owners) {
+    const r = await fetchVerifyLinkOwn(env, owner, provider, job, chainAt, opts);
+    if (r.ok || r.reason === "mail-no-link") return r;
+    if (r.reason !== "no-gmail-token") last = r;
+  }
+  return last;
+}
+async function fetchVerifyLinkOwn(env, n, provider, job, chainAt, opts) {
   // v97 (MULTI-ACCOUNT): the verification mail lands in the inbox of
   // the Google account the setup used — job.email (the chain email).
   // Candidate order: (1) the account whose email matches job.email,
@@ -6962,7 +7080,10 @@ async function provisionGeminiKey(env, n, wantEmail) {
   // v97: when the chain names an email that matches a connected Google
   // account, provision under THAT account; otherwise the default.
   const aid = wantEmail ? await gResolveAcct(env, n, wantEmail) : undefined;
-  const tok = aid ? await googleToken(env, n, aid) : await googleToken(env, n);
+  let tok = aid ? await googleToken(env, n, aid) : await googleToken(env, n);
+  if (!tok) { // v112 bridge: the Google grant may live under the linked app account, not the chain's (WA phone) keyspace — today's chain failed Gemini in seconds with no-google-token while a grant existed under the app account.
+    for (const owner of await linkedUserIds(env, n)) { if (owner === String(n)) continue; const a2 = wantEmail ? await gResolveAcct(env, owner, wantEmail) : undefined; tok = a2 ? await googleToken(env, owner, a2) : await googleToken(env, owner); if (tok) break; }
+  }
   if (!tok) return { ok: false, reason: "no-google-token" };
   const at = tok.access_token;
   const errMsg = e => String((e && (e.message || e.status)) || "");
@@ -7103,8 +7224,19 @@ async function setupStartNext(env, n) {
     const cur0 = parseRec(await env.KV.get(`setupjob:${chain.current}`));
     if (cur0 && cur0.provider === nextId && ["queued", "running", "paused"].includes(cur0.state)) return { ok: true, already: true, job: chain.current, provider: nextId };
   }
+  // v112: identity re-resolve at dispatch — a chain created before an
+  // account link existed (or via a path that found no name) must not
+  // send the runner asking in chat for a name the records now hold.
+  if (!chain.userName) { const idn = await waIdentityFor(env, n, chain.email).catch(() => null); if (idn && idn.name) { chain.userName = idn.name; if (!chain.userPhone && idn.phone) chain.userPhone = idn.phone; } }
+  // v112: Google-door circuit breaker — once one provider in this
+  // chain has burned a full sign-in pause (its recorded reason says
+  // paused-signin), later door providers get doorBlocked on their job
+  // record and fail in seconds with the class reason instead of
+  // serially burning 15 minutes each (today: Together + Fireworks +
+  // Stability = 45 minutes of pauses nobody could act on in time).
+  const doorBlocked = Object.values(chain.failReason || {}).some(r => /paused-signin/i.test(String(r)));
   const job = setupJobId();
-  const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, browser: chain.browser || "ephemeral", userName: chain.userName || "", userPhone: chain.userPhone || "", state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
+  const rec = { job, user: n, provider: nextId, site: SETUP_PROVIDERS[nextId].site, url: SETUP_PROVIDERS[nextId].url, flow: SETUP_PROVIDERS[nextId].flow, email: chain.email, pass: chain.pass, chain: chain.providers, browser: chain.browser || "ephemeral", userName: chain.userName || "", userPhone: chain.userPhone || "", doorBlocked, state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
   await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
   chain.current = job;
   await env.KV.put(`setupchain:${n}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
