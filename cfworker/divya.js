@@ -969,6 +969,40 @@ async function handle(env, m) {
 }
 
 
+// ---------- Public legal pages (/privacy, /terms — required for Google OAuth verification) ----------
+const LEGAL_STYLE = "body{font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;max-width:760px;margin:0 auto;padding:28px 20px 48px;color:#1c1e21;line-height:1.6;font-size:16px}h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:28px 0 6px}.brand{font-weight:800;font-size:20px;letter-spacing:.2px}.sub{color:#606770;font-size:14px;margin-bottom:20px}a{color:#0b5ed7}footer{margin-top:40px;padding-top:16px;border-top:1px solid #ddd;color:#606770;font-size:14px}ul{padding-left:20px}li{margin:4px 0}";
+const PRIVACY_HTML = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Julie — Privacy Policy</title><style>" + LEGAL_STYLE + "</style></head><body>"
++ "<div class=\"brand\">Julie</div><h1>Privacy Policy</h1><div class=\"sub\">Last updated: November 17, 2026</div>"
++ "<p>Julie is an AI assistant that works over chat (WhatsApp and the Julie app). Julie creates and edits videos, publishes them to your own accounts when you ask, and — only with your permission — sets up free AI service accounts and API keys on your behalf. This policy explains what data Julie accesses when you connect your accounts, why, and how it is handled.</p>"
++ "<h2>Data Julie accesses when you connect Google</h2><ul>"
++ "<li><b>Basic profile and email address</b> (scopes: openid, email, profile) — to identify which Google account you connected and to attach the connection to your Julie account.</li>"
++ "<li><b>Gmail, read-only</b> (scope: gmail.readonly) — Julie reads email in only two situations: (a) during account setup, to find the verification email, sign-in link, or code sent by a service where Julie is creating an account for you, so the setup can continue without you hunting through your inbox; and (b) when you explicitly ask Julie to check your mail for something. The permission is read-only: Julie cannot send, delete, label, or modify your email.</li>"
++ "<li><b>Google Cloud Platform</b> (scope: cloud-platform) — used for exactly one purpose: creating a Gemini API key inside <b>your own</b> Google Cloud project during setup. The key belongs to you, in your project. Google does not offer a narrower scope for API-key creation, and Julie makes no other use of this permission.</li>"
++ "<li><b>YouTube</b> (scopes: youtube.readonly, youtube.upload) — read-only access identifies your channel so Julie knows where your videos belong; upload access posts a finished video to your channel only when you ask Julie to publish it, using the title and description prepared for that video.</li></ul>"
++ "<h2>Other connected accounts</h2><p>If you connect Instagram, Facebook, or Telegram, Julie receives the access tokens for the specific actions you request (such as posting a reel to your account or page) and uses them only for those actions.</p>"
++ "<h2>How your data is stored</h2><p>OAuth tokens and API keys are stored encrypted (sealed) in Julie's infrastructure, hosted on Cloudflare, and linked to your Julie account. They are used only to carry out actions you requested. Julie does not store copies of your email messages after the setup or lookup that needed them is complete.</p>"
++ "<h2>What Julie never does</h2><ul><li>Julie never sells your personal data.</li><li>Julie never uses your Gmail content for advertising, and never shares Google user data with third parties for advertising or marketing.</li><li>Julie never shares your data with third parties except the service providers strictly needed to run the features you use (such as Google APIs and Cloudflare hosting), and only to perform the action you requested.</li></ul>"
++ "<p>Julie's use and transfer to any other app of information received from Google APIs will adhere to the <a href=\"https://developers.google.com/terms/api-services-user-data-policy\">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>"
++ "<h2>Disconnecting and deletion</h2><p>You can disconnect Google (or any account) at any time from Julie's connect menu, or by asking Julie in chat. Disconnecting deletes the stored tokens for that account. To request deletion of all data associated with your Julie account, contact us at the email below.</p>"
++ "<h2>Changes to this policy</h2><p>If this policy changes in a way that affects how Google data is handled, the updated version will be posted on this page with a new date.</p>"
++ "<h2>Contact</h2><p>Questions about this policy: <a href=\"mailto:n8n00101@gmail.com\">n8n00101@gmail.com</a></p>"
++ "<footer>Julie · <a href=\"/privacy\">Privacy Policy</a> · <a href=\"/terms\">Terms of Service</a></footer></body></html>";
+const TERMS_HTML = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Julie — Terms of Service</title><style>" + LEGAL_STYLE + "</style></head><body>"
++ "<div class=\"brand\">Julie</div><h1>Terms of Service</h1><div class=\"sub\">Last updated: November 17, 2026</div>"
++ "<p>These terms govern your use of Julie, an AI assistant available over chat (WhatsApp and the Julie app). By using Julie, you agree to these terms.</p>"
++ "<h2>What Julie does</h2><p>Julie creates and edits videos, publishes content to your connected accounts when you ask, and — only with your permission — creates accounts and API keys at free AI services on your behalf and stores them securely for your use. Julie acts on your instructions: an action such as a publish or a setup starts when you request it and approve it.</p>"
++ "<h2>Your accounts</h2><ul><li>Connect only accounts that you own or are authorized to use.</li><li>You are responsible for the actions Julie performs at your instruction on your connected accounts, in the same way as if you had performed them yourself.</li><li>Keep control of your accounts: you can disconnect any account at any time from Julie's connect menu or by asking Julie in chat, which deletes the stored tokens.</li></ul>"
++ "<h2>Content</h2><p>You are responsible for having the rights to any content you ask Julie to create, edit, or publish, and for the content Julie publishes at your instruction. Review titles, descriptions, and media before asking Julie to publish them.</p>"
++ "<h2>Acceptable use</h2><ul><li>Do not use Julie for unlawful activity, spam, or harassment.</li><li>Do not use Julie to violate the terms of a connected third-party service; Julie may decline an action that would do so.</li><li>Do not attempt to access another person's accounts or data through Julie.</li></ul>"
++ "<h2>Availability</h2><p>Julie is provided on an \"as is\" and \"as available\" basis. Features may change, pause, or stop — for example when a third-party service changes its rules or limits. Julie will tell you in chat when an action could not be completed.</p>"
++ "<h2>Liability</h2><p>To the maximum extent permitted by law, Julie is not liable for indirect or consequential losses arising from use of the service, including actions taken by third-party platforms on your connected accounts.</p>"
++ "<h2>Changes to these terms</h2><p>Updated terms will be posted on this page with a new date. Continuing to use Julie after a change means you accept the updated terms.</p>"
++ "<h2>Contact</h2><p>Questions about these terms: <a href=\"mailto:n8n00101@gmail.com\">n8n00101@gmail.com</a></p>"
++ "<footer>Julie · <a href=\"/privacy\">Privacy Policy</a> · <a href=\"/terms\">Terms of Service</a></footer></body></html>";
+function legalPage(kind) {
+  return new Response(kind === "privacy" ? PRIVACY_HTML : TERMS_HTML, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=3600" } });
+}
+
 // ---------- /connect: account linking via OAuth links ----------
 const PROVIDERS = {
   youtube:   { title: "YouTube connect",   desc: "Videos upload cheyadaniki" },
@@ -7816,6 +7850,8 @@ export default {
       return new Response(bytes, { headers: { "content-type": "video/mp4", "cache-control": "public, max-age=3600" } });
     }
     if (url.pathname.startsWith("/c/") || url.pathname.startsWith("/oauth/")) { const r = await oauthRoutes(env, url); if (r) return r; }
+    if (url.pathname === "/privacy") return legalPage("privacy");
+    if (url.pathname === "/terms") return legalPage("terms");
     if (url.pathname === "/health") return Response.json({ ok: true, name: "divya" });
     return new Response("Julie is awake.");
   },
