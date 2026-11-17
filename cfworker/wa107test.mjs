@@ -35,14 +35,34 @@ class KVStub {
 }
 
 let outbox = [], cards = [], images = [], dispatches = [], brainImpl = async () => "Sare, ardham ayyindhi.";
+let ytStub = null, mediaStub = {};
 globalThis.fetch = async (url, opts = {}) => {
   const u = String(url);
+  // v113 stubs: WA media meta/download, YouTube channels + resumable
+  // upload, OAuth refresh — driven by ytStub / mediaStub.
+  const metaM = u.match(/^https:\/\/graph\.facebook\.com\/v21\.0\/([^/]+)$/);
+  if (metaM && mediaStub[metaM[1]] && !(opts && opts.body)) return Response.json({ url: `https://stubcdn.test/${metaM[1]}`, mime_type: "video/mp4", file_size: mediaStub[metaM[1]].size });
+  if (u.startsWith("https://stubcdn.test/")) { const ms = mediaStub[u.slice(21)]; return new Response(new Uint8Array((ms && ms.bytes) || 32)); }
+  if (u.includes("www.googleapis.com/youtube/v3/channels")) {
+    if (u.includes("managedByMe=true")) { const mg = (ytStub && ytStub.managed) || { status: 400, items: [] }; return mg.status === 200 ? Response.json({ items: mg.items }) : Response.json({ error: { message: "managedByMe requires onBehalfOfContentOwner" } }, { status: mg.status }); }
+    return Response.json({ items: (ytStub && ytStub.mine) || [] });
+  }
+  if (u.includes("oauth2.googleapis.com/token")) {
+    if (ytStub && ytStub.refreshFails) return Response.json({ error: "invalid_grant", error_description: "Token has been expired or revoked." }, { status: 400 });
+    return Response.json({ access_token: "tok-refreshed", expires_in: 3600 });
+  }
+  if (u.includes("upload/youtube/v3/videos")) {
+    ytStub.sessionCalls++;
+    if (ytStub.uploadMode === "quota") return Response.json({ error: { errors: [{ reason: "quotaExceeded", domain: "youtube.quota" }], message: "The request cannot be completed because you have exceeded your quota." } }, { status: 403 });
+    return new Response(null, { status: 200, headers: { location: "https://upload.stub.test/session1" } });
+  }
+  if (u.startsWith("https://upload.stub.test/")) { ytStub.transferCalls++; return Response.json({ id: "vid123" }); }
   if (u.includes("graph.facebook.com")) {
     if (u.includes("/media")) return Response.json({ id: "media_test_1" }); // v111: WA media upload (image sends)
     let body = {}; try { body = JSON.parse(opts.body || "{}"); } catch {}
     if (body.type === "text" && body.text && body.text.body) outbox.push({ to: body.to, text: body.text.body });
     if (body.type === "image") images.push({ to: body.to, id: (body.image || {}).id, caption: (body.image || {}).caption || "" });
-    if (body.type === "interactive") cards.push({ to: body.to, kind: body.interactive && body.interactive.type, ids: JSON.stringify(body.interactive || {}).match(/"(conn:[a-z]+|waallow:(yes|no|always)|waproc:(stop|continue|feed|feedoff))"/g) || [] });
+    if (body.type === "interactive") cards.push({ to: body.to, kind: body.interactive && body.interactive.type, ids: JSON.stringify(body.interactive || {}).match(/"(conn:[a-z]+|waallow:(yes|no|always)|waproc:(stop|continue|feed|feedoff)|ytpick:[a-z0-9]+)"/g) || [] });
     return Response.json({ messages: [{ id: "wamid.test" }] });
   }
   if (u.includes("api.groq.com") && u.includes("/models")) {
@@ -71,6 +91,8 @@ function makeWorld() {
     APP_KEK: Buffer.alloc(32, 7).toString("base64"), FORWARD_SECRET: "",
   };
   outbox = []; cards = []; images = []; dispatches = [];
+  ytStub = { mine: [], managed: { status: 400, items: [] }, refreshFails: false, uploadMode: "ok", sessionCalls: 0, transferCalls: 0 };
+  mediaStub = {};
   return { kv, env };
 }
 const imgCount = () => images.length;
@@ -107,6 +129,42 @@ async function send(world, text) {
   for (let i = 0; i < 5; i++) { const ps = promises.splice(0); if (!ps.length) break; await Promise.all(ps); }
   return outbox.slice(before).filter(o => o.to === USER).map(o => o.text);
 }
+
+// v113 helpers: an inbound WA video message, a runner-leg report to
+// /api/runner/yt, and an app-chat turn (the parity entry point).
+async function sendVideo(world, mediaId, caption) {
+  const before = outbox.length;
+  const promises = [];
+  const ctx = { waitUntil(p) { promises.push(Promise.resolve(p)); } };
+  const msg = { from: USER, id: "m" + (++seq), type: "video", video: { id: mediaId, ...(caption ? { caption } : {}) } };
+  const body = { entry: [{ changes: [{ field: "messages", value: { messages: [msg] } }] }] };
+  const req = new Request("https://worker.test/webhook", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  await worker.fetch(req, world.env, ctx);
+  for (let i = 0; i < 6; i++) { const ps = promises.splice(0); if (!ps.length) break; await Promise.all(ps); }
+  return outbox.slice(before).filter(o => o.to === USER).map(o => o.text);
+}
+async function ytRunnerPost(world, job, payload) {
+  const before = outbox.length;
+  const promises = [];
+  const ctx = { waitUntil(p) { promises.push(Promise.resolve(p)); } };
+  const req = new Request(`https://worker.test/api/runner/yt?job=${job}`, { method: "POST", headers: { "content-type": "application/json", "x-runner-key": "rk-test" }, body: JSON.stringify(payload) });
+  await worker.fetch(req, world.env, ctx);
+  for (let i = 0; i < 6; i++) { const ps = promises.splice(0); if (!ps.length) break; await Promise.all(ps); }
+  return outbox.slice(before).filter(o => o.to === USER).map(o => o.text);
+}
+async function appChat(world, text) {
+  const promises = [];
+  const ctx = { waitUntil(p) { promises.push(Promise.resolve(p)); } };
+  const req = new Request("https://worker.test/api/chat", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + "a".repeat(48) }, body: JSON.stringify({ text, lang: "te" }) });
+  const res = await worker.fetch(req, world.env, ctx);
+  for (let i = 0; i < 6; i++) { const ps = promises.splice(0); if (!ps.length) break; await Promise.all(ps); }
+  return res.json().catch(() => ({}));
+}
+async function seedYt(w, list, def, toks) {
+  await w.kv.put(`gaccts:${USER}`, JSON.stringify({ list, def }));
+  for (const [id, tok] of Object.entries(toks || {})) await w.kv.put(id === def ? `tok:${USER}:youtube` : `tok:${USER}:youtube#${id}`, JSON.stringify(tok));
+}
+const freshTok = who => ({ access_token: "tok-fresh", refresh_token: "rt", at: Date.now(), expires_in: 3600, who });
 
 const ERRAND_RX = /open the julie app|julie app lo|in the menu|tap setup|app lo setup open|setup open chesi|#\/setup/i;
 const FABRICATED_RX = /\b\d{1,3}\s?%\s*(complete|ayindhi|done|finished)|script outline|voice-?over recording queued|visuals sourcing|\bsingle instance\b|text-generation|neural[-\s]?voice|stock[-\s]?footage|\b\d+\s+service connections\b/i;
@@ -691,6 +749,206 @@ async function seedAccount(w, email) {
   await runnerPost(w, "job", "jobf1", {});
   const j = JSON.parse((await w.kv.get(`setupjob:jobf1`)) || "{}");
   scoreState("S30", "feed reached the linked account's Gmail grant", !!j.mailFetch && j.mailFetch !== "no-gmail-token");
+}
+
+// ===== v113 scenarios: WA→YouTube upload (the audit's 8) =====
+// S31 — audit #1: a video SENT in the WA chat is staged (history
+// entry + bytes) and a bare follow-up "YouTube lo upload cheyu"
+// finds it: confirm summary (title, description head, tag count,
+// privacy=unlisted, channel name) -> "cheyu" -> WA start line ->
+// resumable session -> watch link; history stamped.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await seedYt(w, [{ id: "g1", email: "a@example.com", ytChannel: "Chan One", ytChannelId: "chan1", ytNoChannel: false, gmail: false, yt: true, state: "ok", at: Date.now() }], "g1", { g1: freshTok('channel "Chan One"') });
+  mediaStub["wamid-vid-1"] = { size: 1000, bytes: 64 };
+  const r0 = await sendVideo(w, "wamid-vid-1");
+  scoreState("S31", "ask line offers the upload path", /YouTube lo upload cheyu/.test(r0.join(" ")));
+  const staged = JSON.parse((await w.kv.get(`hist:${USER}:1`)) || "null");
+  scoreState("S31", "staged history entry (src wa-upload, done)", !!staged && staged.src === "wa-upload" && staged.state === "done" && staged.mediaId === "wamid-vid-1");
+  scoreState("S31", "staged bytes in upl:", !!(await w.kv.get(`upl:${staged.job}`)));
+  const r1 = await send(w, "YouTube lo upload cheyu");
+  scoreState("S31", "confirm names the channel", /Chan One/.test(r1.join(" ")));
+  scoreState("S31", "confirm shows privacy unlisted", /Privacy: unlisted/.test(r1.join(" ")));
+  scoreState("S31", "confirm shows description + tag count", /Description:/.test(r1.join(" ")) && /Tags: 3/.test(r1.join(" ")));
+  const r2 = await send(w, "cheyu");
+  const j2 = r2.join("\n");
+  scoreState("S31", "start line precedes the result", j2.indexOf("Upload start chesa") >= 0 && j2.indexOf("Upload start chesa") < j2.indexOf("watch?v=vid123"));
+  scoreState("S31", "watch link delivered", /watch\?v=vid123/.test(j2));
+  scoreState("S31", "resumable session + one transfer", ytStub.sessionCalls === 1 && ytStub.transferCalls === 1);
+  const after = JSON.parse((await w.kv.get(`hist:${USER}:1`)) || "{}");
+  scoreState("S31", "history stamped with the video id", !!after.yt && after.yt.videoId === "vid123");
+  scoreState("S31", "pending cleared on success", !(await w.kv.get(`uppend:${USER}`)));
+}
+// S32 — audit #2: two channel-bearing accounts -> the picker CARD
+// appears; the tap fixes the account; an explicitly named channel
+// in text wins with no card at all.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`histcount:${USER}`, "1");
+  await w.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, job: "jobx1", title: "Cats", topic: "cats", state: "done", has_result: true, at: Date.now(), yt: null, ig: null }));
+  await w.kv.put(`upl:jobx1`, "fakevideobytes");
+  await seedYt(w, [
+    { id: "g1", email: "a@example.com", ytChannel: "Chan One", ytChannelId: "chan1", ytNoChannel: false, gmail: false, yt: true, state: "ok", at: Date.now() },
+    { id: "g2", email: "b@example.com", ytChannel: "Chan Two", ytChannelId: "chan2", ytNoChannel: false, gmail: false, yt: true, state: "ok", at: Date.now() },
+  ], "g1", { g1: freshTok('channel "Chan One"'), g2: freshTok('channel "Chan Two"') });
+  const r1 = await send(w, "upload video 1 to YouTube");
+  scoreState("S32", "picker lists both channels", /Chan One/.test(r1.join(" ")) && /Chan Two/.test(r1.join(" ")));
+  scoreState("S32", "picker CARD sent with both rows", cards.some(c => c.ids.some(i => i.includes("ytpick:g1"))) && cards.some(c => c.ids.some(i => i.includes("ytpick:g2"))));
+  scoreState("S32", "no pending before the pick", !(await w.kv.get(`uppend:${USER}`)) && !!(await w.kv.get(`uppick:${USER}`)));
+  const r2 = await sendInteractive(w, "ytpick:g2");
+  scoreState("S32", "confirm names the TAPPED channel", /Chan Two/.test(r2.join(" ")));
+  const pend = JSON.parse((await w.kv.get(`uppend:${USER}`)) || "{}");
+  scoreState("S32", "pending fixed to the tapped account", pend.ytAcct === "g2");
+  const w2 = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w2.kv.put(`histcount:${USER}`, "1");
+  await w2.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, job: "jobx1", title: "Cats", topic: "cats", state: "done", has_result: true, at: Date.now(), yt: null, ig: null }));
+  await w2.kv.put(`upl:jobx1`, "fakevideobytes");
+  await seedYt(w2, [
+    { id: "g1", email: "a@example.com", ytChannel: "Chan One", ytChannelId: "chan1", ytNoChannel: false, gmail: false, yt: true, state: "ok", at: Date.now() },
+    { id: "g2", email: "b@example.com", ytChannel: "Chan Two", ytChannelId: "chan2", ytNoChannel: false, gmail: false, yt: true, state: "ok", at: Date.now() },
+  ], "g1", { g1: freshTok('channel "Chan One"'), g2: freshTok('channel "Chan Two"') });
+  const r3 = await send(w2, "upload video 1 to YouTube Chan Two");
+  scoreState("S32b", "named channel wins, no picker", /Chan Two/.test(r3.join(" ")) && !(await w2.kv.get(`uppick:${USER}`)));
+  scoreState("S32b", "pending fixed to the named account", (JSON.parse((await w2.kv.get(`uppend:${USER}`)) || "{}").ytAcct === "g2"));
+}
+// S33 — audit #3: only a ytNoChannel account -> named guidance +
+// connect card, and ZERO calls to the YouTube upload endpoint.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`histcount:${USER}`, "1");
+  await w.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, job: "jobx1", title: "Cats", topic: "cats", state: "done", has_result: true, at: Date.now(), yt: null, ig: null }));
+  await w.kv.put(`upl:jobx1`, "fakevideobytes");
+  await seedYt(w, [{ id: "g1", email: "solo@example.com", ytChannel: "", ytChannelId: "", ytNoChannel: true, gmail: false, yt: true, state: "ok", at: Date.now() }], "g1", { g1: { ...freshTok(""), noChannel: true } });
+  const r = await send(w, "upload video 1 to YouTube");
+  scoreState("S33", "guidance names the account + the missing channel", /solo@example\.com/.test(r.join(" ")) && /channel ledhu/.test(r.join(" ")));
+  scoreState("S33", "connect card attached", cards.some(c => c.ids.some(i => i.includes("conn:youtube"))));
+  scoreState("S33", "ZERO upload-endpoint calls", ytStub.sessionCalls === 0 && ytStub.transferCalls === 0);
+  scoreState("S33", "no pending created", !(await w.kv.get(`uppend:${USER}`)));
+}
+// S34 — audit #4: the noChannel flag heals at re-check — the channel
+// was created after the connect (mine=true), and the Brand-Account
+// shape (mine empty, managedByMe finds it) heals the same way.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`histcount:${USER}`, "1");
+  await w.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, job: "jobx1", title: "Cats", topic: "cats", state: "done", has_result: true, at: Date.now(), yt: null, ig: null }));
+  await w.kv.put(`upl:jobx1`, "fakevideobytes");
+  await seedYt(w, [{ id: "g1", email: "solo@example.com", ytChannel: "", ytChannelId: "", ytNoChannel: true, gmail: false, yt: true, state: "ok", at: Date.now() }], "g1", { g1: { ...freshTok(""), noChannel: true } });
+  ytStub.mine = [{ id: "chanNew1", snippet: { title: "New Chan" } }];
+  const r = await send(w, "upload video 1 to YouTube");
+  scoreState("S34", "confirm proceeds on the healed channel", /New Chan/.test(r.join(" ")));
+  const idx = JSON.parse((await w.kv.get(`gaccts:${USER}`)) || "{}");
+  scoreState("S34", "index healed: flag cleared, title + ID stored", idx.list[0].ytNoChannel === false && idx.list[0].ytChannel === "New Chan" && idx.list[0].ytChannelId === "chanNew1");
+  const r2 = await send(w, "cheyu");
+  scoreState("S34", "upload completes after the heal", /watch\?v=vid123/.test(r2.join(" ")));
+  const w2 = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w2.kv.put(`histcount:${USER}`, "1");
+  await w2.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, job: "jobx1", title: "Cats", topic: "cats", state: "done", has_result: true, at: Date.now(), yt: null, ig: null }));
+  await w2.kv.put(`upl:jobx1`, "fakevideobytes");
+  await seedYt(w2, [{ id: "g1", email: "brand@example.com", ytChannel: "", ytChannelId: "", ytNoChannel: true, gmail: false, yt: true, state: "ok", at: Date.now() }], "g1", { g1: { ...freshTok(""), noChannel: true } });
+  ytStub.managed = { status: 200, items: [{ id: "brandchan1", snippet: { title: "Brand Chan" } }] };
+  const r3 = await send(w2, "upload video 1 to YouTube");
+  scoreState("S34b", "Brand-Account shape heals via managedByMe", /Brand Chan/.test(r3.join(" ")));
+  const idx2 = JSON.parse((await w2.kv.get(`gaccts:${USER}`)) || "{}");
+  scoreState("S34b", "brand channel stored with its ID", idx2.list[0].ytChannel === "Brand Chan" && idx2.list[0].ytChannelId === "brandchan1" && idx2.list[0].ytNoChannel === false);
+}
+// S35 — audit #5: expired grant (refresh fails) -> the failure reply
+// carries the reconnect card AND the pending upload survives; after
+// a reconnect the same "cheyu" completes the SAME pending upload.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`histcount:${USER}`, "1");
+  await w.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, job: "jobx1", title: "Cats", topic: "cats", state: "done", has_result: true, at: Date.now(), yt: null, ig: null }));
+  await w.kv.put(`upl:jobx1`, "fakevideobytes");
+  await seedYt(w, [{ id: "g1", email: "a@example.com", ytChannel: "Chan One", ytChannelId: "chan1", ytNoChannel: false, gmail: false, yt: true, state: "ok", at: Date.now() }], "g1", { g1: { access_token: "tok-stale", refresh_token: "rt", at: Date.now() - 7200e3, expires_in: 3600, who: 'channel "Chan One"' } });
+  ytStub.refreshFails = true;
+  await send(w, "upload video 1 to YouTube");
+  const r = await send(w, "cheyu");
+  scoreState("S35", "expired outcome is named honestly", /expire/i.test(r.join(" ")));
+  scoreState("S35", "reconnect card attached to the failure", cards.some(c => c.ids.some(i => i.includes("conn:youtube"))));
+  scoreState("S35", "pending upload survives the failure", !!(await w.kv.get(`uppend:${USER}`)));
+  scoreState("S35", "no upload attempted on a dead token", ytStub.sessionCalls === 0);
+  // the reconnect lands (fresh grant, same account) — the SAME
+  // pending upload now posts on the next "cheyu".
+  await w.kv.put(`tok:${USER}:youtube`, JSON.stringify(freshTok('channel "Chan One"')));
+  const idx = JSON.parse((await w.kv.get(`gaccts:${USER}`)) || "{}"); idx.list[0].state = "ok"; await w.kv.put(`gaccts:${USER}`, JSON.stringify(idx));
+  const r2 = await send(w, "cheyu");
+  scoreState("S35", "same pending upload completes after reconnect", /watch\?v=vid123/.test(r2.join(" ")));
+  scoreState("S35", "pending cleared after the success", !(await w.kv.get(`uppend:${USER}`)));
+}
+// S36 — audit #6: quota 403 -> the honest quota line, no retry loop,
+// pending upload kept.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`histcount:${USER}`, "1");
+  await w.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, job: "jobx1", title: "Cats", topic: "cats", state: "done", has_result: true, at: Date.now(), yt: null, ig: null }));
+  await w.kv.put(`upl:jobx1`, "fakevideobytes");
+  await seedYt(w, [{ id: "g1", email: "a@example.com", ytChannel: "Chan One", ytChannelId: "chan1", ytNoChannel: false, gmail: false, yt: true, state: "ok", at: Date.now() }], "g1", { g1: freshTok('channel "Chan One"') });
+  ytStub.uploadMode = "quota";
+  await send(w, "upload video 1 to YouTube");
+  const r = await send(w, "cheyu");
+  scoreState("S36", "quota answered as its own fact (try tomorrow)", /quota/i.test(r.join(" ")) && /repu/.test(r.join(" ")));
+  scoreState("S36", "no retry loop (one session call)", ytStub.sessionCalls === 1 && ytStub.transferCalls === 0);
+  scoreState("S36", "pending kept after quota", !!(await w.kv.get(`uppend:${USER}`)));
+  scoreState("S36", "Google's raw message never surfaces", !/request cannot be completed/i.test(r.join(" ")));
+}
+// S37 — audit #7: the RUNNER leg — a WA-sent video too big for KV
+// (media pointer only) dispatches a ytupload job carrying the media
+// id + a minted token (never in chat); runner progress posts become
+// WA lines; the terminal post sends the link, stamps history and
+// settles the pending upload. A runner failure names its stage.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`histcount:${USER}`, "1");
+  await w.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, job: "stagebig", title: "Big WA video", topic: "Big WA video", kind: "upload", src: "wa-upload", state: "done", has_result: false, size: 50000000, mediaId: "wamid-big", at: Date.now(), yt: null, ig: null }));
+  await seedYt(w, [{ id: "g1", email: "a@example.com", ytChannel: "Chan One", ytChannelId: "chan1", ytNoChannel: false, gmail: false, yt: true, state: "ok", at: Date.now() }], "g1", { g1: freshTok('channel "Chan One"') });
+  await send(w, "upload video 1 to YouTube");
+  const r = await send(w, "cheyu");
+  scoreState("S37", "runner leg announced as started", /upload start ayyindhi/.test(r.join(" ")));
+  let ytJob = null, ytJobId = null;
+  for (const k of w.kv.m.keys()) if (k.startsWith("job:")) { const rec = JSON.parse(w.kv.m.get(k)); if (rec.mode === "ytupload") { ytJob = rec; ytJobId = k.slice(4); } }
+  scoreState("S37", "ytupload job record created", !!ytJob);
+  scoreState("S37", "job carries the media id + metadata", !!ytJob && ytJob.media_id === "wamid-big" && ytJob.yt_meta && ytJob.yt_meta.privacy === "unlisted");
+  scoreState("S37", "job carries the minted token", !!ytJob && ytJob.yt_token === "tok-fresh");
+  scoreState("S37", "token never appears in chat", !outbox.some(o => /tok-fresh/.test(o.text || "")));
+  scoreState("S37", "edit workflow dispatched for the job", dispatches.some(d => d.url.includes("edit.yml") && d.inputs && d.inputs.job === ytJobId));
+  scoreState("S37", "pending kept while the runner works", !!(await w.kv.get(`uppend:${USER}`)));
+  const p1 = await ytRunnerPost(w, ytJobId, { state: "progress", pct: 30 });
+  scoreState("S37", "progress 25% line relayed", /25%/.test(p1.join(" ")));
+  const p2 = await ytRunnerPost(w, ytJobId, { state: "progress", pct: 55 });
+  scoreState("S37", "progress 50% line relayed", /50%/.test(p2.join(" ")));
+  const p3 = await ytRunnerPost(w, ytJobId, { state: "done", videoId: "runnervid1" });
+  scoreState("S37", "final watch link sent", /watch\?v=runnervid1/.test(p3.join(" ")));
+  const after = JSON.parse((await w.kv.get(`hist:${USER}:1`)) || "{}");
+  scoreState("S37", "history stamped by the runner leg", !!after.yt && after.yt.videoId === "runnervid1");
+  scoreState("S37", "pending settled at terminal", !(await w.kv.get(`uppend:${USER}`)));
+  const w2 = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w2.kv.put(`histcount:${USER}`, "1");
+  await w2.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, job: "stagebig", title: "Big WA video", topic: "Big WA video", kind: "upload", src: "wa-upload", state: "done", has_result: false, size: 50000000, mediaId: "wamid-big", at: Date.now(), yt: null, ig: null }));
+  await seedYt(w2, [{ id: "g1", email: "a@example.com", ytChannel: "Chan One", ytChannelId: "chan1", ytNoChannel: false, gmail: false, yt: true, state: "ok", at: Date.now() }], "g1", { g1: freshTok('channel "Chan One"') });
+  await send(w2, "upload video 1 to YouTube");
+  await send(w2, "cheyu");
+  let ytJobId2 = null;
+  for (const k of w2.kv.m.keys()) if (k.startsWith("job:")) { const rec = JSON.parse(w2.kv.m.get(k)); if (rec.mode === "ytupload") ytJobId2 = k.slice(4); }
+  const pf = await ytRunnerPost(w2, ytJobId2, { state: "failed", stage: "transfer", kind: "error", error: "network down" });
+  scoreState("S37b", "runner failure names the stage + channel", /transfer stage/.test(pf.join(" ")) && /Chan One/.test(pf.join(" ")));
+  scoreState("S37b", "pending kept after a runner failure", !!(await w2.kv.get(`uppend:${USER}`)));
+}
+// S38 — audit #8: app-chat parity — the same sequence through
+// /api/chat (appTalk) reaches the same chatUpload flow: confirm
+// summary, then "cheyu" posts and the reply carries the link.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`sess:${"a".repeat(48)}`, USER);
+  await w.kv.put(`histcount:${USER}`, "1");
+  await w.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, job: "jobx1", title: "Cats", topic: "cats", state: "done", has_result: true, at: Date.now(), yt: null, ig: null }));
+  await w.kv.put(`upl:jobx1`, "fakevideobytes");
+  await seedYt(w, [{ id: "g1", email: "a@example.com", ytChannel: "Chan One", ytChannelId: "chan1", ytNoChannel: false, gmail: false, yt: true, state: "ok", at: Date.now() }], "g1", { g1: freshTok('channel "Chan One"') });
+  const a1 = await appChat(w, "upload video 1 to YouTube");
+  scoreState("S38", "app confirm names channel + privacy", /Chan One/.test(a1.reply || "") && /Privacy: unlisted/.test(a1.reply || ""));
+  const a2 = await appChat(w, "cheyu");
+  scoreState("S38", "app cheyu posts, link in the reply", /watch\?v=vid123/.test(a2.reply || ""));
+  scoreState("S38", "same resumable path (1 session + 1 transfer)", ytStub.sessionCalls === 1 && ytStub.transferCalls === 1);
 }
 
 const byFlag = {};
