@@ -22,8 +22,8 @@ const code = [rx,
   extract("isStopIntent"), extract("isBareStop"), extract("isCreateOrder"),
   extract("isNoVideoEditOrder"), extract("isNewTopicOrder"), extract("isHowQuestion"),
   extract("howProcessReply"), extract("setupGuideReply"), extract("brainDownReply"),
-  extract("waChatAnswer"),
-  "return { isStopIntent, isBareStop, isCreateOrder, isNoVideoEditOrder, isNewTopicOrder, isHowQuestion, howProcessReply, setupGuideReply, brainDownReply, waChatAnswer };"
+  extract("isRefusalText"), extract("waChatAnswer"),
+  "return { isStopIntent, isBareStop, isCreateOrder, isNoVideoEditOrder, isNewTopicOrder, isHowQuestion, howProcessReply, setupGuideReply, brainDownReply, isRefusalText, waChatAnswer };"
 ].join("\n");
 const F = new Function("chatWithFallback", code)(chatWithFallback);
 

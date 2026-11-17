@@ -1661,6 +1661,7 @@ def wait_for_auth_form(page, cfg, timeout_s=60):
     Returns a controls dict, or None if no auth control ever appeared."""
     progress("running", "signin-page", f"{cfg['name']} sign-in page load avthondhi…", page.url)
     deadline = time.time() + timeout_s
+    clicked_cta = False
     while time.time() < deadline:
         ctrls = {
             "email": _visible(page, _AUTH_EMAIL),
@@ -1671,6 +1672,17 @@ def wait_for_auth_form(page, cfg, timeout_s=60):
             return ctrls
         if check_stop():
             return {"stopped": True}
+        if not clicked_cta and time.time() > deadline - timeout_s + 14:
+            clicked_cta = True
+            # v112: some providers' cfg url is the product ROOT — the
+            # auth form lives behind a Log in / Sign up button there.
+            # SambaNova, NVIDIA and AI21 burned the whole 60s+30s wait
+            # staring at a landing page and failed "form kanipinchaledu"
+            # without ever opening the form. Click the entry CTA once.
+            click(page, ["a:has-text('Log in')", "button:has-text('Log in')",
+                         "a:has-text('Sign in')", "button:has-text('Sign in')",
+                         "a:has-text('Sign up')", "button:has-text('Sign up')",
+                         "a:has-text('Get started')", "button:has-text('Get started')"])
         page.wait_for_timeout(2000)
     return None
 
@@ -2216,6 +2228,18 @@ def _fill_identity_fields(page, job):
         pass
 
 
+def door_blocked_fail(job, name):
+    """v112 (Google-door circuit breaker): the Worker marks a job
+    doorBlocked when an earlier provider in the SAME chain already
+    burned a full sign-in pause (paused-signin). Later Google-door
+    providers then fail in seconds with the class reason instead of
+    serially burning 15 minutes each — ONE Take Control Google
+    sign-in unblocks the whole class on the retry pass."""
+    if job.get("doorBlocked"):
+        return _fail(f"{name} — Google sign-in door: ee chain lo mundhu provider ke sign-in pause expire ayyindhi. Okka Take Control Google sign-in ayyaka ivi kuda avuthayi — ippudu skip chesthunna (step: sign-in).", extra={"no_retry": True})
+    return None
+
+
 def flow_email_signup(page, job, cfg):
     """Email-signup flow, v39: detect the rendered auth page first.
 
@@ -2262,6 +2286,9 @@ def flow_email_signup(page, job, cfg):
     if mode == "sso-only":
         # The page offers ONLY Google/GitHub/SSO — the runner has no
         # session to sign in with. Surface the step, do not fill blindly.
+        dbf = door_blocked_fail(job, name)
+        if dbf:
+            return dbf
         progress("running", "signin", f"{name} — sign-in page lo Google/GitHub matrame undhi.", page.url)
         if not pause_for_signin(page, cfg):
             return _stopped()
@@ -2359,7 +2386,14 @@ def flow_email_signup(page, job, cfg):
     else:
         err = _submit_error(page)
         if err:
-            return _fail(f"{cfg['name']} signup error: {err} (step: signup form).")
+            # v112: some SPAs create the account AND still show a banner
+            # (a secondary step failed, or the banner is stale) — if a
+            # session actually landed, continue to key creation instead
+            # of failing a working signup on the banner's words.
+            if _verify_signed_in(page, cfg, cfg["name"]):
+                progress("running", "api-key", f"{cfg['name']} session land ayyindhi — banner unna kuda key create chesthunna.", page.url)
+            else:
+                return _fail(f"{cfg['name']} signup error: {err} (step: signup form).")
     # The account may already exist: the page says so instead of signing
     # up. First try signing in with the job's password (an auto-provision
     # run reuses the sealed setup password, so this usually just works).
@@ -2371,6 +2405,9 @@ def flow_email_signup(page, job, cfg):
         else:
             if check_stop():
                 return _stopped()
+            dbf = door_blocked_fail(job, name)
+            if dbf:
+                return dbf
             if not pause_for_signin(page, cfg, note=f"{name} account already undhi — browser lo open chesi sign in cheyu, tarvatha Continue nokku, migilina anni nene chestha."):
                 return _stopped()
             if check_stop():
@@ -2444,6 +2481,9 @@ def flow_google(page, job, cfg):
     page.wait_for_timeout(2500)
     click(page, ["button:has-text('Sign in')", "a:has-text('Sign in')", "button:has-text('Get started')"])
     page.wait_for_timeout(3000)
+    dbf = door_blocked_fail(job, cfg["name"])
+    if dbf:
+        return dbf
     progress("paused", "google-signin", GOOGLE_PAUSE_MSG, page.url)
     if wait_pause():
         return _stopped()
@@ -2812,6 +2852,9 @@ def flow_pexels(page, job, cfg):
         click(page, ["button:has-text('Continue with Google')", "a:has-text('Continue with Google')",
                      "button:has-text('Google')", "a:has-text('Google')"])
         page.wait_for_timeout(3000)
+        dbf = door_blocked_fail(job, name)
+        if dbf:
+            return dbf
         if PROFILE_MODE:
             resumed = take_control(page, job, cfg)
         else:
@@ -3703,6 +3746,9 @@ def flow_kaggle(page, job, cfg):
             # SSO-only shell: the Google door is the only way in and it
             # needs the user's own sign-in in this browser.
             if _any_visible(page, _AUTH_SSO):
+                dbf = door_blocked_fail(job, name)
+                if dbf:
+                    return dbf
                 progress("paused", "signin", SIGNIN_PAUSE_MSG(name), page.url, reason="signin")
                 if wait_pause():
                     return _stopped()
@@ -3883,9 +3929,15 @@ def flow_jina(page, job, cfg):
     if key:
         return _ok(key=key)
     # No key on display — the page may want a sign-in first.
-    if _visible(page, ["a:has-text('Log in')", "button:has-text('Log in')", "a:has-text('Sign in')", "button:has-text('Sign in')"]):
+    # v112: login detection widened — today's run found no key AND
+    # missed the page's actual login control (href-based / "Log In"
+    # casing), so it dead-ended instead of taking the sign-in branch.
+    _JINA_LOGIN = ["a:has-text('Log in')", "button:has-text('Log in')", "a:has-text('Sign in')", "button:has-text('Sign in')",
+                   "a:has-text('Log In')", "button:has-text('Log In')", "a:has-text('Login')", "button:has-text('Login')",
+                   "a[href*='login']", "a[href*='sign-in']", "a[href*='signin']"]
+    if _visible(page, _JINA_LOGIN):
         progress("paused", "signin", f"{name} — key chupinchataniki sign-in kavali, aa okka step nuvve cheyyi.", page.url)
-        click(page, ["a:has-text('Log in')", "button:has-text('Log in')", "a:has-text('Sign in')", "button:has-text('Sign in')"])
+        click(page, _JINA_LOGIN)
         page.wait_for_timeout(2500)
         if PROFILE_MODE:
             resumed = take_control(page, job, cfg)
@@ -4123,6 +4175,11 @@ def run_provider(browser, job, cfg, provider):
             progress("failed", "error", last["error"], "")
         finally:
             close_context(ctx)
+        # v112: EVERY flow result is printed — today's chain failed 23/23
+        # and most Actions logs were silent because flows return their
+        # reason as data and nothing ever printed it. A future failure
+        # must be diagnosable from the run log alone.
+        print(f"flow result {provider} attempt {attempt}: {last.get('status')} — {str(last.get('error') or '')[:300]}", flush=True)
         if last["status"] in ("done", "stopped"):
             return last
         # v39 C7: a verification-resume failure must NOT retry — retrying
