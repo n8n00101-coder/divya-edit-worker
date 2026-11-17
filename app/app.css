@@ -236,7 +236,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 
 .toast{position:absolute;left:50%;bottom:calc(24px + var(--sab));transform:translate(-50%,20px);background:var(--text);color:var(--bg);padding:11px 16px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;transition:all .25s;max-width:90%;text-align:center;z-index:40}
 .toast.show{opacity:1;transform:translate(-50%,0)}
-.sheet-bg{position:absolute;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;justify-content:center;z-index:30;animation:fade .2s}
+.sheet-bg{position:absolute;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:flex-end;justify-content:center;z-index:90;animation:fade .2s} /* v106: 30 -> 90 — the sheet must sit ABOVE the floating composer (z 70): at 30 the composer bar cut across the sheet on the chat screen, hiding its text and half-covering its buttons (parity sweep screenshot). Still below the live view (400) and toast (600). */
 .sheet{background:var(--bg);width:100%;max-width:520px;border-radius:22px 22px 0 0;padding:22px 20px calc(20px + var(--sab));animation:up .25s ease;display:flex;flex-direction:column;gap:16px;line-height:1.5;border:1px solid var(--line)}
 .sheet p{margin:0;white-space:pre-line}
 .sheet-btns{display:flex;gap:10px}.sheet-btns .btn{flex:1}
@@ -701,3 +701,9 @@ body.kb-open .composer-wrap{bottom:calc(6px + var(--sab))}
 .attach-chip,.rec-bar{background:rgba(28,28,30,.72);backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);border:1px solid rgba(255,255,255,.14);color:#f5f5f7}
 [data-theme="light"] .attach-chip,[data-theme="light"] .rec-bar{background:rgba(255,255,255,.72);border-color:rgba(0,0,0,.09);color:#1c1c1e}
 @media (prefers-color-scheme: light){ [data-theme="auto"] .attach-chip,[data-theme="auto"] .rec-bar{background:rgba(255,255,255,.72);border-color:rgba(0,0,0,.09);color:#1c1c1e} }
+
+/* v105 (Take Control smoothness): the control key rows carry the extra
+   keys (Backspace / Tab / scroll) — let them wrap instead of squeezing
+   the type box off-screen on a phone. */
+.tc-panel .keyrow, .liveview .keyrow{flex-wrap:wrap}
+.tc-panel .keyrow .keyfield, .liveview .keyrow .keyfield{flex:1 1 45%;min-width:120px}

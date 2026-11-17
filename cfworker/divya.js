@@ -1169,11 +1169,26 @@ async function playbookGuard(env, ans, lang) {
 // the job record, runner-only like smsCode — setup/status strips it
 // via stripJobSecrets). One active ask per job: the value must carry
 // the CURRENT ask's id, inside its TTL, and an ask accepts one value.
-async function setupDeliverUserInput(env, n, rawValue) {
+// v106 (Muse parity): the ONE job currently waiting on this user's
+// in-chat answer. The setup chain's current job wins; a paused BROWSE
+// job is the fallback — before v106 a browse runner could post an ask
+// (the progress handler stores `awaiting` on any job) but the answer
+// routing only ever looked at the chain, so a code the user typed in
+// chat for a browse task vanished and the run timed out.
+async function awaitingJobFor(env, n) {
   const chain = parseRec(await env.KV.get(`setupchain:${n}`));
-  if (!chain || !chain.current) return { ok: false, error: "no-ask" };
-  const j = parseRec(await env.KV.get(`setupjob:${chain.current}`));
-  if (!j || !j.awaiting) return { ok: false, error: "no-ask" };
+  if (chain && chain.current) {
+    const j = parseRec(await env.KV.get(`setupjob:${chain.current}`));
+    if (j && j.awaiting) return { id: chain.current, j };
+  }
+  const bj = await browseJobFor(env, n).catch(() => null);
+  if (bj && bj.awaiting && bj.job) return { id: bj.job, j: bj };
+  return null;
+}
+async function setupDeliverUserInput(env, n, rawValue) {
+  const found = await awaitingJobFor(env, n);
+  if (!found) return { ok: false, error: "no-ask" };
+  const j = found.j;
   const aw = j.awaiting;
   if (!aw.expires || Date.now() > aw.expires) return { ok: false, error: "expired" };
   if (j.userInput && j.userInput.askId === aw.id) return { ok: false, error: "already" };
@@ -1201,7 +1216,7 @@ async function setupDeliverUserInput(env, n, rawValue) {
   }
   j.userInput = { value, askId: aw.id, at: Date.now() };
   j.upd = Date.now();
-  await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
+  await env.KV.put(`setupjob:${found.id}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
   return { ok: true, provider: aw.provider || j.provider || "", kind: aw.kind };
 }
 // v103: is this chat message the answer to the waiting setup ask?
@@ -1212,15 +1227,15 @@ async function setupDeliverUserInput(env, n, rawValue) {
 async function setupAwaitingReply(env, u, text, lang) {
   const t = String(text || "").trim();
   if (!t || isStopIntent(t)) return null;
-  const chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
-  if (!chain || !chain.current) return null;
-  const j = parseRec(await env.KV.get(`setupjob:${chain.current}`));
-  if (!j || !j.awaiting || j.state !== "paused") return null;
+  const found = await awaitingJobFor(env, u.n);
+  if (!found) return null;
+  const j = found.j;
+  if (!j.awaiting || j.state !== "paused") return null;
   const aw = j.awaiting;
   if (!aw.expires || Date.now() > aw.expires) return null;
   if (j.userInput && j.userInput.askId === aw.id) return null; // delivered; the runner is resuming
   const en = lang === "en";
-  const provName = (SETUP_PROVIDERS[aw.provider] || {}).name || aw.provider || "Setup";
+  const provName = (SETUP_PROVIDERS[aw.provider] || {}).name || (aw.provider === "browse" ? "the site" : aw.provider) || "Setup";
   if (aw.kind === "otp") {
     if (!/^[0-9][0-9\s-]{2,12}$/.test(t)) return null;
     const r = await setupDeliverUserInput(env, u.n, t);
@@ -5954,7 +5969,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // Set only on the transition into paused — the runner heartbeats while
     // paused, and re-stamping it would push the guard past the real mail.
     const wasPaused = j.state === "paused";
-    j.state = "paused"; j.pauseReason = reason; j.note = setupPauseLine(reason, lang); j.upd = Date.now();
+    j.state = "paused"; j.pauseReason = reason; j.note = setupPauseLine(reason, lang); j.upd = Date.now(); if (reason === "signin" || reason === "captcha") j.tc = true; /* v105: a user-initiated Take Control pause flags the job tc so the runner fast-pumps inputs + streams frames while the user drives (was: inputs drained by check_stop polls and silently discarded) */
     if (!wasPaused) j.pausedAt = Date.now();
     await env.KV.put(`setupjob:${targetJob}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
     return { ok: true, reason, message: j.note };
@@ -5977,7 +5992,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (!targetJob) return { ok: false, error: "no job" };
     const j = parseRec(await env.KV.get(`setupjob:${targetJob}`));
     if (!j) return { ok: false, error: "no job" };
-    j.state = "running"; j.note = ""; j.pauseReason = ""; j.resumedAt = Date.now(); j.upd = Date.now();
+    j.state = "running"; j.note = ""; j.pauseReason = ""; j.tc = false; /* v105: hand-back clears the control flag */ j.resumedAt = Date.now(); j.upd = Date.now();
     delete j.pausedAt; // v40: pause over, recency guard resets for the next pause
     // v39 C7: the resume can carry what the runner needs to finish the
     // paused step — the magic-link URL (job.verifyLink, opened in the
@@ -6019,7 +6034,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     else return { ok: false, error: "bad type" };
     const qk = `tcinput:${tcJob}`;
     const q = JSON.parse((await env.KV.get(qk)) || "[]");
-    q.push(inp); while (q.length > 30) q.shift();
+    q.push(inp); while (q.length > 120) q.shift(); /* v105: cap 30 -> 120 — per-keystroke streamed typing bursts past 30 between runner polls */
     await env.KV.put(qk, JSON.stringify(q), { expirationTtl: 3600 });
     return { ok: true };
   }
@@ -6371,7 +6386,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     const goal = String((body && body.goal) || rec.task || "").slice(0, 600);
     const hist = Array.isArray(body && body.history) ? body.history.slice(-8) : [];
     const elines = (Array.isArray(snap.elements) ? snap.elements : []).map(e => `${e.i}: <${e.tag}${e.type ? " type=" + e.type : ""}> ${String(e.label || "").slice(0, 80)}${e.href ? " -> " + String(e.href).slice(0, 120) : ""}`).join("\n");
-    const sys = "You are Julie's browser driver. You operate a real web browser ONE step at a time for the user's task. Reply with exactly ONE JSON object and no other text. Allowed actions: {\"action\":\"goto\",\"url\":\"https://...\"} | {\"action\":\"click\",\"i\":N} | {\"action\":\"type\",\"i\":N,\"text\":\"...\",\"submit\":true|false} | {\"action\":\"select\",\"i\":N,\"value\":\"...\"} | {\"action\":\"scroll\",\"dy\":600} | {\"action\":\"back\"} | {\"action\":\"wait\",\"ms\":1500} | {\"action\":\"human\",\"reason\":\"signin\"} (only when a sign-in, captcha or payment step truly needs the user personally) | {\"action\":\"done\",\"answer\":\"...\"} | {\"action\":\"fail\",\"reason\":\"...\"}. Rules: use ONLY the element indices listed; never invent links, page content or facts — the done answer may only state what the VISIBLE TEXT actually showed; if a cookie banner is visible, dismiss it first by clicking its reject/accept button; prefer the fewest steps; read the page text before answering questions about it; NEVER type passwords, card numbers, OTP codes or other secrets — use human for those steps; if the page shows a bot check or an error wall, use human (reason signin) instead of retrying.";
+    const sys = "You are Julie's browser driver. You operate a real web browser ONE step at a time for the user's task. Reply with exactly ONE JSON object and no other text. Allowed actions: {\"action\":\"goto\",\"url\":\"https://...\"} | {\"action\":\"click\",\"i\":N} | {\"action\":\"type\",\"i\":N,\"text\":\"...\",\"submit\":true|false} | {\"action\":\"select\",\"i\":N,\"value\":\"...\"} | {\"action\":\"scroll\",\"dy\":600} | {\"action\":\"back\"} | {\"action\":\"wait\",\"ms\":1500} | {\"action\":\"ask\",\"kind\":\"otp\",\"i\":N,\"prompt\":\"...\"} (the page is asking for a verification / OTP code: Julie asks the user in chat and types the code into element i herself — ALWAYS use ask for codes, never human) | {\"action\":\"ask\",\"kind\":\"field\",\"field\":\"phone\",\"i\":N,\"prompt\":\"...\"} (one detail only the user knows is missing — same chat ask, typed into element i) | {\"action\":\"human\",\"reason\":\"signin\"} (only when a sign-in, captcha or payment step truly needs the user personally) | {\"action\":\"done\",\"answer\":\"...\"} | {\"action\":\"fail\",\"reason\":\"...\"}. Rules: use ONLY the element indices listed; never invent links, page content or facts — the done answer may only state what the VISIBLE TEXT actually showed; if a cookie banner is visible, dismiss it first by clicking its reject/accept button; prefer the fewest steps; read the page text before answering questions about it; NEVER invent or type passwords, card numbers or other secrets yourself: for a verification / OTP code use ask (the user tells Julie in chat, Julie enters it); for passwords, sign-ins, captchas and payments use human; if the page shows a bot check or an error wall, use human (reason signin) instead of retrying.";
     const usr = `TASK: ${goal}\n\nPAGE TITLE: ${String(snap.title || "").slice(0, 200)}\nURL: ${String(snap.url || "").slice(0, 400)}\n${snap.cookie_banner ? "NOTE: a cookie/consent banner is visible on this page.\n" : ""}VISIBLE TEXT:\n${String(snap.text || "").slice(0, 4500)}\n\nINTERACTIVE ELEMENTS:\n${elines || "(none visible)"}\n\nHISTORY (oldest first):\n${hist.map(hh => `- ${hh.action} ${hh.arg || ""} => ${hh.result || ""}`).join("\n") || "(start of task)"}\n\nNext action (ONE JSON object only):`;
     const out = await chatWithFallback(env, { n: rec.user }, [{ role: "system", content: sys }, { role: "user", content: usr }]).catch(() => "");
     const m = out && out.match(/\{[\s\S]*\}/);
