@@ -64,8 +64,8 @@ check("live poll is adaptive (700ms controlling / 1200ms watching)",
 check("in-chat TC poll at 800ms", /setTimeout\(fetchFrame, 800\)/.test(src));
 check("Take button label flips to Hand back while controlling",
   /handBack/.test(src) && /tc\.textContent = liveCtl/.test(src) || /tk\.textContent = liveCtl/.test(src));
-check("key-button rows injected into both TC panels + live view",
-  (src.match(/TC_KEY_BTNS\("/g) || []).length >= 3);
+check("key-button rows injected into the setup TC panel + live view (v106: the browse card carries none — Muse element parity)",
+  (src.match(/TC_KEY_BTNS\("/g) || []).length >= 2);
 
 console.log();
 if (fails) { console.log("TC APP RIG: " + fails + " FAILURES"); process.exit(1); }

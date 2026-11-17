@@ -14,7 +14,7 @@ interactive elements — each tagged with a data-julie-idx the runner
 can resolve back to a real element), POSTs it to
 /api/setup/runner/brainstep, and executes the ONE JSON action the
 Worker's brain returns (goto / click / type / select / scroll / back /
-wait / done / fail / human). Element targeting is by INDEX from the
+wait / ask / done / fail / human). Element targeting is by INDEX from the
 snapshot — never by a selector the model invents — so a click either
 lands on a real visible element or the step reports exactly why not.
 
@@ -406,6 +406,53 @@ def run_browse(page, job):
             if not S.take_control(page, S.get_job(), cfg):
                 return "failed", "Take Control step complete avvaledu (time out / stopped)."
             history.append({"action": "human", "result": "user completed the step via Take Control"})
+            continue
+        if kind == "ask":
+            # v106 (Muse parity / blind-first): a verification code or
+            # one missing detail is asked IN CHAT (the v103 awaiting
+            # protocol) and Julie types the answer into the page herself
+            # — the user never has to find or work the field, which is
+            # what makes this completable by a user who cannot see the
+            # screen. The value is typed with real key events (OTP
+            # auto-advance fires) and is NEVER written into history
+            # (history goes to the brain), the result, or any log.
+            akind = str(action.get("kind") or "otp").lower()
+            if akind not in ("otp", "field"):
+                akind = "otp"
+            prompt = str(action.get("prompt") or "").strip()
+            if not prompt:
+                prompt = ("Nee phone ki vachina verification code ni ikkada cheppu — nenu enter chestha."
+                          if akind == "otp" else "Oka detail kavali — ikkada cheppu, nenu enter chestha.")
+            r = S.await_user_input(page, akind, prompt,
+                                   field=(str(action.get("field") or "")[:40] or None))
+            if r.get("stopped"):
+                return "stopped", ""
+            if r.get("timeout"):
+                history.append({"action": "ask", "result": "user did not answer in time — ask again or use human"})
+                continue
+            val = str(r.get("value") or "")
+            entered = False
+            idx = action.get("i")
+            if idx is not None and val:
+                el = el_by_idx(page, int(idx))
+                if el is not None:
+                    try:
+                        el.scroll_into_view_if_needed(timeout=3000)
+                    except Exception:
+                        pass
+                    S._cursor_to(page, el)
+                    try:
+                        el.click(timeout=5000)
+                    except Exception:
+                        pass
+                    try:
+                        page.keyboard.type(val, delay=60)
+                        entered = True
+                    except Exception:
+                        entered = False
+                    page.wait_for_timeout(600)
+            history.append({"action": "ask", "result": "user answered in chat; Julie entered it into the field (value hidden)" if entered else "user answered in chat (value hidden); no field was typed into"})
+            S.progress("running", f"step-{steps}", "Answer enter chesa — continue chesthunna", page.url)
             continue
         # Execute one browser action.
         label = step_label(action, snap)
