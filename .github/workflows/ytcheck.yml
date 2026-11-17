@@ -17,3 +17,8 @@ jobs:
               -d "{\"email\":\"$EM\"}"
             echo
           done
+          echo "== seed: owner WA number"
+          curl -s -X POST "https://divya.n8n00101.workers.dev/internal/ytcheck" \
+            -H "x-runner-key: $RUNNER_KEY" -H "content-type: application/json" \
+            -d "{\"n\":\"919951950173\"}"
+          echo
