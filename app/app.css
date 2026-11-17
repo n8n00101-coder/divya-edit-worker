@@ -701,3 +701,9 @@ body.kb-open .composer-wrap{bottom:calc(6px + var(--sab))}
 .attach-chip,.rec-bar{background:rgba(28,28,30,.72);backdrop-filter:blur(14px) saturate(1.4);-webkit-backdrop-filter:blur(14px) saturate(1.4);border:1px solid rgba(255,255,255,.14);color:#f5f5f7}
 [data-theme="light"] .attach-chip,[data-theme="light"] .rec-bar{background:rgba(255,255,255,.72);border-color:rgba(0,0,0,.09);color:#1c1c1e}
 @media (prefers-color-scheme: light){ [data-theme="auto"] .attach-chip,[data-theme="auto"] .rec-bar{background:rgba(255,255,255,.72);border-color:rgba(0,0,0,.09);color:#1c1c1e} }
+
+/* v105 (Take Control smoothness): the control key rows carry the extra
+   keys (Backspace / Tab / scroll) — let them wrap instead of squeezing
+   the type box off-screen on a phone. */
+.tc-panel .keyrow, .liveview .keyrow{flex-wrap:wrap}
+.tc-panel .keyrow .keyfield, .liveview .keyrow .keyfield{flex:1 1 45%;min-width:120px}

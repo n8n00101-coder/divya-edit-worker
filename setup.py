@@ -601,6 +601,7 @@ def check_stop():
     """
     deadline = time.time() + 1800
     pause_since = None
+    last_beat = 0.0
     while True:
         j = get_job()
         st = j.get("state", "")
@@ -615,8 +616,19 @@ def check_stop():
             budget = PAUSE_SKIP_S.get(kind)
             if budget and time.time() - pause_since > budget:
                 raise PauseExpired(kind)
-            heartbeat()
-            time.sleep(30)
+            # v105: NEVER discard what this poll drained — if the user
+            # is driving (tc-flagged pause, or inputs actually arrived),
+            # apply them to the live page and stream fast frames on a
+            # 0.8s cadence. A plain pause keeps the v95 30s heartbeat
+            # cadence exactly as before.
+            applied = tc_pump(_CUR.get("page"), j)
+            driving = bool(j.get("tc")) or applied > 0
+            if driving and _CUR.get("page") is not None:
+                tc_post_frame(_CUR["page"], fast=True)
+            if time.time() - last_beat > 29 or not driving:
+                heartbeat()
+                last_beat = time.time()
+            time.sleep(0.8 if driving else 30)
             if time.time() > deadline:
                 return True
             continue
@@ -696,6 +708,7 @@ def await_user_input(page, kind, prompt, field=None, ttl_s=None, attempt=1):
     progress("paused", step, str(prompt)[:300], (page.url if page is not None else "") or "",
              awaiting=awaiting)
     deadline = time.time() + ttl
+    last_beat = 0.0
     while True:
         j = get_job()
         if str(j.get("state") or "") == "stopped":
@@ -708,8 +721,20 @@ def await_user_input(page, kind, prompt, field=None, ttl_s=None, attempt=1):
             return {"value": value}
         if time.time() >= deadline:
             return {"timeout": True}
-        heartbeat()
-        time.sleep(10)
+        # v105: this loop used to poll every 10s, post NO frames (the
+        # live view froze for the whole OTP/field ask) and silently
+        # discard any Take Control inputs the poll drained. Now: pump
+        # drained inputs into the live page, stream fast frames while
+        # the ask is open (change-only — a static screen costs no KV
+        # writes), poll every 2s so a chat answer also lands faster,
+        # heartbeat throttled to ~24s as before in spirit.
+        if page is not None:
+            tc_pump(page, j)
+            tc_post_frame(page, fast=True)
+        if time.time() - last_beat > 24:
+            heartbeat()
+            last_beat = time.time()
+        time.sleep(2)
 
 
 def await_captcha_gate(page, job, cfg, prompt):
@@ -1738,7 +1763,7 @@ TC_PAUSE_MSG = "Sign-in okkasari nuvve cheyyi — Divya browser screen ikkade ap
 _TC_FRAME_LAST = {"at": 0.0, "hash": ""}
 
 
-def tc_post_frame(page, force=False):
+def tc_post_frame(page, force=False, fast=False):
     """Stream one screenshot of the live browser to the Worker (the app
     shows it to the user during Take Control). Best-effort: a failed
     frame never breaks the pause.
@@ -1749,12 +1774,19 @@ def tc_post_frame(page, force=False):
     sends nothing.
     v88 (H2): force=True (stepwise scroll / cursor travel) relaxes the
     throttle to >=0.9s so a viewer can actually watch the work happen,
-    still change-only so a static screen costs nothing."""
+    still change-only so a static screen costs nothing.
+    v105 (Take Control smoothness — Ajju 2026-11-17, Muse benchmark):
+    fast=True is the ACTIVE Take Control mode — the user is driving
+    right now, so the throttle relaxes to >=0.35s (~3 fps ceiling) at a
+    slightly lower JPEG quality. Change-only still applies, so a static
+    screen costs nothing; the v50 quota disaster came from UNATTENDED
+    streaming, and fast mode only ever runs inside a user-driven wait
+    loop (take_control / a tc-flagged pause), never during normal work."""
     try:
         now = time.time()
-        if now - _TC_FRAME_LAST["at"] < (0.9 if force else 2.5):
+        if now - _TC_FRAME_LAST["at"] < (0.35 if fast else (0.9 if force else 2.5)):
             return
-        shot = page.screenshot(type="jpeg", quality=55)
+        shot = page.screenshot(type="jpeg", quality=(42 if fast else 55))
         import hashlib
         digest = hashlib.sha256(shot).hexdigest()
         if digest == _TC_FRAME_LAST["hash"]:
@@ -1792,7 +1824,34 @@ def tc_apply_inputs(page, inputs):
                     page.goto(u, wait_until="domcontentloaded", timeout=30000)
         except Exception as e:
             print("tc input failed:", t, e)
-        page.wait_for_timeout(250)
+        # v105: 250ms -> 50ms settle per input. 250ms made a streamed
+        # 4-digit OTP cost >=1s of pure settle on top of the poll lag;
+        # Playwright's own dispatch is synchronous, 50ms is enough for
+        # the page's JS (auto-advance etc.) to react before the next key.
+        page.wait_for_timeout(50)
+
+
+def tc_pump(page, job_dict):
+    """v105: apply any Take Control inputs the Worker already delivered
+    on THIS job poll (job_dict["tcInputs"]) and immediately stream the
+    resulting frame. Returns how many inputs were applied.
+
+    Why this exists: the Worker's runner/job endpoint is read-and-clear
+    — EVERY get_job() drains the input queue, but before v105 only
+    take_control() looked at the drained value. check_stop() and
+    await_user_input() fetched the job, ignored tcInputs, and the
+    user's taps/typing were silently discarded (the queue had already
+    been cleared server-side). Every wait loop now pumps what it
+    drained: an input the user sent is either applied or never lost."""
+    try:
+        inputs = (job_dict or {}).get("tcInputs") or []
+    except Exception:
+        inputs = []
+    if not inputs or page is None:
+        return 0
+    tc_apply_inputs(page, inputs)
+    tc_post_frame(page, force=True, fast=True)
+    return len(inputs)
 
 
 def take_control(page, job, cfg, escape_when=None):
@@ -1815,7 +1874,7 @@ def take_control(page, job, cfg, escape_when=None):
     dismiss_cookie_banner(page)  # v96: the user takes over a clean page, not a consent sheet
     set_pill(page, "")
     progress("paused", "google-signin", TC_PAUSE_MSG, page.url, reason="signin", tc=True)
-    tc_post_frame(page)
+    tc_post_frame(page, force=True, fast=True)
     deadline = time.time() + 1500
     last_beat = 0.0
     while time.time() < deadline:
@@ -1833,19 +1892,29 @@ def take_control(page, job, cfg, escape_when=None):
         inputs = j.get("tcInputs") or []
         if inputs:
             tc_apply_inputs(page, inputs)
-        tc_post_frame(page)
+            tc_post_frame(page, force=True, fast=True)
+        else:
+            tc_post_frame(page, fast=True)
         if st == "running":
             page.wait_for_timeout(1500)
             return True
         if time.time() - last_beat > 29:
             heartbeat()
             last_beat = time.time()
-        # v95 (DO-burn): poll 1.2s -> 3s — every poll is a get_job round-trip
-        # (several Durable Object requests on the Worker); a 25-min Take
-        # Control window fell from ~1,250 polls to ~500. tcInputs are human
-        # taps, so 3s latency is invisible; frames stay throttled + change-
-        # only inside tc_post_frame, and the 30-min watchdog is untouched.
-        time.sleep(3.0)
+        # v105 (supersedes the v95 note below for THIS loop only): the
+        # v95 change took the poll 1.2s -> 3s claiming "3s latency is
+        # invisible" for human taps — Ajju's 2026-11-17 verdict (with a
+        # Muse Take Control recording as the benchmark) is that it is
+        # anything but: 3s pickup + 2.5s frame throttle made control
+        # feel broken. While the user is ACTIVELY driving, this loop
+        # polls every 0.3s and streams fast frames (change-only, so a
+        # static screen still costs no KV writes; the reads are KV
+        # reads on the job record, the cheap budget). The v95 DO-burn
+        # discipline still governs every NON-control wait (check_stop
+        # keeps its 30s cadence unless the job is tc-flagged, progress
+        # polls elsewhere are untouched), and the 30-min watchdog is
+        # untouched.
+        time.sleep(0.3)
     print(f"take control timed out for {cfg['name']}", flush=True)
     LAST_TC_TIMEOUT = True
     return False

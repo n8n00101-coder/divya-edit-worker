@@ -4597,7 +4597,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // Set only on the transition into paused — the runner heartbeats while
     // paused, and re-stamping it would push the guard past the real mail.
     const wasPaused = j.state === "paused";
-    j.state = "paused"; j.pauseReason = reason; j.note = setupPauseLine(reason, lang); j.upd = Date.now();
+    j.state = "paused"; j.pauseReason = reason; j.note = setupPauseLine(reason, lang); j.upd = Date.now(); if (reason === "signin" || reason === "captcha") j.tc = true; /* v105: a user-initiated Take Control pause flags the job tc so the runner fast-pumps inputs + streams frames while the user drives (was: inputs drained by check_stop polls and silently discarded) */
     if (!wasPaused) j.pausedAt = Date.now();
     await env.KV.put(`setupjob:${targetJob}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
     return { ok: true, reason, message: j.note };
@@ -4612,7 +4612,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (!targetJob) return { ok: false, error: "no job" };
     const j = parseRec(await env.KV.get(`setupjob:${targetJob}`));
     if (!j) return { ok: false, error: "no job" };
-    j.state = "running"; j.note = ""; j.pauseReason = ""; j.resumedAt = Date.now(); j.upd = Date.now();
+    j.state = "running"; j.note = ""; j.pauseReason = ""; j.tc = false; /* v105: hand-back clears the control flag */ j.resumedAt = Date.now(); j.upd = Date.now();
     delete j.pausedAt; // v40: pause over, recency guard resets for the next pause
     // v39 C7: the resume can carry what the runner needs to finish the
     // paused step — the magic-link URL (job.verifyLink, opened in the
@@ -4654,7 +4654,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     else return { ok: false, error: "bad type" };
     const qk = `tcinput:${tcJob}`;
     const q = JSON.parse((await env.KV.get(qk)) || "[]");
-    q.push(inp); while (q.length > 30) q.shift();
+    q.push(inp); while (q.length > 120) q.shift(); /* v105: cap 30 -> 120 — per-keystroke streamed typing bursts past 30 between runner polls */
     await env.KV.put(qk, JSON.stringify(q), { expirationTtl: 3600 });
     return { ok: true };
   }
