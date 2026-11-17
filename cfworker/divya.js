@@ -2173,11 +2173,11 @@ async function chatUpload(env, u, text, lang, opts = {}) {
     let ytAccts = gidx3.list.filter(a => a.yt);
     if (!ytAccts.length) return { reply: en ? "YouTube is not connected yet. I'm sending the connect card — tap the YouTube row and log in." : "YouTube inka connect avvaledu. Connect card pampisthunna — YouTube row tap chesi login chesthe upload cheyagalanu.", card: "connect" };
     let healed = false;
-    for (const a of ytAccts) if (a.ytNoChannel) { const rc = await ytRecheckChannel(env, u.n, a.id).catch(() => null); if (rc && rc.ok) healed = true; }
+    for (const a of ytAccts) if (a.ytNoChannel || !a.ytChannelId) { const rc = await ytRecheckChannel(env, u.n, a.id).catch(() => null); if (rc && rc.ok) healed = true; }
     if (healed) { gidx3 = await gAccts(env, u.n); ytAccts = gidx3.list.filter(a => a.yt); }
-    const bearing = ytAccts.filter(a => a.ytChannel);
+    const bearing = ytAccts.filter(a => a.ytChannelId);
     const hinted = ytAccts.find(a => (a.ytChannel && low.includes(a.ytChannel.toLowerCase())) || (a.email && low.includes(a.email.toLowerCase())));
-    if (hinted && !hinted.ytChannel) {
+    if (hinted && !hinted.ytChannelId) {
       return { reply: en ? `That account (${hinted.email}) has no YouTube channel behind it — I re-checked just now. Create a channel on that account, or connect an account that has one (when Google asks, pick the channel identity).` : `Aa account (${hinted.email}) ki YouTube channel ledhu — ippude malli check chesa. Aa account lo channel create cheyyi, leda channel unna account connect cheyyi (Google adiginappudu channel identity select cheyyi).`, card: "connect" };
     }
     if (!bearing.length) {
@@ -2289,13 +2289,14 @@ async function doPostYoutube(env, n, o, en = false) {
   // noChannel is re-checked ONCE (the channel may exist by now); if
   // the flag stands, the upload is refused HERE with named guidance
   // and the YouTube upload endpoint is never called for it.
-  if (entry && entry.yt && !entry.ytChannel) {
+  if (entry && entry.yt && !entry.ytChannelId) {
     const rc = await ytRecheckChannel(env, n, entry.id).catch(() => null);
     if (rc && rc.ok) { const idx1 = await gAccts(env, n); entry = idx1.list.find(a => a.id === entry.id) || entry; acctId = entry.id; }
+    else if (rc && rc.kind === "expired") return { ok: false, kind: "expired", code: 400, error: en ? `The ${entry.email} YouTube connect has expired — reconnect it from the connect card, then try again.` : `Aa account (${entry.email}) YouTube connect expire ayyindhi — connect card nunchi malli connect chesi try cheyyi.` };
     else if (!o.account) {
       // No account was explicitly chosen: a channel-bearing account
       // (v97's fallback intent) wins over refusing on the default.
-      const alt = (await gAccts(env, n)).list.find(a => a.yt && a.ytChannel);
+      const alt = (await gAccts(env, n)).list.find(a => a.yt && a.ytChannelId);
       if (alt) { entry = alt; acctId = alt.id; }
       else return { ok: false, kind: "nochchannel", code: 400, error: en ? `The account ${entry.email} has no YouTube channel behind it — I re-checked just now. Create a channel on that account, or connect the account that holds your channel (pick the channel identity when Google asks), then try again.` : `Aa account (${entry.email}) ki YouTube channel ledhu — ippude malli check chesa. Aa account lo channel create cheyyi, leda nee channel unna account connect cheyyi (Google adiginappudu channel identity select cheyyi), tarvatha malli try cheyyi.` };
     }
@@ -2310,7 +2311,7 @@ async function doPostYoutube(env, n, o, en = false) {
     // honestly, so a video never lands on the wrong channel.
     // v113: channel-less accounts are skipped here too (guard above).
     const idx = await gAccts(env, n);
-    for (const a of idx.list) { if (!a.yt || !a.ytChannel) continue; const t2 = await ytToken(env, n, a.id); if (t2) { t = t2; acctId = a.id; entry = a; break; } }
+    for (const a of idx.list) { if (!a.yt || !a.ytChannelId) continue; const t2 = await ytToken(env, n, a.id); if (t2) { t = t2; acctId = a.id; entry = a; break; } }
   }
   if (!t) {
     const anyYt = (await gAccts(env, n)).list.some(a => a.yt);
@@ -3963,10 +3964,14 @@ async function waConnReply(env, user, svc) {
       for (const p of Object.keys(PROVIDERS)) { if (!toks[p] && await env.KV.get(`tok:${id}:${p}`)) toks[p] = true; }
     }
     const accts = [...gseen.values()];
-    const yt = accts.filter(a => a.yt), ytCh = yt.filter(a => a.ytChannel), ytNo = yt.filter(a => a.ytNoChannel);
+    // v114: a channel counts ONLY with a real channel ID present —
+    // a title-shaped string with no ID (the malformed legacy shape:
+    // the no-channel sentence stored as the "title") reads as
+    // no-channel, never as a channel name.
+    const yt = accts.filter(a => a.yt), ytCh = yt.filter(a => a.ytChannelId), ytNo = yt.filter(a => !a.ytChannelId);
     const gm = accts.filter(a => a.gmail);
     const L = [];
-    if (yt.length) L.push(`YouTube: ${yt.length} account${yt.length > 1 ? "s" : ""} connect ayyayi${ytCh.length ? ` — channel: ${ytCh.map(a => a.ytChannel).join(", ")}` : ""}${ytNo.length ? `${ytCh.length ? "; " : " — "}${ytNo.length} account lo YouTube channel kanipinchaledu (channel unna account connect chesthe uploads avuthayi)` : ""}.`);
+    if (yt.length) L.push(`YouTube: ${yt.length} account${yt.length > 1 ? "s" : ""} connect ayyayi${ytCh.length ? ` — channel: ${ytCh.map(a => a.ytChannel || a.email).join(", ")}` : ""}${ytNo.length ? `${ytCh.length ? "; " : " — "}${ytNo.length} account lo YouTube channel kanipinchaledu (channel unna account connect chesthe uploads avuthayi)` : ""}.`);
     if (gm.length) L.push(`Google: ${gm.length} account${gm.length > 1 ? "s" : ""} connect ayyayi (${gm.map(a => a.email).filter(Boolean).join(", ")}) — Gmail kuda chadhavagalanu.`);
     for (const p of ["instagram", "facebook", "telegram"]) if (toks[p]) L.push(`${PROVIDERS[p].title.replace(/ connect$/, "")}: connect ayyindhi.`);
     if (!L.length) return "Inka okka account kuda connect avvaledu. Connect card pampisthunna — oka row tap chesi, aa site lo login chesthe ayipothundhi.";
@@ -4243,7 +4248,7 @@ async function waStopBrowserJob(env, user) {
   const chain = parseRec(await env.KV.get(`setupchain:${user}`));
   if (chain) {
     if (chain.current) { const j = parseRec(await env.KV.get(`setupjob:${chain.current}`)); if (j && ["queued", "running", "paused"].includes(j.state)) { j.state = "stopped"; j.upd = Date.now(); await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 }); } }
-    try { const cj = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null; await env.KV.put(`setupdone:${user}`, JSON.stringify({ state: "stopped", done: chain.done || [], failed: chain.failed || [], skipped: chain.skipped || null, provider: (cj && cj.provider) || null, note: "User stopped the setup.", at: Date.now(), failReason: chain.failReason || null }), { expirationTtl: 86400 }); } catch {}
+    try { const cj = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null; const finRec = { state: "stopped", done: chain.done || [], failed: chain.failed || [], skipped: chain.skipped || null, provider: (cj && cj.provider) || null, note: "User stopped the setup.", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, user, finRec); await env.KV.put(`setupdone:${user}`, JSON.stringify(finRec), { expirationTtl: 86400 }); } catch {}
     await env.KV.delete(`setupchain:${user}`);
     did = "setup";
   }
@@ -4294,6 +4299,62 @@ async function waDeployListReply(env, user) {
   if (rec.databases.length) L.push("Databases: " + rec.databases.map(d => d.name).join(", "));
   return L.join("\n");
 }
+// ===== v114 OUTCOME JOURNAL + REBUILD (live-state fix pass) =====
+// Pre-fix, a finished chain's outcome lived in exactly ONE record —
+// setupdone:<user>, 24h TTL, written once at finalize. Live
+// 2026-11-17: the 23-provider WA chain finalized at 10:26Z — its WA
+// finalize message, the connect card after it, and the chain's
+// deletion all sit DOWNSTREAM of that write in setupStartNext, so
+// the write was issued and did not throw — yet by ~11:30Z the
+// record was gone, together with EVERY other record of that chain
+// (setupconsent 7-day TTL, upass 365-day TTL, all 23 setupjob
+// records 2-day TTL), while other accounts' same-day records and
+// this user's older records persisted. No code path in the Worker
+// deletes setupdone/setupconsent/upass (the only setupjob delete is
+// the single-job dispatch-failure path): the chain's records were
+// lost wholesale at the storage layer, and every retry trigger —
+// which read ONLY that one record — died silently with it. The
+// journal is the durable second copy: written on every terminal
+// chain outcome (finalize, watchdog stall, stop), 30-day TTL, and
+// waRetryableFailed rebuilds from it (then from surviving job
+// records) whenever setupdone is missing. A single record can
+// still be lost; the OUTCOME can no longer be.
+async function setupJournal(env, n, fin) {
+  try {
+    if (!n || !fin) return;
+    const rec = { state: fin.state || "failed", done: fin.done || [], failed: fin.failed || [], skipped: fin.skipped || null, failReason: fin.failReason || null, provider: fin.provider || null, note: fin.note || "", at: fin.at || Date.now(), journaledAt: Date.now() };
+    await env.KV.put(`setuphist:${n}`, JSON.stringify(rec), { expirationTtl: 86400 * 30 });
+  } catch {}
+}
+// Last-resort rebuild: the chain's own job records (job.chain = the
+// chain's full provider list). Only a COMPLETE cluster — every
+// provider accounted for by a terminal job in the latest cluster —
+// counts as an outcome; anything less could be a live chain's
+// remnant or a partial loss, and a retry is never armed on a guess.
+async function setupOutcomeFromJobs(env, user) {
+  try {
+    const list = await env.KV.list({ prefix: "setupjob:" });
+    const jobs = [];
+    for (const k of (list.keys || []).slice(0, 200)) {
+      const j = parseRec(await env.KV.get(k.name));
+      if (j && j.user === user && Array.isArray(j.chain) && j.chain.length) jobs.push(j);
+    }
+    if (!jobs.length) return null;
+    jobs.sort((a, b) => (b.at || 0) - (a.at || 0));
+    const newest = jobs[0];
+    const sig = JSON.stringify(newest.chain);
+    const cluster = jobs.filter(j => JSON.stringify(j.chain) === sig && Math.abs((j.at || 0) - (newest.at || 0)) < 86400e3);
+    const done = [], failed = [], failReason = {};
+    for (const j of cluster) {
+      if (j.state === "done" && !done.includes(j.provider)) done.push(j.provider);
+      if ((j.state === "failed" || j.state === "stopped") && !failed.includes(j.provider)) { failed.push(j.provider); if (j.note) failReason[j.provider] = String(j.note).slice(0, 80); }
+    }
+    const accounted = new Set([...done, ...failed]);
+    if (!newest.chain.every(id => accounted.has(id))) return null;
+    if (!failed.length) return null;
+    return { state: "failed", done, failed, skipped: null, failReason, at: newest.at || Date.now(), rebuiltFrom: "jobs" };
+  } catch { return null; }
+}
 // ===== v111 RETRY: the failed set of a finished chain =====
 // Ajju: "API keys connect avvatledhu" — the 2026-11-17 chain ended
 // with 6 failures in 3 wall classes. The retry is ONE pass over the
@@ -4308,7 +4369,9 @@ async function waDeployListReply(env, user) {
 const WA_RETRY_DOOR_PROVIDERS = ["groq", "cohere", "together", "fireworks"];
 async function waRetryableFailed(env, user) {
   if (await env.KV.get(`setupchain:${user}`)) return null; // a live chain's reporter owns status
-  const fin = parseRec(await env.KV.get(`setupdone:${user}`));
+  let fin = parseRec(await env.KV.get(`setupdone:${user}`));
+  if (!fin) fin = parseRec(await env.KV.get(`setuphist:${user}`)); // v114: the outcome journal — the durable second copy
+  if (!fin) fin = await setupOutcomeFromJobs(env, user); // v114: last resort — rebuild from the chain's surviving job records
   if (!fin) return null;
   const failed = [...(fin.failed || [])];
   for (const k of Object.keys(fin.skipped || {})) if (!failed.includes(k)) failed.push(k);
@@ -4364,7 +4427,8 @@ async function waIdentityFor(env, user, email) {
   return { name: name.slice(0, 60), phone: phone.slice(0, 20) };
 }
 async function waRetryStart(env, user, ids) {
-  const fin = parseRec(await env.KV.get(`setupdone:${user}`));
+  let fin = parseRec(await env.KV.get(`setupdone:${user}`));
+  if (!fin) fin = parseRec(await env.KV.get(`setuphist:${user}`)); // v114: same fallback as the offer — the journal carries the done set too
   const prevDone = (fin && fin.done) || [];
   const ord = id => WA_SETUP_PROVIDERS.indexOf(id);
   const retryIds = [...new Set(ids || [])].filter(id => SETUP_PROVIDERS[id] && !prevDone.includes(id)).sort((a, b) => ord(a) - ord(b));
@@ -6063,8 +6127,15 @@ async function setupWatchdog(env, n, chain) {
   // HTTP 500 (live 2026-11-12, after the TC frame stream burned the
   // day's writes). The verdict is still returned for THIS response;
   // the records are re-finalized on a later call once writes recover.
+  await setupJournal(env, n, fin); // v114: the stall outcome is journaled like every terminal outcome
   try { await env.KV.put(`setupdone:${n}`, JSON.stringify(fin), { expirationTtl: 86400 }); } catch {}
   try { await env.KV.delete(`setupchain:${n}`); } catch {}
+  // v114: a stall-finalized chain must not strand its current job in
+  // a non-terminal state — live 2026-11-15/16 left 14 resend/brevo
+  // jobs "queued" forever exactly this way (their chains were
+  // stall-finalized above them while the jobs sat queued). The job
+  // settles WITH the chain, carrying the stall reason.
+  try { cur.state = "failed"; cur.step = "stalled"; cur.note = fin.note; cur.upd = Date.now(); await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(cur), { expirationTtl: 86400 * 2 }); } catch {}
   return fin;
 }
 // v104 (chain robustness — Ajju's order after the 2026-11-16 live
@@ -6549,19 +6620,38 @@ function gAcctId(email) {
   let h = 0; for (let i = 0; i < e.length; i++) h = (h * 31 + e.charCodeAt(i)) >>> 0;
   return "a" + h.toString(36);
 }
-function gYtTitle(who) { const m = /^channel "([\s\S]*)"$/.exec(String(who || "")); return m ? m[1] : String(who || ""); }
+// v114: a channel title exists ONLY in the `channel "..."` form —
+// the two writers (oauthRoutes, gAcctSetChannel) write nothing else.
+// The old fallback returned the raw `who`, and for a channel-less
+// connect `who` IS the human sentence "(ee account lo YouTube
+// channel kanipinchaledu)" — so the sentence itself was stored and
+// read back as a channel title (live record, 2026-11-17: ytChannel
+// = that sentence, ytChannelId "", ytNoChannel false). Anything
+// that is not the pattern is NO title.
+function gYtTitle(who) { const m = /^channel "([\s\S]*)"$/.exec(String(who || "")); return m ? m[1] : ""; }
+// v114: channel truth is the channel ID. An index entry carrying a
+// title with NO ID is the malformed legacy shape (a title from
+// before IDs were stored — or the no-channel sentence itself):
+// normalize it on read to what it provably is — no channel — so
+// EVERY reader (reporter, picker, app list, upload guard) sees the
+// same truth, and the re-check heal (which fires for ID-less
+// entries) can restore a real channel with its ID.
+function gAcctsNormalize(idx) {
+  for (const a of (idx && idx.list) || []) if (a && a.yt && !a.ytChannelId) { a.ytChannel = ""; a.ytNoChannel = true; }
+  return idx;
+}
 function gTokKey(n, prov, id, def) { return id && def && id !== def ? `tok:${n}:${prov}#${id}` : `tok:${n}:${prov}`; }
 async function gAccts(env, n) {
   const idx = parseRec(await env.KV.get(`gaccts:${n}`));
-  if (idx && Array.isArray(idx.list)) return idx;
+  if (idx && Array.isArray(idx.list)) return gAcctsNormalize(idx);
   const g = parseRec(await env.KV.get(`tok:${n}:google`));
   const y = parseRec(await env.KV.get(`tok:${n}:youtube`));
   const list = [];
   if (g || y) {
     const email = (g && g.who) || "";
-    list.push({ id: gAcctId(email || (y && y.who) || "acct1"), email, ytChannel: y && !y.noChannel ? gYtTitle(y.who) : "", ytChannelId: (y && !y.noChannel && y.ytChannelId) || "", ytNoChannel: !!(y && y.noChannel), gmail: !!g, yt: !!y, state: "ok", at: (g && g.at) || (y && y.at) || 0 });
+    list.push({ id: gAcctId(email || (y && y.who) || "acct1"), email, ytChannel: y && !y.noChannel ? gYtTitle(y.who) : "", ytChannelId: (y && !y.noChannel && y.ytChannelId) || "", ytNoChannel: !!(y && (y.noChannel || !gYtTitle(y.who))), gmail: !!g, yt: !!y, state: "ok", at: (g && g.at) || (y && y.at) || 0 });
   }
-  return { list, def: list.length ? list[0].id : null };
+  return gAcctsNormalize({ list, def: list.length ? list[0].id : null });
 }
 async function gAcctsSave(env, n, idx) { try { await env.KV.put(`gaccts:${n}`, JSON.stringify(idx)); } catch {} }
 async function gAcctMarkExpired(env, n, id) {
@@ -6596,7 +6686,7 @@ async function gAcctRegister(env, n, prov, rec, email) {
   a.state = "ok"; a.at = Date.now();
   if (em && !a.email) a.email = em;
   if (prov === "google") a.gmail = true;
-  if (prov === "youtube") { a.yt = true; if (rec.noChannel) { a.ytNoChannel = true; a.ytChannel = ""; a.ytChannelId = ""; } else if (rec.who) { a.ytChannel = gYtTitle(rec.who); a.ytChannelId = rec.ytChannelId || ""; a.ytNoChannel = false; } }
+  if (prov === "youtube") { a.yt = true; const title = gYtTitle(rec.who); if (rec.noChannel || !title) { a.ytNoChannel = true; a.ytChannel = ""; a.ytChannelId = ""; } else { a.ytChannel = title; a.ytChannelId = rec.ytChannelId || ""; a.ytNoChannel = false; } }
   await env.KV.put(gTokKey(n, prov, a.id, idx.def), JSON.stringify(rec));
   await gAcctsSave(env, n, idx);
   return { ok: true, id: a.id, def: idx.def };
@@ -6959,6 +7049,28 @@ async function maybeFeedVerifyLink(env, job, chainAt) {
       delete job.pausedAt;
     } else {
       job.mailFetch = r.reason || "gmail-error";
+      // v114 (live-state fix pass): a verification-mail wait whose
+      // owner has NO viable Gmail grant can NEVER succeed — post-v112
+      // fetchVerifyLink returns no-gmail-token only after EVERY
+      // linked keyspace came back grant-less (no Gmail account in
+      // the index, or every stored token refresh-dead). That is a
+      // permanent state, not a slow inbox. Live 2026-11-17: two
+      // auto-chain Groq jobs spun to mailTries 37/38 against exactly
+      // this (one grant expired, one absent). Three dead outcomes —
+      // the 20s feed throttle spaces them, and any other outcome (a
+      // connect landing in between, a real fetch error) resets the
+      // count — fail the provider FAST with the class reason; the
+      // runner's next poll sees the terminal state and the chain
+      // advances through the normal path. Never dozens of tries.
+      if (r.reason === "no-gmail-token") {
+        job.mailDead = (job.mailDead || 0) + 1;
+        if (job.mailDead >= 3 && job.state === "paused") {
+          job.state = "failed";
+          job.note = "email verification — Gmail connect ledu leda grant expired; verification mail feed pani cheyyaledu (no viable Gmail grant)";
+          job.pauseReason = "";
+          delete job.pausedAt;
+        }
+      } else if (job.mailDead) job.mailDead = 0;
     }
     job.upd = Date.now();
     await env.KV.put(`setupjob:${job.job}`, JSON.stringify(job), { expirationTtl: 86400 * 2 });
@@ -7267,7 +7379,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // segment's per-provider terminal reasons vanished (live
     // 2026-11-16 the run was driven by stop+restart segments and the
     // reasons were lost on every rotation).
-    if (chain) { try { const cj = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null; await env.KV.put(`setupdone:${u.n}`, JSON.stringify({ state: "stopped", done: chain.done || [], failed: chain.failed || [], skipped: chain.skipped || null, provider: (cj && cj.provider) || null, note: "User stopped the setup.", at: Date.now(), failReason: chain.failReason || null }), { expirationTtl: 86400 }); } catch {} }
+    if (chain) { try { const cj = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null; const finRec = { state: "stopped", done: chain.done || [], failed: chain.failed || [], skipped: chain.skipped || null, provider: (cj && cj.provider) || null, note: "User stopped the setup.", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, u.n, finRec); await env.KV.put(`setupdone:${u.n}`, JSON.stringify(finRec), { expirationTtl: 86400 }); } catch {} }
     await env.KV.delete(`setupchain:${u.n}`);
     return { ok: true };
   }
@@ -7520,7 +7632,14 @@ async function setupStartNext(env, n) {
   // v24: record the outcome before deleting the chain — otherwise the app has
   // nothing to show when the setup ends (the mini-box just vanished).
   // v38 merge fix: if NO provider produced a key, the run failed (not done).
-  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; await env.KV.put(`setupdone:${n}`, JSON.stringify({ state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, skipped: chain.skipped || null, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, failReason: chain.failReason || null, ...fin }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${n}`);
+  if (!nextId) { const fin = await setupFinalize(env, n, chain.done); const anyKey = fin.keys && Object.keys(fin.keys).length > 0; const finRec = { state: anyKey ? "done" : "failed", done: chain.done, failed: chain.failed, skipped: chain.skipped || null, at: Date.now(), geminiVerify: chain.geminiNeedsVerify || null, failReason: chain.failReason || null, ...fin };
+    // v114: journal FIRST (durable second copy, 30-day TTL), then the
+    // finalize record VERIFIED — written, read back, and rewritten
+    // once on any mismatch, so a lost write is caught HERE instead
+    // of being discovered later as a silently dead retry arm.
+    await setupJournal(env, n, finRec);
+    for (let att = 0; att < 2; att++) { try { await env.KV.put(`setupdone:${n}`, JSON.stringify(finRec), { expirationTtl: 86400 }); const back = parseRec(await env.KV.get(`setupdone:${n}`)); if (back && back.at === finRec.at) break; } catch {} }
+    await env.KV.delete(`setupchain:${n}`);
     // v107: a WhatsApp-started chain reports its outcome IN the
     // WhatsApp chat (the owner id is the phone number) — the WA user
     // has no Setup screen to watch. Exactly once: the chain is gone.
@@ -7900,7 +8019,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
       if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80); chain.waTold = chain.waTold || {}; const remaining110 = (chain.providers || []).filter(p => !(chain.done || []).includes(p) && !chain.failed.includes(p) && !(chain.skipped || []).includes(p)); if (!chain.waTold[rec.provider] && remaining110.length && /^\d{7,15}$/.test(String(rec.user || ""))) { chain.waTold[rec.provider] = "failed"; let msg110 = waChainOutcomeText(chain, rec.provider, false, String(rec.note || "").replace(/^paused-[a-z]+\s*/i, "").slice(0, 70)); if (rec.verifyWait || rec.mailFetch) msg110 += ` Mail feed: ${waFeedReasonText(rec.mailFetch)}.`; try { await waSendText(env, String(rec.user), msg110); } catch {} if ((rec.verifyWait || rec.mailFetch === "no-gmail-token") && !(chain.feedCardAt && Date.now() - chain.feedCardAt < 30 * 60000)) { chain.feedCardAt = Date.now(); try { await connectMenu(env, String(rec.user)); } catch {} } } await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
     }
-    if (state === "stopped") { const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`)); if (chain && chain.current === job) { await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state, done: chain.done, failed: chain.failed || [], skipped: chain.skipped || null, provider: rec.provider, note: rec.note || "", at: Date.now(), failReason: chain.failReason || null }), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${rec.user}`); } }
+    if (state === "stopped") { const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`)); if (chain && chain.current === job) { const finRec = { state, done: chain.done, failed: chain.failed || [], skipped: chain.skipped || null, provider: rec.provider, note: rec.note || "", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, rec.user, finRec); await env.KV.put(`setupdone:${rec.user}`, JSON.stringify(finRec), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${rec.user}`); } }
     return Response.json({ ok: true });
   }
   if (p === "setup/runner/linkbad" && req.method === "POST") {
@@ -7992,6 +8111,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       if (tellFail) { try { await waSendText(env, waOwner, waChainOutcomeText(chain, provider, false, chain.failReason[provider])); } catch {} }
       await deferAdvance(); return Response.json({ ok: true, advanced: true }); }
     // stopped: the user stopped the setup — end the whole chain.
+    await setupJournal(env, rec.user, { state: "stopped", done: chain.done, failed: chain.failed, provider, note: rec.note || "", at: Date.now(), failReason: chain.failReason || null }); // v114
     await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state: "stopped", done: chain.done, failed: chain.failed, provider, note: rec.note || "", at: Date.now() }), { expirationTtl: 86400 });
     await env.KV.delete(`setupchain:${rec.user}`);
     return Response.json({ ok: true, advanced: false });

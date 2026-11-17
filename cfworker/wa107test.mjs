@@ -51,6 +51,7 @@ globalThis.fetch = async (url, opts = {}) => {
     if (ytStub && ytStub.refreshFails) return Response.json({ error: "invalid_grant", error_description: "Token has been expired or revoked." }, { status: 400 });
     return Response.json({ access_token: "tok-refreshed", expires_in: 3600 });
   }
+  if (u.includes("openidconnect.googleapis.com")) return Response.json({ email: "rig@example.com", name: "Rig User" }); // v114: OAuth callback userinfo (S39)
   if (u.includes("upload/youtube/v3/videos")) {
     ytStub.sessionCalls++;
     if (ytStub.uploadMode === "quota") return Response.json({ error: { errors: [{ reason: "quotaExceeded", domain: "youtube.quota" }], message: "The request cannot be completed because you have exceeded your quota." } }, { status: 403 });
@@ -949,6 +950,136 @@ async function seedAccount(w, email) {
   const a2 = await appChat(w, "cheyu");
   scoreState("S38", "app cheyu posts, link in the reply", /watch\?v=vid123/.test(a2.reply || ""));
   scoreState("S38", "same resumable path (1 session + 1 transfer)", ytStub.sessionCalls === 1 && ytStub.transferCalls === 1);
+}
+
+// ===== v114 scenarios: live-state fix pass (2026-11-17 verification sweep) =====
+// S39 — DEFECT 1: the finalize record (setupdone) is GONE (the live
+// failure), but the outcome JOURNAL survives. A Google-connect
+// completion must re-fire the retry offer with the FULL failed set
+// rebuilt from the journal — 22 failed + Deepgram arriving via the
+// skipped bucket = all 23 providers.
+const FAILED22 = ["groq", "openrouter", "gemini", "cloudflare", "cohere", "together", "sambanova", "fireworks", "cerebras", "nvidia", "mistral", "ai21", "voyage", "tavily", "serper", "exa", "assemblyai", "elevenlabs", "stability", "jina", "kaggle", "pexels"];
+const JOURNAL39 = { state: "failed", done: [], failed: FAILED22, skipped: { deepgram: { kind: "captcha", at: Date.now() }, serper: { kind: "captcha", at: Date.now() }, elevenlabs: { kind: "captcha", at: Date.now() } }, failReason: { groq: "email verification failed — no Gmail grant in the job keyspace", cohere: "email verification failed — no Gmail grant in the job keyspace", gemini: "no-google-token", together: "paused-signin", fireworks: "paused-signin", stability: "paused-signin", serper: "paused-captcha", deepgram: "paused-captcha", elevenlabs: "paused-captcha" }, at: Date.now() };
+async function oauthGet(world, path) {
+  const before = outbox.length;
+  const promises = [];
+  const ctx = { waitUntil(p) { promises.push(Promise.resolve(p)); } };
+  const req = new Request("https://worker.test" + path, { method: "GET" });
+  await worker.fetch(req, world.env, ctx);
+  for (let i = 0; i < 6; i++) { const ps = promises.splice(0); if (!ps.length) break; await Promise.all(ps); }
+  return outbox.slice(before).filter(o => o.to === USER).map(o => o.text);
+}
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setuphist:${USER}`, JSON.stringify(JOURNAL39));
+  await w.kv.put(`oauth:st39`, JSON.stringify({ prov: "google", user: USER }));
+  const r = await oauthGet(w, "/oauth/google?state=st39&code=testcode");
+  scoreState("S39a", "connect completion re-fires the retry offer from the JOURNAL", /malli try cheyala/.test(r.join(" ")) && /Groq/.test(r.join(" ")) && /Pexels/.test(r.join(" ")));
+  scoreState("S39a", "offer names the captcha tap honestly", /captcha vasthe/.test(r.join(" ")));
+  const pend = JSON.parse((await w.kv.get(`waretrypend:${USER}`)) || "{}");
+  scoreState("S39a", "retry armed with the FULL 23-provider failed set", Array.isArray(pend.ids) && pend.ids.length === 23 && pend.ids.includes("deepgram") && pend.ids.includes("pexels") && pend.ids.includes("groq"));
+  scoreState("S39a", "allow card sent with the offer", cards.some(c => c.ids.some(i => i.includes("waallow:yes"))));
+  // S39b — the phrase trigger reads the journal the same way (door
+  // class un-granted here: connect card first, nothing armed).
+  const w2 = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w2.kv.put(`setuphist:${USER}`, JSON.stringify(JOURNAL39));
+  const r2 = await send(w2, "failed vi malli try cheyu");
+  scoreState("S39b", "phrase offer rebuilt from the journal", /Google connect kavali/.test(r2.join(" ")) && /Groq/.test(r2.join(" ")) && /Pexels/.test(r2.join(" ")));
+  scoreState("S39b", "connect card sent, nothing armed while door-grant missing", cards.some(c => c.ids.some(i => i.includes("conn:google"))) && !(await w2.kv.get(`waretrypend:${USER}`)));
+  // S39c — last-resort rebuild: no setupdone, no journal — the
+  // chain's own terminal job records reconstruct the outcome.
+  const w3 = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  for (const [job, prov] of [["jobr1", "groq"], ["jobr2", "cohere"], ["jobr3", "pexels"]])
+    await w3.kv.put(`setupjob:${job}`, JSON.stringify({ job, user: USER, provider: prov, state: "failed", chain: ["groq", "cohere", "pexels"], note: "flow failed", at: Date.now() - 3600e3, upd: Date.now() - 3600e3 }));
+  const r3 = await send(w3, "failed vi malli try cheyu");
+  scoreState("S39c", "offer rebuilt from surviving job records", /Google connect kavali/.test(r3.join(" ")) && /Groq/.test(r3.join(" ")) && /Cohere/.test(r3.join(" ")) && /Pexels/.test(r3.join(" ")));
+  // S39d — a finalize now writes the journal alongside setupdone.
+  const w4 = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w4.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "cohere"], done: [], failed: [], current: "jobz01", email: "t@example.com", pass: "x", at: Date.now(), browser: "profile", via: "wa" }));
+  await w4.kv.put(`setupjob:jobz01`, JSON.stringify({ job: "jobz01", user: USER, provider: "groq", state: "running", step: "creating key", at: Date.now(), upd: Date.now() }));
+  await runnerPost(w4, "key", "jobz01", { provider: "groq", key: "gsk-test-key-0123456789" });
+  await runnerPost(w4, "result", "jobz01", { provider: "groq", status: "done" });
+  const chain4 = JSON.parse((await w4.kv.get(`setupchain:${USER}`)) || "{}");
+  await w4.kv.put(`setupjob:${chain4.current}`, JSON.stringify({ job: chain4.current, user: USER, provider: "cohere", state: "running", step: "creating key", at: Date.now(), upd: Date.now() }));
+  await runnerPost(w4, "result", chain4.current, { provider: "cohere", status: "failed", error: "signup wall" });
+  const hist4 = JSON.parse((await w4.kv.get(`setuphist:${USER}`)) || "{}");
+  scoreState("S39d", "finalize journals the outcome", (hist4.done || []).includes("groq") && (hist4.failed || []).includes("cohere"));
+  scoreState("S39d", "setupdone still written", !!(await w4.kv.get(`setupdone:${USER}`)));
+}
+// S40 — DEFECT 2: the malformed YouTube grant (the live shape,
+// verbatim): who = the no-channel SENTENCE, noChannel unset, no
+// channel ID — in the tok record (derivation path) AND persisted in
+// the index. The count question must answer no-channel honestly and
+// never name the sentence as a channel; the re-check heal must fire
+// for the ID-less record and restore the real channel.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`tok:${USER}:youtube`, JSON.stringify({ access_token: "tok-stale", refresh_token: "rt", at: Date.now() - 8 * 86400e3, expires_in: 3600, who: "(ee account lo YouTube channel kanipinchaledu)" }));
+  const r = await send(w, "Neeku enni youtube accs conncet ayi unnay");
+  scoreState("S40a", "malformed tok record -> honest no-channel count", /YouTube: 1 account/.test(r.join(" ")) && /channel kanipinchaledu/.test(r.join(" ")));
+  scoreState("S40a", "the sentence is never named as a channel", !/— channel:/.test(r.join(" ")));
+  const w2 = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w2.kv.put(`gaccts:${USER}`, JSON.stringify({ list: [{ id: "a6iemaj", email: "", ytChannel: "(ee account lo YouTube channel kanipinchaledu)", ytChannelId: "", ytNoChannel: false, gmail: false, yt: true, state: "expired", at: Date.now() - 8 * 86400e3 }], def: "a6iemaj" }));
+  await w2.kv.put(`tok:${USER}:youtube`, JSON.stringify({ access_token: "tok-stale", refresh_token: "rt", at: Date.now() - 8 * 86400e3, expires_in: 3600, who: "(ee account lo YouTube channel kanipinchaledu)" }));
+  const r2 = await send(w2, "Neeku enni youtube accs conncet ayi unnay");
+  scoreState("S40b", "persisted malformed index -> honest no-channel count", /YouTube: 1 account/.test(r2.join(" ")) && /channel kanipinchaledu/.test(r2.join(" ")) && !/— channel:/.test(r2.join(" ")));
+  const w3 = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w3.kv.put(`histcount:${USER}`, "1");
+  await w3.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, job: "jobx1", title: "Cats", topic: "cats", state: "done", has_result: true, at: Date.now(), yt: null, ig: null }));
+  await w3.kv.put(`upl:jobx1`, "fakevideobytes");
+  await w3.kv.put(`gaccts:${USER}`, JSON.stringify({ list: [{ id: "a6iemaj", email: "", ytChannel: "(ee account lo YouTube channel kanipinchaledu)", ytChannelId: "", ytNoChannel: false, gmail: false, yt: true, state: "ok", at: Date.now() }], def: "a6iemaj" }));
+  await w3.kv.put(`tok:${USER}:youtube`, JSON.stringify(freshTok("(ee account lo YouTube channel kanipinchaledu)")));
+  ytStub.mine = [{ id: "UC999", snippet: { title: "Quiet One" } }];
+  const r3 = await send(w3, "upload video 1 to YouTube");
+  scoreState("S40c", "heal fires for the ID-less record — confirm names the REAL channel", /Quiet One/.test(r3.join(" ")));
+  const idx3 = JSON.parse((await w3.kv.get(`gaccts:${USER}`)) || "{}");
+  scoreState("S40c", "index healed with the channel ID", idx3.list[0].ytChannelId === "UC999" && idx3.list[0].ytChannel === "Quiet One" && idx3.list[0].ytNoChannel === false);
+  const tok3 = JSON.parse((await w3.kv.get(`tok:${USER}:youtube`)) || "{}");
+  scoreState("S40c", "token record healed (who + ID, flag cleared)", tok3.who === 'channel "Quiet One"' && tok3.ytChannelId === "UC999" && !tok3.noChannel);
+}
+// S41 — DEFECT 3a guard: a verification-mail wait with NO viable
+// Gmail grant fails the provider fast (3 dead feed outcomes, the
+// class reason on the job) — never mailTries in the dozens. With a
+// viable grant the same polls are ordinary fetch outcomes and the
+// job keeps waiting.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq"], done: [], failed: [], current: "jobd1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobd1`, JSON.stringify({ job: "jobd1", user: USER, provider: "groq", state: "paused", pauseReason: "email", verifyWait: true, email: "t@example.com", pausedAt: Date.now(), at: Date.now(), upd: Date.now() }));
+  for (let i = 0; i < 3; i++) {
+    await runnerPost(w, "job", "jobd1", {});
+    const j = JSON.parse((await w.kv.get(`setupjob:jobd1`)) || "{}");
+    if (j.state === "paused") { j.mailFetchAt = 0; await w.kv.put(`setupjob:jobd1`, JSON.stringify(j)); } // simulate the 20s feed throttle elapsing
+  }
+  const jEnd = JSON.parse((await w.kv.get(`setupjob:jobd1`)) || "{}");
+  scoreState("S41a", "dead-grant mail wait fails the provider fast", jEnd.state === "failed" && /no viable Gmail grant/.test(jEnd.note || ""));
+  scoreState("S41a", "tries stayed in single digits", (jEnd.mailTries || 0) <= 3 && (jEnd.mailDead || 0) === 3);
+  const w2 = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w2.kv.put(`gaccts:${USER}`, JSON.stringify({ list: [{ id: "g1", email: "a@example.com", ytChannel: "", ytNoChannel: false, gmail: true, yt: false, state: "ok", at: Date.now() }], def: "g1" }));
+  await w2.kv.put(`tok:${USER}:google`, JSON.stringify({ access_token: "tok-fresh", refresh_token: "rt", at: Date.now(), expires_in: 3600, who: "a@example.com" }));
+  await w2.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq"], done: [], failed: [], current: "jobd2", email: "a@example.com", at: Date.now(), via: "wa" }));
+  await w2.kv.put(`setupjob:jobd2`, JSON.stringify({ job: "jobd2", user: USER, provider: "groq", state: "paused", pauseReason: "email", verifyWait: true, email: "a@example.com", pausedAt: Date.now(), at: Date.now(), upd: Date.now() }));
+  for (let i = 0; i < 3; i++) {
+    await runnerPost(w2, "job", "jobd2", {});
+    const j = JSON.parse((await w2.kv.get(`setupjob:jobd2`)) || "{}");
+    if (j.state === "paused") { j.mailFetchAt = 0; await w2.kv.put(`setupjob:jobd2`, JSON.stringify(j)); }
+  }
+  const j2End = JSON.parse((await w2.kv.get(`setupjob:jobd2`)) || "{}");
+  scoreState("S41b", "viable grant -> ordinary fetch outcomes, job keeps waiting", j2End.state === "paused" && j2End.mailFetch === "gmail-error" && !(j2End.mailDead > 0));
+}
+// S42 — DEFECT 3b guard: a stall-finalized chain settles its current
+// job — the job record must not outlive its chain in "queued" (the
+// 14 stranded resend/brevo jobs of 2026-11-15/16).
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["resend"], done: [], failed: [], current: "jobq9", email: "t@example.com", at: Date.now() - 40 * 60000, via: "wa" }));
+  await w.kv.put(`setupjob:jobq9`, JSON.stringify({ job: "jobq9", user: USER, provider: "resend", state: "queued", step: "starting", at: Date.now() - 40 * 60000, upd: Date.now() - 31 * 60000 }));
+  const r = await send(w, "Chesava");
+  scoreState("S42", "watchdog stall-finalizes the chain", /Setup aagipoyindhi/.test(r.join(" ")));
+  const j = JSON.parse((await w.kv.get(`setupjob:jobq9`)) || "{}");
+  scoreState("S42", "the stranded job settles WITH its chain", j.state === "failed" && /stalled/.test(j.step || ""));
+  const hist42 = JSON.parse((await w.kv.get(`setuphist:${USER}`)) || "{}");
+  scoreState("S42", "stall outcome journaled", hist42.state === "stalled");
 }
 
 const byFlag = {};
