@@ -34,13 +34,15 @@ class KVStub {
   async mget(keys) { const o = {}; for (const k of keys) o[k] = this.m.has(k) ? this.m.get(k) : null; return o; }
 }
 
-let outbox = [], cards = [], dispatches = [], brainImpl = async () => "Sare, ardham ayyindhi.";
+let outbox = [], cards = [], images = [], dispatches = [], brainImpl = async () => "Sare, ardham ayyindhi.";
 globalThis.fetch = async (url, opts = {}) => {
   const u = String(url);
   if (u.includes("graph.facebook.com")) {
+    if (u.includes("/media")) return Response.json({ id: "media_test_1" }); // v111: WA media upload (image sends)
     let body = {}; try { body = JSON.parse(opts.body || "{}"); } catch {}
     if (body.type === "text" && body.text && body.text.body) outbox.push({ to: body.to, text: body.text.body });
-    if (body.type === "interactive") cards.push({ to: body.to, kind: body.interactive && body.interactive.type, ids: JSON.stringify(body.interactive || {}).match(/"(conn:[a-z]+|waallow:(yes|no|always))"/g) || [] });
+    if (body.type === "image") images.push({ to: body.to, id: (body.image || {}).id, caption: (body.image || {}).caption || "" });
+    if (body.type === "interactive") cards.push({ to: body.to, kind: body.interactive && body.interactive.type, ids: JSON.stringify(body.interactive || {}).match(/"(conn:[a-z]+|waallow:(yes|no|always)|waproc:(stop|continue|feed|feedoff))"/g) || [] });
     return Response.json({ messages: [{ id: "wamid.test" }] });
   }
   if (u.includes("api.groq.com") && u.includes("/models")) {
@@ -68,8 +70,13 @@ function makeWorld() {
     GH_TOKEN: "gh-test", GH_REPO: "test/repo", RUNNER_KEY: "rk-test", VERIFY_TOKEN: "vt",
     APP_KEK: Buffer.alloc(32, 7).toString("base64"), FORWARD_SECRET: "",
   };
-  outbox = []; cards = []; dispatches = [];
+  outbox = []; cards = []; images = []; dispatches = [];
   return { kv, env };
+}
+const imgCount = () => images.length;
+const FRAME_B64 = Buffer.from("fake-jpeg-frame-bytes").toString("base64");
+async function seedFrame(w, job, fp) {
+  await w.kv.put(`tcframe:${job}`, JSON.stringify({ img: FRAME_B64, url: "https://console.groq.com/login", at: Date.now(), fp: fp || "fp1" }));
 }
 async function sendInteractive(world, id) {
   const before = outbox.length;
@@ -433,6 +440,170 @@ async function seedAccount(w, email) {
   scoreReply("S18b", "[runner progress: cohere done]", p3, { must: /Cohere.*ready.*\(2\/2\)/, maxLen: 900 });
   scoreReply("S18b", "[runner progress: cohere done]", p3, { must: /Setup complete/, maxLen: 900 });
   scoreState("S18b", "chain cleared at finalize", !(await w.kv.get(`setupchain:${USER}`)));
+}
+
+// ===== v111 scenarios: WA feature + process parity (Ajju 2026-11-17) =====
+// S19 — on-demand process view (P1): "browser em chesthundhi,
+// process chupu" while a setup job runs -> the step line + the
+// job's LATEST screenshot as an image + the action card (Stop /
+// Process feed). The frame comes from tcframe:<job> — the same
+// record the app's live view reads.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "cohere"], done: [], failed: [], current: "jobp1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobp1`, JSON.stringify({ job: "jobp1", user: USER, provider: "groq", state: "running", step: "creating account", url: "https://console.groq.com/keys", at: Date.now(), upd: Date.now() }));
+  await seedFrame(w, "jobp1", "fp1");
+  const r = await send(w, "Browser em chesthundhi, process chupu");
+  scoreReply("S19a", "Browser em chesthundhi, process chupu", r, { must: /Groq setup: nadusthundhi — creating account/, maxLen: 500 });
+  scoreState("S19a", "screenshot sent as image", imgCount() === 1 && images[0].id === "media_test_1");
+  scoreState("S19a", "action card has Stop", cards.some(c => c.ids.some(i => i.includes("waproc:stop"))));
+  scoreState("S19a", "action card has Process feed", cards.some(c => c.ids.some(i => i.includes("waproc:feed"))));
+  // S19b — the same view for a BROWSE job (browsecur resolution).
+  const w2 = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w2.kv.put(`browsecur:${USER}`, JSON.stringify({ job: "jobb9", at: Date.now() }));
+  await w2.kv.put(`setupjob:jobb9`, JSON.stringify({ job: "jobb9", user: USER, provider: "browse", flow: "browse", task: "example.com lo price chudu", state: "running", step: "reading page", url: "https://example.com/item", at: Date.now(), upd: Date.now() }));
+  await seedFrame(w2, "jobb9", "fp1");
+  const r2 = await send(w2, "Process chupu");
+  scoreReply("S19b", "Process chupu (browse job)", r2, { must: /Browse: nadusthundhi — reading page/, maxLen: 600 });
+  scoreState("S19b", "browse screenshot sent", imgCount() === 1);
+}
+// S20 — QUIET BY DEFAULT + pause carries the screen (P1): a mid-job
+// step change sends NOTHING unprompted; the transition into a
+// captcha pause sends the honest pause text AND the screenshot of
+// the wall.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["serper"], done: [], failed: [], current: "jobq1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobq1`, JSON.stringify({ job: "jobq1", user: USER, provider: "serper", state: "running", step: "signing up", at: Date.now(), upd: Date.now() }));
+  const p0 = await runnerPost(w, "progress", "jobq1", { state: "running", step: "filling form" });
+  scoreState("S20a", "mid-job step change sends nothing", p0.length === 0 && imgCount() === 0);
+  await seedFrame(w, "jobq1", "fp1");
+  const p1 = await runnerPost(w, "progress", "jobq1", { state: "paused", reason: "captcha", step: "waiting" });
+  scoreReply("S20b", "[runner: serper paused captcha]", p1, { must: /captcha \(bot check\)/, maxLen: 900 });
+  scoreState("S20b", "pause carries the screenshot", imgCount() === 1 && /ee screen meedha aagindhi/.test(images[0].caption));
+}
+// S21 — PROCESS FEED opt-in (P1): "process chupinchu step by step"
+// arms the feed for THAT job; step changes stream line + new frame;
+// the terminal post clears the flag; the NEXT job starts quiet.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "cohere"], done: [], failed: [], current: "jobf1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobf1`, JSON.stringify({ job: "jobf1", user: USER, provider: "groq", state: "running", step: "signing up", at: Date.now(), upd: Date.now() }));
+  await seedFrame(w, "jobf1", "fp1");
+  const r = await send(w, "Process chupinchu step by step");
+  scoreReply("S21a", "Process chupinchu step by step", r, { must: /Process feed ON/, maxLen: 600 });
+  scoreState("S21a", "feed armed for this job", ((JSON.parse((await w.kv.get(`wafeed:${USER}`)) || "{}")).job === "jobf1"));
+  scoreState("S21a", "current frame sent at opt-in", imgCount() === 1);
+  await seedFrame(w, "jobf1", "fp2");
+  const p1 = await runnerPost(w, "progress", "jobf1", { state: "running", step: "entering details" });
+  scoreReply("S21b", "[feed: step change]", p1, { must: /▸ .*entering details/, maxLen: 400 });
+  scoreState("S21b", "new frame streamed", imgCount() === 2);
+  const p2 = await runnerPost(w, "progress", "jobf1", { state: "running", step: "entering details" });
+  scoreState("S21b", "same step + same frame = silence", p2.length === 0 && imgCount() === 2);
+  await runnerPost(w, "key", "jobf1", { provider: "groq", key: "gsk-test-key-0123456789" });
+  const p3 = await runnerPost(w, "progress", "jobf1", { state: "done", note: "ready" });
+  scoreReply("S21c", "[feed: groq done]", p3, { must: /Groq.*ready/, maxLen: 400 });
+  scoreState("S21c", "feed cleared at terminal", !(await w.kv.get(`wafeed:${USER}`)));
+  const chain2 = JSON.parse((await w.kv.get(`setupchain:${USER}`)) || "{}");
+  scoreState("S21c", "chain advanced", !!chain2.current && chain2.current !== "jobf1");
+  const p4 = await runnerPost(w, "progress", chain2.current, { state: "running", step: "signing up" });
+  scoreState("S21c", "next job starts quiet (no feed lines)", !p4.some(t => /▸/.test(t)) && imgCount() === 2);
+  // S21d — feed off by text.
+  await send(w, "Process chupinchu");
+  scoreState("S21d", "feed re-armed", !!(await w.kv.get(`wafeed:${USER}`)));
+  const rOff = await send(w, "Feed off");
+  scoreReply("S21d", "Feed off", rOff, { must: /feed OFF/, maxLen: 200 });
+  scoreState("S21d", "feed disarmed", !(await w.kv.get(`wafeed:${USER}`)));
+}
+// S22 — a structured ASK pause (OTP) also carries the screenshot.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq"], done: [], failed: [], current: "jobo1", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobo1`, JSON.stringify({ job: "jobo1", user: USER, provider: "groq", state: "running", step: "signing up", at: Date.now(), upd: Date.now() }));
+  await seedFrame(w, "jobo1", "fp1");
+  const p = await runnerPost(w, "progress", "jobo1", { state: "paused", reason: "sms", step: "waiting for code", awaiting: { id: "a1", provider: "groq", kind: "otp", prompt: "Groq nunchi SMS code vachindhi — ikkada pampu.", at: Date.now(), expires: Date.now() + 600000, attempts: 1 } });
+  scoreReply("S22", "[runner: groq OTP ask]", p, { must: /SMS code/, maxLen: 400 });
+  scoreState("S22", "ask pause carries the screenshot", imgCount() === 1);
+}
+// S23 — RETRY pass (P3): setupdone carries 1 ready + 3 failed
+// (email door, signin door, captcha). Google is connected, so the
+// ask gets the offer + allow card; the Allow tap starts a MERGED
+// chain (providers = full set, done carried over) whose first job
+// is the first failed provider — one continuous record.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await seedAccount(w, "markk34200@gmail.com");
+  await w.kv.put(`tok:${USER}:google`, JSON.stringify({ at: Date.now(), who: "markk34200@gmail.com" }));
+  await w.kv.put(`setupdone:${USER}`, JSON.stringify({ state: "failed", done: ["openrouter"], failed: ["groq", "together", "serper"], skipped: { serper: { kind: "captcha", at: Date.now() } }, failReason: { groq: "email verification failed", together: "paused-signin — user step time ayipoyindhi", serper: "paused-captcha — user complete cheyyaledhu" }, at: Date.now() }));
+  const r = await send(w, "Failed vi malli try cheyu");
+  scoreReply("S23a", "Failed vi malli try cheyu", r, { must: /Fail ayinavi: Groq, Together AI, Serper/, maxLen: 700 });
+  scoreReply("S23a", "Failed vi malli try cheyu", r, { must: /captcha vasthe/, maxLen: 700 });
+  scoreState("S23a", "retry allow card sent", cards.some(c => c.ids.some(i => i.includes("waallow:yes"))));
+  scoreState("S23a", "retry pend armed", !!(await w.kv.get(`waretrypend:${USER}`)));
+  scoreState("S23a", "no chain before the allow", !(await w.kv.get(`setupchain:${USER}`)));
+  const r2 = await sendInteractive(w, "waallow:yes");
+  scoreReply("S23b", "[tap Allow — retry]", r2, { must: /Retry start chesa/, maxLen: 500 });
+  const chain = JSON.parse((await w.kv.get(`setupchain:${USER}`)) || "{}");
+  scoreState("S23b", "merged chain: full provider set", (chain.providers || []).length === 4);
+  scoreState("S23b", "merged chain: done carried over", (chain.done || []).join() === "openrouter");
+  scoreState("S23b", "retry marked on the record", !!(chain.retry && (chain.retry.of || []).length === 3));
+  const cur = JSON.parse((await w.kv.get(`setupjob:${chain.current}`)) || "{}");
+  scoreState("S23b", "first retry job is Groq", cur.provider === "groq");
+  scoreState("S23b", "retry dispatched", dispatches.some(d => d.url.includes("setup.yml")));
+  scoreState("S23b", "retry pend consumed", !(await w.kv.get(`waretrypend:${USER}`)));
+}
+// S24 — retry BEFORE the connect: the door providers need Google;
+// without a grant the offer sends the connect card FIRST and starts
+// nothing. Once the grant exists, the same ask produces the offer.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await seedAccount(w, "markk34200@gmail.com");
+  await w.kv.put(`setupdone:${USER}`, JSON.stringify({ state: "failed", done: [], failed: ["together"], failReason: { together: "paused-signin — user step time ayipoyindhi" }, at: Date.now() }));
+  const r = await send(w, "Failed providers malli try cheyu");
+  scoreReply("S24a", "Failed providers malli try cheyu (no grant)", r, { must: /Google connect kavali/, maxLen: 700 });
+  scoreState("S24a", "connect card sent first", cards.some(c => c.ids.some(i => i.includes("conn:google"))));
+  scoreState("S24a", "nothing armed, nothing started", !(await w.kv.get(`waretrypend:${USER}`)) && !(await w.kv.get(`setupchain:${USER}`)));
+  await w.kv.put(`tok:${USER}:google`, JSON.stringify({ at: Date.now(), who: "markk34200@gmail.com" }));
+  const r2 = await send(w, "Failed providers malli try cheyu");
+  scoreReply("S24b", "Failed providers malli try cheyu (grant on file)", r2, { must: /malli try cheyala/, maxLen: 700 });
+  scoreState("S24b", "retry pend armed after connect", !!(await w.kv.get(`waretrypend:${USER}`)));
+}
+// S25 — History + deploy list as WA reads (P2).
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`histcount:${USER}`, "2");
+  await w.kv.put(`hist:${USER}:2`, JSON.stringify({ n: 2, title: "Space documentary", state: "done", at: Date.now() }));
+  await w.kv.put(`hist:${USER}:1`, JSON.stringify({ n: 1, title: "Ocean short", state: "failed", at: Date.now() }));
+  const r = await send(w, "Naa videos history chupu");
+  scoreReply("S25a", "Naa videos history chupu", r, { must: /Space documentary — ready/, maxLen: 500 });
+  scoreReply("S25a", "Naa videos history chupu", r, { must: /Ocean short — fail/, maxLen: 500 });
+  await w.kv.put(`udeploy:${USER}`, JSON.stringify({ sites: [{ name: "mysite", url: "https://mysite.pages.dev" }], databases: [{ name: "db1" }] }));
+  const r2 = await send(w, "Naa sites list chupu");
+  scoreReply("S25b", "Naa sites list chupu", r2, { must: /mysite/, maxLen: 400 });
+  scoreReply("S25b", "Naa sites list chupu", r2, { must: /db1/, maxLen: 400 });
+}
+// S26 — a WA "Stop" halts the setup CHAIN too (P2): pre-fix it only
+// cancelled video jobs and answered "emi run avvatledhu" over a
+// running chain. The chain outcome is recorded before it clears.
+{
+  const w = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq", "cohere"], done: ["groq"], failed: [], current: "jobs9", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w.kv.put(`setupjob:jobs9`, JSON.stringify({ job: "jobs9", user: USER, provider: "cohere", state: "running", step: "signing up", at: Date.now(), upd: Date.now() }));
+  const r = await send(w, "Stop");
+  scoreReply("S26", "Stop (chain running)", r, { must: /setup stop chesa/, maxLen: 400 });
+  scoreState("S26", "chain cleared", !(await w.kv.get(`setupchain:${USER}`)));
+  const fin = JSON.parse((await w.kv.get(`setupdone:${USER}`)) || "{}");
+  scoreState("S26", "outcome recorded as stopped with done kept", fin.state === "stopped" && (fin.done || []).join() === "groq");
+  const j = JSON.parse((await w.kv.get(`setupjob:jobs9`)) || "{}");
+  scoreState("S26", "job marked stopped", j.state === "stopped");
+  // S26b — the process card's Continue button resumes a paused job.
+  const w2 = makeWorld(); brainImpl = async () => "Sare, ardham ayyindhi.";
+  await w2.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["groq"], done: [], failed: [], current: "jobc9", email: "t@example.com", at: Date.now(), via: "wa" }));
+  await w2.kv.put(`setupjob:jobc9`, JSON.stringify({ job: "jobc9", user: USER, provider: "groq", state: "paused", pauseReason: "captcha", pausedAt: Date.now(), at: Date.now(), upd: Date.now() }));
+  const r2 = await sendInteractive(w2, "waproc:continue");
+  scoreReply("S26b", "[tap Continue]", r2, { must: /Continue chesa/, maxLen: 300 });
+  const j2 = JSON.parse((await w2.kv.get(`setupjob:jobc9`)) || "{}");
+  scoreState("S26b", "job running again", j2.state === "running" && !j2.pauseReason);
 }
 
 const byFlag = {};

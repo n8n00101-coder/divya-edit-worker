@@ -620,7 +620,15 @@ async function handle(env, m) {
     // deploy asks on WA skip the card (waSetupRespond honours the
     // grant) but every piece of work is still reported in chat.
     if (id === "waallow:always") { await waSetAlwaysGrant(env, user).catch(() => {}); const r = await waGrantSetup(env, user).catch(() => "Setup start cheyyaleka poyanu — 'setup cheyu' ani malli cheppu."); return say(env, user, `Always allow pettukunna ✓ — future lo setup/deploy asks malli adagakunda chestha, ayyina prathi pani ikkade cheptha.\n${r}`); }
-    if (id === "waallow:no") { await env.KV.delete(`wasetupask:${user}`).catch(() => {}); return say(env, user, "Sare, setup start cheyyaledhu. Kavali ante 'setup cheyu' ani cheppu, ikkade adugutha."); } }
+    if (id === "waallow:no") { await env.KV.delete(`wasetupask:${user}`).catch(() => {}); await env.KV.delete(`waretrypend:${user}`).catch(() => {}); return say(env, user, "Sare, setup start cheyyaledhu. Kavali ante 'setup cheyu' ani cheppu, ikkade adugutha."); }
+    // v111: the process view's action buttons — the same state
+    // transitions the app's live-view controls perform (Continue =
+    // setup/continue's record write; Stop = setup/stop's, shared
+    // with browse; Feed = the per-job WA step feed flag).
+    if (id === "waproc:stop") { const r = await waStopBrowserJob(env, user).catch(() => null); return say(env, user, r || "Stop cheyadaniki active browser job em ledu."); }
+    if (id === "waproc:continue") { const r = await waContinueBrowserJob(env, user).catch(() => "Continue cheyyaleka poyanu — malli try cheyyi."); return say(env, user, r); }
+    if (id === "waproc:feed") { const r = await waProcessReply(env, user, "feed").catch(() => null); return say(env, user, r || "Feed on cheyadaniki active browser job em ledu."); }
+    if (id === "waproc:feedoff") { await env.KV.delete(`wafeed:${user}`).catch(() => {}); return say(env, user, "Process feed OFF chesa — ippudu adigithene process chupistha."); } }
   if (isOwner && /system prompt|full prompt|instructions paste|nee prompt|your prompt/.test(tx0)) return say(env, user, SYSTEM);
 
   if (m.type === "video" || (m.type === "document" && (m.document?.mime_type || "").startsWith("video"))) {
@@ -690,6 +698,12 @@ async function handle(env, m) {
     // through to the normal flow untouched.
     if (isStopIntent(text)) {
       const cxl = await cancelActiveJob(env, user).catch(() => null);
+      // v111: no video job to cancel — a running SETUP CHAIN or
+      // BROWSE is a browser job, and the app's Stop halts those too
+      // (setup/stop). Pre-fix a WA stop over a chain answered "emi
+      // run avvatledhu" while the chain kept running.
+      if (!cxl) { const bst = await waStopBrowserJob(env, user).catch(() => null);
+        if (bst) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: bst }); await remember(env, user, hh); return say(env, user, bst); } }
       if (cxl || isBareStop(text)) {
         const a2 = stopReply(cxl, /\b(malli|redo|again)\b/i.test(text));
         const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh);
@@ -779,6 +793,13 @@ async function handle(env, m) {
     // the neural-voice TTS engine, the stock-footage library").
     { const ck = waCountKind(text);
       if (ck) { const a2 = await waCountReply(env, user); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } }
+    // v111: "failed vi malli try cheyu" — the finished chain's failed
+    // providers get ONE retry pass over the same merged record. The
+    // offer arms the same allow card (the grant lands in
+    // waGrantSetup's retry branch); with nothing retryable the
+    // message flows on untouched.
+    { const rk = waRetryKind(text);
+      if (rk) { const a2 = await waRetryOffer(env, user).catch(() => null); if (a2) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } } }
     // v107: "ikade adugu allow chestha" — the user explicitly asks
     // Julie to take the allow HERE. That is a setup-need expression:
     // answer with the in-chat allow ask, never an app-menu errand.
@@ -789,6 +810,16 @@ async function handle(env, m) {
     // question on 2026-11-17 ("OpenAI engine", "single instance").
     { const ek = waExplainKind(text);
       if (ek) { const a2 = JULIE_TRUTH[ek]; const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } }
+    // v111: a BROWSER PROCESS ask ("browser status", "process
+    // chupu", "em chesthundhi", "screenshot pampu") goes to the
+    // process view — the running job's step + its latest streamed
+    // screenshot + action buttons — never the brain, and only when
+    // asked (Ajju: adigithene chepali). "Process chupinchu / step
+    // by step" arms the per-job feed instead. With no browser job
+    // the reply is null and the message flows on untouched.
+    { const pk = waProcessKind(text);
+      if (pk === "feedoff") { await env.KV.delete(`wafeed:${user}`).catch(() => {}); const a2 = "Process feed OFF chesa — ippudu adigithene process chupistha."; const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); }
+      if (pk) { const a2 = await waProcessReply(env, user, pk).catch(() => null); if (a2) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } } }
     // v109: a generic progress/status/completion question goes to
     // the running job's real state reporter — never the brain. On
     // 2026-11-17 "Chesava" got a canned video line and "Entha
@@ -808,6 +839,12 @@ async function handle(env, m) {
     // brain (which turned it into a CREATE on 2026-11-16) and never
     // starts a job. The reply itself states nothing was started.
     if (isHowQuestion(text)) { const a2 = howProcessReply(); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); }
+    // v111: the app's History screen and Deploy list as WA reads —
+    // the same records (histList / deployRec), answered in chat.
+    { const hk = waHistoryKind(text);
+      if (hk) { const a2 = await waHistoryReply(env, user); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } }
+    { const dk = waDeployListKind(text);
+      if (dk) { const a2 = await waDeployListReply(env, user); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } }
     // v109: a deploy / server-setup order on WhatsApp takes the same
     // structural path the app chat has (deployChatReply — deploys
     // onto the user's own Cloudflare with their sealed key). Pre-fix
@@ -1035,6 +1072,12 @@ async function oauthRoutes(env, url) {
     // under this same user, so feed the link NOW instead of waiting
     // for the runner's next poll, and tell the chat it resumed.
     if (s.prov === "google") { try { const chain110 = parseRec(await env.KV.get(`setupchain:${s.user}`)); if (chain110 && chain110.current) { const job110 = parseRec(await env.KV.get(`setupjob:${chain110.current}`)); if (job110 && job110.state === "paused" && ((job110.pauseReason || "email") === "email" || job110.verifyWait)) { const upd110 = await maybeFeedVerifyLink(env, job110, chain110.at || 0); if (upd110 && upd110.state === "running" && !s.app) await say(env, s.user, `Google connect ayyindhi ✓ — ${setupProvName(job110.provider)} verification link feed chesa, setup continue avuthundhi.`); } } } catch {} }
+    // v111: the same connect is also the unblock for a FINISHED
+    // chain's failed door providers — with no chain running, the
+    // retry offer fires now (its allow card rides with it; with an
+    // Always-allow grant on file the retry starts at once and this
+    // line is its start report).
+    if (s.prov === "google" && !s.app) { try { const chain111 = parseRec(await env.KV.get(`setupchain:${s.user}`)); if (!chain111) { const offer111 = await waRetryOffer(env, s.user).catch(() => null); if (offer111) await say(env, s.user, offer111); } } catch {} }
     // v61: app-originated connects return INTO the app (the old plain
     // page dead-ended app users on the API host, outside Julie).
     if (s.app) return Response.redirect("https://divya-app.n8n00101.workers.dev/?connected=" + encodeURIComponent(s.prov), 302);
@@ -3749,6 +3792,237 @@ function waFabricationHit(ans) {
   if (/\b\d+\s+service connections\b/i.test(a)) return true;
   return false;
 }
+// ===== v111: WHATSAPP FEATURE + PROCESS PARITY (Ajju 2026-11-17) =====
+// "Julie app lo unde features anni kuda WhatsApp lo chupinchela
+// cheyu — anni browser process lu kuda WhatsApp lo kanipinchali,
+// Muse lo kanipinche same browser process app lo AND WhatsApp lo.
+// Adigithene chepali, clear ga kanipinchali. API keys connect
+// avvatledhu." Three builds on the v110 truth system:
+//  (1) PROCESS VIEW — the SAME browser job the app's live view shows
+//      (the runner streams a frame to tcframe:<job> at every step
+//      change, setup.py v68) is followable from WA: on demand, the
+//      step line + the latest screenshot as an image + the action
+//      buttons for right now; on explicit opt-in, a per-job step
+//      feed. Quiet by default — unprompted sends stay outcomes +
+//      action pauses only (v110 discipline, unchanged).
+//  (2) SURFACES — the app features WA could not reach: setup/browse
+//      STOP (a WA "stop" only cancelled video jobs), browse outcome
+//      delivery, video History list, deploy list.
+//  (3) RETRY — the failed providers of a finished chain become one
+//      retry pass over the SAME merged record (reporters see one
+//      continuous chain), offered on Google-connect completion or
+//      on ask, gated on the connect the door providers need.
+async function waBrowserJobFor(env, user) {
+  const chain = parseRec(await env.KV.get(`setupchain:${user}`));
+  if (chain && chain.current) {
+    const j = parseRec(await env.KV.get(`setupjob:${chain.current}`));
+    if (j) return { kind: "setup", chain, j };
+  }
+  const bj = await browseJobFor(env, user).catch(() => null);
+  if (bj) return { kind: "browse", chain: null, j: bj };
+  return null;
+}
+function waJobStepLine(j, kind) {
+  const host = String(j.url || "").replace(/^https?:\/\//, "").split("/")[0];
+  const st = j.state === "paused" ? `aagindhi (${j.pauseReason || "wait"})` : j.state === "running" ? "nadusthundhi" : j.state === "queued" ? "queue lo undhi" : j.state === "done" ? "ayipoyindhi" : j.state === "failed" ? "fail ayyindhi" : String(j.state || "");
+  const step = j.step && j.step !== "starting" ? ` — ${j.step}` : "";
+  if (kind === "browse") return `🌐 Browse: ${st}${step}${host ? ` · ${host}` : ""}${j.task ? `\nTask: ${String(j.task).slice(0, 100)}` : ""}`;
+  return `🔧 ${setupProvName(j.provider)} setup: ${st}${step}${host ? ` · ${host}` : ""}`;
+}
+// Sends the job's latest streamed frame as a WA image. Returns the
+// frame fingerprint when an image actually went out (the feed hook
+// dedupes on it), else null — no frame is ever faked or reused from
+// another job: the record is keyed by THIS job id only.
+async function waSendJobFrame(env, user, jobId, caption) {
+  try {
+    const fr = parseRec(await env.KV.get(`tcframe:${jobId}`));
+    if (!fr || !fr.img) return null;
+    const r = await waSendImage(env, user, fr.img, caption || "");
+    return r.ok ? (fr.fp || "1") : null;
+  } catch { return null; }
+}
+function waProcessKind(text) {
+  const t = String(text || "").toLowerCase();
+  if (isCreateOrder(t) || isNoVideoEditOrder(t)) return null;
+  if (/(feed|process)\s*(off|aapu|chupinchaku|bandh)/i.test(t)) return "feedoff";
+  if (/(step\s*by\s*step|process\s*(feed|full)|anni\s*steps?\s*chupinchu|full\s*process)/i.test(t)) return "feed";
+  if (/(process|browser|screen|live)\s*(chupinchu|chupinchandi)/i.test(t)) return "feed";
+  if (/(browser|process|screen|live\s*view|page)\s*(status|chupu|chupinchu|pampu|em|enti|ekkada|show)/i.test(t)) return "process";
+  if (/(em\s+chesthundhi|enti\s+chesthundhi|em\s+nadusthundhi|ekkada\s+undhi|ekkada\s+undo|screenshot|screen\s*shot|screen\s*(chupu|pampu))/i.test(t)) return "process";
+  if (/(process|browser)\s*(chupu|status|ippudu)/i.test(t)) return "process";
+  return null;
+}
+// The on-demand process view: step line (returned for say()) + the
+// latest screenshot as an image + the action card for right now.
+// Returns null when no browser job exists at all — the message then
+// flows on to the normal gates untouched.
+async function waProcessReply(env, user, mode) {
+  const found = await waBrowserJobFor(env, user);
+  if (!found) return null;
+  const { j, kind } = found;
+  const line = waJobStepLine(j, kind);
+  const active = ["queued", "running", "paused"].includes(j.state);
+  if (mode === "feed") {
+    if (!active) return `${line} — job active ga ledu, feed on cheyyalenu.`;
+    await env.KV.put(`wafeed:${user}`, JSON.stringify({ job: j.job, at: Date.now(), fp: "" }), { expirationTtl: 86400 });
+  }
+  if (!active) {
+    // A finished browse still shows its last screen + outcome here;
+    // a finished setup job's outcome is the chain/finalize report.
+    if (kind === "browse") {
+      await waSendJobFrame(env, user, j.job, "");
+      if (j.state === "done") return `${line}${j.answer ? `\nAnswer: ${String(j.answer).slice(0, 700)}` : ""}`;
+      return `${line}${j.note ? ` — ${String(j.note).slice(0, 200)}` : ""}`;
+    }
+    return null;
+  }
+  const sentImg = await waSendJobFrame(env, user, j.job, "");
+  const feedRec = parseRec(await env.KV.get(`wafeed:${user}`));
+  const feedOn = mode === "feed" || !!(feedRec && feedRec.job === j.job);
+  const btns = [];
+  if (j.state === "paused") btns.push({ type: "reply", reply: { id: "waproc:continue", title: "Continue ▶" } });
+  btns.push({ type: "reply", reply: { id: "waproc:stop", title: "Stop ⛔" } });
+  btns.push(feedOn ? { type: "reply", reply: { id: "waproc:feedoff", title: "Feed off" } } : { type: "reply", reply: { id: "waproc:feed", title: "Process feed" } });
+  try { wa(env, user, { type: "interactive", interactive: { type: "button", body: { text: "Live view + Take Control (screen meedha tap/type) app lone vasthundhi: https://divya-app.n8n00101.workers.dev — app login code kavali ante 'login' ani pampu." }, action: { buttons: btns.slice(0, 3) } } }); } catch {}
+  if (mode === "feed") return `${line}\nProcess feed ON 📺 — ee job prathi step ikkade vasthundhi. Aapali ante 'feed off' ani cheppu.`;
+  if (!sentImg && j.state === "queued") return `${line} — screen inka raledhu, machine start avuthondhi; konchem sepu lo frame vasthundhi.`;
+  return line;
+}
+// The app's shared Stop (setup/stop) mirrored for WA: it halts the
+// setup chain AND a running browse, recording the chain outcome
+// BEFORE the chain record goes (the v104 retention rule). A WA
+// "stop" pre-fix reached only cancelActiveJob (video records), so a
+// running chain/browse was unstoppable from WhatsApp.
+async function waStopBrowserJob(env, user) {
+  let did = "";
+  const chain = parseRec(await env.KV.get(`setupchain:${user}`));
+  if (chain) {
+    if (chain.current) { const j = parseRec(await env.KV.get(`setupjob:${chain.current}`)); if (j && ["queued", "running", "paused"].includes(j.state)) { j.state = "stopped"; j.upd = Date.now(); await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 }); } }
+    try { const cj = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null; await env.KV.put(`setupdone:${user}`, JSON.stringify({ state: "stopped", done: chain.done || [], failed: chain.failed || [], skipped: chain.skipped || null, provider: (cj && cj.provider) || null, note: "User stopped the setup.", at: Date.now(), failReason: chain.failReason || null }), { expirationTtl: 86400 }); } catch {}
+    await env.KV.delete(`setupchain:${user}`);
+    did = "setup";
+  }
+  const bj = await browseJobFor(env, user).catch(() => null);
+  if (bj && ["queued", "running", "paused"].includes(bj.state)) { bj.state = "stopped"; bj.upd = Date.now(); await env.KV.put(`setupjob:${bj.job}`, JSON.stringify(bj), { expirationTtl: 86400 * 2 }); did = did ? "both" : "browse"; }
+  if (!did) return null;
+  await env.KV.delete(`wafeed:${user}`).catch(() => {});
+  if (did === "browse") return "Aapesa — browse job stop chesa. Inka progress messages raavu.";
+  return "Aapesa — setup stop chesa. Inthavaraku ayinavi alaage unnayi; malli start cheyala ante 'setup cheyu' leda 'failed vi malli try cheyu' ani cheppu.";
+}
+// The app's setup/continue mirrored for WA: a paused job flips back
+// to running and the runner resumes on its next poll — the same
+// record write the app endpoint performs, no WA-only state.
+async function waContinueBrowserJob(env, user) {
+  const found = await waBrowserJobFor(env, user);
+  if (!found) return "Continue cheyadaniki job em ledu.";
+  const { j, kind } = found;
+  const name = kind === "browse" ? "Browse" : setupProvName(j.provider);
+  if (j.state !== "paused") return `${name} paused lo ledu — ${j.state} lo undhi.`;
+  j.state = "running"; j.note = ""; j.pauseReason = ""; j.tc = false; j.resumedAt = Date.now(); j.upd = Date.now();
+  delete j.pausedAt;
+  await env.KV.put(`setupjob:${j.job}`, JSON.stringify(j), { expirationTtl: 86400 * 2 });
+  return `Continue chesa ✓ — ${name} malli nadusthundhi. Progress ikkade cheptha.`;
+}
+function waHistoryKind(text) {
+  const t = String(text || "").toLowerCase();
+  if (isCreateOrder(t) || isNoVideoEditOrder(t)) return null;
+  if (/\bhistory\b/i.test(t) || /(naa|my)\s+videos?\b/i.test(t) || /videos?\s+(list|chupu|chupinchu)/i.test(t)) return "history";
+  return null;
+}
+async function waHistoryReply(env, user) {
+  const list = await histList(env, user, 8).catch(() => []);
+  if (!list.length) return "Nee history lo videos em levu — kotta video cheyala? Topic cheppu, start chestha.";
+  const lines = list.map(e => `${e.n}. ${String(e.title || e.topic || "video").slice(0, 60)} — ${e.state === "done" ? "ready ✓" : e.state === "failed" ? "fail ayyindhi" : e.state === "cancelled" ? "cancel ayyindhi" : "tayaru avuthondi"}`);
+  return `Nee videos (History):\n${lines.join("\n")}\nOka video gurinchi aduguthe details cheptha.`;
+}
+function waDeployListKind(text) {
+  const t = String(text || "").toLowerCase();
+  if (isCreateOrder(t) || isNoVideoEditOrder(t)) return null;
+  if (/(deploy|sites?|databases?)\s*(list|chupu|chupinchu|enti|em)/i.test(t) || /(naa|my)\s+(sites?|deploy)/i.test(t)) return "deploylist";
+  return null;
+}
+async function waDeployListReply(env, user) {
+  const rec = await deployRec(env, user).catch(() => ({ sites: [], databases: [] }));
+  if (!rec.sites.length && !rec.databases.length) return "Inka em deploy avvaledu — site deploy cheyala ante cheppu, nee Cloudflare lone chestha.";
+  const L = [];
+  if (rec.sites.length) L.push("Sites: " + rec.sites.map(s => `${s.name}${s.url || s.deploymentUrl ? " — " + (s.url || s.deploymentUrl) : ""}`).join("; "));
+  if (rec.databases.length) L.push("Databases: " + rec.databases.map(d => d.name).join(", "));
+  return L.join("\n");
+}
+// ===== v111 RETRY: the failed set of a finished chain =====
+// Ajju: "API keys connect avvatledhu" — the 2026-11-17 chain ended
+// with 6 failures in 3 wall classes. The retry is ONE pass over the
+// failed providers, built as a MERGED chain record (providers = the
+// full original set, done = the previously-ready providers), so
+// every reporter — progress line, count reply, finalize — sees one
+// continuous chain, never a second invisible one. Email/Google-door
+// failures are gated on the Google connect they need (the connect
+// card goes first; the offer re-fires on connect completion);
+// captcha failures retry through the same honest pause (his one
+// tap), never around the wall.
+const WA_RETRY_DOOR_PROVIDERS = ["groq", "cohere", "together", "fireworks"];
+async function waRetryableFailed(env, user) {
+  if (await env.KV.get(`setupchain:${user}`)) return null; // a live chain's reporter owns status
+  const fin = parseRec(await env.KV.get(`setupdone:${user}`));
+  if (!fin) return null;
+  const failed = [...(fin.failed || [])];
+  for (const k of Object.keys(fin.skipped || {})) if (!failed.includes(k)) failed.push(k);
+  const ids = failed.filter(id => SETUP_PROVIDERS[id]);
+  if (!ids.length) return null;
+  const captcha = ids.filter(id => /captcha/i.test(String((fin.failReason || {})[id] || "")) || ((fin.skipped || {})[id] || {}).kind === "captcha");
+  const door = ids.filter(id => !captcha.includes(id) && (WA_RETRY_DOOR_PROVIDERS.includes(id) || /email|verif|signin|sign-in|google/i.test(String((fin.failReason || {})[id] || ""))));
+  return { ids, captcha, door, fin };
+}
+function waRetryKind(text) {
+  const t = String(text || "").toLowerCase();
+  if (isCreateOrder(t) || isNoVideoEditOrder(t)) return null;
+  if (!/(malli\s*try|retry|re-?try|try\s*again)/i.test(t)) return null;
+  if (/(fail|setup|provider|keys?|accounts?|anni|veetini|vaatini|groq|cohere|together|fireworks|serper|deepgram)/i.test(t)) return "retry";
+  if (/^\s*(malli\s*try|retry)(\s+cheyu|\s+cheyyi)?\s*[.!]*\s*$/i.test(t)) return "retry";
+  return null;
+}
+async function waRetryOffer(env, user) {
+  const r = await waRetryableFailed(env, user);
+  if (!r) return null;
+  const names = r.ids.map(setupProvName).join(", ");
+  if (r.door.length) {
+    let hasGrant = false;
+    try { hasGrant = !!(await env.KV.get(`tok:${user}:google`)); if (!hasGrant) { const idx = await gAccts(env, user); hasGrant = (idx.list || []).length > 0; } } catch {}
+    if (!hasGrant) {
+      try { await connectMenu(env, user); } catch {}
+      return `Fail ayina providers: ${names}. Veetilo ${r.door.map(setupProvName).join(", ")} ki nee Google connect kavali — paine connect card pampina, Google connect cheyyi. Connect ayyaka 'failed vi malli try cheyu' ani cheppu, retry ikkade start chestha.`;
+    }
+  }
+  if (await waAlwaysGrant(env, user)) return waRetryStart(env, user, r.ids);
+  await env.KV.put(`waretrypend:${user}`, JSON.stringify({ ids: r.ids, at: Date.now() }), { expirationTtl: 1800 });
+  await env.KV.put(`wasetupask:${user}`, JSON.stringify({ at: Date.now(), retry: true }), { expirationTtl: 1800 });
+  try { wa(env, user, { type: "interactive", interactive: { type: "button", body: { text: `Fail ayina providers malli try cheyala? ${names}` }, action: { buttons: [{ type: "reply", reply: { id: "waallow:yes", title: "Allow ✓" } }, { type: "reply", reply: { id: "waallow:always", title: "Always allow" } }, { type: "reply", reply: { id: "waallow:no", title: "Don't allow" } }] } } }); } catch {}
+  return `Fail ayinavi: ${names} — malli try cheyala? Allow nokku leda 'sare' ani cheppu.${r.captcha.length ? ` ${r.captcha.map(setupProvName).join(", ")} daggara captcha vasthe okkasari nee tap kavali — appudu ikkade cheptha.` : ""}`;
+}
+async function waRetryStart(env, user, ids) {
+  const fin = parseRec(await env.KV.get(`setupdone:${user}`));
+  const prevDone = (fin && fin.done) || [];
+  const ord = id => WA_SETUP_PROVIDERS.indexOf(id);
+  const retryIds = [...new Set(ids || [])].filter(id => SETUP_PROVIDERS[id] && !prevDone.includes(id)).sort((a, b) => ord(a) - ord(b));
+  if (!retryIds.length) return "Retry cheyadaniki fail ayinavi em levu — anni ready ga unnayi.";
+  const live = parseRec(await env.KV.get(`setupchain:${user}`));
+  if (live) return waSetupProgressLine(env, user, live);
+  let email = "";
+  try { const c = parseRec(await env.KV.get(`setupconsent:${user}`)); if (c && c.email) email = c.email; } catch {}
+  if (!email) { try { const a = await acctFind(env, user); if (a && a.email) email = a.email; } catch {} }
+  if (!email) return "Retry kosam nee email dorakaledhu — 'setup cheyu' ani cheppu, akkada nunchi motham malli clear ga start chestha.";
+  await env.KV.put(`setupconsent:${user}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: [...prevDone, ...retryIds], email }), { expirationTtl: 86400 * 7 });
+  const pass = setupPass();
+  try { await env.KV.put(`upass:${user}`, JSON.stringify({ ct: await sealKey(env, user, "setup", pass) }), { expirationTtl: 86400 * 365 }); } catch {}
+  let userName = "";
+  try { const a = await acctFind(env, user); if (a && a.name) userName = a.name; } catch {}
+  const chain = { providers: [...prevDone, ...retryIds], done: [...prevDone], failed: [], skipped: null, failReason: {}, current: null, email, pass, at: Date.now(), browser: "profile", userName, userPhone: user, startId: null, via: "wa", retry: { at: Date.now(), of: retryIds } };
+  await env.KV.put(`setupchain:${user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+  await env.KV.delete(`wafeed:${user}`).catch(() => {});
+  const next = await setupStartNext(env, user);
+  if (!next.ok) { await env.KV.delete(`setupchain:${user}`).catch(() => {}); return "Retry machine start avvaledu — konchem sepu tarvatha malli cheppu."; }
+  return `Retry start chesa ✓ — ${retryIds.map(setupProvName).join(", ")} malli try chesthunna (mundhu ready ayinavi alaage unnayi). Progress ikkade cheptha; code vasthe ikkade adugutha.`;
+}
 // v110 ALWAYS ALLOW (Ajju 2026-11-17: "allow, always allow, dont
 // allow lantivi asalu adagaledhu"): the standing grant lives in
 // shared state (`setupalways:`), written under the WA number AND
@@ -3800,6 +4074,7 @@ async function waSetupStart(env, user, email) {
   try { const a = await acctFind(env, user); if (a && a.name) userName = a.name; } catch {}
   const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: "profile", userName, userPhone: user, startId: null, via: "wa" };
   await env.KV.put(`setupchain:${user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+  await env.KV.delete(`wafeed:${user}`).catch(() => {}); // v111: a new job starts quiet — a feed never carries over
   const next = await setupStartNext(env, user);
   if (!next.ok) { await env.KV.delete(`setupchain:${user}`).catch(() => {}); return "Setup machine start avvaledu — konchem sepu tarvatha malli 'setup cheyu' ani cheppu."; }
   return "Allow theeskunna ✓ Setup start chesa — accounts, keys anni nene create chestha. Progress ikkade cheptha; code vasthe ikkade adugutha, type cheyyi chaalu.";
@@ -3832,6 +4107,11 @@ async function waAllowFlow(env, user, text) {
 // record the identical consent and start the identical chain.
 async function waGrantSetup(env, user) {
   await env.KV.delete(`wasetupask:${user}`);
+  // v111: a pending RETRY offer owns this grant — the same Allow /
+  // Always-allow tap (or typed "sare") starts the retry pass over
+  // the failed providers, not a fresh full chain.
+  { const rp = parseRec(await env.KV.get(`waretrypend:${user}`));
+    if (rp && Array.isArray(rp.ids) && rp.ids.length) { await env.KV.delete(`waretrypend:${user}`); return waRetryStart(env, user, rp.ids); } }
   const consent = parseRec(await env.KV.get(`setupconsent:${user}`));
   let email = (consent && consent.email) || "";
   if (!email) { try { const a = await acctFind(env, user); if (a && a.email) email = a.email; } catch {} }
@@ -4451,6 +4731,34 @@ async function waSendText(env, to, text) {
     if (r.ok && id) return { ok: true, id };
     const em = (j && j.error && (j.error.message || j.error.type)) || `HTTP ${r.status}`;
     return { ok: false, error: String(em).slice(0, 160) };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 120) }; }
+}
+// v111 (WA parity — Ajju 2026-11-17): the first WA IMAGE send. Until
+// now WhatsApp could only receive text + interactive cards, so the
+// browser process (whose frames the runner already streams to the
+// Worker at every step change — setup.py v68, stored as
+// tcframe:<job>) could never be SHOWN on WhatsApp. An image goes
+// through Meta's media upload (the frame bytes are Julie's own
+// runner screenshots of the user's own job — never logged, never
+// sent to anyone but the job's owner).
+async function waSendImage(env, to, b64, caption) {
+  if (!env.WA_TOKEN || !env.PHONE_ID || !b64) return { ok: false, error: "no frame" };
+  try {
+    const bin = atob(String(b64));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const fd = new FormData();
+    fd.append("messaging_product", "whatsapp");
+    fd.append("type", "image/jpeg");
+    fd.append("file", new Blob([bytes], { type: "image/jpeg" }), "julie-screen.jpg");
+    const up = await fetch(`${G}/${env.PHONE_ID}/media`, { method: "POST", headers: { Authorization: `Bearer ${env.WA_TOKEN}` }, body: fd });
+    const uj = await up.json().catch(() => ({}));
+    if (!up.ok || !uj.id) return { ok: false, error: "media upload failed" };
+    const r = await fetch(`${G}/${env.PHONE_ID}/messages`, { method: "POST", headers: { Authorization: `Bearer ${env.WA_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ messaging_product: "whatsapp", to, type: "image", image: { id: uj.id, ...(caption ? { caption: String(caption).slice(0, 1024) } : {}) } }) });
+    const j = await r.json().catch(() => ({}));
+    const id = j && j.messages && j.messages[0] && j.messages[0].id;
+    if (r.ok && id) return { ok: true, id };
+    return { ok: false, error: String((j && j.error && j.error.message) || `HTTP ${r.status}`).slice(0, 160) };
   } catch (e) { return { ok: false, error: String((e && e.message) || e).slice(0, 120) }; }
 }
 async function appAssist(env, u, body, lang) {
@@ -6986,7 +7294,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
           // the ask must ARRIVE in that WhatsApp chat, not only sit in
           // the history store where the WA user never sees it. The
           // answer routes back through setupAwaitingReply in handle().
-          if (/^\d{7,15}$/.test(String(rec.user || ""))) { try { await waSendText(env, String(rec.user), clean.prompt); } catch {} }
+          if (/^\d{7,15}$/.test(String(rec.user || ""))) { try { await waSendText(env, String(rec.user), clean.prompt); } catch {} try { await waSendJobFrame(env, String(rec.user), job, `⏸ ${setupProvName(rec.provider)} — ee screen meedha aagindhi`); } catch {} }
         } else if (clean.id) {
           rec.awaiting = clean; // same ask re-posted — refresh only, no new chat line
         }
@@ -7014,7 +7322,30 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       // this user's Gmail — and every line names its scheduled
       // automatic continuation (the runner's pause-skip budget).
       try { await waSendText(env, String(rec.user), await waPauseText(env, rec)); } catch {}
+      // v111: the pause carries the SCREEN it is paused on — the
+      // user sees the wall he is acting on, not just its name. The
+      // sent fingerprint is recorded on an active feed so the feed
+      // hook below does not send the same frame twice.
+      try { const fp111 = await waSendJobFrame(env, String(rec.user), job, `⏸ ${setupProvName(rec.provider)} — ee screen meedha aagindhi`); if (fp111) { const f111 = parseRec(await env.KV.get(`wafeed:${rec.user}`)); if (f111 && f111.job === job) { f111.fp = fp111; await env.KV.put(`wafeed:${rec.user}`, JSON.stringify(f111), { expirationTtl: 86400 }); } } } catch {}
     }
+    // v111 PROCESS FEED: only for a job the user explicitly opted
+    // into ("process chupinchu / step by step" — wafeed:<user>
+    // carries THAT job's id). A step change sends the step line;
+    // a NEW frame (the runner's frames are change-only) rides as
+    // an image. Terminal states clear the flag — the next job
+    // starts quiet by default. Without the flag this block is
+    // inert: mid-job progress stays silent (v110 discipline).
+    try {
+      const feed111 = parseRec(await env.KV.get(`wafeed:${rec.user}`));
+      if (feed111 && feed111.job === job && /^\d{7,15}$/.test(String(rec.user || ""))) {
+        if (state === "done" || state === "failed" || state === "stopped") await env.KV.delete(`wafeed:${rec.user}`);
+        else if (state !== prevState || rec.step !== prevStep) {
+          await waSendText(env, String(rec.user), "▸ " + waJobStepLine(rec, rec.provider === "browse" ? "browse" : "setup"));
+          const fr111 = parseRec(await env.KV.get(`tcframe:${job}`));
+          if (fr111 && fr111.img && fr111.fp !== feed111.fp) { feed111.fp = fr111.fp; try { await env.KV.put(`wafeed:${rec.user}`, JSON.stringify(feed111), { expirationTtl: 86400 }); } catch {} await waSendImage(env, String(rec.user), fr111.img, ""); }
+        }
+      }
+    } catch {}
     // Chain: provider done → auto-start the next one with the same consent.
     if (state === "done") {
       const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
@@ -7095,8 +7426,17 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     if (body.error) rec.note = String(body.error).slice(0, 300);
     if (rec.provider === "browse" && body.answer) rec.answer = String(body.answer).slice(0, 2000); // v101: the browse result — stored on the job, reported by appTalk + setup/status
     if (rec.provider === "browse") rec.state = status; // v101: the result post is authoritative for a browse job's terminal state (its progress post says the same; belt and braces)
+    // v111: a browse outcome is an OUTCOME — it reaches the owner's
+    // WhatsApp too (one job, two windows; pre-fix the answer was
+    // stored on the record and only the app chat ever reported it).
+    let browseTell111 = null;
+    if (rec.provider === "browse" && !rec.waToldBrowse && /^\d{7,15}$/.test(String(rec.user || ""))) {
+      rec.waToldBrowse = true;
+      browseTell111 = status === "done" ? `✓ Browse ayipoyindhi${rec.answer ? ` — ${String(rec.answer).slice(0, 700)}` : ""}` : status === "stopped" ? "Browse stop ayyindhi." : `✗ Browse fail ayyindhi${rec.note ? ` — ${String(rec.note).slice(0, 200)}` : ""}`;
+    }
     rec.upd = Date.now();
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    if (browseTell111) { try { await waSendText(env, String(rec.user), browseTell111); } catch {} }
     if (!chain || chain.current !== job) return Response.json({ ok: true, advanced: false });
     chain.failed = chain.failed || [];
     // v109: per-provider progress INTO the WhatsApp chat as it
