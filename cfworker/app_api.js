@@ -917,6 +917,51 @@ async function appApi(req, env, url, ctx) {
     }
     return appJson(req, { ok: false, error: "kind" }, 400);
   }
+  // v118 (Nod Phase 1.75 — train mode): TRAIN visibility + control.
+  // Staging (utrainstage:) holds candidate learnings; live (ulearn:)
+  // holds the rules that passed the wrong-reply battery in
+  // train_learn.py and now ride every brain call via memContext.
+  // Production promotions flow through the git ledger
+  // (skills/learned/train_live.json) + ulearnSync; these endpoints are
+  // the owner-facing view and the rig/runner write path. Owner-only:
+  // the learnings come from the owner's own conversations.
+  if (p === "train" && req.method === "GET") {
+    if (!u.owner) return appJson(req, { ok: false, error: "owner" }, 403);
+    const staging = JSON.parse((await env.KV.get(`utrainstage:${u.n}`)) || "[]");
+    const live = JSON.parse((await env.KV.get(`ulearn:${u.n}`)) || "[]");
+    return appJson(req, { ok: true, staging, live });
+  }
+  if (p === "train/stage" && req.method === "POST") {
+    if (!u.owner) return appJson(req, { ok: false, error: "owner" }, 403);
+    const entries = Array.isArray(body.entries) ? body.entries : [];
+    const cur = JSON.parse((await env.KV.get(`utrainstage:${u.n}`)) || "[]");
+    const ids = new Set(cur.map(e => e.id));
+    let added = 0;
+    for (const e of entries) {
+      const rule = String((e && e.rule) || "").trim().slice(0, 300);
+      const id = String((e && e.id) || "").trim();
+      if (!rule || !id || ids.has(id)) continue;
+      cur.push({ id, user: String(e.user || "").slice(0, 300), reply: String(e.reply || "").slice(0, 300), rule, source: String(e.source || "digest").slice(0, 40), at: Date.now() });
+      ids.add(id); added++;
+    }
+    await env.KV.put(`utrainstage:${u.n}`, JSON.stringify(cur.slice(-100)));
+    return appJson(req, { ok: true, added, staged: cur.length });
+  }
+  if (p === "train/promote" && req.method === "POST") {
+    if (!u.owner) return appJson(req, { ok: false, error: "owner" }, 403);
+    const want = new Set((Array.isArray(body.ids) ? body.ids : []).map(String));
+    const cur = JSON.parse((await env.KV.get(`utrainstage:${u.n}`)) || "[]");
+    const live = JSON.parse((await env.KV.get(`ulearn:${u.n}`)) || "[]");
+    const have = new Set(live);
+    const keep = []; let moved = 0;
+    for (const e of cur) {
+      if (want.has(e.id)) { if (!have.has(e.rule)) { live.push(e.rule); have.add(e.rule); } moved++; }
+      else keep.push(e);
+    }
+    await env.KV.put(`utrainstage:${u.n}`, JSON.stringify(keep));
+    await env.KV.put(`ulearn:${u.n}`, JSON.stringify(live.slice(-40)));
+    return appJson(req, { ok: true, moved, live: live.length });
+  }
   if (p === "voice/speak" && req.method === "POST") {
     // v50 (V4): ASYNC house-voice route. The text is charged TOK.COST.voice
     // in tokens (the only gate), a vjob is stored, and the voice workflow

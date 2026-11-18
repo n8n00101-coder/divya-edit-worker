@@ -395,6 +395,34 @@ async function remember(env, user, h) {
   }
   await env.KV.put(`h:${user}`, JSON.stringify(keep), { expirationTtl: 86400 * 30 });
 }
+// v118 (Nod Phase 1.75 — train mode): LEARNED REPLY RULES. Rules Julie
+// distilled from the owner's own conversations (divya digest + Nod
+// chats), gated by the wrong-reply battery in train_learn.py BEFORE
+// they ever reach live. The git ledger (skills/learned/train_live.json
+// on main) is the source of truth; this mirrors it into KV
+// (ulearn:<user>) at most hourly, so a merged promotion reaches live
+// chats with no manual step. Owner-only: a friend never sees or gets
+// the owner's learned rules. Any failure returns the last mirrored set.
+async function ulearnSync(env, user) {
+  let live = [];
+  try { live = JSON.parse((await env.KV.get(`ulearn:${user}`)) || "[]"); } catch {}
+  try {
+    const owners = (env.OWNERS || "").split(",").map(s => s.trim());
+    if (!owners.includes(user)) return [];
+    const at = JSON.parse((await env.KV.get("ulearnsrc:at")) || "0");
+    if (Date.now() - at < 3600000) return live;
+    await env.KV.put("ulearnsrc:at", JSON.stringify(Date.now()));
+    const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/contents/skills/learned/train_live.json`, { headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" } }).catch(() => null);
+    if (!r || !r.ok) return live;
+    const j = await r.json().catch(() => null);
+    if (!j || !j.content) return live;
+    const bytes = Uint8Array.from(atob(String(j.content).replace(/\s/g, "")), c => c.charCodeAt(0));
+    const led = JSON.parse(new TextDecoder().decode(bytes));
+    const rules = (Array.isArray(led.live) ? led.live : []).map(e => String((e && e.rule) || "").trim()).filter(Boolean).slice(0, 40);
+    await env.KV.put(`ulearn:${user}`, JSON.stringify(rules));
+    return rules;
+  } catch { return live; }
+}
 async function memContext(env, user) {
   // Durable memory injected into every brain call: compressed earlier
   // conversations (hmem:) + hard user facts (umem:) — this is how Julie
@@ -405,6 +433,8 @@ async function memContext(env, user) {
     if (hm.length) out.push({ role: "system", content: "LONG-TERM MEMORY (earlier conversations with this user — treat as true and use it):\n" + hm.join("\n") });
     const um = JSON.parse((await env.KV.get(`umem:${user}`)) || "null");
     if (um) { const bits = []; if (um.name) bits.push(`their name is ${um.name}`); if (um.voice) bits.push(`always use a ${um.voice} voice-over for their videos`); if (um.lang) bits.push(`they prefer ${um.lang}`); (um.notes || []).forEach(n => bits.push(n)); if (bits.length) out.push({ role: "system", content: "USER FACTS (durable, saved across all conversations): " + bits.join("; ") + "." }); }
+    const lr = await ulearnSync(env, user); // v118: battery-gated learned reply rules (owner only)
+    if (lr.length) out.push({ role: "system", content: "LEARNED REPLY RULES (distilled from the owner's own conversations, battery-tested before going live — follow them like the REPLY SYSTEM):\n" + lr.map(r => "- " + r).join("\n") });
   } catch {}
   return out;
 }
@@ -2576,6 +2606,51 @@ async function appApi(req, env, url, ctx) {
       return appJson(req, { ok: true });
     }
     return appJson(req, { ok: false, error: "kind" }, 400);
+  }
+  // v118 (Nod Phase 1.75 — train mode): TRAIN visibility + control.
+  // Staging (utrainstage:) holds candidate learnings; live (ulearn:)
+  // holds the rules that passed the wrong-reply battery in
+  // train_learn.py and now ride every brain call via memContext.
+  // Production promotions flow through the git ledger
+  // (skills/learned/train_live.json) + ulearnSync; these endpoints are
+  // the owner-facing view and the rig/runner write path. Owner-only:
+  // the learnings come from the owner's own conversations.
+  if (p === "train" && req.method === "GET") {
+    if (!u.owner) return appJson(req, { ok: false, error: "owner" }, 403);
+    const staging = JSON.parse((await env.KV.get(`utrainstage:${u.n}`)) || "[]");
+    const live = JSON.parse((await env.KV.get(`ulearn:${u.n}`)) || "[]");
+    return appJson(req, { ok: true, staging, live });
+  }
+  if (p === "train/stage" && req.method === "POST") {
+    if (!u.owner) return appJson(req, { ok: false, error: "owner" }, 403);
+    const entries = Array.isArray(body.entries) ? body.entries : [];
+    const cur = JSON.parse((await env.KV.get(`utrainstage:${u.n}`)) || "[]");
+    const ids = new Set(cur.map(e => e.id));
+    let added = 0;
+    for (const e of entries) {
+      const rule = String((e && e.rule) || "").trim().slice(0, 300);
+      const id = String((e && e.id) || "").trim();
+      if (!rule || !id || ids.has(id)) continue;
+      cur.push({ id, user: String(e.user || "").slice(0, 300), reply: String(e.reply || "").slice(0, 300), rule, source: String(e.source || "digest").slice(0, 40), at: Date.now() });
+      ids.add(id); added++;
+    }
+    await env.KV.put(`utrainstage:${u.n}`, JSON.stringify(cur.slice(-100)));
+    return appJson(req, { ok: true, added, staged: cur.length });
+  }
+  if (p === "train/promote" && req.method === "POST") {
+    if (!u.owner) return appJson(req, { ok: false, error: "owner" }, 403);
+    const want = new Set((Array.isArray(body.ids) ? body.ids : []).map(String));
+    const cur = JSON.parse((await env.KV.get(`utrainstage:${u.n}`)) || "[]");
+    const live = JSON.parse((await env.KV.get(`ulearn:${u.n}`)) || "[]");
+    const have = new Set(live);
+    const keep = []; let moved = 0;
+    for (const e of cur) {
+      if (want.has(e.id)) { if (!have.has(e.rule)) { live.push(e.rule); have.add(e.rule); } moved++; }
+      else keep.push(e);
+    }
+    await env.KV.put(`utrainstage:${u.n}`, JSON.stringify(keep));
+    await env.KV.put(`ulearn:${u.n}`, JSON.stringify(live.slice(-40)));
+    return appJson(req, { ok: true, moved, live: live.length });
   }
   if (p === "voice/speak" && req.method === "POST") {
     // v50 (V4): ASYNC house-voice route. The text is charged TOK.COST.voice
