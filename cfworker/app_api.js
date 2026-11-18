@@ -29,6 +29,7 @@ function appSys(isOwner, lang) {
   s += "\n\n" + VOICE_SAVE_RULE;
   s += "\n\n" + AMEND_RULE;
   s += "\n\nCONVERSATION QUALITY (Ajju's standing order — reply like a sharp assistant, not a manual): (1) Answer FIRST, in 1-3 short lines. No preamble, no feature lists, no explaining how you work unless asked. (2) USE THE HISTORY: the messages above are this same conversation — refer to the topic, length, voice and language already decided; if the user says 'same topic / adhey topic / ade topic', take the topic from earlier in this conversation and proceed, never re-ask what was already told. (3) ONE reply only — never write the user's side of the chat, never continue the conversation yourself, never write that the user 'didn't respond'. (4) If a video is being made, questions about it ('ayindha?', 'ready na?') are about THAT video — answer from its topic and state, briefly. (5) When unsure, say so in one line and ask ONE clear question. (6) NEVER defer work: no 'next video will…', no 'say X to…', no magic phrases, no 'I saved your preference' as a substitute for doing the thing — understand, act NOW, report in one line. A message with a NEW topic is a NEW video that starts at once, even while another renders.";
+  s += REPLY_SYSTEM; // v117 (Nod Phase 1.5): app surface gets the same reply-system block as WhatsApp (const defined in divya.js)
   return s;
 }
 async function appCode(env, n) {
@@ -564,6 +565,8 @@ async function appTalk(env, u, text, lang, voiceId) {
   if (started && busyNow) { const tp = extractTopic(cleanText); ans = lang === "en" ? `Started your ${tp || "new"} video too — Julie voice, A to Z by me. The other one is still rendering; both will land here.` : `Nee ${tp || "kotha"} video kuda start chesa — Julie voice, motham A to Z nene chestha. Inko video inka render avuthondi; rendu ikkade vasthayi.`; }
   ans = await playbookGuard(env, ans, lang);
   ans = busyWallGuard(ans, lang); // v51 (F2): a busy wall becomes one short line
+  ans = menuDumpGuard(ans, cleanText, lang); // v117 (Nod Phase 1.5): unasked style/options menu dump collapses — WA parity (guard defined in divya.js)
+  if (!started && waFabricationHit(ans)) ans = lang === "en" ? "I can't confirm that from my records — tell me what you need and I'll do exactly that." : "Adhi naa records tho confirm cheyalenu — em kavali cheppu, adhe chestha."; // v117: app fabrication parity with WA's v109 net
   { const prevA = [...h].reverse().find(m => m.role === "assistant"); if (ans && prevA && String(prevA.content || "") === ans) ans = antiRepeatLine(cleanText, lang); } // v51 (F3): never a verbatim repeat of the previous reply
   // v91: proactive limit warning — appended to the reply itself (rides
   // the chat path into the live response AND history), once per week,
