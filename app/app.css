@@ -707,3 +707,14 @@ body.kb-open .composer-wrap{bottom:calc(6px + var(--sab))}
    the type box off-screen on a phone. */
 .tc-panel .keyrow, .liveview .keyrow{flex-wrap:wrap}
 .tc-panel .keyrow .keyfield, .liveview .keyrow .keyfield{flex:1 1 45%;min-width:120px}
+
+/* v116 (Nod Phase 1): Memory screen — theme vars only, cards never touch */
+.mem-h{margin:20px 0 8px}
+.mem-row{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 14px;margin:0 0 10px}
+.mem-text{white-space:pre-wrap;overflow-wrap:anywhere;margin:2px 0}
+.mem-src{margin-top:2px}
+.mem-actions{display:flex;gap:8px;margin-top:8px}
+.mem-actions .btn{width:auto;margin:0;padding:8px 14px}
+.mem-editor{margin-top:10px}
+.mem-ta{width:100%;box-sizing:border-box;border-radius:12px;padding:10px 12px;font:inherit;color:var(--text)}
+.mem-list[hidden]{display:none}

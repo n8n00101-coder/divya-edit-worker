@@ -2488,6 +2488,81 @@ async function appApi(req, env, url, ctx) {
   // view. Default ON when unset.
   if (p === "prefs" && req.method === "GET") { const pr = JSON.parse((await env.KV.get(`prefs:${u.n}`)) || "{}"); return appJson(req, { ok: true, prefs: pr }); }
   if (p === "prefs" && req.method === "POST") { const b = body; /* v54: use the body appApi already parsed — a second req.json() always throws (body consumed), so the pref was NEVER stored and every toggle silently failed to persist */ const cur = JSON.parse((await env.KV.get(`prefs:${u.n}`)) || "{}"); if (typeof b.lvMini === "boolean") cur.lvMini = b.lvMini; await env.KV.put(`prefs:${u.n}`, JSON.stringify(cur)); return appJson(req, { ok: true, prefs: cur }); }
+  // v116 (Nod Phase 1): VISIBLE MEMORY — the Memory screen reads, edits
+  // and forgets the SAME stores the brain uses: umem: (durable user
+  // facts + explicit "remember" notes) and hmem: (compressed earlier-
+  // conversation summaries). No new store, no new engine — the user
+  // finally sees what Julie remembers, where it came from, and can fix
+  // or erase it. Source labels are honest about what is actually
+  // stored: a note's text IS the user's own "remember..." message; a
+  // summary is Julie's compression of an earlier conversation.
+  if (p === "memory" && req.method === "GET") {
+    const um = JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null") || {};
+    const hm = JSON.parse((await env.KV.get(`hmem:${u.n}`)) || "[]");
+    const facts = [];
+    if (um.name) facts.push({ field: "name", label: "Name", value: String(um.name), source: "You told Julie your name in chat" });
+    if (um.voice) facts.push({ field: "voice", label: "Voice-over", value: String(um.voice), source: "Your always-voice preference from chat" });
+    if (um.lang) facts.push({ field: "lang", label: "Language", value: String(um.lang), source: "Your preferred language from chat" });
+    const notes = (um.notes || []).map((t, i) => ({ kind: "note", idx: i, text: String(t), source: "You asked Julie to remember this" }));
+    const summaries = (Array.isArray(hm) ? hm : []).map((t, i) => ({ kind: "summary", idx: i, text: String(t), source: "Summary of an earlier conversation" }));
+    return appJson(req, { ok: true, facts, notes, summaries });
+  }
+  if (p === "memory/edit" && req.method === "POST") {
+    const kind = String(body.kind || ""), idx = Number(body.idx), text = String(body.text || "").trim();
+    if (!text) return appJson(req, { ok: false, error: "empty" }, 400);
+    if (kind === "fact") {
+      const field = String(body.field || "");
+      if (!["name", "voice", "lang"].includes(field)) return appJson(req, { ok: false, error: "field" }, 400);
+      if (field === "voice" && !["female", "male"].includes(text.toLowerCase())) return appJson(req, { ok: false, error: "voice" }, 400);
+      const um = JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null") || {};
+      um[field] = field === "voice" ? text.toLowerCase() : text.slice(0, 60);
+      await env.KV.put(`umem:${u.n}`, JSON.stringify(um), { expirationTtl: 86400 * 180 });
+      return appJson(req, { ok: true });
+    }
+    if (kind === "note") {
+      const um = JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null") || {};
+      const notes = um.notes || [];
+      if (!(idx >= 0 && idx < notes.length)) return appJson(req, { ok: false, error: "idx" }, 400);
+      notes[idx] = text.slice(0, 300); um.notes = notes;
+      await env.KV.put(`umem:${u.n}`, JSON.stringify(um), { expirationTtl: 86400 * 180 });
+      return appJson(req, { ok: true });
+    }
+    if (kind === "summary") {
+      const hm = JSON.parse((await env.KV.get(`hmem:${u.n}`)) || "[]");
+      if (!(idx >= 0 && idx < hm.length)) return appJson(req, { ok: false, error: "idx" }, 400);
+      hm[idx] = text.slice(0, 700);
+      await env.KV.put(`hmem:${u.n}`, JSON.stringify(hm), { expirationTtl: 86400 * 90 });
+      return appJson(req, { ok: true });
+    }
+    return appJson(req, { ok: false, error: "kind" }, 400);
+  }
+  if (p === "memory/forget" && req.method === "POST") {
+    const kind = String(body.kind || ""), idx = Number(body.idx);
+    if (kind === "fact") {
+      const field = String(body.field || "");
+      if (!["name", "voice", "lang"].includes(field)) return appJson(req, { ok: false, error: "field" }, 400);
+      const um = JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null") || {};
+      delete um[field];
+      await env.KV.put(`umem:${u.n}`, JSON.stringify(um), { expirationTtl: 86400 * 180 });
+      return appJson(req, { ok: true });
+    }
+    if (kind === "note") {
+      const um = JSON.parse((await env.KV.get(`umem:${u.n}`)) || "null") || {};
+      const notes = um.notes || [];
+      if (!(idx >= 0 && idx < notes.length)) return appJson(req, { ok: false, error: "idx" }, 400);
+      notes.splice(idx, 1); um.notes = notes;
+      await env.KV.put(`umem:${u.n}`, JSON.stringify(um), { expirationTtl: 86400 * 180 });
+      return appJson(req, { ok: true });
+    }
+    if (kind === "summary") {
+      const hm = JSON.parse((await env.KV.get(`hmem:${u.n}`)) || "[]");
+      if (!(idx >= 0 && idx < hm.length)) return appJson(req, { ok: false, error: "idx" }, 400);
+      hm.splice(idx, 1);
+      await env.KV.put(`hmem:${u.n}`, JSON.stringify(hm), { expirationTtl: 86400 * 90 });
+      return appJson(req, { ok: true });
+    }
+    return appJson(req, { ok: false, error: "kind" }, 400);
+  }
   if (p === "voice/speak" && req.method === "POST") {
     // v50 (V4): ASYNC house-voice route. The text is charged TOK.COST.voice
     // in tokens (the only gate), a vjob is stored, and the voice workflow
