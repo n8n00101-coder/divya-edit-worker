@@ -125,6 +125,7 @@
         <li><a href="#/connect" data-r="connect"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span data-t="sConnect"></span></a></li>
         <li><a href="#/plan" data-r="plan"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.6 5.6 6 .7-4.5 4.1 1.2 6L12 16.4 6.7 19.4l1.2-6L3.4 9.3l6-.7z"/></svg><span data-t="sPlan"></span></a></li>
         <li><a href="#/download" data-r="download"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg><span data-t="sDownload"></span></a></li>
+        <li><a href="#/memory" data-r="memory"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg><span data-t="sMemory"></span></a></li>
         <li><a href="#/profile" data-r="profile"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span data-t="sProfile"></span></a></li>
         <li><a href="#/settings" data-r="settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg><span data-t="sSettings"></span></a></li>
         <!-- v37: Setup goes LAST (before logout) — it is a one-time screen, not a daily destination. -->
@@ -378,6 +379,7 @@
             <div class="row"><span data-t="phone"></span><span class="muted r" id="profPhone"></span></div>
             <a class="row link" href="#/plan"><span data-t="planL"></span><span class="muted r"><span id="profPlan"></span> ›</span></a>
             <a class="row link" href="#/plan"><span data-t="tokensL"></span><span class="muted r"><span id="profEdits"></span> ›</span></a>
+            <a class="row link" href="#/memory"><span data-t="sMemory"></span><span class="muted r">›</span></a>
             <a class="row link" href="#/connect"><span data-t="connected"></span><span class="muted r"><span id="profConn"></span> ›</span></a>
           </div>
           <div class="card stack acct-card" id="acctCard" hidden>
@@ -402,6 +404,21 @@
             </form>
           </div>
           <div class="list"><button class="row link danger" id="profLogout"><span data-t="logout"></span></button></div>
+        </div>
+      </section>
+
+      <!-- MEMORY (v116, Nod Phase 1: visible memory — read / edit / forget) -->
+      <section id="s-memory" class="screen" data-title="sMemory">
+        <div class="scroll pad">
+          <p class="muted" data-t="memSub"></p>
+          <h2 class="h3 mem-h" id="memFactsH" data-t="memFacts"></h2>
+          <div id="memFacts" class="mem-list"></div>
+          <h2 class="h3 mem-h" id="memNotesH" data-t="memNotes"></h2>
+          <div id="memNotes" class="mem-list"></div>
+          <h2 class="h3 mem-h" id="memSummH" data-t="memSummaries"></h2>
+          <div id="memSummaries" class="mem-list"></div>
+          <p class="muted" id="memEmpty" data-t="memEmpty" hidden></p>
+          <p class="muted small" id="memStatus" aria-live="polite"></p>
         </div>
       </section>
 
