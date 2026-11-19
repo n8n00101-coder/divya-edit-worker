@@ -953,6 +953,24 @@ async function handle(env, m) {
                     : "Cloudflare server key inka ledu — adi setup lone create avuthundhi. 'setup cheyu' ani cheppu, ikkade allow theeskoni create chestha; tarvatha nee site ni aa server lone deploy chestha.";
       const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2);
     }
+    // Agent routing (final integration slice): a general do-it task
+    // on WhatsApp becomes a REAL agent job through the same creation
+    // core as the app chat (chatStartAgentJob — TOK.COST.agent gate,
+    // one active job, dispatch-failure refund). The outcome returns
+    // to THIS chat from the result handler's tell. The classifier is
+    // conservative: every gate above (stop, upload, setup, status,
+    // deploy, how) has already claimed its messages, and
+    // isAgentTaskOrder itself refuses greetings, questions, video
+    // orders and setup asks.
+    if (isAgentTaskOrder(text)) {
+      const r = await chatStartAgentJob(env, user, text, "te").catch(() => ({ ok: false, error: "dispatch" }));
+      let a2;
+      if (r.ok) a2 = `🤖 Agent task start chesa — “${text.slice(0, 80)}”. Naa agent pani chesthundhi; ayyaka ikkade cheptha. Aapali ante "stop" ani cheppu.`;
+      else if (r.error === "busy") a2 = "🤖 Oka agent job already nadusthundhi. Adi ayyaka next di start avuthundi — leda ippudu annadhi aapali ante \"stop\" ani cheppu.";
+      else if (r.error === "quota") a2 = r.msg;
+      else a2 = "🤖 Agent machine start avvaledu. Tokens venakki ichesa — konchem sepu tarvatha try cheyyi.";
+      const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2);
+    }
     // v72: a production instruction while a create is RUNNING is an
     // amendment to THAT video (Hark behaviour) — stored structurally on
     // the job's record for the runner's checkpoints, answered in one
@@ -1741,6 +1759,34 @@ async function appTalk(env, u, text, lang, voiceId) {
     h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
     return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
   }
+  // Agent routing (final integration slice): a finished agent job is
+  // reported in THIS chat from its record, once, behind the record's
+  // chatToldAgent mark (the result handler's WhatsApp tell is the
+  // other window, behind waToldAgent — one job, two windows, each
+  // told once). A failed/unverified outcome delivered nothing the
+  // user can use: its creation spend is settled here too
+  // (refundJobSpend is idempotent, and the "tokens returned" line is
+  // claimed only when a refund write landed or the durable spend
+  // record already shows it).
+  const aJob = await agentJobFor(env, u.n).catch(() => null);
+  if (aJob && ["done", "failed", "stopped", "unverified"].includes(aJob.state) && !aJob.chatToldAgent) {
+    let refunded = false;
+    if (aJob.state === "failed" || aJob.state === "unverified") {
+      try { refunded = await refundJobSpend(env, aJob.job, u.n); if (!refunded) { const sp = parseRec(await env.KV.get(`spend:${aJob.job}`)); refunded = !!(sp && sp.refunded); } } catch {}
+    }
+    aJob.chatToldAgent = true; aJob.upd = Date.now();
+    try { await env.KV.put(`setupjob:${aJob.job}`, JSON.stringify(aJob), { expirationTtl: 86400 * 2 }); } catch {}
+    const a2 = agentOutcomeLine(aJob, lang, refunded);
+    h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
+    return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
+  }
+  if (aJob && ["queued", "running"].includes(aJob.state) && isStopIntent(cleanText)) {
+    aJob.state = "stopped"; aJob.upd = Date.now();
+    try { await env.KV.put(`setupjob:${aJob.job}`, JSON.stringify(aJob), { expirationTtl: 86400 * 2 }); } catch {}
+    const a2 = lang === "en" ? "🤖 Agent job stopped — the agent halts at its next step." : "🤖 Agent job aapesanu — agent next step daggara aaguthundhi.";
+    h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
+    return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
+  }
   // v101 (R51 browser parity): a browse order (a link to open, a site
   // to work on) starts a REAL browse job on the browse runner —
   // structurally, BEFORE the R28 open-intent below (which would
@@ -1799,6 +1845,23 @@ async function appTalk(env, u, text, lang, voiceId) {
     h.push({ role: "assistant", content: sg }); await remember(env, u.n, h);
     return { reply: sg, video_started: false, premium_required: false, brain: u.via || "shared" };
   }
+  // Agent routing (final integration slice): a general do-it task
+  // that is neither a video/edit order nor a setup/browse/deploy ask
+  // becomes a REAL agent job (the engine loop on the agent runner) —
+  // structurally, here, so "started" is said only when a job record
+  // + a successful dispatch both exist. The classifier is
+  // conservative (isAgentTaskOrder): greetings, questions, status
+  // asks and every older route keep their behaviour untouched.
+  if (isAgentTaskOrder(text)) {
+    const r = await chatStartAgentJob(env, u.n, cleanText || text, lang).catch(() => ({ ok: false, error: "dispatch" }));
+    let a2;
+    if (r.ok) a2 = lang === "en" ? `🤖 Agent task started — “${(cleanText || text).slice(0, 80)}”. My agent is on it; I'll report here when it's done. Say "stop" anytime to halt it.` : `🤖 Agent task start chesa — “${(cleanText || text).slice(0, 80)}”. Naa agent pani chesthundhi; ayyaka ikkade cheptha. Aapali ante "stop" ani cheppu.`;
+    else if (r.error === "busy") a2 = lang === "en" ? "🤖 An agent job is already running. The next one can start after it finishes — or say \"stop\" to halt the current one." : "🤖 Oka agent job already nadusthundhi. Adi ayyaka next di start avuthundi — leda ippudu annadhi aapali ante \"stop\" ani cheppu.";
+    else if (r.error === "quota") a2 = r.msg;
+    else a2 = lang === "en" ? "🤖 The agent machine didn't start. Your tokens were returned — try again in a few minutes." : "🤖 Agent machine start avvaledu. Tokens venakki ichesa — konchem sepu tarvatha try cheyyi.";
+    h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
+    return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared", agent_started: !!r.ok, agent_job: r.job || null };
+  }
   // v67 (Ajju): "ayindha video?" is answered from the actual job record —
   // never the brain, never the manual. A voice/language change asked while
   // a video renders is saved as the next video's preference, said plainly.
@@ -1823,6 +1886,19 @@ async function appTalk(env, u, text, lang, voiceId) {
     }
     h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
     return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
+  }
+  // Agent routing: a status question with an agent job on record is
+  // answered from THAT record (agentPublic — state + step counts,
+  // never an invented %). Runs after the video status block above:
+  // a running video keeps its v67 answer; an agent job answers when
+  // no video context claimed the question.
+  if (isStatusQ) {
+    const aJobS = await agentJobFor(env, u.n).catch(() => null);
+    if (aJobS) {
+      const a2 = agentStatusLine(aJobS, lang);
+      h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
+      return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
+    }
   }
   // v72: a production instruction while a create is RUNNING is an
   // amendment to THAT video (Hark behaviour) — stored structurally on
@@ -4421,6 +4497,11 @@ async function waJobStatusReply(env, user) {
       if (fin2) return waSetupDoneLine(fin2);
       return "Setup ippude modalayindhi — progress ikkade cheptha.";
     }
+    // Agent routing: an ACTIVE agent job answers a status question
+    // from its own record (agentPublic via agentStatusLine) — never
+    // the video line, never an invented %.
+    const aJob = await agentJobFor(env, user).catch(() => null);
+    if (aJob && ["queued", "running"].includes(aJob.state)) return agentStatusLine(aJob, "te");
     const busyNow = await env.KV.get(`busy:${user}`);
     const appjob = parseRec(await env.KV.get(`appjob:${user}`));
     if (busyNow || appjob) {
@@ -4435,6 +4516,9 @@ async function waJobStatusReply(env, user) {
     if (last && last.state === "failed") return "Last video machine daggara fail ayyindhi. Cheppu, malli start chestha.";
     if (last && last.state === "cancelled") return "Last video cancel ayyindhi — kotthadhi kavali ante topic cheppu.";
     if (last && last.state === "editing") return "Nee video inka tayaru avuthondi. Ready ayina ventane ikkade pampistha.";
+    // A terminal agent job still answers truthfully from its record
+    // instead of the "nothing is running" line.
+    if (aJob) return agentStatusLine(aJob, "te");
     return "Ippudu em job run avvatledhu — setup kuda ledu, video kuda ledu. Em cheyalo cheppu, start chestha.";
   } catch { return "Status ippudu check cheyyaleka pothunna — okka nimisham lo malli adugu."; }
 }
@@ -4570,10 +4654,16 @@ async function waStopBrowserJob(env, user) {
   }
   const bj = await browseJobFor(env, user).catch(() => null);
   if (bj && ["queued", "running", "paused"].includes(bj.state)) { bj.state = "stopped"; bj.upd = Date.now(); await env.KV.put(`setupjob:${bj.job}`, JSON.stringify(bj), { expirationTtl: 86400 * 2 }); did = did ? "both" : "browse"; }
-  if (!did) return null;
+  // Agent routing: the same WA stop also halts a running AGENT job
+  // (the shared setup/stop rule) — its loop polls this state.
+  let agentStopped = false;
+  const aj = await agentJobFor(env, user).catch(() => null);
+  if (aj && ["queued", "running"].includes(aj.state)) { aj.state = "stopped"; aj.upd = Date.now(); await env.KV.put(`setupjob:${aj.job}`, JSON.stringify(aj), { expirationTtl: 86400 * 2 }); agentStopped = true; }
+  if (!did && !agentStopped) return null;
   await env.KV.delete(`wafeed:${user}`).catch(() => {});
-  if (did === "browse") return "Aapesa — browse job stop chesa. Inka progress messages raavu.";
-  return "Aapesa — setup stop chesa. Inthavaraku ayinavi alaage unnayi; malli start cheyala ante 'setup cheyu' leda 'failed vi malli try cheyu' ani cheppu.";
+  if (agentStopped && !did) return "Aapesa — agent job stop chesa. Inka progress messages raavu.";
+  const base = did === "browse" ? "Aapesa — browse job stop chesa. Inka progress messages raavu." : "Aapesa — setup stop chesa. Inthavaraku ayinavi alaage unnayi; malli start cheyala ante 'setup cheyu' leda 'failed vi malli try cheyu' ani cheppu.";
+  return agentStopped ? base + " Agent job kuda stop chesa." : base;
 }
 // The app's setup/continue mirrored for WA: a paused job flips back
 // to running and the runner resumes on its next poll — the same
@@ -6619,6 +6709,87 @@ function agentPublic(j) {
   for (const n of startedN) if (!doneN.has(n)) inflight++;
   const ev = Array.isArray(j.evidence) ? j.evidence : [];
   return { job: j.job, active: ["queued", "running"].includes(j.state), state: j.state, step: j.step || "", note: j.note || "", task: String(j.task || "").slice(0, 140), answer: j.answer || "", steps: { recorded: steps.length, completed, ok, failed: completed - ok, inflight, last: last ? { n: last.n || 0, tool: last.tool || "", ok: !!last.ok, result: String(last.result || "").slice(0, 200) } : null }, evidence: { declared: ev.length, requirements: ev.map(r => ({ tool: String((r && r.tool) || ""), ...(r && r.contains ? { contains: String(r.contains).slice(0, 80) } : {}), verify: !!(r && r.args) })) }, at: j.at || 0, upd: j.upd || 0 };
+}
+// ===== Chat/WhatsApp routing to agent jobs (final integration
+// slice): a general do-it task asked in conversation becomes a REAL
+// agent job through the same creation core as POST /api/agent =====
+// The classifier is deliberately conservative — Julie's reply
+// discipline law: a greeting, a question, a video order, a setup
+// ask or a status question must NEVER start an agent job, and a
+// pending intent is never hijacked. A message routes only when it
+// carries BOTH an imperative work verb AND a work product / object,
+// and none of the older structural routes claim it.
+function isAgentTaskOrder(text) {
+  const t = String(text || "").trim();
+  if (t.length < 14) return false;
+  if (isCreateOrder(t) || isNoVideoEditOrder(t) || isSetupQuestion(t) || isDeployOrder(t) || isBrowseOrder(t) || isHowQuestion(t)) return false;
+  if (isStopIntent(t) || askOnlyQ(t) || mathAnswer(t)) return false;
+  if (/^\s*(hi+|hello|hey|helo|hai|namaste|hii+)\b/i.test(t)) return false;
+  // the video / setup worlds keep their own flows — never an agent job
+  if (/\b(video|videos|reel|reels|shorts|thumbnail|youtube|instagram)\b/i.test(t) || /\bshort\s+(video|film|clip)\b/i.test(t)) return false;
+  if (/\b(api\s*keys?|setup|connect|login|password|otp|captcha)\b/i.test(t)) return false;
+  // a status / progress question is answered from the record, not started
+  if (/(ayindha|ayyindha|ayipoyindha|status|progress|ekkada\s*varaku|entha\s*percent|percent\s*complete|em\s*ayindi)/i.test(t) && !/(cheyu|cheyyi|chesko|raayi|rayi|write|prepare|create|make|draft|list)/i.test(t)) return false;
+  // a pure question (no imperative verb) is a question, not an order
+  const verb = /\b(write|draft|compose|prepare|create|make|generate|summari[sz]e|analy[sz]e|research|compile|calculate|compute|convert|translate|rewrite|proofread|compare|collect|gather|design|list|raayi|rayi|cheyu|cheyyi|chesko|lekkalu|kanipettu)\b/i.test(t);
+  if (!verb) return false;
+  // a question ANYWHERE demotes weak imperatives: "Styles em unnay?
+  // List cheppu" asks what exists — the brain answers it; it is not
+  // a task order. Only a strong task verb still routes a ?-carrying
+  // message ("write a report on X, and cover Y?").
+  if (/\?/.test(t) && !/\b(write|draft|compose|prepare|create|make|generate|summari[sz]e|analy[sz]e|research|compile|calculate|compute|convert|translate|rewrite|raayi|rayi|cheyu|cheyyi|chesko)\b/i.test(t)) return false;
+  // the work product / object the verb acts on
+  const product = /\b(report|summary|list|table|essay|letter|email|plan|notes?|analysis|paragraph|article|document|doc|file|csv|data|text|answers?|questions?|points?|comparison|schedule|itinerary|budget|resume|poem|story\s+outline|outline|stages?|steps?|names?|ideas?|options?|pros\s+and\s+cons)\b/i.test(t);
+  if (product) return true;
+  // verb-led with a real object phrase ("research the best laptops under 50000")
+  return /^\s*(please\s+)?(write|draft|compose|prepare|create|make|generate|summari[sz]e|analy[sz]e|research|compile|calculate|compute|convert|translate|rewrite|proofread|compare|collect|gather|design|list)\b[^.?!]{8,}$/i.test(t);
+}
+// Chat-side creation: the SAME money path as POST /api/agent —
+// busy rule first, tokSpend at TOK.COST.agent (token-only gating),
+// recordSpend on success, full refund when the dispatch fails.
+async function chatStartAgentJob(env, n, task, lang) {
+  const prev = await agentJobFor(env, n).catch(() => null);
+  if (prev && ["queued", "running"].includes(prev.state)) return { ok: false, error: "busy", job: prev.job };
+  const cost = TOK.COST.agent;
+  const tk = await tokSpend(env, n, cost);
+  if (!tk.ok) return { ok: false, error: "quota", msg: tokMsg(lang, tk) };
+  const r = await startAgentJob(env, n, String(task || "").slice(0, 600), {}).catch(() => ({ ok: false, error: "dispatch" }));
+  if (!r.ok) {
+    await tokRefund(env, n, tk, cost);
+    if (r.error === "busy") return { ok: false, error: "busy", job: r.job };
+    return { ok: false, error: "dispatch", job: r.job };
+  }
+  await recordSpend(env, r.job, n, tk, cost);
+  return { ok: true, job: r.job };
+}
+// The agent job's terminal outcome as ONE chat line — composed from
+// the job record alone (the result handler's WhatsApp wording, the
+// app surface's language). The refund is claimed ONLY when the
+// caller verified it landed (refundJobSpend / the spend record).
+function agentOutcomeLine(j, lang, refunded) {
+  const en = lang === "en";
+  const task = j.task ? `“${String(j.task).slice(0, 80)}”` : "";
+  const refundLine = refunded ? (en ? " Your tokens were returned." : " Tokens venakki ichesa.") : "";
+  if (j.state === "done") return en ? `🤖 Agent job done — ${task || "your task"}${j.answer ? `\n${String(j.answer).slice(0, 1200)}` : ""}` : `🤖 Agent job ayipoyindhi — ${task || "nee task"}${j.answer ? `\n${String(j.answer).slice(0, 1200)}` : ""}`;
+  if (j.state === "unverified") return en ? `🤖 Agent job UNVERIFIED — it claimed done but the evidence didn't check out${j.note ? ` (${String(j.note).slice(0, 160)})` : ""}.${refundLine}` : `🤖 Agent job UNVERIFIED — done ani claim chesindhi kaani evidence saripoledu${j.note ? ` (${String(j.note).slice(0, 160)})` : ""}.${refundLine}`;
+  if (j.state === "stopped") return en ? "🤖 Agent job stopped." : "🤖 Agent job stop ayyindhi.";
+  return en ? `🤖 Agent job didn't finish — ${j.note || "it failed at the machine."}${refundLine}` : `🤖 Agent job complete avvaledu — ${j.note || "machine daggara fail ayyindhi."}${refundLine}`;
+}
+// The agent job's status as ONE chat line, from agentPublic — the
+// record's state + recorded step counts only. No percentages, no
+// stage names, nothing the record does not hold.
+function agentStatusLine(j, lang) {
+  const p = agentPublic(j);
+  if (!p) return "";
+  const en = lang === "en";
+  const task = p.task ? `“${p.task}”` : (en ? "your task" : "nee task");
+  const steps = p.steps.completed ? (en ? ` Steps so far: ${p.steps.completed} recorded, ${p.steps.ok} ok.` : ` Steps: ${p.steps.completed} record ayyayi, ${p.steps.ok} ok.`) : "";
+  if (p.state === "queued") return en ? `🤖 Agent job queued — ${task}. It starts on the agent machine in a moment; I'll report here when it's done.` : `🤖 Agent job queue lo undhi — ${task}. Agent machine meedha twaralo start avuthundhi; ayyaka ikkade cheptha.`;
+  if (p.state === "running") return en ? `🤖 Agent job running — ${task}.${steps}` : `🤖 Agent job nadusthundhi — ${task}.${steps}`;
+  if (p.state === "done") return en ? `🤖 Agent job done — ${task}${p.answer ? `\n${String(p.answer).slice(0, 700)}` : ""}` : `🤖 Agent job ayipoyindhi — ${task}${p.answer ? `\n${String(p.answer).slice(0, 700)}` : ""}`;
+  if (p.state === "unverified") return en ? `🤖 Agent job UNVERIFIED — ${task}${p.note ? ` (${String(p.note).slice(0, 160)})` : ""}` : `🤖 Agent job UNVERIFIED — ${task}${p.note ? ` (${String(p.note).slice(0, 160)})` : ""}`;
+  if (p.state === "stopped") return en ? `🤖 Agent job stopped — ${task}.` : `🤖 Agent job stop ayyindhi — ${task}.`;
+  return en ? `🤖 Agent job failed — ${task}${p.note ? ` — ${String(p.note).slice(0, 160)}` : ""}` : `🤖 Agent job fail ayyindhi — ${task}${p.note ? ` — ${String(p.note).slice(0, 160)}` : ""}`;
 }
 function isBrowseOrder(text) {
   const t = String(text || "");
