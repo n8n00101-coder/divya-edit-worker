@@ -98,6 +98,20 @@ UNVERIFIED — an honest terminal state, not done and not a silent
 fail — with the gap recorded on the record. With no declared
 requirements, done behaves exactly as E1 specified. See e56test.py.
 
+E7 (deterministic compute + verify) closes the hole parity test
+v1 exposed: the E6 gate proved a declared artifact EXISTED, not
+that its contents were RIGHT, and the model computed the facts
+itself — wrongly. A requirement may now be verify-style:
+{"tool": "verify_file_contains", "args": {...}} — the gate then
+passes only when a recorded OK step from that exact tool, with
+args matching the requirement's args, exists AFTER the last
+recorded OK write to the artifact the args name (their "path"):
+verifying an earlier version of the file, or a FAILED verify,
+never satisfies it. Plain tool / tool+contains requirements keep
+their E6 meaning unchanged. The verify tools themselves live in
+compute_tools.py (with compute_csv, the exact-arithmetic fact
+computer). See e7test.py.
+
 Tool contract: a tool is a dict {"name": str, "desc": str,
 "run": callable}. Since E2 the canonical source of tool dicts is
 tools_registry.py (a Registry's as_tools()): entries there also
@@ -404,28 +418,100 @@ def _call_handler_cancellable(tool, args, stop):
 
 def _norm_requirement(r):
     """Normalize one declared evidence requirement to
-    {"tool": str, "contains": str}: a bare string names a tool
-    that must have a recorded OK result; a dict may name "tool"
-    and/or "contains" (a substring the OK result must contain —
-    how a required artifact / check is declared)."""
+    {"tool": str, "contains": str, "args": ...}: a bare string
+    names a tool that must have a recorded OK result; a dict may
+    name "tool" and/or "contains" (a substring the OK result must
+    contain — how a required artifact / check is declared). E7: a
+    dict carrying "args" is a VERIFY-style requirement — its
+    value rides along untouched (None when the key is absent) and
+    _verify_gap interprets it."""
     if isinstance(r, str):
-        return {"tool": r, "contains": ""}
+        return {"tool": r, "contains": "", "args": None}
     if isinstance(r, dict):
         return {"tool": str(r.get("tool") or ""),
                 "contains": str(r.get("contains")
-                                or r.get("result_contains") or "")}
-    return {"tool": "", "contains": ""}
+                                or r.get("result_contains") or ""),
+                "args": (r.get("args") if "args" in r else None)}
+    return {"tool": "", "contains": "", "args": None}
 
 
-def _evidence_gaps(requirements, ok_steps):
+def _args_match(want, got):
+    """Subset match for a verify-style requirement: every key/value
+    the requirement declares must equal the recorded step's args
+    (the step may carry more). Values compare with ==, so lists
+    and dicts match structurally. A step whose args were never
+    recorded (None — e.g. a seed-history entry) never matches."""
+    if not isinstance(got, dict):
+        return False
+    return all(got.get(k) == v for k, v in want.items())
+
+
+def _verify_gap(req, events):
+    """E7: check one verify-style requirement against the recorded
+    OK events (dicts {"tool", "args", "mutating", "seq"} in run
+    order). Returns None when satisfied, else the gap description.
+
+    Satisfied = an OK event from the requirement's tool whose args
+    match the requirement's args AND whose seq is AFTER the last
+    OK mutating event that wrote the artifact the args name
+    (args["path"]) — so a verify of an earlier version of the
+    file, or a FAILED verify (never an OK event), cannot pass the
+    gate. When no write to the artifact is on record, any matching
+    OK verify satisfies it (verifying a pre-existing file)."""
+    want_args = req["args"]
+    artifact = want_args.get("path")
+    last_write = None
+    if isinstance(artifact, str) and artifact:
+        for ev in (events or []):
+            ev_args = ev.get("args") or {}
+            if ev.get("mutating") and ev_args.get("path") == artifact:
+                if last_write is None or ev["seq"] > last_write:
+                    last_write = ev["seq"]
+    for ev in (events or []):
+        if ev.get("tool") != req["tool"]:
+            continue
+        if not _args_match(want_args, ev.get("args")):
+            continue
+        if last_write is not None and ev["seq"] <= last_write:
+            continue
+        return None
+    where = (f" after the last write to {artifact!r}"
+             if last_write is not None else "")
+    return (f"missing evidence: no recorded OK {req['tool']!r} step "
+            f"with args {want_args!r}{where}")
+
+
+def _evidence_gaps(requirements, ok_steps, events=None):
     """The done-evidence gate's check: for every declared
     requirement, is there a recorded OK step satisfying it?
     ok_steps is a list of (tool, result) pairs — the goal's seed
     history OK entries plus every OK step this run executed.
+    events (E7) is the parallel list of OK event dicts carrying
+    each step's args + mutating flag + sequence number, which
+    verify-style requirements (a dict with "args") are checked
+    against; plain requirements keep the E6 check on ok_steps.
     Returns the list of gap descriptions (empty = gate passes)."""
     gaps = []
     for r in (requirements or []):
         req = _norm_requirement(r)
+        if req["args"] is not None:
+            # E7 verify-style: the named tool must have verified,
+            # with exactly these args, after the artifact's last
+            # write. Content existence (E6) is not enough.
+            if not isinstance(req["args"], dict):
+                gaps.append("a verify-style evidence requirement "
+                            "was declared with non-object args and "
+                            "cannot be satisfied")
+                continue
+            if not req["tool"]:
+                gaps.append("a verify-style evidence requirement "
+                            "was declared without a tool name and "
+                            "cannot be satisfied")
+                continue
+            gap = _verify_gap(req, events)
+            if gap:
+                gaps.append(gap)
+            continue
         if not req["tool"] and not req["contains"]:
             gaps.append("an empty evidence requirement was declared "
                         "and cannot be satisfied")
@@ -498,7 +584,11 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                  (see _norm_requirement for the shapes). Falls back
                  to job["evidence"] when the arg is None. When any
                  requirements are in force, a done claim must pass
-                 the done-evidence gate (module docstring).
+                 the done-evidence gate (module docstring). E7 —
+                 a requirement dict carrying "args" is verify-style:
+                 it passes only on a recorded OK step from the
+                 named (verify) tool with matching args, recorded
+                 after the artifact's last write.
 
     Returns (status, output): status is "done" | "failed" |
     "stopped" | "unverified" (E6 — done claimed without the
@@ -540,10 +630,21 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
     if evidence_reqs is None and isinstance(job, dict):
         evidence_reqs = job.get("evidence")
     ok_steps = []
-    for h in history:
+    # E7: the same OK steps as events — tool + args + mutating +
+    # sequence — for verify-style requirements. Seed-history
+    # entries carry no structured args (their "arg" is a display
+    # summary), so their events record args=None: they can never
+    # satisfy a verify-style requirement, and a resumed run must
+    # verify again in-run. That is the conservative direction —
+    # a verify is cheap, a stale one is worthless.
+    ok_events = []
+    for i, h in enumerate(history):
         res = str(h.get("result") or "")
         if res.startswith("ok: "):
             ok_steps.append((str(h.get("action") or ""), res[4:]))
+            ok_events.append({"tool": str(h.get("action") or ""),
+                              "args": None, "mutating": False,
+                              "seq": i - len(history)})
     verify_failures = 0
 
     def emit(entry):
@@ -588,7 +689,8 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                 # verification step naming the exact gap; after
                 # MAX_DONE_VERIFY_FAILURES failed verifications the
                 # run ends UNVERIFIED — never done, never silent.
-                gaps = _evidence_gaps(evidence_reqs, ok_steps)
+                gaps = _evidence_gaps(evidence_reqs, ok_steps,
+                                      ok_events)
                 if gaps:
                     verify_failures += 1
                     gap_text = "; ".join(gaps)
@@ -697,6 +799,13 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
             # verifies later done claims against exactly this list
             # (plus the seed history's OK entries).
             ok_steps.append((name, result))
+            # E7: the same step as an event, with the args it ran
+            # with and whether its tool mutates — verify-style
+            # requirements match on args, and order themselves
+            # against the artifact's last write by step number.
+            ok_events.append({"tool": name, "args": dict(args),
+                              "mutating": bool(tool.get("mutating")),
+                              "seq": steps})
         emit({"n": steps, "tool": name, "arg": _arg_summary(action),
               "ok": ok, "result": result, "at": int(time.time() * 1000)})
         # The result — success OR failure — becomes history, so the
