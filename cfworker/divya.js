@@ -667,6 +667,11 @@ async function handle(env, m) {
   if (await env.KV.get(`seen:${m.id}`)) return;
   await env.KV.put(`seen:${m.id}`, "1", { expirationTtl: 86400 });
 
+  // Claude Code mode (2026-11-19): toggles + queueing run before
+  // EVERY other flow — while CC mode is ON, Julie's brain, jobs and
+  // token gates never see the message (see ccRoute below).
+  if (m.type === "text" && await ccRoute(env, user, m.text?.body || "")) return;
+
   const tx0 = (m.text?.body || "").toLowerCase();
   if (/^\s*\/?connect(\s+(cheyu|cheyyi|chey|account|accounts|cheyali))?\s*$/.test(tx0)) return connectMenu(env, user);
   if (/^\s*tokens?\s*$/.test(tx0)) { const b = await tokBalance(env, user); return say(env, user, `Tokens: ee week lo ${b.weekLeft.toLocaleString("en-IN")} migilayi (reset ${b.weekEnds}), pool ${b.pool.toLocaleString("en-IN")}, plan ${b.planLeft.toLocaleString("en-IN")}. Ee week lo ${b.videosWeek} videos cheyachu.`); }
@@ -765,6 +770,10 @@ async function handle(env, m) {
 
   if (m.type === "text") {
     let text = m.text.body.trim(); // let: R46 "edit:" with no video strips the prefix and falls through to create.
+    // Claude Code mode: a voice note transcribed above re-enters
+    // here as text — route it through ccRoute too (typed texts were
+    // already handled at the top of handle(), before every flow).
+    if (await ccRoute(env, user, text)) return;
     // v99 (WA discipline): STOP is structural — handled here, before
     // every conversational flow, never by the brain. It cancels the
     // running create (flag + refund + pointers + History), and the
@@ -6791,6 +6800,46 @@ function agentStatusLine(j, lang) {
   if (p.state === "stopped") return en ? `🤖 Agent job stopped — ${task}.` : `🤖 Agent job stop ayyindhi — ${task}.`;
   return en ? `🤖 Agent job failed — ${task}${p.note ? ` — ${String(p.note).slice(0, 160)}` : ""}` : `🤖 Agent job fail ayyindhi — ${task}${p.note ? ` — ${String(p.note).slice(0, 160)}` : ""}`;
 }
+// ===== Claude Code mode (WhatsApp, 2026-11-19): the SAME WhatsApp
+// chat can hand the conversation to the real Claude Code CLI =====
+// "cc on" / "claude code on" flips a per-user flag (ccmode:<user>).
+// While it is ON, every text message is stored as a ccmsg:<id>
+// record (state "pending") and Julie's brain stays silent — no
+// reply, no job creation, no token charge, no stop/status flow.
+// A bridge process on divya's VM polls the runner channel
+// (setup/runner/ccpull), runs Claude Code on the message, and posts
+// the answer back through setup/runner/ccreply, which sends it on
+// WhatsApp via waSendText — the same send path the job result
+// handlers use. "cc off" hands the chat back to Julie. CC mode
+// charges NOTHING: it is the owner's own tool, not a product flow.
+function ccToggle(text) {
+  const t = String(text || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (/^(cc|claude code)( mode)? on$/.test(t)) return "on";
+  if (/^(cc|claude code)( mode)? off$/.test(t)) return "off";
+  return "";
+}
+// Returns true when the message was fully handled here (a toggle
+// reply, or a queued CC message) — the caller then stops.
+async function ccRoute(env, user, raw) {
+  const tg = ccToggle(raw);
+  if (tg === "on") {
+    await env.KV.put(`ccmode:${user}`, "1");
+    await say(env, user, "Claude Code mode ON — ippudu nunchi Claude Code answer chesthundhi. 'cc off' ani pampithe Julie ki vasthundhi.");
+    return true;
+  }
+  if (tg === "off") {
+    await env.KV.delete(`ccmode:${user}`);
+    await say(env, user, "Claude Code mode OFF — ippudu nunchi Julie answer chesthundhi. 'cc on' ani pampithe Claude Code ki vasthundhi.");
+    return true;
+  }
+  if ((await env.KV.get(`ccmode:${user}`)) === "1") {
+    const id = setupJobId();
+    const rec = { id, user: String(user), text: String(raw || "").slice(0, 4000), ts: Date.now(), state: "pending" };
+    await env.KV.put(`ccmsg:${id}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    return true;
+  }
+  return false;
+}
 function isBrowseOrder(text) {
   const t = String(text || "");
   if (isCreateOrder(t) || isDeployOrder(t) || isSetupQuestion(t)) return false;
@@ -8567,6 +8616,52 @@ async function appVoiceRunner(req, env, p, url, body) {
 }
 async function appSetupRunner(req, env, p, url, body, ctx) {
   if (!env.RUNNER_KEY || req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
+  // Claude Code mode bridge (VM poller, 2026-11-19): the only two
+  // runner endpoints that do NOT belong to a setupjob record — they
+  // serve the ccmsg queue (see ccRoute). Same x-runner-key auth as
+  // every runner endpoint, checked immediately above.
+  if (p === "setup/runner/ccpull" && req.method === "POST") {
+    // Oldest pending messages first; each returned message is
+    // marked "picked" in the same write, so a second pull never
+    // hands it out again.
+    const list = await env.KV.list({ prefix: "ccmsg:" });
+    const pend = [];
+    for (const k of (list.keys || [])) {
+      const r0 = parseRec(await env.KV.get(k.name));
+      if (r0 && r0.state === "pending" && r0.id && r0.user) pend.push(r0);
+    }
+    pend.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    const out = [];
+    for (const r0 of pend.slice(0, 3)) {
+      r0.state = "picked"; r0.pickedAt = Date.now();
+      await env.KV.put(`ccmsg:${r0.id}`, JSON.stringify(r0), { expirationTtl: 86400 * 2 });
+      out.push({ id: r0.id, user: r0.user, text: r0.text, ts: r0.ts });
+    }
+    return Response.json({ ok: true, messages: out });
+  }
+  if (p === "setup/runner/ccreply" && req.method === "POST") {
+    // The bridge posts Claude Code's answer for one queued message;
+    // the Worker sends it on WhatsApp via waSendText — the same
+    // send path the job result handlers use. A failed send keeps
+    // the record "picked" with the error recorded (honest state,
+    // retryable by the bridge); a repeat post after success is a
+    // no-op, so a reply can never be sent twice.
+    const id = String((body && body.id) || "").replace(/[^a-z0-9]/g, "");
+    const r0 = id ? parseRec(await env.KV.get(`ccmsg:${id}`)) : null;
+    if (!r0) return new Response("missing", { status: 404 });
+    if (r0.state === "done") return Response.json({ ok: true, already: true });
+    const text = String((body && body.text) || "").slice(0, 4000);
+    if (!text) return appJson(req, { ok: false, error: "empty reply" }, 400);
+    const sent = await waSendText(env, r0.user, text);
+    if (!sent.ok) {
+      r0.sendError = sent.error || "send failed"; r0.attempts = (r0.attempts || 0) + 1; r0.upd = Date.now();
+      await env.KV.put(`ccmsg:${id}`, JSON.stringify(r0), { expirationTtl: 86400 * 2 });
+      return Response.json({ ok: false, error: sent.error || "send failed" });
+    }
+    r0.state = "done"; r0.doneAt = Date.now(); r0.reply = text; r0.waId = sent.id || "";
+    await env.KV.put(`ccmsg:${id}`, JSON.stringify(r0), { expirationTtl: 86400 * 2 });
+    return Response.json({ ok: true, id: sent.id || "" });
+  }
   const job = String(url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, "");
   const rec = job ? parseRec(await env.KV.get(`setupjob:${job}`)) : null;
   if (!rec) return new Response("missing", { status: 404 });
