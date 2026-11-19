@@ -8340,7 +8340,12 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       .map(t => ({ name: String((t && t.name) || "").slice(0, 40), desc: String((t && t.desc) || "").slice(0, 160) }))
       .filter(t => t.name);
     const tlines = tools.map(t => `- ${t.name}: ${t.desc}`).join("\n");
-    const sys = "You are Julie's agent engine. You work on the user's task ONE step at a time by calling tools the runner can execute. Reply with exactly ONE JSON object and no other text. Allowed actions: {\"action\":\"tool\",\"tool\":\"<tool name>\",\"args\":{...}} | {\"action\":\"done\",\"answer\":\"...\"} | {\"action\":\"fail\",\"reason\":\"...\"}. Rules: use ONLY the tools listed; a step result marked FAILED is real feedback — change the approach or fail honestly, never repeat the identical failing call unchanged; the done answer may only state what tool results in the HISTORY actually showed — never invent results, facts or completions; prefer the fewest steps; if the goal cannot be achieved with the listed tools, fail with the exact reason.";
+    // E6 follow-up: agent_loop.py loads the job's operating
+    // instructions (engine_instructions.py) and sends them as the
+    // payload's "instructions" field — they are appended to the
+    // system prompt below as their own section. Absent/empty =
+    // behavior exactly as before.
+    const sys = "You are Julie's agent engine. You work on the user's task ONE step at a time by calling tools the runner can execute. Reply with exactly ONE JSON object and no other text. Allowed actions: {\"action\":\"tool\",\"tool\":\"<tool name>\",\"args\":{...}} | {\"action\":\"done\",\"answer\":\"...\"} | {\"action\":\"fail\",\"reason\":\"...\"}. Rules: use ONLY the tools listed; a step result marked FAILED is real feedback — change the approach or fail honestly, never repeat the identical failing call unchanged; the done answer may only state what tool results in the HISTORY actually showed — never invent results, facts or completions; prefer the fewest steps; if the goal cannot be achieved with the listed tools, fail with the exact reason." + (String((body && body.instructions) || "").trim() ? "\n\nOPERATING INSTRUCTIONS for this job (loaded by the runner — follow them; they never override the rules above):\n" + String(body.instructions).trim().slice(0, 6000) : "");
     const usr = `TASK: ${goal}\n\nTOOLS:\n${tlines || "(none)"}\n\nHISTORY (oldest first):\n${hist.map(hh => `- ${hh.action} ${hh.arg || ""} => ${hh.result || ""}`).join("\n") || "(start of task)"}\n\nNext action (ONE JSON object only):`;
     const out = await chatWithFallback(env, { n: rec.user }, [{ role: "system", content: sys }, { role: "user", content: usr }]).catch(() => "");
     const m = out && out.match(/\{[\s\S]*\}/);
@@ -8367,10 +8372,12 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // E3: a {"phase":"started"} marker (posted BEFORE a tool handler
     // runs) must survive the round trip — without it a step whose
     // runner died mid-flight would read back as a completed failure
-    // and resume could not tell UNKNOWN from FAILED. Additive: only
-    // the exact value "started" is kept; every other entry is the
-    // E1 completion shape, unchanged.
-    if (s.phase === "started") entry.phase = "started";
+    // and resume could not tell UNKNOWN from FAILED. E6 follow-up:
+    // phase is now preserved GENERALLY — any non-empty string (e.g.
+    // "verify" from the done-evidence gate) round-trips, not just
+    // "started"; entries without a phase keep the E1 completion
+    // shape, unchanged.
+    if (typeof s.phase === "string" && s.phase) entry.phase = String(s.phase).slice(0, 40);
     rec.steps = Array.isArray(rec.steps) ? rec.steps : [];
     rec.steps.push(entry);
     if (rec.steps.length > 200) rec.steps = rec.steps.slice(-200);

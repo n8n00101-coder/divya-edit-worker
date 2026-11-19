@@ -33,10 +33,14 @@ const KV = {
 };
 
 // --- stubbed network: the Gemini chat path returns scripted replies --
+// (request bodies are captured so the E6 follow-up checks can prove
+// what system prompt the endpoint actually built)
 let modelQueue = [];
-globalThis.fetch = async (url) => {
+let modelBodies = [];
+globalThis.fetch = async (url, opts) => {
   const u = String(url);
   if (u.includes("generativelanguage.googleapis.com")) {
+    try { modelBodies.push(String((opts && opts.body) || "")); } catch {}
     const text = modelQueue.length ? modelQueue.shift() : "";
     return Response.json({ candidates: [{ content: { parts: [{ text }] } }] });
   }
@@ -106,6 +110,24 @@ check(r.json && r.json.steps === 3 && rec.steps.length === 3
   && rec.steps[2].phase === "started" && rec.steps[2].tool === "submit",
   "S8 (E3) a started marker keeps its phase through the round trip");
 
+r = await runner("POST", "/api/setup/runner/agentsteps?job=agentjob1", { step: { n: 4, tool: "echo", arg: "{}", ok: true, result: "verified", phase: "verify" } });
+rec = getRec("setupjob:agentjob1");
+check(r.json && r.json.steps === 4 && rec.steps.length === 4
+  && rec.steps[3].phase === "verify",
+  "S9 (E6 follow-up) a verify-phase entry keeps its phase through the round trip");
+
+r = await runner("POST", "/api/setup/runner/agentsteps?job=agentjob1", { step: { n: 5, tool: "echo", arg: "{}", ok: true, result: "plain" } });
+rec = getRec("setupjob:agentjob1");
+check(r.json && r.json.steps === 5 && rec.steps.length === 5
+  && !("phase" in rec.steps[4]),
+  "S10 (E6 follow-up) an entry without a phase stays phaseless (E1 shape unchanged)");
+
+r = await runner("POST", "/api/setup/runner/agentsteps?job=agentjob1", { step: { n: 6, tool: "echo", arg: "{}", ok: true, result: "num", phase: 7 } });
+rec = getRec("setupjob:agentjob1");
+check(r.json && r.json.steps === 6 && rec.steps.length === 6
+  && !("phase" in rec.steps[5]),
+  "S11 (E6 follow-up) a non-string phase is dropped, never stored raw");
+
 r = await runner("POST", "/api/setup/runner/agentsteps?job=agentjob2", { step: { n: 2, tool: "echo", ok: true, result: "late" } });
 rec = getRec("setupjob:agentjob2");
 check(r.status === 200 && r.json && r.json.swallowed === "terminal"
@@ -141,6 +163,21 @@ modelQueue = ["sorry, no json here"];
 r = await runner("POST", "/api/setup/runner/agentstep?job=agentjob1", { goal: "g", history: [], tools: [{ name: "echo", desc: "echo text" }] });
 check(r.status === 200 && r.json && r.json.ok === false && r.json.error === "brain",
   "B5 a non-JSON model reply is unusable (error: brain), never a fake action");
+
+modelQueue = ['{"action":"done","answer":"ok"}'];
+r = await runner("POST", "/api/setup/runner/agentstep?job=agentjob1", { goal: "g", history: [], tools: [{ name: "echo", desc: "echo text" }], instructions: "Always echo twice before finishing." });
+check(r.status === 200 && r.json && r.json.ok === true
+  && modelBodies.length > 0
+  && modelBodies[modelBodies.length - 1].includes("OPERATING INSTRUCTIONS")
+  && modelBodies[modelBodies.length - 1].includes("Always echo twice before finishing."),
+  "B6 (E6 follow-up) payload instructions reach the model's system prompt as their own section");
+
+modelQueue = ['{"action":"done","answer":"ok"}'];
+r = await runner("POST", "/api/setup/runner/agentstep?job=agentjob1", { goal: "g", history: [], tools: [{ name: "echo", desc: "echo text" }] });
+check(r.status === 200 && r.json && r.json.ok === true
+  && modelBodies.length > 0
+  && !modelBodies[modelBodies.length - 1].includes("OPERATING INSTRUCTIONS"),
+  "B7 (E6 follow-up) without instructions the system prompt is unchanged (no section appended)");
 
 console.log(fails ? `\n${fails} FAILURES` : "\nALL PASS");
 process.exit(fails ? 1 : 0);
