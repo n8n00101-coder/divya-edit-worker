@@ -128,7 +128,8 @@ reg = full_registry()
 check("(0) compute tools registered after defaults + workspace tools",
       reg.names() == ["noop", "echo", "job_state",
                       "file_list", "file_read", "file_write",
-                      "file_append", "compute_csv",
+                      "file_append", "edit_file", "search_text",
+                      "list_files", "run_command", "compute_csv",
                       "verify_file_contains", "verify_csv_rows",
                       "filter_csv", "verify_csv_subset"],
       str(reg.names()))

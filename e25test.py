@@ -114,7 +114,9 @@ def tool_run(reg, name, args):
 reg = ws_registry()
 check("(0) file tools registered after the default set",
       reg.names() == ["noop", "echo", "job_state", "file_list",
-                      "file_read", "file_write", "file_append"],
+                      "file_read", "file_write", "file_append",
+                      "edit_file", "search_text", "list_files",
+                      "run_command"],
       str(reg.names()))
 cls = {n: (reg.get(n)["mutating"], reg.get(n)["needs_allow"],
            reg.get(n)["stub"]) for n in reg.names()
@@ -132,8 +134,9 @@ check("(0) file_read/write schemas require path (write also content)",
       and reg.get("file_write")["schema"]["path"]["required"] is True
       and reg.get("file_write")["schema"]["content"]["required"] is True)
 check("(0) brain_list offers the file tools to the brain",
-      [d["name"] for d in reg.brain_list()][-4:] ==
-      ["file_list", "file_read", "file_write", "file_append"])
+      [d["name"] for d in reg.brain_list()][-8:] ==
+      ["file_list", "file_read", "file_write", "file_append",
+       "edit_file", "search_text", "list_files", "run_command"])
 
 # ------------------------------------------- (a) round trip via the loop
 entries, record = recorder()

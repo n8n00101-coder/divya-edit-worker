@@ -48,7 +48,15 @@ JOB = S.JOB
 DEADLINE_S = 25 * 60  # workflow timeout is 35 min; finish well inside it
 # The only needs_allow tools this runner Allows: the ones confined
 # to the job's own workspace (see the module docstring).
-SANDBOX_ALLOW = ("file_write", "file_append", "filter_csv")
+# E10: edit_file joins them (it is workspace-confined like the
+# writes). run_command does NOT: its sandbox is cwd + timeout +
+# output cap, not filesystem confinement, and it inherits the
+# runner's environment — so it stays behind a real Allow, which
+# this unattended runner never grants; an agent job's brain gets
+# the honest refusal and verifies with file_read / verify_* tools
+# instead (divya's call, E10 review 2026-11-19).
+SANDBOX_ALLOW = ("file_write", "file_append", "filter_csv",
+                 "edit_file")
 
 
 def workspace_root():
@@ -81,15 +89,18 @@ def seed_files(job, root):
         print(f"agent: seeded {name} ({len(str(content))} chars)", flush=True)
 
 
-def build_tools(root):
+def build_tools(root, job=None):
     """The registry for an agent job: the context-free tools
     (job_state + stubs) plus the workspace file tools and the
     deterministic compute/verify tools, all confined to the job
     workspace. Browser tools are NOT registered — this runner has
-    no live page (browse jobs own the browser)."""
+    no live page (browse jobs own the browser).
+
+    E10: passes job record for read-before-edit enforcement."""
     reg = tools_registry.default_registry()
-    tools_registry.register_workspace_tools(reg, root)
+    tools_registry.register_workspace_tools(reg, root, job_record=job)
     tools_registry.register_compute_tools(reg, root)
+    tools_registry.register_plan_tool(reg, job)
     return reg.as_tools()
 
 
@@ -101,7 +112,7 @@ def main():
     print(f"agent: job task={str(job.get('task') or '')[:80]!r}", flush=True)
     root = workspace_root()
     seed_files(job, root)
-    tools = build_tools(root)
+    tools = build_tools(root, job=job)
     S.progress("running", "start", "Agent job start ayyindhi — pani chesthunna.", "")
     try:
         # A record with steps from a dead runner resumes (E3); a
