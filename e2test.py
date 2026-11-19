@@ -262,7 +262,7 @@ def browser_registry(page):
 # ------------------------------------------------------- (0) contract
 reg = tools_registry.default_registry()
 check("(0) default registry holds E1's tools",
-      reg.names() == ["noop", "echo", "job_state"], str(reg.names()))
+      reg.names() == ["noop", "echo", "job_state", "get_history"], str(reg.names()))
 ok = True
 for name in reg.names():
     e = reg.get(name)

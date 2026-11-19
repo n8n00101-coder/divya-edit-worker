@@ -126,7 +126,7 @@ def tool_run(reg, name, args):
 # ------------------------------------------------------- (0) contract
 reg = full_registry()
 check("(0) compute tools registered after defaults + workspace tools",
-      reg.names() == ["noop", "echo", "job_state",
+      reg.names() == ["noop", "echo", "job_state", "get_history",
                       "file_list", "file_read", "file_write",
                       "file_append", "edit_file", "search_text",
                       "list_files", "run_command", "compute_csv",

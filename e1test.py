@@ -221,8 +221,8 @@ try:
 except Exception:
     safe = False
 check("(i) worker_record / worker_stop never raise with no env", safe)
-check("(i) default tool set is noop + echo + job_state",
-      [t["name"] for t in agent_loop.default_tools()] == ["noop", "echo", "job_state"])
+check("(i) default tool set is noop + echo + job_state + get_history",
+      [t["name"] for t in agent_loop.default_tools()] == ["noop", "echo", "job_state", "get_history"])
 ok, res = agent_loop.default_tools()[1]["run"]({"text": "hello"})
 check("(i) echo stub works", ok is True and res == "hello")
 

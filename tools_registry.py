@@ -212,8 +212,9 @@ class Registry:
 
 def default_registry():
     """The context-free tools: E1's set, registered properly.
-    noop / echo are stubs (marked as such); job_state is REAL — it
-    wraps agent_loop's job-record read over the runner channel."""
+    noop / echo are stubs (marked as such); job_state and get_history
+    are REAL — they wrap agent_loop's job-record reads over the runner
+    channel."""
     reg = Registry()
     reg.register(
         "noop",
@@ -227,8 +228,14 @@ def default_registry():
         agent_loop._tool_echo, stub=True)
     reg.register(
         "job_state",
-        "Read this job's own record (state, current step, note, recorded step count). Read-only, no side effects.",
+        "Read this job's own record (state, current step, note, recorded step count, plan). Read-only, no side effects.",
         {}, agent_loop._tool_job_state)
+    reg.register(
+        "get_history",
+        "Retrieve the full step history from the job record. Args: {limit?, offset?} — limit defaults to 100, offset defaults to 0 (most recent first). Read-only, no side effects.",
+        {"limit": {"type": "number", "required": False, "desc": "max steps to return (default 100, max 500)"},
+         "offset": {"type": "number", "required": False, "desc": "skip this many most-recent steps (default 0)"}},
+        agent_loop._tool_get_history, mutating=False, needs_allow=False, stub=False)
     return reg
 
 
