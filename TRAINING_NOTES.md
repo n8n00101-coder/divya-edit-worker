@@ -29,17 +29,17 @@ Ranked by real-world value for multi-step agent work:
 
 **What the tool does:**
 - **Read-only** (`mutating=False`, `needs_allow=False`, `stub=False`) — never triggers Allow gate, never changes state
-- **Pagination:** `limit` (default 50) and `offset` (default 0) args for stepping through history
+- **Pagination:** `limit` (default 100, max 500) and `offset` (default 0) args for stepping through history
 - **Full history access:** Returns ALL recorded steps from the job record, regardless of HISTORY_WINDOW
-- **Resumed jobs:** Reads from `job["steps"]` only — `seed_history` (from previous run) is NOT in the record, so get_history correctly shows only steps recorded in this run
-- **Empty state:** Returns helpful message "No steps recorded yet (total=0)" instead of empty string
-- **Schema:** `{limit: {type: number, required: false, desc: "max steps to return (default 50)"}, offset: {type: number, required: false, desc: "skip N most recent steps (default 0)"}}`
+- **Resumed jobs:** Reads from `job["steps"]` only — the job record's `steps[]` holds all prior runs' recorded steps (not just this run), so get_history correctly shows the full persisted history
+- **Empty state:** Returns helpful message "no steps in range (total=0, offset=0, limit=100)" instead of empty string
+- **Schema:** `{limit: {type: number, required: false, desc: "max steps to return (default 100, max 500)"}, offset: {type: number, required: false, desc: "skip this many most-recent steps (default 0)"}}`
 
 **Key design decisions:**
 - Reads from `fetch_job_state()` → `job["steps"]` — same source as `job_state` tool, so it's always consistent with the persisted record
 - Does NOT read from the brain's `history` parameter (which is truncated to HISTORY_WINDOW)
 - The loop passes `history` to the brain (truncated), but the tool reads the full record — brain can recover context beyond the window
-- Offset is applied AFTER limit: we slice `steps[-limit:]` then `result[offset:]` — this means "most recent N, then skip M of those"
+- Entries are reversed to most-recent-first, then sliced `entries[offset:offset + limit]` — so offset skips the most recent N entries, limit caps how many are returned after that
 
 **Why this solves the top gap:**
 Before: brain sees only last 8 steps → on step 20, steps 1-12 are gone forever  
@@ -73,14 +73,14 @@ After: brain calls `get_history` with limit/offset → can retrieve any step, re
 | e3test.py | ✅ 27/27 pass | |
 | e4test.py | ✅ 30/30 pass | |
 | e56test.py | ✅ 31/31 pass | |
-| e7test.py | ✅ 33/33 pass | |
+| e7test.py | ✅ 33/33 pass | Updated expectation for registry order (get_history in defaults) |
 | e8test.py | ✅ 28/28 pass | |
 | e9test.py | ✅ 23/23 pass | |
 | e10test.py | ✅ 45/45 pass | |
-| cctrain1test.py | ✅ 19/19 pass | New rig for get_history |
+| cctrain1test.py | ✅ 23/23 pass | New rig for get_history (includes production reachability test) |
 | integrationtest.py | ⚠️ Skipped | Requires Playwright (not installed in this env) — known dependency gap, not a regression |
 
-**No regressions introduced.** All existing engine rigs pass.
+**No regressions introduced.** All existing engine rigs pass. Total: **296 tests**.
 
 ---
 
@@ -100,8 +100,9 @@ After: brain calls `get_history` with limit/offset → can retrieve any step, re
 ## 6. Verification Evidence
 
 - **All e-series rigs pass** (273 tests total)
-- **New cctrain1test.py passes** (19 tests)
+- **New cctrain1test.py passes** (23 tests, including production reachability case)
 - **e1test.py updated** to expect get_history in default tool set
+- **e7test.py updated** to expect get_history in registry order
 - **No changes to brain, providers, routing, skills, or knowledge files** — scope walls respected
 - **Backup created** at `~/workspace/backups/julie-cctrain-1-2026-11-19/`
 
@@ -117,9 +118,11 @@ feat(engine): add get_history tool for long-job context recovery
   HISTORY_WINDOW=8
 - Registered in default_tools() with proper E2 metadata (mutating=False,
   needs_allow=False, stub=False, schema)
-- Created cctrain1test.py with 19 rig tests covering basic use,
-  pagination, resume behavior, empty state, metadata, and context recovery
-- Updated e1test.py expectation for default tool set
+- Added to tools_registry.default_registry() for production reachability
+- Created cctrain1test.py with 23 rig tests covering basic use,
+  pagination, resume behavior, empty state, metadata, context recovery,
+  and production Registry path
+- Updated e1test.py and e7test.py expectations for default tool set
 - All 273 existing e-series tests pass; no regressions
 - Closes TOP gap from gap audit: context handling across long jobs
 ```

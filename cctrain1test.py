@@ -28,6 +28,7 @@ for _v in ("WORKER_URL", "RUNNER_KEY", "JOB"):
     os.environ.pop(_v, None)
 
 import agent_loop
+import tools_registry
 
 PASS = []
 FAIL = []
@@ -201,6 +202,35 @@ hist_step = next(e for e in entries if e.get("tool") == "get_history")
 check("(f) get_history returns all steps beyond the window",
       all(f"step {i}" in hist_step.get("result", "") for i in range(HISTORY_WINDOW + 3)),
       hist_step.get("result")[:500])
+
+# ------------------------------------------------------------ (g) production reachability
+# get_history must be reachable through the production Registry path:
+# tools_registry.default_registry() -> as_tools() -> run_loop can call it
+job = {"steps": []}
+entries, record = recorder(job["steps"])
+reg = tools_registry.default_registry()
+check("(g) get_history is in default_registry",
+      "get_history" in reg, str(reg.names()))
+tools = reg.as_tools()
+hist_tool = next(t for t in tools if t["name"] == "get_history")
+check("(g) get_history entry has correct run/metadata",
+      callable(hist_tool.get("run"))
+      and hist_tool.get("mutating") is False
+      and hist_tool.get("needs_allow") is False
+      and "limit" in hist_tool.get("schema", {}))
+
+brain = FakeBrain([
+    {"action": "tool", "tool": "echo", "args": {"text": "prod step"}},
+    {"action": "tool", "tool": "get_history", "args": {"limit": 5}},
+    {"action": "done", "answer": "production path works"},
+])
+status, out = run_with_job(job, brain, "production registry path test",
+                           record=record, stop=no_stop)
+check("(g) production path: loop completes with done", status == "done", status)
+hist_step = next(e for e in entries if e.get("tool") == "get_history")
+check("(g) production path: get_history returns the prior step",
+      "prod step" in hist_step.get("result", ""),
+      hist_step.get("result"))
 
 print()
 if FAIL:
