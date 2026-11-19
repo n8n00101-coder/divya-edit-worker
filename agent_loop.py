@@ -47,6 +47,21 @@ unfinished MUTATING step the loop additionally enforces verify-first
 mechanically: mutating calls are refused until a read-only tool has
 completed, so the brain must look before it redoes. See e3test.py.
 
+E4 (chain continuation) generalizes the hand-off the setup chain
+hard-codes between provider jobs: a job record may carry a CHAIN of
+goals (job["chain"]); when one goal's loop finishes DONE, run_chain
+starts the next goal itself — no human re-asking — seeding the new
+goal's brain with a compact handoff built from the finished goal's
+recorded steps (what was done + its final answer), never the raw
+transcript. A FAILED or STOPPED goal HALTS the chain with the reason
+recorded on the chain state; later goals never start, and there is
+no auto-retry. A chain runs at most MAX_CHAIN_GOALS goals. Chain
+state is mirrored into steps[] as {"phase": "chain"} markers through
+the same recorder, so a fresh runner reconstructs the chain from the
+record alone and resumes the CURRENT goal under E3's rules (chain
+position preserved). Agent jobs only — the existing setup chain in
+divya.js and every production flow are untouched. See e4test.py.
+
 Tool contract: a tool is a dict {"name": str, "desc": str,
 "run": callable}. Since E2 the canonical source of tool dicts is
 tools_registry.py (a Registry's as_tools()): entries there also
@@ -468,6 +483,11 @@ def parse_recorded_steps(steps):
     for e in (steps if isinstance(steps, list) else []):
         if not isinstance(e, dict):
             continue
+        if e.get("phase") == "chain":
+            # E4 chain-state marker: engine bookkeeping mirrored
+            # into steps[] — never a step, never history, never
+            # terminal, never counted in last_n.
+            continue
         tool = str(e.get("tool") or "")
         try:
             n = int(e.get("n") or 0)
@@ -607,3 +627,277 @@ def run_agent_job(job, tools=None, **kw):
         return "failed", "Agent job carries no task text."
     kw.setdefault("record_started", True)
     return run_loop(goal, tools if tools is not None else default_tools(), **kw)
+
+
+# ------------------------------------------------------------------ E4 chain
+# Chain continuation for agent jobs (see the module docstring). The
+# descriptor lives on the job record as job["chain"]:
+#   {"goals": [{"goal": str,
+#               "tools": [tool names]   (optional subset),
+#               "allow": Allow          (optional, E2 semantics)}, ...],
+#    "index": int,                      # next goal to run
+#    "status": "pending" | "running" | "done" | "halted",
+#    "haltReason": str,
+#    "goalStartN": int,                 # step number the current goal
+#                                       # started after (its recorded
+#                                       # steps are the ones above it)
+#    "handoffs": [str],                 # one summary per finished goal
+#    "lastAnswer": str}
+# The live state is mirrored into steps[] as {"phase": "chain"}
+# markers through the same recorder the steps use, so the record
+# alone reconstructs the chain after a runner dies.
+
+MAX_CHAIN_GOALS = 10      # hard cap on goals a chain will run
+HANDOFF_CAP = 1500        # chars per goal handoff summary
+HANDOFF_STEP_CAP = 220    # chars per step line inside a handoff
+
+
+def _step_n(e):
+    try:
+        return int(e.get("n") or 0)
+    except Exception:
+        return 0
+
+
+def _goal_spec(g):
+    """Normalize one chain goal entry: a bare string is a goal with
+    the job's full tool set; a dict may narrow the tools to a subset
+    and/or carry its own Allow (E2 semantics: True, a callable
+    allow(name, args) -> bool, or a container of tool names)."""
+    if isinstance(g, str):
+        return {"goal": g}
+    if isinstance(g, dict):
+        out = {"goal": str(g.get("goal") or "")}
+        if isinstance(g.get("tools"), (list, tuple)) and g["tools"]:
+            out["tools"] = [str(t) for t in g["tools"]]
+        if "allow" in g:
+            out["allow"] = g["allow"]
+        return out
+    return {"goal": ""}
+
+
+def make_chain(goals):
+    """Build a chain descriptor for a job record (shape above).
+    Goals beyond MAX_CHAIN_GOALS stay in the descriptor — the cap
+    is enforced by run_chain, which halts the chain with the reason
+    recorded rather than running on past it."""
+    return {"goals": [_goal_spec(g) for g in (goals or [])],
+            "index": 0, "status": "pending", "haltReason": "",
+            "goalStartN": 0, "handoffs": [], "lastAnswer": ""}
+
+
+def _chain_state_from(job):
+    """Reconstruct the live chain state for a job record: the latest
+    chain marker in steps[] wins (it is the newest progress); fall
+    back to the descriptor the job was created with. Returns a
+    normalized state dict, or None when the job carries no chain."""
+    state = None
+    if isinstance(job, dict) and isinstance(job.get("chain"), dict):
+        state = dict(job["chain"])
+    if isinstance(job, dict):
+        for e in (job.get("steps") or []):
+            if isinstance(e, dict) and e.get("phase") == "chain":
+                try:
+                    m = json.loads(str(e.get("result") or ""))
+                except Exception:
+                    continue
+                if isinstance(m, dict) and isinstance(m.get("goals"), list):
+                    state = m
+    if state is None or not isinstance(state.get("goals"), list):
+        return None
+    out = make_chain(state["goals"])
+    for k in ("index", "status", "haltReason", "goalStartN",
+              "handoffs", "lastAnswer"):
+        if k in state:
+            out[k] = state[k]
+    out["index"] = _step_n({"n": out.get("index")})
+    out["goalStartN"] = _step_n({"n": out.get("goalStartN")})
+    out["handoffs"] = [str(h) for h in (out.get("handoffs") or [])]
+    out["status"] = str(out.get("status") or "pending")
+    out["haltReason"] = str(out.get("haltReason") or "")
+    out["lastAnswer"] = str(out.get("lastAnswer") or "")
+    return out
+
+
+def chain_state(job):
+    """Public read: the job's live chain state (descriptor + progress
+    + halt reason), reconstructed from the record alone."""
+    return _chain_state_from(job)
+
+
+def _chain_emit(record, state):
+    """Mirror the chain state into the record as a chain marker
+    entry, through the same recorder the steps use (the Worker
+    appends it to steps[] via agentsteps in production)."""
+    entry = {"n": 0, "tool": "chain", "phase": "chain",
+             "ok": state.get("status") != "halted",
+             "result": json.dumps(state, ensure_ascii=False, default=str),
+             "at": int(time.time() * 1000)}
+    try:
+        record(entry)
+    except Exception as e:
+        print("agent_loop: chain record failed:", e, flush=True)
+
+
+def build_handoff(goal_text, entries, answer):
+    """The compact handoff one finished goal passes to the next: the
+    goal, one line per completed step (tool + ok/FAILED + recorded
+    result, capped), and the goal's final answer — built ONLY from
+    the recorded steps, never the raw brain transcript."""
+    lines = [f"Completed goal: {goal_text}"]
+    for e in parse_recorded_steps(entries)["completed"]:
+        lines.append(f"- {e.get('tool') or '?'}: "
+                     f"{'ok' if e.get('ok') else 'FAILED'} — "
+                     f"{str(e.get('result') or '')[:HANDOFF_STEP_CAP]}")
+    lines.append(f"Final answer: {answer}")
+    return "\n".join(lines)[:HANDOFF_CAP]
+
+
+def run_chain(job, tools=None, brain=None, record=None, stop=None,
+              max_goals=MAX_CHAIN_GOALS, **kw):
+    """Run (or resume) the job's chain of goals, in order.
+
+    Each goal runs through run_loop with that goal's tool subset and
+    Allow. When a goal finishes DONE the engine builds its handoff
+    and starts the next goal itself, seeding the brain with every
+    previous handoff plus the current goal's own recorded history.
+    A FAILED or STOPPED goal halts the chain: the chain state is
+    marked halted with the reason, later goals never start, and a
+    later run_chain on the same record reports "terminal" instead
+    of retrying. Running past max_goals goals halts the chain the
+    same way. A runner dying mid-goal (exception, kill) leaves the
+    chain marker + step record behind; calling run_chain again on
+    the record resumes the CURRENT goal under E3's rules — completed
+    steps are history, never re-executed; an unfinished mutating
+    step arms verify-first — with the chain position preserved.
+
+    Extra **kw (max_steps, deadline_s, observation, allow) pass to
+    run_loop; a goal's own "allow" overrides the chain-wide one.
+
+    Returns (status, output): "done" with the last goal's answer,
+    "failed" with the halt reason, "stopped", or "terminal" when
+    the chain had already halted before this call."""
+    if not isinstance(job, dict):
+        return "failed", "Chain asked for a job with no record."
+    state = _chain_state_from(job)
+    if state is None or not state["goals"]:
+        return "failed", "Job carries no chain of goals."
+    if state["status"] == "done":
+        return "done", state.get("lastAnswer") or ""
+    if state["status"] == "halted":
+        return "terminal", ("Chain already halted: "
+                            + (state.get("haltReason") or "reason not recorded"))
+    tools = tools if tools is not None else default_tools()
+    base_record = record or worker_record
+    snap0 = [e for e in (job.get("steps") or []) if isinstance(e, dict)]
+    recorded_now = []
+
+    def _record(entry):
+        recorded_now.append(entry)
+        base_record(entry)
+
+    def _entries():
+        return snap0 + recorded_now
+
+    def _goal_entries():
+        return [e for e in _entries()
+                if e.get("phase") != "chain"
+                and _step_n(e) > state["goalStartN"]]
+
+    def _last_n():
+        return parse_recorded_steps(_entries())["last_n"]
+
+    state["status"] = "running"
+    _chain_emit(_record, state)
+    while state["index"] < len(state["goals"]):
+        idx = state["index"]
+        if idx >= max_goals:
+            state["status"] = "halted"
+            state["haltReason"] = (f"chain goal cap reached ({max_goals} goals) — "
+                                   f"goal {idx + 1} and later goals were not run")
+            _chain_emit(_record, state)
+            return "failed", state["haltReason"]
+        gspec = state["goals"][idx]
+        goal_text = gspec["goal"]
+        if not goal_text:
+            state["status"] = "halted"
+            state["haltReason"] = f"goal {idx + 1} carries no goal text"
+            _chain_emit(_record, state)
+            return "failed", state["haltReason"]
+        gentries = _goal_entries()
+        parsed = parse_recorded_steps(gentries)
+        if parsed["terminal"]:
+            # Crash window: the goal's loop recorded its terminal
+            # step but the runner died before the chain marker
+            # landed. Settle the goal from the record itself —
+            # never re-run it.
+            term_entry = {}
+            for e in gentries:
+                if str(e.get("tool") or "") in TERMINAL_STEP_TOOLS:
+                    term_entry = e
+            reason = str(term_entry.get("result") or "")
+            state["goalStartN"] = _last_n()
+            if parsed["terminal"] == "fail":
+                state["status"] = "halted"
+                state["haltReason"] = f"goal {idx + 1} failed: {reason}"
+                _chain_emit(_record, state)
+                return "failed", reason
+            if parsed["terminal"] == "stopped":
+                state["status"] = "halted"
+                state["haltReason"] = f"stopped during goal {idx + 1}"
+                _chain_emit(_record, state)
+                return "stopped", ""
+            status, output = "done", reason
+        else:
+            by_name = {t["name"]: t for t in tools}
+            verify_for = None
+            for e in parsed["inflight"]:
+                t = by_name.get(str(e.get("tool") or ""))
+                if t and (t.get("mutating") or t.get("needs_allow")):
+                    verify_for = str(e.get("tool") or "")
+                    break
+            if gspec.get("tools"):
+                goal_tools = [t for t in tools if t["name"] in gspec["tools"]]
+            else:
+                goal_tools = tools
+            seed = [{"action": "handoff", "arg": "", "result": h}
+                    for h in state["handoffs"]] + parsed["history"]
+            goal_kw = dict(kw)
+            goal_kw["allow"] = (gspec["allow"] if "allow" in gspec
+                                else goal_kw.get("allow"))
+            status, output = run_loop(goal_text, goal_tools, brain=brain,
+                                      record=_record, stop=stop,
+                                      seed_history=seed,
+                                      step_offset=_last_n(),
+                                      verify_first_for=verify_for,
+                                      record_started=True, **goal_kw)
+            # Re-capture BEFORE advancing goalStartN: the handoff is
+            # built from this goal's entries, which the advance would
+            # filter out.
+            gentries = _goal_entries()
+            state["goalStartN"] = _last_n()
+        if status == "done":
+            state["handoffs"].append(
+                build_handoff(goal_text, gentries, output))
+            state["lastAnswer"] = output
+            state["index"] = idx + 1
+            if state["index"] >= len(state["goals"]):
+                state["status"] = "done"
+                _chain_emit(_record, state)
+                return "done", output
+            _chain_emit(_record, state)
+            continue
+        if status == "stopped":
+            state["status"] = "halted"
+            state["haltReason"] = f"stopped during goal {idx + 1}"
+            _chain_emit(_record, state)
+            return "stopped", ""
+        state["status"] = "halted"
+        state["haltReason"] = f"goal {idx + 1} failed: {output}"
+        _chain_emit(_record, state)
+        return "failed", output
+    # Index already past the end (a record whose final marker was
+    # lost): the chain is complete by its own accounting.
+    state["status"] = "done"
+    _chain_emit(_record, state)
+    return "done", state.get("lastAnswer") or ""
