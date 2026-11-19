@@ -259,18 +259,6 @@
           </div>
           <p class="muted" data-t="setupIntro"></p>
           <h3 data-t="autoTitle"></h3>
-          <!-- R48: plain-words explainer — Divya does everything with one allow
-               (accounts, API keys, captchas, server). The user is asked for
-               ONE thing only, and only once: the email-link tap / SMS code. -->
-          <div class="card note small" id="setupHow">
-            <p><b data-t="setupHowT"></b></p>
-            <p><b data-t="setupHowDivyaT"></b> <span data-t="setupHowDivya"></span></p>
-            <p><b data-t="setupHowYouT"></b></p>
-            <p><span data-t="setupYouEmail"></span></p>
-            <p><span data-t="setupYouSms"></span></p>
-            <p><b data-t="setupHowAfterT"></b> <span data-t="setupHowAfter"></span></p>
-            <p class="muted" data-t="setupHowNote"></p>
-          </div>
           <button class="btn primary" id="oneTapBtn" data-t="setupOneTap" disabled></button>
           <p class="muted small" data-t="setupConsent"></p>
           <div class="list">
@@ -291,6 +279,18 @@
             <p class="muted small" id="modelMsg" aria-live="polite"></p>
             <div class="btns" id="modelBtns" hidden><button class="act-btn alt" id="modelTestBtn" data-t="test"></button><button class="act-btn alt" id="modelDelBtn" data-t="remove"></button></div>
             <p class="muted small" data-t="modelOwn"></p>
+          </div>
+          <!-- R48: plain-words explainer — Divya does everything with one allow
+               (accounts, API keys, captchas, server). The user is asked for
+               ONE thing only, and only once: the email-link tap / SMS code. -->
+          <div class="card note small" id="setupHow">
+            <p><b data-t="setupHowT"></b></p>
+            <p><b data-t="setupHowDivyaT"></b> <span data-t="setupHowDivya"></span></p>
+            <p><b data-t="setupHowYouT"></b></p>
+            <p><span data-t="setupYouEmail"></span></p>
+            <p><span data-t="setupYouSms"></span></p>
+            <p><b data-t="setupHowAfterT"></b> <span data-t="setupHowAfter"></span></p>
+            <p class="muted" data-t="setupHowNote"></p>
           </div>
           <!-- v84: Kaggle GPU connect — the user's OWN Kaggle account.
                v104: two doors — Julie can CREATE the account via
@@ -426,7 +426,7 @@
       <section id="s-settings" class="screen" data-title="sSettings">
         <div class="scroll pad">
           <div class="list">
-            <div class="row"><span id="lblSetLang" data-t="language"></span>
+            <div class="row fld-seg"><span id="lblSetLang" data-t="language"></span>
               <div class="seg small" id="setLang" role="radiogroup" aria-labelledby="lblSetLang"><button data-v="te">Telugu</button><button data-v="en">English</button><button data-v="hi">हिन्दी</button><button data-v="hi-Latn">Hinglish</button></div></div>
             <div class="row"><label for="setVoice"><span data-t="voiceReplies"></span><br><span class="muted small" data-t="voiceRepliesSub"></span></label>
               <span class="switch"><input type="checkbox" id="setVoice" role="switch"><span aria-hidden="true"></span></span></div>

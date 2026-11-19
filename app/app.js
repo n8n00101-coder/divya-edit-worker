@@ -5,7 +5,7 @@ let API = API_BASES[Math.min(parseInt(localStorage.getItem("dv_apiIdx") || "0", 
 const APP_URL = "https://divya-app.n8n00101.workers.dev";
 // App version — KEEP IN SYNC with sw.js `const V`. checkUpdate() compares the live
 // sw.js file against this so a phone can never stay stuck on a stale cached shell.
-const APP_V = "julie-v64";
+const APP_V = "julie-v65";
 const BASE = new URL(".", location.href.split("#")[0].split("?")[0].replace(/\/setup$/, "/")).href; // works at / and at /divya-edit-worker/app/
 const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
 const store = { get: (k, d) => { try { const v = localStorage.getItem("dv_" + k); return v === null ? d : JSON.parse(v); } catch { return d; } }, set: (k, v) => localStorage.setItem("dv_" + k, JSON.stringify(v)), del: k => localStorage.removeItem("dv_" + k) };
@@ -2188,11 +2188,31 @@ async function checkSetupPrompt(force) {
   if (!needs) return false;
   if (!force && store.get("setupDeclined", false)) return false;
   setupPromptShown = true;
-  sheet(t("setupAsk"), [
-    { label: t("setupAllow"), primary: true, fn: () => { store.del("setupDeclined"); startOneTapSetup(); } },
-    { label: t("later"), fn: () => { store.set("setupDeclined", true); setupPromptShown = false; toast(t("gsDeclined")); } },
-  ]);
+  renderSetupNotice();
   return true;
+}
+/* v65 (D1, Ajju POPUP RULE): the setup prompt is a normal IN-CHAT message
+   (same .setup-box pattern as setup progress) — never a global sheet.
+   It lives inside #msgs, so it can never cover the composer or the tab
+   bar, never appears on the Setup screen (no duplicate of its own start
+   button), and never hides account rows on Connect. */
+let setupNoticeEl = null;
+function renderSetupNotice() {
+  const host = $("#msgs"); if (!host) return;
+  if (setupNoticeEl && document.body.contains(setupNoticeEl)) return;
+  $("#msgs .empty")?.remove();
+  const d = document.createElement("div");
+  d.className = "msg bot setup-box setup-notice";
+  const p = document.createElement("div"); p.textContent = t("setupAsk"); d.appendChild(p);
+  const row = document.createElement("div"); row.className = "act";
+  const go = document.createElement("button"); go.className = "pill go"; go.textContent = t("setupAllow");
+  go.onclick = () => { store.del("setupDeclined"); d.remove(); setupNoticeEl = null; startOneTapSetup(); };
+  const later = document.createElement("button"); later.className = "pill"; later.textContent = t("later");
+  later.onclick = () => { store.set("setupDeclined", true); setupPromptShown = false; d.remove(); setupNoticeEl = null; toast(t("gsDeclined")); };
+  row.append(go, later); d.appendChild(row);
+  host.appendChild(d); setupNoticeEl = d;
+  host.scrollTop = host.scrollHeight;
+  if (S.vf) speak(t("setupAsk"));
 }
 /* Pre-v38 setup/status shape {active, finished, keys}: setup is needed when
    no setup run is active, no finished "done" is recorded, and no provider

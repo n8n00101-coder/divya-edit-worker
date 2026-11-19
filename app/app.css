@@ -46,6 +46,13 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .field:focus-within,.code-input:focus,.big-input:focus,.keyfield:focus{border-color:var(--accent)}
 .prefix{color:var(--muted);margin-right:10px;font-weight:600}
 .field input{flex:1;min-width:0;border:0;outline:0;background:none;font-size:19px;letter-spacing:.5px}
+/* v65 (D8): Login's focused .field showed a DOUBLE ring — the wrapper's
+   border darkens (muted2) AND its :focus-within box-shadow ring stacks
+   around it, heavier than every other control. The inner input is already
+   ring-free (see the .field input reset below); the wrapper now carries
+   ONE focus signal only: its border. */
+.field:focus-within{box-shadow:none!important}
+.field input:focus{box-shadow:none!important;border-color:transparent;outline:none}
 .code-input{height:58px;border-radius:14px;border:1px solid var(--line);background:var(--surface);text-align:center;font-size:26px;letter-spacing:12px;outline:0}
 .err{color:var(--text);font-weight:600;min-height:20px;font-size:14px;margin-top:12px}
 .btn{min-height:52px;border-radius:14px;font-weight:650;font-size:16px;padding:0 18px;transition:transform .12s,opacity .2s}
@@ -91,7 +98,7 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 /* home */
 .greet{font-size:24px;font-weight:700;margin:4px 0 16px;line-height:1.3;letter-spacing:-.3px}
 .greet .muted{font-size:15px;font-weight:400;letter-spacing:0}
-.hey{display:flex;align-items:center;gap:16px;width:100%;padding:18px;border-radius:26px;background:linear-gradient(135deg,var(--accent2),var(--accent));color:var(--on-accent);text-align:left;margin-bottom:18px;min-height:96px;box-shadow:0 8px 24px color-mix(in srgb,var(--accent) 35%,transparent)}
+.hey{display:flex;align-items:center;gap:16px;width:100%;padding:18px;border-radius:26px;background:var(--accent);color:var(--on-accent);text-align:left;margin-bottom:18px;min-height:96px;box-shadow:var(--shadow)}
 .hey .muted{color:inherit;opacity:.75;display:block;margin-top:2px}
 .hey b{font-size:22px;letter-spacing:-.3px}
 .hey-orb{width:60px;height:60px;border-radius:50%;display:grid;place-items:center;flex:none;position:relative;overflow:hidden;border:2px solid color-mix(in srgb,var(--on-accent) 65%,transparent)}
@@ -195,13 +202,13 @@ svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 #voiceStatus,#voiceList .muted{overflow-wrap:anywhere;line-height:1.45}
 .orb-btn{align-self:center;width:200px;height:200px;border-radius:50%;display:grid;place-items:center;margin:8px 0 6px}
 .orb{position:relative;width:150px;height:150px;display:block}
-.orb b{position:absolute;inset:28px;border-radius:50%;background:radial-gradient(circle at 35% 30%,var(--bg),var(--text) 75%);box-shadow:0 0 30px color-mix(in srgb,var(--text) 25%,transparent);transition:transform .3s}
+.orb b{position:absolute;inset:30px;border-radius:50%;background:var(--text);transition:transform .3s}
 .orb i{position:absolute;inset:0;border-radius:50%;border:1.5px solid var(--text);opacity:.18}
-.orb i:nth-child(2){inset:12px;opacity:.28}.orb i:nth-child(3){inset:-12px;opacity:.1}
+.orb i:nth-child(2){inset:10px;opacity:.28}.orb i:nth-child(3){inset:20px;opacity:.1}
 .orb[data-state=wake] b{animation:breathe 3s ease-in-out infinite}
 .orb[data-state=listen] i{animation:ring 1.3s infinite}.orb[data-state=listen] i:nth-child(2){animation-delay:.4s}.orb[data-state=listen] i:nth-child(3){animation-delay:.8s}
 .orb[data-state=listen] b{transform:scale(1.08)}
-.orb[data-state=think] b{animation:spin 1.2s linear infinite;background:conic-gradient(var(--text),var(--surface2),var(--text))}
+.orb[data-state=think] b{animation:breathe 1.2s ease-in-out infinite}
 .orb[data-state=speak] b{animation:talk .45s ease-in-out infinite alternate}
 .v-state{text-align:center;font-weight:700;font-size:18px;margin:4px 0 4px;min-height:24px}
 .wake-dot{display:block;width:12px;height:12px;border-radius:50%;background:var(--text);margin:2px auto;animation:blink 1.4s infinite}
@@ -470,11 +477,18 @@ input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=
 .plan-card .pc-price{font-size:15px;font-weight:650}
 .plan-card .pc-grant{color:var(--muted);font-size:14px}
 .plan-voice-note{margin:2px 2px 0}
+/* v65 (D6): referral Copy must read as a tappable control, not a label —
+   chip affordance (border + fill + pill shape), like other pill actions. */
+#refCopy{min-height:38px;padding:0 16px;border:1px solid var(--line);border-radius:999px;background:var(--surface2);font-size:14px;font-weight:650;vertical-align:middle}
 /* live view: full-bleed stage between header and control bar */
 .liveview{background:#000;color:#FFFFFF}
 .lv-head{background:#171717;border-bottom-color:#3A3A3A;color:#FFFFFF}
 .lv-stage{flex:1 1 auto;width:100%;background:#000;min-height:0}
 .lv-stage img{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+/* v65 (D7): before the first frame arrives the <img> has no src — Chromium
+   draws a 1px outline box for the empty replaced element (box-on-box over
+   the black stage). Hide it until a real frame sets src. */
+.lv-stage img:not([src]){display:none}
 /* v96: zoomed live view — the desktop frame (1280x800) at 200% width,
    pannable, for reading small page text on a phone. Toggled by the
    header 🔍 button or a double-tap on the frame. */
@@ -544,6 +558,18 @@ input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=
 .fld{display:block;margin-top:12px}
 .fld>span{display:block;font-size:13px;font-weight:650;color:var(--muted);margin:0 0 6px 2px}
 .fld input{display:block;width:100%;height:52px;min-height:52px;padding:0 14px;font-size:16px;line-height:1.2;border-radius:14px;box-sizing:border-box}
+/* v65 (D3): segmented control in a settings row uses the SAME .fld pattern —
+   label above (13px/650/muted, same as .fld>span), control full width below.
+   The old side-by-side row squeezed 4 language buttons into a misaligned
+   2x2 wrap with the label floating at mid-height (box-on-box). */
+.row.fld-seg{flex-direction:column;align-items:stretch;justify-content:flex-start;gap:8px}
+.row.fld-seg>span{font-size:13px;font-weight:650;color:var(--muted);margin-left:2px}
+.row.fld-seg .seg{width:100%}
+/* With the label moved above, the seg has the full row width — all four
+   languages fit ONE row. This overrides the Round-4b 2x2 wrap for this
+   pattern only (the Theme seg keeps its existing wrap behaviour). */
+#s-settings .row.fld-seg .seg{flex-wrap:nowrap}
+#s-settings .row.fld-seg .seg button{flex:1 1 0;padding:0 6px}
 #modelCard .fld{margin-top:10px}
 .bubble-input input{height:52px;min-height:52px}
 .step .keyrow input,.tc-panel .keyrow input{height:52px;min-height:52px;padding:0 12px}
@@ -586,6 +612,13 @@ input:where(:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=
 .tabbar a[aria-current=page]:before{display:none}
 .tabbar a[aria-current=page] .tv-orb{background:transparent;color:inherit;box-shadow:none}
 .tabbar .tv-orb{width:26px;height:26px}
+/* v65 (D4): ONE shared tab icon style — the Voice tab's mic sits in the
+   same 24px outline-icon treatment as every other tab. The old filled
+   black disc on the inactive Voice tab (and its 18px glyph) made its
+   weight inconsistent with the other four tabs; the active state is the
+   shared filled 52px circle above for all five tabs alike. */
+.tabbar .tv-orb{background:transparent;color:inherit}
+.tabbar .tv-orb svg{width:24px;height:24px}
 /* Round-4 audit defect fixes (measured at 360px, see plan doc):
    - Connect rows: a long unbroken string (email) in .pt spilled 50px out
      of its row — provider text wraps anywhere now.
@@ -718,3 +751,9 @@ body.kb-open .composer-wrap{bottom:calc(6px + var(--sab))}
 .mem-editor{margin-top:10px}
 .mem-ta{width:100%;box-sizing:border-box;border-radius:12px;padding:10px 12px;font:inherit;color:var(--text)}
 .mem-list[hidden]{display:none}
+
+/* v65 (D3) final override — intentionally LAST in the file: the Round-4
+   `#s-settings .row:has(> .seg) .seg{flex:1 1 200px}` rule ties this
+   selector's specificity and would otherwise win by position, stretching
+   the Language seg to fill its row. Natural height here. */
+#s-settings .row.fld-seg .seg{flex:0 1 auto}
