@@ -49,12 +49,19 @@ is rewritten:
                          do_type / do_select / snapshot) and
                          setup.py's goto / human_scroll, bound to one
                          live page via register_browser_tools(page)
+  - file_* (E2.5)        workspace_tools.py's confined workspace
+                         file primitives, bound to one per-job
+                         workspace root via
+                         register_workspace_tools(reg, root)
 
-GAP (honest, per the E2 brief): there is NO file read/list helper for
-a job workspace anywhere in the runner today (runner.py / create.py /
-setup.py / browse.py have no workspace list/read primitive to wrap),
-so no file tool is registered — inventing one is a later phase's
-decision, not E2's.
+GAP CLOSED (E2.5): E2 honestly recorded that there was NO file
+read/list helper for a job workspace anywhere in the runner to wrap
+(runner.py / create.py / setup.py / browse.py have no workspace
+list/read primitive), so E2 registered no file tool. E2.5 closes
+that gap with workspace_tools.py — purpose-built file_list /
+file_read / file_write / file_append primitives, confined to a
+per-job workspace root, registered via register_workspace_tools()
+below exactly like the browser tools.
 
 Additive only: no production flow (browse / setup / video) imports
 this module yet, and providers.py / channel.py / brain content are
@@ -325,3 +332,17 @@ def register_browser_tools(reg, page):
                 "desc": "milliseconds to wait"}},
         _wait, timeout=15)
     return reg
+
+
+# ---------------------------------------------------- workspace tools
+
+def register_workspace_tools(reg, root):
+    """Register the E2.5 workspace file tools (file_list / file_read
+    read-only; file_write / file_append mutating + needs Allow),
+    confined to the per-job workspace directory `root`. The real
+    implementation lives in workspace_tools.py (imported lazily,
+    like browse/setup above); see that module for the confinement
+    contract — any path escaping the root is refused as a FAILED
+    step and the filesystem outside the root is never touched."""
+    import workspace_tools
+    return workspace_tools.register_workspace_tools(reg, root)
