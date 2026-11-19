@@ -33,7 +33,14 @@ setup.py and the video pipelines keep their current behaviour; E1 is
 the engine core + proof, integration lands in later phases.
 
 Tool contract: a tool is a dict {"name": str, "desc": str,
-"run": callable}. run(args: dict) may return:
+"run": callable}. Since E2 the canonical source of tool dicts is
+tools_registry.py (a Registry's as_tools()): entries there also
+carry "schema" (args are validated before the handler runs),
+"mutating" and "needs_allow". A tool marked needs_allow (a
+mutating / external action) runs ONLY when the loop's caller passes
+an Allow for it — otherwise the call is REFUSED as a FAILED step fed
+back to the brain; it is never executed silently. run(args: dict)
+may return:
   - (ok: bool, result: str) tuple,
   - {"ok": bool, "result": str} dict,
   - a plain str (ok=True),
@@ -87,10 +94,16 @@ def worker_brain(goal, history, tools, observation=None):
     worker = _worker()
     if not worker or not _job_id():
         return None
+    offered = []
+    for t in tools:
+        o = {"name": t["name"], "desc": t.get("desc", "")}
+        if isinstance(t.get("schema"), dict) and t["schema"]:
+            o["schema"] = t["schema"]
+        offered.append(o)
     payload = {
         "goal": goal,
         "history": history[-HISTORY_WINDOW:],
-        "tools": [{"name": t["name"], "desc": t.get("desc", "")} for t in tools],
+        "tools": offered,
     }
     if observation:
         payload["observation"] = observation
@@ -226,8 +239,28 @@ def _normalize(res):
     return True, str(res)
 
 
+def _allowed(allow, name, args):
+    """The E2 Allow gate's decision for one needs_allow tool call.
+    allow may be: True (everything allowed), a callable
+    allow(name, args) -> bool (the job's Allow check), or a container
+    of allowed tool names. Anything else — None included — means NOT
+    allowed: an un-Allowed mutating call is refused by default, never
+    run on silence. A broken Allow check also reads as not allowed."""
+    if allow is True:
+        return True
+    if callable(allow):
+        try:
+            return bool(allow(name, args))
+        except Exception:
+            return False
+    if isinstance(allow, (set, frozenset, list, tuple)):
+        return name in allow
+    return False
+
+
 def run_loop(goal, tools, brain=None, record=None, stop=None,
-             max_steps=MAX_STEPS, deadline_s=None, observation=None):
+             max_steps=MAX_STEPS, deadline_s=None, observation=None,
+             allow=None):
     """Run the general agent loop.
 
     goal:        the task text (job-type agnostic).
@@ -242,6 +275,11 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
     deadline_s:  optional wall-clock budget; None = no deadline.
     observation: optional extra context handed to the brain each step
                  (e.g. a page snapshot for browser-flavoured jobs).
+    allow:       the E2 Allow grant for needs_allow tools — True, a
+                 callable(name, args) -> bool, or a container of
+                 allowed tool names. Default None = no Allow: a
+                 needs_allow call is refused as a FAILED step (the
+                 handler never runs) and the brain replans.
 
     Returns (status, output): status is "done" | "failed" | "stopped";
     output is the done answer, the honest failure reason, or "".
@@ -302,6 +340,15 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
         tool = by_name.get(name)
         if tool is None:
             ok, result = False, f"unknown tool {name!r} — available tools: {', '.join(sorted(by_name)) or '(none)'}"
+        elif tool.get("needs_allow") and not _allowed(allow, name, args):
+            # E2 Allow gate: a mutating / external action without the
+            # user's Allow is REFUSED — recorded as a FAILED step and
+            # fed back to the brain like any other failure, so the
+            # brain can ask the user or pick a read-only approach.
+            # The handler is never executed silently.
+            ok, result = False, (f"REFUSED: {name} is a mutating/external action and needs the user's Allow, "
+                                 "which was not given — the tool was NOT executed. "
+                                 "Ask the user for Allow, or use a read-only approach.")
         else:
             try:
                 ok, result = _normalize(tool["run"](args))
