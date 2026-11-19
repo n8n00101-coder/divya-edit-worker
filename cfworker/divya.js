@@ -8692,11 +8692,18 @@ async function appVoiceRunner(req, env, p, url, body) {
   return new Response("not found", { status: 404 });
 }
 async function appSetupRunner(req, env, p, url, body, ctx) {
-  if (!env.RUNNER_KEY || req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
+  // Auth: x-runner-key. The VM cc-bridge holds a SEPARATE key
+  // (CC_BRIDGE_KEY) accepted ONLY on the two cc endpoints below —
+  // never anywhere else; unset CC_BRIDGE_KEY = behavior unchanged.
+  const rk = req.headers.get("x-runner-key");
+  const ccEp = p === "setup/runner/ccpull" || p === "setup/runner/ccreply";
+  const runnerOk = !!env.RUNNER_KEY && rk === env.RUNNER_KEY;
+  const bridgeOk = ccEp && !!env.CC_BRIDGE_KEY && rk === env.CC_BRIDGE_KEY;
+  if (!runnerOk && !bridgeOk) return new Response("no", { status: 403 });
   // Claude Code mode bridge (VM poller, 2026-11-19): the only two
   // runner endpoints that do NOT belong to a setupjob record — they
-  // serve the ccmsg queue (see ccRoute). Same x-runner-key auth as
-  // every runner endpoint, checked immediately above.
+  // serve the ccmsg queue (see ccRoute). Auth checked immediately
+  // above (runner key, or the bridge-only key on these two paths).
   if (p === "setup/runner/ccpull" && req.method === "POST") {
     // Oldest pending messages first; each returned message is
     // marked "picked" in the same write, so a second pull never
