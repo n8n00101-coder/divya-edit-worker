@@ -112,6 +112,22 @@ their E6 meaning unchanged. The verify tools themselves live in
 compute_tools.py (with compute_csv, the exact-arithmetic fact
 computer). See e7test.py.
 
+E8 (evidence auto-close) closes the third failure parity test v2
+exposed: Julie's own verify PASSED and the brain still did not
+declare done — it wandered into the step limit and the finished
+job was scored a failure. When evidence requirements are declared,
+they ARE the goal's definition of done, so the loop now checks
+them after EVERY completed step: the moment every requirement is
+satisfied by the recorded steps, the loop ends the run as DONE
+itself — a terminal record entry stating "evidence complete —
+auto-closed" plus a summary of the final step (the brain gave no
+answer; it never declared done) — without another brain call.
+The brain can still declare done earlier (the E6 gate path is
+unchanged), and with no evidence declared the loop behaves
+exactly as E1 specified. run_chain treats an auto-closed DONE
+like any DONE: the handoff is built from the recorded steps and
+the chain continues. See e8test.py.
+
 Tool contract: a tool is a dict {"name": str, "desc": str,
 "run": callable}. Since E2 the canonical source of tool dicts is
 tools_registry.py (a Registry's as_tools()): entries there also
@@ -588,7 +604,12 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                  a requirement dict carrying "args" is verify-style:
                  it passes only on a recorded OK step from the
                  named (verify) tool with matching args, recorded
-                 after the artifact's last write.
+                 after the artifact's last write. E8 — the same
+                 requirements also auto-close the run: the moment
+                 a completed step leaves every requirement
+                 satisfied, the loop ends the run DONE itself
+                 ("evidence complete — auto-closed") instead of
+                 waiting for the brain to declare done.
 
     Returns (status, output): status is "done" | "failed" |
     "stopped" | "unverified" (E6 — done claimed without the
@@ -813,6 +834,21 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
         # is the whole point of the loop (browse discipline).
         history.append({"action": name, "arg": _arg_summary(action),
                         "result": ("ok: " if ok else "FAILED: ") + result})
+        if evidence_reqs and not _evidence_gaps(evidence_reqs,
+                                                ok_steps, ok_events):
+            # E8 evidence auto-close: every declared requirement is
+            # now satisfied by the recorded steps, so the run IS
+            # done — mechanically, whether or not the brain notices
+            # (parity v2: its verify passed and it still wandered
+            # to the step limit). End it here: terminal entry +
+            # DONE, the answer a summary of the final step. No
+            # further brain call is made.
+            summary = (f"evidence complete — auto-closed after "
+                       f"step {steps} ({name}: {result})")
+            emit({"n": steps, "tool": "done", "arg": "", "ok": True,
+                  "result": summary[:RESULT_CAP],
+                  "at": int(time.time() * 1000)})
+            return "done", summary[:1800]
     return "failed", f"Step limit ayipoyindhi ({max_steps} steps) — task inka complete avvaledu."
 
 

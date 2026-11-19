@@ -38,11 +38,35 @@ a sorted check must parse as a Decimal; an empty or non-numeric
 cell is a FAILED step naming the row and value. Silently treating
 bad data as 0 would manufacture facts — the exact failure E7
 exists to prevent.
+
+E8 (parity test v2) adds the two tools that close v2's remaining
+failure modes mechanically:
+
+  filter_csv             produce a filtered / sorted subset CSV
+                         BY CODE: rows matching {column, equals}
+                         are copied from the source VERBATIM (all
+                         columns, original values, header
+                         preserved) and optionally sorted
+                         numeric-aware. The model never hand-copies
+                         rows again — in v2 it copied a pending row
+                         into cleaned.csv with its status rewritten
+                         to "completed". Mutating: it writes the
+                         dest file, so it needs Allow.
+  verify_csv_subset      passes ONLY when the output's rows are
+                         EXACTLY the source rows matching the
+                         filter (verbatim row equality, all
+                         columns), in the declared sort order. The
+                         comparison is against the SOURCE, never
+                         against expectations the brain chose — in
+                         v2 the brain's own verify_csv_rows
+                         expectations passed vacuously over its own
+                         relabelled row. Read-only.
 """
 
 import csv
 import json
 import os
+from collections import Counter
 from decimal import Decimal, InvalidOperation
 
 from workspace_tools import _confined, _refused
@@ -115,13 +139,67 @@ def _num_literal(v, what):
         return None, f"{what} must be a number, got {v!r}"
 
 
+def _parse_filter(filt, fields, what="filter"):
+    """Validate a {"column", "equals"} filter object against a CSV
+    header. Returns (column, equals_str, None) or
+    (None, None, reason) — a malformed filter or a column the CSV
+    does not have is a reason, never a guess."""
+    if not isinstance(filt, dict) \
+            or "column" not in filt or "equals" not in filt:
+        return None, None, (f"{what} must be an object "
+                            "{\"column\": ..., \"equals\": ...}")
+    col = filt["column"]
+    if not isinstance(col, str) or not col:
+        return None, None, f"{what} must name a column"
+    if col not in fields:
+        return None, None, (f"{what} names column {col!r}, which "
+                            f"is not in the CSV header {fields}")
+    return col, str(filt["equals"]), None
+
+
+def _parse_sort(srt, fields, what="sort"):
+    """Validate a {"column", "order": "asc"|"desc"} sort object
+    against a CSV header. Returns (column, order, None) or
+    (None, None, reason)."""
+    if not isinstance(srt, dict) or "column" not in srt \
+            or srt.get("order") not in ("asc", "desc"):
+        return None, None, (f"{what} must be an object "
+                            "{\"column\": ..., \"order\": "
+                            "\"asc\"|\"desc\"}")
+    col = srt["column"]
+    if not isinstance(col, str) or not col:
+        return None, None, f"{what} must name a column"
+    if col not in fields:
+        return None, None, (f"{what} names column {col!r}, which "
+                            f"is not in the CSV header {fields}")
+    return col, srt["order"], None
+
+
+def _sorted_rows(picked, col, order):
+    """Numeric-aware sort of (rowno, row) pairs by `col`: every
+    cell must parse as a Decimal (the E7 strictness rule — a
+    non-numeric cell is a FAILED step naming the row, never a
+    silent lexical ordering). Stable: rows with equal keys keep
+    their source order. Returns (rows, None) or (None, reason)."""
+    keyed = []
+    for rowno, r in picked:
+        d, bad = _num(r.get(col, ""), col, rowno)
+        if bad:
+            return None, bad
+        keyed.append((d, r))
+    keyed.sort(key=lambda kr: kr[0], reverse=(order == "desc"))
+    return [r for _d, r in keyed], None
+
+
 def register_compute_tools(reg, root):
-    """Register the three E7 compute/verify tools on `reg`,
-    confined to `root` (the per-job workspace directory; created
-    here if missing, mirroring register_workspace_tools). All
-    three are read-only: they never write, so they never need
-    Allow, and a verify step is always safe for the loop's
-    resume verify-first guard."""
+    """Register the compute/verify tools on `reg`, confined to
+    `root` (the per-job workspace directory; created here if
+    missing, mirroring register_workspace_tools). The E7 three
+    (compute_csv / verify_file_contains / verify_csv_rows) and
+    E8's verify_csv_subset are read-only: they never write, so
+    they never need Allow, and a verify step is always safe for
+    the loop's resume verify-first guard. E8's filter_csv WRITES
+    its dest file, so it is mutating and needs Allow."""
     root_real = os.path.realpath(str(root))
     os.makedirs(root_real, exist_ok=True)
 
@@ -377,6 +455,141 @@ def register_compute_tools(reg, root):
         return True, (f"OK: {rel!r} matches all expectations "
                       f"({len(rows)} data rows)")
 
+    # ------------------------------------------------ filter_csv
+    def _filter_csv(args):
+        src_rel = str(args.get("source") or "")
+        dst_rel = str(args.get("dest") or "")
+        rows, fields, err = _read_csv(root_real, src_rel)
+        if err:
+            return err
+        filt = args.get("filter")
+        if filt is None:
+            return False, ("filter_csv needs a filter object "
+                           "{\"column\": ..., \"equals\": ...}")
+        fcol, feq, bad = _parse_filter(filt, fields)
+        if bad:
+            return False, bad
+        srt = args.get("sort")
+        scol = sorder = None
+        if srt is not None:
+            scol, sorder, bad = _parse_sort(srt, fields)
+            if bad:
+                return False, bad
+        picked = [(i + 1, r) for i, r in enumerate(rows)
+                  if str(r.get(fcol, "")) == feq]
+        out_rows = [r for _n, r in picked]
+        if scol is not None:
+            out_rows, bad = _sorted_rows(picked, scol, sorder)
+            if bad:
+                return False, bad
+        target = _confined(root_real, dst_rel)
+        if target is None or target == root_real:
+            return _refused(dst_rel)
+        if target == _confined(root_real, src_rel):
+            return False, ("filter_csv dest must differ from its "
+                           "source — overwriting the source would "
+                           "destroy the file verify_csv_subset "
+                           "checks the output against")
+        if os.path.isdir(target):
+            return False, f"is a directory: {dst_rel!r}"
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "w", newline="",
+                      encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=fields,
+                                   lineterminator="\n")
+                w.writeheader()
+                for r in out_rows:
+                    w.writerow({k: r.get(k, "") for k in fields})
+        except (OSError, csv.Error) as e:
+            return False, f"write failed for {dst_rel!r}: {e}"
+        facts = {"source": src_rel, "dest": dst_rel,
+                 "rows": len(out_rows),
+                 "filter": {"column": fcol, "equals": feq}}
+        if scol is not None:
+            facts["sorted"] = {"column": scol, "order": sorder}
+        return True, json.dumps(facts, ensure_ascii=False,
+                                sort_keys=True)
+
+    # --------------------------------------- verify_csv_subset
+    def _verify_subset(args):
+        src_rel = str(args.get("source") or "")
+        out_rel = str(args.get("output") or "")
+        srows, sfields, err = _read_csv(root_real, src_rel)
+        if err:
+            return err
+        orows, ofields, err = _read_csv(root_real, out_rel)
+        if err:
+            return err
+        filt = args.get("filter")
+        if filt is None:
+            return False, ("verify_csv_subset needs a filter "
+                           "object {\"column\": ..., "
+                           "\"equals\": ...}")
+        fcol, feq, bad = _parse_filter(filt, sfields)
+        if bad:
+            return False, bad
+        srt = args.get("sort")
+        scol = sorder = None
+        if srt is not None:
+            scol, sorder, bad = _parse_sort(srt, sfields)
+            if bad:
+                return False, bad
+        picked = [(i + 1, r) for i, r in enumerate(srows)
+                  if str(r.get(fcol, "")) == feq]
+        expected = [r for _n, r in picked]
+        if scol is not None:
+            expected, bad = _sorted_rows(picked, scol, sorder)
+            if bad:
+                return False, bad
+        problems = []
+        if ofields != sfields:
+            problems.append(f"header differs: source header "
+                            f"{sfields}, output header {ofields}")
+
+        def _key(r):
+            return tuple(str(r.get(c, "")) for c in sfields)
+
+        exp_keys = [_key(r) for r in expected]
+        out_keys = [_key(r) for r in orows]
+        missing = list((Counter(exp_keys)
+                        - Counter(out_keys)).elements())
+        extra = list((Counter(out_keys)
+                      - Counter(exp_keys)).elements())
+        for k in missing[:3]:
+            problems.append("missing row (in the source subset, "
+                            f"not in the output): {list(k)}")
+        if len(missing) > 3:
+            problems.append(f"… and {len(missing) - 3} more "
+                            f"missing row(s)")
+        for k in extra[:3]:
+            problems.append("extra row (in the output, not in "
+                            f"the source subset): {list(k)}")
+        if len(extra) > 3:
+            problems.append(f"… and {len(extra) - 3} more "
+                            f"extra row(s)")
+        if not missing and not extra:
+            for i, (a, b) in enumerate(zip(exp_keys, out_keys)):
+                if a != b:
+                    problems.append(
+                        f"order differs at data row {i + 1}: "
+                        f"expected {list(a)}, found {list(b)}")
+                    break
+        elif len(orows) != len(expected):
+            problems.append(
+                f"row count: expected {len(expected)} (source "
+                f"rows with {fcol}={feq!r}), found {len(orows)}")
+        if problems:
+            return False, (f"{out_rel!r} FAILED subset "
+                           f"verification against source "
+                           f"{src_rel!r}: " + "; ".join(problems))
+        order_txt = (f", sorted {sorder} by {scol!r}"
+                     if scol is not None else "")
+        return True, (f"OK: {out_rel!r} is exactly the subset of "
+                      f"{src_rel!r} with {fcol}={feq!r} — "
+                      f"{len(expected)} row(s), verbatim"
+                      f"{order_txt}")
+
     reg.register(
         "compute_csv",
         "Compute exact facts from a workspace CSV with CODE (never in your head): filter {column,equals}, group_by, sum, count, count_where {column,gt}, top_by_sum. Args: {path, spec}. Returns JSON facts. Read-only.",
@@ -401,4 +614,28 @@ def register_compute_tools(reg, root):
          "expect": {"type": "object", "required": True,
                     "desc": "expectations: row_count/must_contain/must_not_contain/sorted"}},
         _verify_csv_rows, timeout=30)
+    reg.register(
+        "filter_csv",
+        "Produce a filtered (and optionally sorted) copy of a workspace CSV BY CODE: the rows matching filter {column,equals} are copied from source to dest VERBATIM (all columns, original values), header preserved, sort {column, order asc|desc} numeric-aware. Args: {source, dest, filter, sort?}. Returns JSON with the row count and dest. Use this — never copy rows into an output file yourself. Mutating (writes dest) — needs Allow.",
+        {"source": {"type": "string", "required": True,
+                    "desc": "source CSV path inside the workspace"},
+         "dest": {"type": "string", "required": True,
+                  "desc": "output CSV path inside the workspace"},
+         "filter": {"type": "object", "required": True,
+                    "desc": "{\"column\": ..., \"equals\": ...} — rows whose column equals the value are copied"},
+         "sort": {"type": "object", "required": False,
+                  "desc": "{\"column\": ..., \"order\": \"asc\"|\"desc\"} — numeric-aware ordering of the copied rows"}},
+        _filter_csv, mutating=True, timeout=30)
+    reg.register(
+        "verify_csv_subset",
+        "Verify a workspace CSV is EXACTLY a filtered/sorted subset of a SOURCE CSV: the output's rows must equal the source rows matching filter {column,equals} verbatim in every column, count included, in the sort order when sort {column, order asc|desc} is given. Args: {source, output, filter, sort?}. Compared against the source itself — relabelled, dropped, extra or misordered rows FAIL with the specific mismatch. Read-only.",
+        {"source": {"type": "string", "required": True,
+                    "desc": "source CSV path inside the workspace"},
+         "output": {"type": "string", "required": True,
+                    "desc": "output CSV path inside the workspace"},
+         "filter": {"type": "object", "required": True,
+                    "desc": "{\"column\": ..., \"equals\": ...} — the subset the output must equal"},
+         "sort": {"type": "object", "required": False,
+                  "desc": "{\"column\": ..., \"order\": \"asc\"|\"desc\"} — the order the output rows must be in"}},
+        _verify_subset, timeout=30)
     return reg

@@ -129,7 +129,8 @@ check("(0) compute tools registered after defaults + workspace tools",
       reg.names() == ["noop", "echo", "job_state",
                       "file_list", "file_read", "file_write",
                       "file_append", "compute_csv",
-                      "verify_file_contains", "verify_csv_rows"],
+                      "verify_file_contains", "verify_csv_rows",
+                      "filter_csv", "verify_csv_subset"],
       str(reg.names()))
 cls = {n: (reg.get(n)["mutating"], reg.get(n)["needs_allow"],
            reg.get(n)["stub"])
@@ -280,8 +281,9 @@ brain_d = FakeBrain([
 status, out = agent_loop.run_loop(
     "summarise orders.csv into summary.txt", tools_d, brain=brain_d,
     record=entries_d.append, stop=no_stop, allow=True, evidence=REQ)
-check("(d) the run ends done only after compute + rewrite + verify",
-      status == "done" and out == "summary written and verified",
+check("(d) the run ends done (E8 auto-close on the completed "
+      "evidence) only after compute + rewrite + verify",
+      status == "done" and "auto-closed" in out,
       f"{status} {out}")
 rej_d = [e for e in entries_d if e.get("tool") == "verify"]
 check("(d) the premature done claim was rejected exactly once, naming the verify tool",
@@ -298,6 +300,13 @@ check("(d) the file on disk carries the computed facts, not the wrong ones",
       disk_d == "paid=4 total=30.80\n", repr(disk_d))
 
 # ------------------------------- (d2) a stale verify does not pass
+# E8 note: a second evidence requirement (the notes.txt write) is
+# declared alongside REQ. Without it, the E8 auto-close would
+# LEGITIMATELY end the run at the first OK verify — at that point
+# the file was written and verified, i.e. done. The extra
+# requirement keeps the run open so the rewrite can make the
+# verify stale and the GATE's rejection is what is exercised.
+REQ_D2 = REQ + [{"tool": "file_write", "contains": "notes.txt"}]
 entries_d2 = []
 brain_d2 = FakeBrain([
     {"action": "tool", "tool": "file_write",
@@ -310,16 +319,20 @@ brain_d2 = FakeBrain([
      "args": {"path": "summary.txt",
               "content": "paid=4 total=30.80\n"}},          # ...then rewritten
     {"action": "done", "answer": "done"},                   # gate rejects: stale verify
+    {"action": "tool", "tool": "file_write",
+     "args": {"path": "notes.txt",
+              "content": "notes\n"}},                       # second requirement met
     {"action": "tool", "tool": "verify_file_contains",
      "args": {"path": "summary.txt",
-              "contains": ["paid=4", "total=30.80"]}},      # fresh OK
+              "contains": ["paid=4", "total=30.80"]}},      # fresh OK -> E8 auto-close
     {"action": "done", "answer": "verified after the last write"},
 ])
 status, out = agent_loop.run_loop(
     "write and verify summary.txt", tools_d, brain=brain_d2,
-    record=entries_d2.append, stop=no_stop, allow=True, evidence=REQ)
-check("(d2) done accepted only after a verify that follows the last write",
-      status == "done" and out == "verified after the last write",
+    record=entries_d2.append, stop=no_stop, allow=True,
+    evidence=REQ_D2)
+check("(d2) done (E8 auto-close) only after a verify that follows the last write",
+      status == "done" and "auto-closed" in out,
       f"{status} {out}")
 rej_d2 = [e for e in entries_d2 if e.get("tool") == "verify"]
 check("(d2) the stale-verify claim was rejected once, naming the last write",
