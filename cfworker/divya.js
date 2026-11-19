@@ -8762,12 +8762,23 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
   if (p === "setup/runner/ccpull" && req.method === "POST") {
     // Oldest pending messages first; each returned message is
     // marked "picked" in the same write, so a second pull never
-    // hands it out again.
+    // hands it out again. Picked-message recovery (2026-11-19): a
+    // record left "picked" for over 10 minutes is stale — the
+    // bridge died/restarted mid-run (Ajju's "hook" message was
+    // lost this way) — so it is re-served as pending and re-marked
+    // picked with a fresh pickedAt below. "done" is never re-served.
+    const CC_PICK_STALE_MS = 10 * 60 * 1000;
+    const ccNow = Date.now();
     const list = await env.KV.list({ prefix: "ccmsg:" });
     const pend = [];
     for (const k of (list.keys || [])) {
       const r0 = parseRec(await env.KV.get(k.name));
-      if (r0 && r0.state === "pending" && r0.id && r0.user) pend.push(r0);
+      if (!r0 || !r0.id || !r0.user) continue;
+      if (r0.state === "pending") pend.push(r0);
+      else if (r0.state === "picked") {
+        const pickTs = r0.pickedAt || r0.upd || r0.ts || 0;
+        if (pickTs && ccNow - pickTs > CC_PICK_STALE_MS) pend.push(r0);
+      }
     }
     pend.sort((a, b) => (a.ts || 0) - (b.ts || 0));
     const out = [];
