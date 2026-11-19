@@ -61,6 +61,21 @@ failure modes mechanically:
                          v2 the brain's own verify_csv_rows
                          expectations passed vacuously over its own
                          relabelled row. Read-only.
+
+E9 (parity test v3b) hardens compute_csv against how free models
+actually call it: in v3b the model sent the spec in nested-object
+shapes — "count": {}, "sum": {"column": ...}, "group_by":
+{"column": ..., "sum": {...}} — 18 times, was rejected 18 times
+with errors that were precise but not corrective, and never
+converged (in v3 the same model had used the flat shapes fine).
+The tool now NORMALIZES the known spec keys: each accepts the
+documented flat form AND the nested {"column": ...} form (plus
+count_where's {"op": ">", "value": N} spelling), so shape
+variance in a KNOWN key is no longer a failure. Strictness is
+unchanged where it matters: unknown keys, missing columns and
+non-numeric data still FAIL — but every spec-validation failure
+now ends with a worked valid-spec example, so the feedback loop
+itself carries the correction.
 """
 
 import csv
@@ -78,6 +93,124 @@ _SPEC_KEYS = ("filter", "group_by", "sum", "count", "count_where",
               "top_by_sum")
 _EXPECT_KEYS = ("row_count", "must_contain", "must_not_contain",
                 "sorted")
+
+# The one worked example every compute_csv spec error carries
+# (E9): a model that shaped the spec wrong gets the correction
+# inside the FAILED result it is fed back, not just a refusal.
+_SPEC_EXAMPLE = (
+    '{"filter": {"column": "status", "equals": "completed"}, '
+    '"count": true, "sum": "amount_inr", '
+    '"count_where": {"column": "amount_inr", "gt": 1000}, '
+    '"group_by": "product", "top_by_sum": true}')
+_SPEC_HINT = "\nValid spec example: " + _SPEC_EXAMPLE
+
+
+def _spec_column(value):
+    """A spec column named in EITHER shape the models use: the
+    flat string "amount_inr" or the nested object
+    {"column": "amount_inr"}. Returns the column name, or None
+    when the value names no column in either shape."""
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, dict):
+        col = value.get("column")
+        if isinstance(col, str) and col:
+            return col
+    return None
+
+
+def _normalize_spec(spec):
+    """E9 spec normalization: rewrite the KNOWN spec keys from
+    whichever shape the brain used into the one internal shape
+    the validator below has always accepted. Returns
+    (normalized_spec, None) or (None, reason).
+
+    Accepted variants, per key:
+      filter      {"column", "equals"} — "value" is an alias
+                  for "equals" (normalized before validation).
+      sum         "amount_inr" | {"column": "amount_inr"}
+      group_by    "product" | {"column": "product"} — a nested
+                  group_by may also carry its own "sum" (flat or
+                  nested); it is lifted to the top-level sum
+                  when the spec has none of its own.
+      count       true | {} | any object (an object value is
+                  how v3b's model said "yes, count").
+      count_where {"column", "gt"} | {"column", "op": ">",
+                  "value"} | {"column", "value"} (value alone
+                  implies gt). Any other op is a reason — only
+                  "greater than" exists.
+      top_by_sum  true | "amount_inr" | {"column": ...} — a
+                  column value names the sum column (lifted
+                  when the spec has no sum of its own) and
+                  switches top_by_sum on.
+
+    Unknown keys pass through untouched, so the strict
+    unknown-key rejection still fires on them; values that name
+    no column in either shape are a reason here, and column
+    EXISTENCE is still checked by the validator against the
+    CSV header, exactly as before."""
+    out = {}
+    for key, val in spec.items():
+        if key == "filter":
+            if isinstance(val, dict) and "equals" not in val \
+                    and "value" in val:
+                val = dict(val)
+                val["equals"] = val.pop("value")
+            out["filter"] = val
+        elif key == "sum":
+            col = _spec_column(val)
+            if col is None:
+                return None, ("spec sum must name a column — a "
+                              "string or {\"column\": ...}")
+            out["sum"] = col
+        elif key == "group_by":
+            col = _spec_column(val)
+            if col is None:
+                return None, ("spec group_by must name a column "
+                              "— a string or {\"column\": ...}")
+            out["group_by"] = col
+            if isinstance(val, dict) and "sum" in val \
+                    and "sum" not in spec and "sum" not in out:
+                scol = _spec_column(val["sum"])
+                if scol is None:
+                    return None, ("spec group_by sum must name "
+                                  "a column — a string or "
+                                  "{\"column\": ...}")
+                out["sum"] = scol
+        elif key == "count":
+            if val is True or isinstance(val, dict) \
+                    or val == "true":
+                out["count"] = True
+            elif val:
+                out["count"] = val
+            # a falsy count (false / null / 0) drops the key:
+            # count simply was not requested
+        elif key == "count_where":
+            if isinstance(val, dict) and "gt" not in val \
+                    and "value" in val:
+                op = val.get("op", ">")
+                if op != ">":
+                    return None, (f"spec count_where op {op!r} "
+                                  f"is not supported — the only "
+                                  f"comparison is \"gt\" (>)")
+                val = {"column": val.get("column"),
+                       "gt": val["value"]}
+            out["count_where"] = val
+        elif key == "top_by_sum":
+            if isinstance(val, bool):
+                out["top_by_sum"] = val
+            else:
+                col = _spec_column(val)
+                if col is None:
+                    return None, ("spec top_by_sum must be true "
+                                  "or name the sum column — a "
+                                  "string or {\"column\": ...}")
+                out["top_by_sum"] = True
+                if "sum" not in spec and "sum" not in out:
+                    out["sum"] = col
+        else:
+            out[key] = val
+    return out, None
 
 
 def _read_csv(root_real, rel):
@@ -143,7 +276,13 @@ def _parse_filter(filt, fields, what="filter"):
     """Validate a {"column", "equals"} filter object against a CSV
     header. Returns (column, equals_str, None) or
     (None, None, reason) — a malformed filter or a column the CSV
-    does not have is a reason, never a guess."""
+    does not have is a reason, never a guess. E9: "value" is
+    accepted as an alias for "equals" — the other spelling
+    models reach for."""
+    if isinstance(filt, dict) and "equals" not in filt \
+            and "value" in filt:
+        filt = dict(filt)
+        filt["equals"] = filt.pop("value")
     if not isinstance(filt, dict) \
             or "column" not in filt or "equals" not in filt:
         return None, None, (f"{what} must be an object "
@@ -160,7 +299,19 @@ def _parse_filter(filt, fields, what="filter"):
 def _parse_sort(srt, fields, what="sort"):
     """Validate a {"column", "order": "asc"|"desc"} sort object
     against a CSV header. Returns (column, order, None) or
-    (None, None, reason)."""
+    (None, None, reason). E9: the variant spellings models use
+    are normalized first — "by" for "column", "direction" for
+    "order", "ascending"/"descending" for "asc"/"desc"."""
+    if isinstance(srt, dict):
+        srt = dict(srt)
+        if "column" not in srt and "by" in srt:
+            srt["column"] = srt.pop("by")
+        if "order" not in srt and "direction" in srt:
+            srt["order"] = srt.pop("direction")
+        if srt.get("order") == "ascending":
+            srt["order"] = "asc"
+        elif srt.get("order") == "descending":
+            srt["order"] = "desc"
     if not isinstance(srt, dict) or "column" not in srt \
             or srt.get("order") not in ("asc", "desc"):
         return None, None, (f"{what} must be an object "
@@ -205,16 +356,27 @@ def register_compute_tools(reg, root):
 
     # ------------------------------------------------ compute_csv
     def _compute_csv(args):
+        def spec_fail(msg):
+            """A SPEC-validation failure (E9): the reason plus
+            the worked example, so the feedback the loop gives
+            the brain carries the correction. Data failures
+            (unreadable file, non-numeric cells) do NOT get the
+            example — the spec was not their problem."""
+            return False, msg + _SPEC_HINT
+
         rel = str(args.get("path") or "")
         spec = args.get("spec")
         if not isinstance(spec, dict) or not spec:
-            return False, ("compute_csv needs a spec object — "
-                           "one of: " + ", ".join(_SPEC_KEYS))
+            return spec_fail("compute_csv needs a spec object — "
+                             "one of: " + ", ".join(_SPEC_KEYS))
+        spec, norm_bad = _normalize_spec(spec)
+        if norm_bad:
+            return spec_fail(norm_bad)
         unknown = sorted(set(spec) - set(_SPEC_KEYS))
         if unknown:
-            return False, (f"unknown spec key(s): "
-                           f"{', '.join(unknown)} — supported: "
-                           f"{', '.join(_SPEC_KEYS)}")
+            return spec_fail(f"unknown spec key(s): "
+                             f"{', '.join(unknown)} — supported: "
+                             f"{', '.join(_SPEC_KEYS)}")
         rows, fields, err = _read_csv(root_real, rel)
         if err:
             return err
@@ -232,46 +394,48 @@ def register_compute_tools(reg, root):
         if filt is not None:
             if not isinstance(filt, dict) \
                     or "column" not in filt or "equals" not in filt:
-                return False, ("spec filter must be an object "
-                               "{\"column\": ..., \"equals\": ...}")
+                return spec_fail(
+                    "spec filter must be an object "
+                    "{\"column\": ..., \"equals\": ...}")
             bad = need_col(filt["column"], "filter")
             if bad:
-                return False, bad
+                return spec_fail(bad)
             fcol, feq = filt["column"], str(filt["equals"])
         gcol = spec.get("group_by")
         if gcol is not None:
             bad = need_col(gcol, "group_by")
             if bad:
-                return False, bad
+                return spec_fail(bad)
         scol = spec.get("sum")
         if scol is not None:
             bad = need_col(scol, "sum")
             if bad:
-                return False, bad
+                return spec_fail(bad)
         cw = spec.get("count_where")
         cw_col = cw_gt = None
         if cw is not None:
             if not isinstance(cw, dict) \
                     or "column" not in cw or "gt" not in cw:
-                return False, ("spec count_where must be an object "
-                               "{\"column\": ..., \"gt\": number}")
+                return spec_fail(
+                    "spec count_where must be an object "
+                    "{\"column\": ..., \"gt\": number}")
             bad = need_col(cw["column"], "count_where")
             if bad:
-                return False, bad
+                return spec_fail(bad)
             cw_gt, bad = _num_literal(cw["gt"], "count_where gt")
             if bad:
-                return False, bad
+                return spec_fail(bad)
             cw_col = cw["column"]
         want_count = bool(spec.get("count"))
         want_top = bool(spec.get("top_by_sum"))
         if want_top and (gcol is None or scol is None):
-            return False, ("spec top_by_sum needs both group_by "
-                           "and sum in the same spec")
+            return spec_fail("spec top_by_sum needs both "
+                             "group_by and sum in the same spec")
         if not (want_count or scol is not None or cw is not None
                 or gcol is not None):
-            return False, ("spec computes nothing — give at least "
-                           "one of count, sum, count_where, "
-                           "group_by")
+            return spec_fail("spec computes nothing — give at "
+                             "least one of count, sum, "
+                             "count_where, group_by")
 
         picked = [(i + 1, r) for i, r in enumerate(rows)
                   if fcol is None or str(r.get(fcol, "")) == feq]
@@ -592,11 +756,14 @@ def register_compute_tools(reg, root):
 
     reg.register(
         "compute_csv",
-        "Compute exact facts from a workspace CSV with CODE (never in your head): filter {column,equals}, group_by, sum, count, count_where {column,gt}, top_by_sum. Args: {path, spec}. Returns JSON facts. Read-only.",
+        "Compute exact facts from a workspace CSV with CODE (never in your head). Args: {path, spec}. Spec example: "
+        + _SPEC_EXAMPLE +
+        " — flat string forms (\"sum\": \"amount_inr\") and nested forms (\"sum\": {\"column\": \"amount_inr\"}, \"count\": {}) are both accepted. Returns JSON facts. Read-only.",
         {"path": {"type": "string", "required": True,
                   "desc": "CSV path inside the workspace"},
          "spec": {"type": "object", "required": True,
-                  "desc": "declarative spec: filter/group_by/sum/count/count_where/top_by_sum"}},
+                  "desc": "declarative spec — example: "
+                          + _SPEC_EXAMPLE}},
         _compute_csv, timeout=30)
     reg.register(
         "verify_file_contains",
@@ -616,7 +783,7 @@ def register_compute_tools(reg, root):
         _verify_csv_rows, timeout=30)
     reg.register(
         "filter_csv",
-        "Produce a filtered (and optionally sorted) copy of a workspace CSV BY CODE: the rows matching filter {column,equals} are copied from source to dest VERBATIM (all columns, original values), header preserved, sort {column, order asc|desc} numeric-aware. Args: {source, dest, filter, sort?}. Returns JSON with the row count and dest. Use this — never copy rows into an output file yourself. Mutating (writes dest) — needs Allow.",
+        "Produce a filtered (and optionally sorted) copy of a workspace CSV BY CODE: the rows matching filter {column,equals} are copied from source to dest VERBATIM (all columns, original values), header preserved, sort {column, order asc|desc} numeric-aware. Args: {source, dest, filter, sort?}. Example: {\"source\": \"orders.csv\", \"dest\": \"cleaned.csv\", \"filter\": {\"column\": \"status\", \"equals\": \"completed\"}, \"sort\": {\"column\": \"amount_inr\", \"order\": \"desc\"}}. Returns JSON with the row count and dest. Use this — never copy rows into an output file yourself. Mutating (writes dest) — needs Allow.",
         {"source": {"type": "string", "required": True,
                     "desc": "source CSV path inside the workspace"},
          "dest": {"type": "string", "required": True,
@@ -628,7 +795,7 @@ def register_compute_tools(reg, root):
         _filter_csv, mutating=True, timeout=30)
     reg.register(
         "verify_csv_subset",
-        "Verify a workspace CSV is EXACTLY a filtered/sorted subset of a SOURCE CSV: the output's rows must equal the source rows matching filter {column,equals} verbatim in every column, count included, in the sort order when sort {column, order asc|desc} is given. Args: {source, output, filter, sort?}. Compared against the source itself — relabelled, dropped, extra or misordered rows FAIL with the specific mismatch. Read-only.",
+        "Verify a workspace CSV is EXACTLY a filtered/sorted subset of a SOURCE CSV: the output's rows must equal the source rows matching filter {column,equals} verbatim in every column, count included, in the sort order when sort {column, order asc|desc} is given. Args: {source, output, filter, sort?}. Example: {\"source\": \"orders.csv\", \"output\": \"cleaned.csv\", \"filter\": {\"column\": \"status\", \"equals\": \"completed\"}, \"sort\": {\"column\": \"amount_inr\", \"order\": \"desc\"}}. Compared against the source itself — relabelled, dropped, extra or misordered rows FAIL with the specific mismatch. Read-only.",
         {"source": {"type": "string", "required": True,
                     "desc": "source CSV path inside the workspace"},
          "output": {"type": "string", "required": True,
