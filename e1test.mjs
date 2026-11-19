@@ -100,6 +100,12 @@ check(r.json && r.json.steps === 2 && rec.steps.length === 2
   && rec.steps[1].tool === "flaky" && rec.steps[1].ok === false,
   "S6 second step appended in order, failure recorded as-is");
 
+r = await runner("POST", "/api/setup/runner/agentsteps?job=agentjob1", { step: { n: 3, tool: "submit", arg: "{}", ok: false, result: "", phase: "started" } });
+rec = getRec("setupjob:agentjob1");
+check(r.json && r.json.steps === 3 && rec.steps.length === 3
+  && rec.steps[2].phase === "started" && rec.steps[2].tool === "submit",
+  "S8 (E3) a started marker keeps its phase through the round trip");
+
 r = await runner("POST", "/api/setup/runner/agentsteps?job=agentjob2", { step: { n: 2, tool: "echo", ok: true, result: "late" } });
 rec = getRec("setupjob:agentjob2");
 check(r.status === 200 && r.json && r.json.swallowed === "terminal"

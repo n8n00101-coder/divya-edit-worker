@@ -5151,6 +5151,13 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     if (["done", "failed", "stopped"].includes(rec.state)) return Response.json({ ok: true, swallowed: "terminal" });
     const s = (body && body.step) || {};
     const entry = { n: Number(s.n) || 0, tool: String(s.tool || "").slice(0, 40), arg: String(s.arg || "").slice(0, 200), ok: !!s.ok, result: String(s.result || "").slice(0, 600), at: Number(s.at) || Date.now() };
+    // E3: a {"phase":"started"} marker (posted BEFORE a tool handler
+    // runs) must survive the round trip — without it a step whose
+    // runner died mid-flight would read back as a completed failure
+    // and resume could not tell UNKNOWN from FAILED. Additive: only
+    // the exact value "started" is kept; every other entry is the
+    // E1 completion shape, unchanged.
+    if (s.phase === "started") entry.phase = "started";
     rec.steps = Array.isArray(rec.steps) ? rec.steps : [];
     rec.steps.push(entry);
     if (rec.steps.length > 200) rec.steps = rec.steps.slice(-200);
