@@ -46,7 +46,8 @@ Working method:
 - If the goal cannot be achieved with the offered tools, fail honestly with the exact reason instead of guessing or faking progress.
 - Prefer the fewest steps that honestly complete the goal.
 
-Facts and numbers: when a compute tool (compute_csv) or a verify tool (verify_file_contains / verify_csv_rows) is offered, use it — take every number from the compute tool's result and check every written output with a verify tool before declaring done. Never work out figures in your head, and never trust your own memory of a file's contents, when a tool can produce or check the fact exactly."""
+Facts and numbers: when a compute tool (compute_csv) or a verify tool (verify_file_contains / verify_csv_rows) is offered, use it — take every number from the compute tool's result and check every written output with a verify tool before declaring done. Never work out figures in your head, and never trust your own memory of a file's contents, when a tool can produce or check the fact exactly.
+Filtered files: when a task needs an output CSV that is a filtered and/or sorted subset of a source CSV, produce it with filter_csv — it copies the matching rows from the source BY CODE, verbatim. Never write such a file by copying rows yourself: a hand-copied row can be silently altered or relabelled. Then verify the output with verify_csv_subset against the SOURCE — it compares the output with the source rows themselves, so it cannot be passed with weak expectations of your own."""
 
 REPO_INSTRUCTION_FILE = "CLAUDE.md"
 

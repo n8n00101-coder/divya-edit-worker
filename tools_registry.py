@@ -57,6 +57,11 @@ is rewritten:
                          (compute_csv / verify_file_contains /
                          verify_csv_rows), bound to the same root
                          via register_compute_tools(reg, root)
+  - filter/subset (E8)   compute_tools.py's filter_csv (mutating,
+                         needs Allow — produces a filtered/sorted
+                         CSV by code) and verify_csv_subset
+                         (read-only — checks an output against the
+                         SOURCE rows), same registration call
 
 GAP CLOSED (E2.5): E2 honestly recorded that there was NO file
 read/list helper for a job workspace anywhere in the runner to wrap
@@ -356,8 +361,10 @@ def register_workspace_tools(reg, root):
 
 def register_compute_tools(reg, root):
     """Register the E7 deterministic compute + verify tools
-    (compute_csv / verify_file_contains / verify_csv_rows — all
-    read-only), confined to the per-job workspace directory `root`
+    (compute_csv / verify_file_contains / verify_csv_rows) plus
+    E8's filter_csv (mutating — needs Allow) and
+    verify_csv_subset (read-only), confined to the per-job
+    workspace directory `root`
     by the same helper the file tools use. The real implementation
     lives in compute_tools.py (imported lazily, like
     workspace_tools above); see that module for the exactness

@@ -283,8 +283,10 @@ status, out = agent_loop.run_loop(
     "fetch then save", [fetch_d, save_d], brain=brain_d,
     record=entries_d.append, stop=no_stop,
     evidence=[{"tool": "save", "contains": "report.txt"}])
-check("(d) after producing the missing evidence, done is accepted",
-      status == "done" and out == "saved and done", f"{status} {out}")
+check("(d) after producing the missing evidence, the run ends done "
+      "(E8: auto-closed the moment the evidence completed — the "
+      "brain's own later done claim is never needed)",
+      status == "done" and "auto-closed" in out, f"{status} {out}")
 check("(d) each tool ran exactly once",
       counts_d == {"fetch": 1, "save": 1}, f"{counts_d}")
 ver_d = [e for e in entries_d if e.get("tool") == "verify"]
