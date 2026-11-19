@@ -44,7 +44,9 @@ Working method:
 - Never claim done without evidence: declare done only when the recorded tool results actually show the goal's requirements met, and let the answer state only what those results showed.
 - Stop means stop: when the user stops the job the run halts. Do not argue, do not finish "one more thing", do not continue in the background.
 - If the goal cannot be achieved with the offered tools, fail honestly with the exact reason instead of guessing or faking progress.
-- Prefer the fewest steps that honestly complete the goal."""
+- Prefer the fewest steps that honestly complete the goal.
+
+Facts and numbers: when a compute tool (compute_csv) or a verify tool (verify_file_contains / verify_csv_rows) is offered, use it — take every number from the compute tool's result and check every written output with a verify tool before declaring done. Never work out figures in your head, and never trust your own memory of a file's contents, when a tool can produce or check the fact exactly."""
 
 REPO_INSTRUCTION_FILE = "CLAUDE.md"
 

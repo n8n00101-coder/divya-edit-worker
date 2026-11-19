@@ -53,6 +53,10 @@ is rewritten:
                          file primitives, bound to one per-job
                          workspace root via
                          register_workspace_tools(reg, root)
+  - compute/verify (E7)  compute_tools.py's deterministic tools
+                         (compute_csv / verify_file_contains /
+                         verify_csv_rows), bound to the same root
+                         via register_compute_tools(reg, root)
 
 GAP CLOSED (E2.5): E2 honestly recorded that there was NO file
 read/list helper for a job workspace anywhere in the runner to wrap
@@ -346,3 +350,18 @@ def register_workspace_tools(reg, root):
     step and the filesystem outside the root is never touched."""
     import workspace_tools
     return workspace_tools.register_workspace_tools(reg, root)
+
+
+# ----------------------------------------------------- compute tools
+
+def register_compute_tools(reg, root):
+    """Register the E7 deterministic compute + verify tools
+    (compute_csv / verify_file_contains / verify_csv_rows — all
+    read-only), confined to the per-job workspace directory `root`
+    by the same helper the file tools use. The real implementation
+    lives in compute_tools.py (imported lazily, like
+    workspace_tools above); see that module for the exactness
+    contract — facts are computed by code with Decimal arithmetic,
+    and a failed check is a FAILED step, never a silent pass."""
+    import compute_tools
+    return compute_tools.register_compute_tools(reg, root)
