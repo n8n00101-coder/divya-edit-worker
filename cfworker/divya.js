@@ -1087,6 +1087,12 @@ async function handle(env, m) {
     // the brain collapses to the one short line — Julie picks the
     // style herself (the 2026-11-16 menu-dump incident class).
     if (!mm) ans = menuDumpGuard(ans, text, "te");
+    // v121 TRUTH OUTPUT GUARD: a brain reply about Claude connection
+    // that still invents the Setup grant path is swapped for the
+    // truth sheet — post-generation, on the reply text itself, so
+    // no question phrasing can leak the invention (the "Cc one"
+    // leak of 2026-11-19 17:11, after the v120 gate missed it).
+    if (!mm) ans = truthOutputGuard(ans, text, teMixText(text) ? "te" : "en");
     const askOnly = /(gala(va|ra|vu)|cheya(gala|lava)|chesta(va|ra)|can you|could you|possible\s*a|avuthunda)\s*\??\s*$/i.test(text) && !/\b(chey(yi|i)?|create|make)\b\s*$/i.test(text);
     let go = !!mm && !askOnly;
     if (mm && askOnly) ans = "Cheyagalanu — shorts mariyu 60 min varaku long videos kuda. Topic, length, language cheppu, appudu start chestha.";
@@ -2126,6 +2132,10 @@ async function appTalk(env, u, text, lang, voiceId) {
   // no longer reach the model at all (truth sheet above); this net is
   // for every other ordinary question a model refuses out of habit.
   if (!started && isRefusalText(ans, true)) ans = brainDownReply(lang);
+  // v121 TRUTH OUTPUT GUARD (WA parity): a brain reply about Claude
+  // connection inventing the Setup grant path is swapped for the
+  // truth sheet — post-generation, on the reply text itself.
+  if (!started) ans = truthOutputGuard(ans, cleanText || text, lang);
   { const prevA = [...h].reverse().find(m => m.role === "assistant"); if (ans && prevA && String(prevA.content || "") === ans) ans = antiRepeatLine(cleanText, lang); } // v51 (F3): never a verbatim repeat of the previous reply
   // v91: proactive limit warning — appended to the reply itself (rides
   // the chat path into the live response AND history), once per week,
@@ -4170,6 +4180,17 @@ function isSelfKnowledgeQuestion(text) {
   if (isCreateOrder(t) || isNoVideoEditOrder(t) || isDeployOrder(t) || isBrowseOrder(t)) return false;
   const low = t.toLowerCase();
   if (/\bclaude\b|\bcloude\b|\banthropic\b/.test(low)) return true;
+  // v121 (2026-11-19 17:11 screenshot): typo-short variants — a bare
+  // "cc" / "cloud code" token plus a connection/on token ("Cc one",
+  // "cc connect ayindha", "cloud code connect ayindha"). "Cc one"
+  // carried no "claude" word, missed this gate, and the brain
+  // invented the Setup grant line AGAIN despite the JULIE_TRUTH_SYS
+  // prompt ban. A named real provider keeps its own setup route.
+  // ("Cc one" is NOT the ccRoute toggle — toggles are exact "cc on"
+  // and are claimed by ccRoute before this gate ever sees them.)
+  const toks = low.split(/[^a-z]+/).filter(Boolean);
+  if ((toks.includes("cc") || /\bcloud\s*code\b/.test(low)) && !setupProviderInText(t) &&
+      toks.some(x => /^(on|one|connect|connected|connecting|link|linked|undha|undi|undhi|unnava|unnav|chesava|chey|cheyi|avv|avvaledha|avvaledhu|ayindha|ayyi|ayi)$/.test(x))) return true;
   if (/\b(which|what|emi|enti|em)\s+(model|engine|ai|llm)\b/.test(low) && /(use|vaduthunnav|vaduthunnava|unnava|unnav|are\s+you|running|tho|meedha|pai)/.test(low)) return true;
   if (/\b(nee|your)\s+(engine|model|brain)\s+(enti|emiti|what|which)\b/.test(low)) return true;
   if (/\b(who|evaru)\b[^.?!]{0,30}\b(made|created|built)\b/.test(low) && /\b(you|ninnu|nin)\b/.test(low)) return true;
@@ -4191,6 +4212,40 @@ function selfKnowledgeReply(text, lang) {
   return te
     ? "Nenu Julie ni — naa own free-model pool + naa own API keys tho, naa own server (Cloudflare + GitHub runners) meedha pani chestha; Claude kaadhu. Naa engine Claude Code pani chese vidhanam meedha train ayyindhi — ade vidhanam lo pani chestha, connect mathram avvaledhu. Videos create/edit, browse, accounts/keys setup — anni nene chestha."
     : "I'm Julie — I run on my own free-model pool with my own API keys on my own server (Cloudflare + GitHub runners), not Claude. My engine was trained on Claude Code's way of working — I work that way, but I'm not connected to it. I create and edit videos, browse, and set up accounts and keys myself.";
+}
+// v121 (2026-11-19 17:11 screenshot): TRUTH OUTPUT GUARD — the last
+// structural word on any BRAIN reply about Claude connection. The
+// gate above can still miss a phrasing (it missed "Cc one"), and the
+// JULIE_TRUTH_SYS prompt ban did not stop the model from inventing
+// "open the Setup section in the Julie app and grant the required
+// permissions" — a Setup grant path for Claude that does not exist.
+// So the reply TEXT itself is scanned: a Claude-connection topic
+// (broad: claude/cloude/anthropic/cloud code/a bare "cc" token)
+// whose reply carries the grant-invention patterns is replaced by
+// the truth sheet. The patterns are Claude-specific fabrications
+// (Setup section, grant + permissions/access, "add one" + setup/
+// platform) — a truthful reply never contains them, and real-
+// provider setup replies are never scanned (their messages carry
+// no Claude topic).
+function isClaudeConnTopic(text) {
+  const t = String(text || "");
+  if (isCreateOrder(t) || isNoVideoEditOrder(t) || isDeployOrder(t) || isBrowseOrder(t)) return false;
+  const low = t.toLowerCase();
+  if (/\bclaude\b|\bcloude\b|\banthropic\b|\bcloud\s*code\b/.test(low)) return true;
+  return /(^|[^a-z])cc([^a-z]|$)/.test(low);
+}
+function claudeGrantInvented(ans) {
+  const a = String(ans || "");
+  if (!a) return false;
+  if (/open\s+the\s+setup|setup\s+section/i.test(a)) return true;
+  if (/grant[^.]{0,50}?\b(permissions?|access)\b/i.test(a)) return true;
+  if (/\bsetup\b[^.]{0,80}?\b(permissions?|grant)\b/i.test(a)) return true;
+  if (/\badd\s+one\b/i.test(a) && /\b(setup|platform|service)\b/i.test(a)) return true;
+  return false;
+}
+function truthOutputGuard(ans, text, lang) {
+  if (ans && isClaudeConnTopic(text) && claudeGrantInvented(ans)) return selfKnowledgeReply(text, lang);
+  return ans;
 }
 // v120 (2026-11-19 WA screenshot): a BARE negation ("Ledha", "Kaadhu",
 // "No") is an ANSWER only when a real confirmation is pending in the

@@ -183,5 +183,71 @@ const PLATFORM_RX = /cloud-code platform|cloud code platform/i;
   check("S6", /ardham kaaledhu/i.test(r), "unrelated Ledha: asks what the 'no' refers to", r);
 }
 
+// ---- S7: v121 — the 17:11 leak itself: "Cc one" + typo variants (WA) ----
+// "Cc one" (his typo of the toggle) carried no "claude" word, missed
+// the v120 gate, and the brain invented the Setup grant line AGAIN.
+// Post-fix: the broadened gate answers from the truth sheet, and
+// "Cc one" must NOT become the ccRoute toggle.
+const TRUTH_RX = /connect avvaledhu|not connected to Claude|train ayyindhi|trained on Claude Code/i;
+{
+  const w = makeWorld();
+  const r1 = (await send(w, "Cc one")).join("\n");
+  check("S7", /own free-model pool/i.test(r1), "'Cc one': truth sheet (own pool)", r1);
+  check("S7", /not connected|not Claude/i.test(r1), "'Cc one': not connected", r1);
+  check("S7", !GRANT_RX.test(r1) && !/permissions/i.test(r1) && !/setup section/i.test(r1), "'Cc one': NO grant / permissions / Setup section", r1);
+  check("S7", !(await w.kv.get(`ccmode:${USER}`)), "'Cc one' did NOT toggle CC mode");
+  check("S7", (await w.kv.list({ prefix: "ccmsg:" })).keys.length === 0, "'Cc one' queued no ccmsg");
+  check("S7", !(await w.kv.get(`busy:${USER}`)) && !(await w.kv.get(`appjob:${USER}`)), "'Cc one' started no job");
+
+  const r2 = (await send(w, "cc connect ayindha")).join("\n");
+  check("S7", /own free-model pool/i.test(r2) && /avvaledhu/i.test(r2), "'cc connect ayindha': truth sheet", r2);
+  check("S7", !GRANT_RX.test(r2) && !/permissions/i.test(r2), "'cc connect ayindha': no invention", r2);
+
+  const r3 = (await send(w, "Claude connect chesava")).join("\n");
+  check("S7", (/connect avvaledhu/i.test(r3) || /not connected to Claude/i.test(r3)) && (/train ayyindhi/i.test(r3) || /trained on Claude Code/i.test(r3)), "'Claude connect chesava': truth sheet", r3);
+  check("S7", !GRANT_RX.test(r3) && !/permissions/i.test(r3), "'Claude connect chesava': no invention", r3);
+
+  const r4 = (await send(w, "neeku claude code undha")).join("\n");
+  check("S7", /connect avvaledhu/i.test(r4) && /own free-model pool/i.test(r4), "'neeku claude code undha': truth sheet", r4);
+  check("S7", !GRANT_RX.test(r4) && !/permissions/i.test(r4), "'neeku claude code undha': no invention", r4);
+}
+
+// ---- S8: v121 OUTPUT GUARD (WA) — a hostile brain stub returns the ----
+// exact invented line for a Claude-topic message the gate does not
+// catch ("cc ante enti" — no connection token). The post-generation
+// guard must swap it for the truth sheet.
+const INVENTED = "I'm not connected to any cloud-code platform right now. If you want to add one, open the Setup section in the Julie app and grant the required permissions.";
+{
+  const w = makeWorld();
+  brainImpl = async () => INVENTED;
+  const r = (await send(w, "cc ante enti")).join("\n");
+  brainImpl = async () => "Sare, ardham ayyindhi.";
+  check("S8", /own free-model pool/i.test(r), "guard WA: swapped to truth sheet (own pool)", r);
+  check("S8", !/grant/i.test(r) && !/permissions/i.test(r) && !/setup section/i.test(r), "guard WA: invention gone", r);
+  check("S8", !PLATFORM_RX.test(r), "guard WA: no 'cloud-code platform' parrot", r);
+  check("S8", !(await w.kv.get(`busy:${USER}`)) && !(await w.kv.get(`appjob:${USER}`)), "guard WA: no job started");
+}
+
+// ---- S9: v121 OUTPUT GUARD (app) — same hostile stub, app surface ----
+{
+  const w = makeWorld();
+  brainImpl = async () => INVENTED;
+  const a = String((await appChat(w, "cc ante enti")).reply || "");
+  brainImpl = async () => "Sare, ardham ayyindhi.";
+  check("S9", /own free-model pool/i.test(a), "guard app: swapped to truth sheet (own pool)", a);
+  check("S9", !/grant/i.test(a) && !/permissions/i.test(a) && !/setup section/i.test(a), "guard app: invention gone", a);
+}
+
+// ---- S10: real-provider setup questions keep their own routes ----
+{
+  const w = makeWorld();
+  const r1 = (await send(w, "Groq connect cheyi")).join("\n");
+  check("S10", r1.length > 0, "'Groq connect cheyi': gets a reply", r1);
+  check("S10", !TRUTH_RX.test(r1), "'Groq connect cheyi': NOT the truth sheet", r1);
+  const r2 = (await send(w, "Cerebras setup ayindha")).join("\n");
+  check("S10", /setup/i.test(r2), "'Cerebras setup ayindha': setup route reply (WA global-setup line)", r2);
+  check("S10", !TRUTH_RX.test(r2), "'Cerebras setup ayindha': NOT the truth sheet", r2);
+}
+
 console.log(`\nwatruthtest: ${checks - fails.length}/${checks} checks passed`);
 if (fails.length) { console.log("FAILURES:\n" + fails.map(f => " - " + f).join("\n")); process.exit(1); }
