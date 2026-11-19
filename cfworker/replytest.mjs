@@ -142,6 +142,49 @@ function check(name, cond, extra = "") {
   const res = await appChat(w, "Space gurinchi okka line cheppu");
   check("R7 app passthrough", /Jupiter/.test(res.reply || ""), (res.reply || "").slice(0, 160));
 }
+// R8 — APP (2026-11-19 screenshot, defect 2): a NAMED-provider setup
+// order with NO Cerebras state anywhere gets the true state in one
+// line — never the canned R48 paragraph, never a done-claim.
+{
+  const w = makeWorld(); brainImpl = async () => "Sorry, I can't help.";
+  const res = await appChat(w, "Cerebras acc create chesi , api key automatic ga conncet chesko");
+  check("R8 cerebras not-started line", /Cerebras/.test(res.reply || "") && /start avvaledhu/.test(res.reply || ""), (res.reply || "").slice(0, 200));
+  check("R8 no canned paragraph", !/my job, not yours/.test(res.reply || ""), (res.reply || "").slice(0, 200));
+  check("R8 no done claim", !/Setup is done|setup done/i.test(res.reply || ""), (res.reply || "").slice(0, 200));
+}
+// R9 — APP (defect 2): with a verified Cerebras key on record, the same
+// order answers from the read-back: connected, one line.
+{
+  const w = makeWorld(); brainImpl = async () => "Sorry, I can't help.";
+  await w.kv.put(`ukey:${USER}:cerebras`, JSON.stringify({ ok: true, at: 1, source: "divya" }));
+  const res = await appChat(w, "Cerebras acc create chesi , api key automatic ga conncet chesko");
+  check("R9 cerebras connected line", /Cerebras/.test(res.reply || "") && /connect ayyi undhi/.test(res.reply || ""), (res.reply || "").slice(0, 200));
+}
+// R10 — APP (defect 2): with the chain paused ON Cerebras, the answer
+// states the pause (from the job record), not a generic pitch.
+{
+  const w = makeWorld(); brainImpl = async () => "Sorry, I can't help.";
+  await w.kv.put(`setupchain:${USER}`, JSON.stringify({ providers: ["cerebras"], current: "jobx1", done: [], failed: [] }));
+  await w.kv.put("setupjob:jobx1", JSON.stringify({ provider: "cerebras", state: "paused", pauseReason: "sms" }));
+  const res = await appChat(w, "Cerebras setup em ayindhi?");
+  check("R10 cerebras paused line", /Cerebras/.test(res.reply || "") && /pause lo undhi/.test(res.reply || ""), (res.reply || "").slice(0, 200));
+}
+// R11 — APP (2026-11-19 screenshot, defect 3a): "Cloude tho connect ayi
+// unnava" is answered from the truth sheet (NOT connected to Claude) —
+// the model's canned refusal never surfaces.
+{
+  const w = makeWorld(); brainImpl = async () => "Sorry, I can't help.";
+  const res = await appChat(w, "Cloude tho connect ayi unnava");
+  check("R11 truth sheet answers", /Claude tho connect avvaledhu/.test(res.reply || "") && /Julie/.test(res.reply || ""), (res.reply || "").slice(0, 240));
+  check("R11 no refusal", !/can(?:'|’)t help/i.test(res.reply || ""), (res.reply || "").slice(0, 240));
+}
+// R12 — APP (defect 3b): an ordinary question whose model answer is the
+// canned refusal gets the honest brain-down line instead (refusal net).
+{
+  const w = makeWorld(); brainImpl = async () => "Sorry, I can't help.";
+  const res = await appChat(w, "Space gurinchi cheppu");
+  check("R12 refusal netted", !/can(?:'|’)t help/i.test(res.reply || "") && /andubatulo ledhu/.test(res.reply || ""), (res.reply || "").slice(0, 240));
+}
 
 console.log(`\nreplytest: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
