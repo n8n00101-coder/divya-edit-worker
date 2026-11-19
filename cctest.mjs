@@ -69,7 +69,7 @@ globalThis.fetch = async (url, opts) => {
 const OWNER = "910000000001";      // WhatsApp user (owner — handle() gate)
 const kek = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64");
 const env = {
-  KV, APP_KEK: kek, RUNNER_KEY: "test-runner", GH_TOKEN: "ghp_testtoken",
+  KV, APP_KEK: kek, RUNNER_KEY: "test-runner", CC_BRIDGE_KEY: "test-bridge", GH_TOKEN: "ghp_testtoken",
   GH_REPO: "owner/repo", OWNERS: OWNER, FRIENDS: "", GROQ_KEY: "",
   GEMINI_KEY: "test-gemini-key", WA_TOKEN: "wa-test", PHONE_ID: "1555000111",
 };
@@ -192,6 +192,42 @@ check(store.get(`ccmode:${OWNER}`) === "1" && tells.length === 1 && /mode ON/.te
 tells = await waSend("cc mode off");
 check(store.get(`ccmode:${OWNER}`) !== "1" && tells.length === 1 && /mode OFF/.test(tells[0]),
   "C18 'cc mode off' toggles back off");
+
+// =====================================================================
+// Bridge key (CC_BRIDGE_KEY): accepted on ccpull/ccreply ONLY
+// =====================================================================
+tells = await waSend("cc on");
+check(tells.length === 1 && store.get(`ccmode:${OWNER}`) === "1", "C19 cc on again for the bridge-key section");
+tells = await waSend("Bridge key task");
+check(tells.length === 0 && ccMsgs().some(m => m.text === "Bridge key task" && m.state === "pending"),
+  "C20 a third message queues pending for the bridge-key pull");
+
+let rb = await runner("/api/setup/runner/ccpull", {}, "test-bridge");
+check(rb.json && rb.json.ok && rb.json.messages.length === 1 && rb.json.messages[0].text === "Bridge key task",
+  "C21 ccpull with the BRIDGE key succeeds and returns the pending message");
+const IDB = rb.json.messages[0].id;
+check(getRec(`ccmsg:${IDB}`).state === "picked", "C22 the bridge-key pull marks the message picked");
+
+rb = await runner("/api/setup/runner/ccreply", { id: IDB, text: "BRIDGE KEY ANSWER" }, "test-bridge");
+check(rb.json && rb.json.ok === true && getRec(`ccmsg:${IDB}`).state === "done" && getRec(`ccmsg:${IDB}`).reply === "BRIDGE KEY ANSWER",
+  "C23 ccreply with the BRIDGE key posts the answer and lands the record done");
+
+rb = await runner("/api/setup/runner/agentstep", {}, "test-bridge");
+check(rb.status === 403, "C24 the bridge key on agentstep (non-cc runner endpoint) -> 403");
+
+rb = await runner("/api/setup/runner/ccreply", { id: IDB, text: "x" }, "wrong-key");
+check(rb.status === 403, "C25 ccreply with a wrong key -> 403");
+
+rb = await call("POST", "/api/setup/runner/ccpull", {}, {});
+check(rb.status === 403, "C26 ccpull with NO key -> 403");
+
+delete env.CC_BRIDGE_KEY;
+rb = await runner("/api/setup/runner/ccpull", {}, "test-bridge");
+check(rb.status === 403, "C27 with CC_BRIDGE_KEY unset, the bridge key is rejected (behavior unchanged)");
+env.CC_BRIDGE_KEY = "test-bridge";
+
+tells = await waSend("cc off");
+check(store.get(`ccmode:${OWNER}`) !== "1", "C28 cleanup: cc mode off again");
 
 console.log(fails ? `\n${fails} FAILURES` : "\nALL PASS");
 process.exit(fails ? 1 : 0);
