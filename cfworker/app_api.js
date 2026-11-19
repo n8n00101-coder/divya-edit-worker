@@ -5111,6 +5111,53 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     if (!action || typeof action.action !== "string") return Response.json({ ok: false, error: "brain" });
     return Response.json({ ok: true, action });
   }
+  if (p === "setup/runner/agentstep" && req.method === "POST") {
+    // E1 (engine program): the GENERAL agent-step brain — brainstep's
+    // sibling for non-browser jobs. agent_loop.py (the runner) sends
+    // the goal + the step history + the tool list its loop can execute
+    // and gets back ONE JSON action: call a tool, declare done (only
+    // from results actually in the history), or fail honestly. Same
+    // rails as brainstep: runner-key auth above, job record required,
+    // the owner's normal chat chain (chatWithFallback) — keys never
+    // leave the Worker. Additive: no existing flow calls this yet.
+    if (rec.provider !== "agent") return new Response("not an agent job", { status: 400 });
+    const goal = String((body && body.goal) || rec.task || "").slice(0, 600);
+    const hist = Array.isArray(body && body.history) ? body.history.slice(-8) : [];
+    const tools = (Array.isArray(body && body.tools) ? body.tools : []).slice(0, 24)
+      .map(t => ({ name: String((t && t.name) || "").slice(0, 40), desc: String((t && t.desc) || "").slice(0, 160) }))
+      .filter(t => t.name);
+    const tlines = tools.map(t => `- ${t.name}: ${t.desc}`).join("\n");
+    const sys = "You are Julie's agent engine. You work on the user's task ONE step at a time by calling tools the runner can execute. Reply with exactly ONE JSON object and no other text. Allowed actions: {\"action\":\"tool\",\"tool\":\"<tool name>\",\"args\":{...}} | {\"action\":\"done\",\"answer\":\"...\"} | {\"action\":\"fail\",\"reason\":\"...\"}. Rules: use ONLY the tools listed; a step result marked FAILED is real feedback — change the approach or fail honestly, never repeat the identical failing call unchanged; the done answer may only state what tool results in the HISTORY actually showed — never invent results, facts or completions; prefer the fewest steps; if the goal cannot be achieved with the listed tools, fail with the exact reason.";
+    const usr = `TASK: ${goal}\n\nTOOLS:\n${tlines || "(none)"}\n\nHISTORY (oldest first):\n${hist.map(hh => `- ${hh.action} ${hh.arg || ""} => ${hh.result || ""}`).join("\n") || "(start of task)"}\n\nNext action (ONE JSON object only):`;
+    const out = await chatWithFallback(env, { n: rec.user }, [{ role: "system", content: sys }, { role: "user", content: usr }]).catch(() => "");
+    const m = out && out.match(/\{[\s\S]*\}/);
+    let action = null;
+    try { action = m ? JSON.parse(m[0]) : null; } catch {}
+    if (!action || typeof action.action !== "string") return Response.json({ ok: false, error: "brain" });
+    // A tool call must name a tool the runner actually offered —
+    // anything else is an unusable reply, same as no reply.
+    if (action.action === "tool" && !tools.some(t => t.name === String(action.tool || ""))) return Response.json({ ok: false, error: "brain" });
+    return Response.json({ ok: true, action });
+  }
+  if (p === "setup/runner/agentsteps" && req.method === "POST") {
+    // E1: the runner records EVERY loop step on the job record
+    // (steps[] — per-step tool, args, ok, result) so the record is
+    // the job's real state and a later phase (E3 resume) can continue
+    // from the last completed step instead of restarting. Append-only
+    // and capped; a terminal record is final, exactly like the
+    // progress relay's terminal-sticky rule — a stopped job's record
+    // is never rewritten.
+    if (rec.provider !== "agent") return new Response("not an agent job", { status: 400 });
+    if (["done", "failed", "stopped"].includes(rec.state)) return Response.json({ ok: true, swallowed: "terminal" });
+    const s = (body && body.step) || {};
+    const entry = { n: Number(s.n) || 0, tool: String(s.tool || "").slice(0, 40), arg: String(s.arg || "").slice(0, 200), ok: !!s.ok, result: String(s.result || "").slice(0, 600), at: Number(s.at) || Date.now() };
+    rec.steps = Array.isArray(rec.steps) ? rec.steps : [];
+    rec.steps.push(entry);
+    if (rec.steps.length > 200) rec.steps = rec.steps.slice(-200);
+    rec.upd = Date.now();
+    await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    return Response.json({ ok: true, steps: rec.steps.length });
+  }
   if (p === "setup/runner/job") {
     // v48 (Take Control): hand the runner the inputs the user queued in
     // the app since the last poll, then clear the queue — read-and-clear,
