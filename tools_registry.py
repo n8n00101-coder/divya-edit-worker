@@ -31,6 +31,13 @@ A registry entry is the full contract the brain and the loop rely on:
     timeout      declared per-tool budget in seconds (metadata the
                  dispatch layer can enforce; the sync loop itself
                  does not preempt a running handler — see E2 report).
+    cancel       E5: optional cooperative-cancellation hook (a
+                 no-arg callable). A tool that can be interrupted
+                 registers one; agent_loop then runs its handler
+                 under stop polling and CALLS the hook when a stop
+                 lands mid-run, so the handler can wind down
+                 cleanly. Tools without a hook run synchronously
+                 and are stopped at the next step checkpoint.
     stub         True for smoke-test stand-ins (noop / echo).
 
 Real tools here WRAP the runner's existing implementations — nothing
@@ -102,13 +109,17 @@ class Registry:
         self._tools = {}
 
     def register(self, name, desc, schema, handler, *, mutating=False,
-                 needs_allow=None, timeout=60, stub=False):
+                 needs_allow=None, timeout=60, stub=False, cancel=None):
         """Add one tool. needs_allow defaults to the mutating flag:
         a read-only tool never needs Allow; a mutating/external one
         does unless the registrant explicitly says otherwise (e.g.
-        browser_scroll moves only the local view)."""
+        browser_scroll moves only the local view). cancel (E5) is
+        the tool's cooperative-cancellation hook — see the module
+        docstring."""
         if not name or not callable(handler):
             raise ValueError("a tool needs a name and a callable handler")
+        if cancel is not None and not callable(cancel):
+            raise ValueError("cancel must be a callable or None")
         if name in self._tools:
             raise ValueError(f"tool {name!r} already registered")
         entry = {
@@ -120,6 +131,7 @@ class Registry:
             "needs_allow": bool(mutating if needs_allow is None else needs_allow),
             "timeout": int(timeout),
             "stub": bool(stub),
+            "cancel": cancel,
         }
         self._tools[entry["name"]] = entry
         return entry
@@ -150,17 +162,22 @@ class Registry:
         validates args against the entry's schema first (bad args =
         (False, reason), handler untouched), then calls the handler.
         The entry's mutating / needs_allow flags ride along so the
-        loop's Allow gate can see them."""
+        loop's Allow gate can see them, and a registered cancel hook
+        (E5) rides along so the loop can signal cooperative
+        cancellation when a stop lands mid-run."""
         out = []
         for e in self._tools.values():
-            out.append({
+            d = {
                 "name": e["name"],
                 "desc": e["desc"],
                 "schema": e["schema"],
                 "mutating": e["mutating"],
                 "needs_allow": e["needs_allow"],
                 "run": self._runner(e),
-            })
+            }
+            if callable(e.get("cancel")):
+                d["cancel"] = e["cancel"]
+            out.append(d)
         return out
 
     @staticmethod

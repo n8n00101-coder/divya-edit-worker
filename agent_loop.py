@@ -62,6 +62,42 @@ record alone and resumes the CURRENT goal under E3's rules (chain
 position preserved). Agent jobs only — the existing setup chain in
 divya.js and every production flow are untouched. See e4test.py.
 
+E5 (stop + status mechanics) hardens the two promises the loop
+already made informally. STOP: the stop flag the runner already
+polls (the job record's state, via worker_stop — the same read
+setup.get_job / browse use) is now also polled WHILE a tool runs,
+for tools that declare cooperative cancellation (a "cancel"
+callable on the tool dict, carried through tools_registry): when a
+stop lands mid-tool the loop signals the tool's cancel hook, waits
+a short grace for it to wind down, records the interrupted step,
+and halts — no further brain calls, no further steps, and a chain
+(E4) marks itself halted-stopped from the returned status. Tools
+without a cancel hook keep the E1 behaviour exactly: synchronous
+execution, stop honoured at the checkpoint before the next step.
+STATUS: build_job_status() / format_job_status() answer "what is
+this job doing, how far has it got, what remains" from the job
+RECORD alone — step counts from steps[], chain position from the
+chain state, the last recorded result — with no model call and no
+invented percentages; a record without data says so plainly.
+
+E6 (instruction loading + done-evidence gate) gives the loop the
+two Claude Code habits it lacked. INSTRUCTIONS: at job start the
+loop loads its operating instructions through engine_instructions
+(core working method -> repo CLAUDE.md -> job-attached text) and
+hands them to the brain as its system context on every agentstep
+call (worker_brain sends them as the payload's instructions
+field); the manifest of what loaded is stamped on the job dict as
+instructionsLoaded. DONE-EVIDENCE GATE: when a goal declares
+evidence requirements (run_loop's evidence arg, a chain goal's
+"evidence", or job["evidence"]), a done claim is VERIFIED against
+the recorded steps before it is accepted — every declared check
+must have a recorded OK result. A claim that fails is fed back to
+the brain as a FAILED verification step naming the exact gap;
+after MAX_DONE_VERIFY_FAILURES failed verifications the run ends
+UNVERIFIED — an honest terminal state, not done and not a silent
+fail — with the gap recorded on the record. With no declared
+requirements, done behaves exactly as E1 specified. See e56test.py.
+
 Tool contract: a tool is a dict {"name": str, "desc": str,
 "run": callable}. Since E2 the canonical source of tool dicts is
 tools_registry.py (a Registry's as_tools()): entries there also
@@ -86,15 +122,24 @@ Honesty rules (Ajju's standing orders, same as browse.py):
 - Step results are recorded on the job record as they happen, so the
   status anyone reads is the real state of the job.
 """
+import inspect
 import json
 import os
+import threading
 import time
 
 import httpx
 
+import engine_instructions
+
 MAX_STEPS = 40        # same step budget as browse.py
 HISTORY_WINDOW = 8    # brainstep/agentstep both see the last 8 steps
 RESULT_CAP = 600      # chars of one tool result recorded / fed back
+CANCEL_GRACE_S = 3    # E5: after signalling a tool's cancel hook, how
+                      # long the loop waits for it to wind down before
+                      # halting anyway (its late result is discarded)
+MAX_DONE_VERIFY_FAILURES = 2   # E6: failed done-verifications tolerated
+                               # before the run ends UNVERIFIED
 
 
 # ---------------------------------------------------------------- plumbing
@@ -115,12 +160,15 @@ def _job_id():
     return os.environ.get("JOB", "")
 
 
-def worker_brain(goal, history, tools, observation=None):
+def worker_brain(goal, history, tools, observation=None, instructions=None):
     """Default brain: ask the Worker for the next action via
     /api/setup/runner/agentstep (agentstep is brainstep's general
     sibling). Returns the action dict, or None when the brain is
     unreachable / answered nothing usable — the loop then fails
-    honestly, exactly like browse.brain_step."""
+    honestly, exactly like browse.brain_step. E6: the loop's loaded
+    operating instructions ride along as the payload's
+    "instructions" field — the brain's system context for the
+    call."""
     worker = _worker()
     if not worker or not _job_id():
         return None
@@ -137,6 +185,8 @@ def worker_brain(goal, history, tools, observation=None):
     }
     if observation:
         payload["observation"] = observation
+    if instructions:
+        payload["instructions"] = instructions
     for attempt in range(2):
         try:
             r = httpx.post(f"{worker}/api/setup/runner/agentstep",
@@ -288,10 +338,117 @@ def _allowed(allow, name, args):
     return False
 
 
+def _takes_instructions(fn):
+    """True when a brain callable accepts the loop's E6 operating
+    instructions (an "instructions" parameter, or **kwargs to carry
+    it). Brains written against the E1 contract — (goal, history,
+    tools, observation) — return False and are called exactly as
+    before; worker_brain accepts the parameter and forwards the
+    instructions as the agentstep payload's system context."""
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    if "instructions" in params:
+        return True
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD
+               for p in params.values())
+
+
+def _call_handler(tool, args):
+    """Run one tool handler synchronously and normalize its outcome
+    (a raise becomes a FAILED result, never a dead loop — the E1
+    contract)."""
+    try:
+        return _normalize(tool["run"](args))
+    except Exception as e:
+        return False, f"{tool['name']} error: {str(e)[:RESULT_CAP]}"
+
+
+def _call_handler_cancellable(tool, args, stop):
+    """E5: run a cancel-declaring tool's handler on a daemon thread
+    while polling the stop flag. Returns ("ok", ok, result) when
+    the handler finishes on its own, or ("stopped", False, "") when
+    a stop lands mid-run: the tool's cancel hook is then called
+    (best-effort — signalling IS the cooperative contract) and the
+    loop waits CANCEL_GRACE_S for the handler to wind down before
+    halting regardless; a handler that ignores its hook may finish
+    in the background, but its late result is discarded and never
+    recorded as this step's result."""
+    box = {}
+
+    def _target():
+        box["out"] = _call_handler(tool, args)
+
+    th = threading.Thread(target=_target, daemon=True)
+    th.start()
+    while th.is_alive():
+        th.join(0.05)
+        if not th.is_alive():
+            break
+        try:
+            stopped = bool(stop())
+        except Exception:
+            stopped = False   # a broken stop poll is "no signal"
+        if stopped:
+            try:
+                tool["cancel"]()
+            except Exception:
+                pass
+            th.join(CANCEL_GRACE_S)
+            return "stopped", False, ""
+    return "ok", box["out"][0], box["out"][1]
+
+
+# ------------------------------------------------------- E6 done gate
+
+def _norm_requirement(r):
+    """Normalize one declared evidence requirement to
+    {"tool": str, "contains": str}: a bare string names a tool
+    that must have a recorded OK result; a dict may name "tool"
+    and/or "contains" (a substring the OK result must contain —
+    how a required artifact / check is declared)."""
+    if isinstance(r, str):
+        return {"tool": r, "contains": ""}
+    if isinstance(r, dict):
+        return {"tool": str(r.get("tool") or ""),
+                "contains": str(r.get("contains")
+                                or r.get("result_contains") or "")}
+    return {"tool": "", "contains": ""}
+
+
+def _evidence_gaps(requirements, ok_steps):
+    """The done-evidence gate's check: for every declared
+    requirement, is there a recorded OK step satisfying it?
+    ok_steps is a list of (tool, result) pairs — the goal's seed
+    history OK entries plus every OK step this run executed.
+    Returns the list of gap descriptions (empty = gate passes)."""
+    gaps = []
+    for r in (requirements or []):
+        req = _norm_requirement(r)
+        if not req["tool"] and not req["contains"]:
+            gaps.append("an empty evidence requirement was declared "
+                        "and cannot be satisfied")
+            continue
+        hit = any((not req["tool"] or t == req["tool"])
+                  and (not req["contains"] or req["contains"] in res)
+                  for t, res in ok_steps)
+        if not hit:
+            want = []
+            if req["tool"]:
+                want.append(f"a recorded OK result from tool {req['tool']!r}")
+            if req["contains"]:
+                want.append(f"a recorded OK result containing {req['contains']!r}")
+            gaps.append("missing evidence: no " + " and ".join(want))
+    return gaps
+
+
 def run_loop(goal, tools, brain=None, record=None, stop=None,
              max_steps=MAX_STEPS, deadline_s=None, observation=None,
              allow=None, seed_history=None, step_offset=0,
-             verify_first_for=None, record_started=False):
+             verify_first_for=None, record_started=False,
+             job=None, instructions=None, load_instructions=True,
+             evidence=None):
     """Run the general agent loop.
 
     goal:        the task text (job-type agnostic).
@@ -328,9 +485,25 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                  dying mid-step leaves the started-but-unfinished
                  marker resume reads. Default False keeps the E1/E2
                  record shape for callers that do not resume.
+    job:         E6 — the job record dict this run serves, when the
+                 caller has it: the source of the job instruction
+                 layer and of job["evidence"], and the dict the
+                 loaded-instructions manifest is stamped onto as
+                 job["instructionsLoaded"].
+    instructions: E6 — explicit operating-instructions text. When
+                 None (the default) the loop loads the layered text
+                 via engine_instructions at job start; pass
+                 load_instructions=False to run with none.
+    evidence:    E6 — the goal's declared evidence requirements
+                 (see _norm_requirement for the shapes). Falls back
+                 to job["evidence"] when the arg is None. When any
+                 requirements are in force, a done claim must pass
+                 the done-evidence gate (module docstring).
 
-    Returns (status, output): status is "done" | "failed" | "stopped";
-    output is the done answer, the honest failure reason, or "".
+    Returns (status, output): status is "done" | "failed" |
+    "stopped" | "unverified" (E6 — done claimed without the
+    declared evidence); output is the done answer, the honest
+    failure reason, or "".
     """
     brain = brain or worker_brain
     record = record or worker_record
@@ -340,6 +513,38 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
     t0 = time.time()
     steps = int(step_offset or 0)
     pending_verify = str(verify_first_for or "") or None
+
+    # E6: operating instructions, loaded at job start and handed to
+    # the brain as its system context on every call — but only to
+    # brains whose contract accepts them (worker_brain does; the
+    # E1-signature rig brains are called exactly as before).
+    instructions_text = None
+    if instructions is not None:
+        instructions_text = str(instructions)
+    elif load_instructions:
+        try:
+            instructions_text, _manifest = \
+                engine_instructions.load_instructions(job=job)
+            if isinstance(job, dict):
+                job["instructionsLoaded"] = _manifest
+        except Exception as e:
+            print("agent_loop: instruction loading failed:", e, flush=True)
+            instructions_text = None
+    brain_takes_instructions = bool(instructions_text) \
+        and _takes_instructions(brain)
+
+    # E6: the evidence this goal's done claim will be verified
+    # against — OK steps the record already holds (seed history)
+    # plus every OK step this run executes.
+    evidence_reqs = evidence
+    if evidence_reqs is None and isinstance(job, dict):
+        evidence_reqs = job.get("evidence")
+    ok_steps = []
+    for h in history:
+        res = str(h.get("result") or "")
+        if res.startswith("ok: "):
+            ok_steps.append((str(h.get("action") or ""), res[4:]))
+    verify_failures = 0
 
     def emit(entry):
         try:
@@ -361,7 +566,11 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                 return "stopped", ""
         except Exception:
             pass  # a broken stop poll is "no signal", never a dead loop
-        action = brain(goal, list(history), tools, observation)
+        if brain_takes_instructions:
+            action = brain(goal, list(history), tools, observation,
+                           instructions=instructions_text)
+        else:
+            action = brain(goal, list(history), tools, observation)
         if action is None:
             return "failed", "Brain nunchi response raaledhu (agentstep unreachable) — step plan cheyyalekapoya."
         kind = str(action.get("action") or "").lower()
@@ -372,6 +581,38 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                 history.append({"action": "done",
                                 "result": "rejected: empty answer — an answer must state what the tool results actually showed"})
                 continue
+            if evidence_reqs:
+                # E6 done-evidence gate: the claim is verified
+                # against the recorded steps BEFORE it is accepted.
+                # A failing claim is fed back as a FAILED
+                # verification step naming the exact gap; after
+                # MAX_DONE_VERIFY_FAILURES failed verifications the
+                # run ends UNVERIFIED — never done, never silent.
+                gaps = _evidence_gaps(evidence_reqs, ok_steps)
+                if gaps:
+                    verify_failures += 1
+                    gap_text = "; ".join(gaps)
+                    emit({"n": steps, "tool": "verify", "arg": "",
+                          "ok": False, "phase": "verify",
+                          "result": ("done claim rejected — missing "
+                                     "evidence: " + gap_text)[:RESULT_CAP],
+                          "at": int(time.time() * 1000)})
+                    if verify_failures >= MAX_DONE_VERIFY_FAILURES:
+                        reason = (f"UNVERIFIED: done was claimed "
+                                  f"{verify_failures} times without the "
+                                  f"declared evidence — {gap_text}")
+                        emit({"n": steps, "tool": "unverified", "arg": "",
+                              "ok": False,
+                              "result": reason[:RESULT_CAP],
+                              "at": int(time.time() * 1000)})
+                        return "unverified", reason[:1800]
+                    history.append(
+                        {"action": "verify",
+                         "result": ("FAILED: done rejected — missing "
+                                    "evidence: " + gap_text + ". Produce "
+                                    "the missing evidence with tool calls, "
+                                    "then declare done again.")})
+                    continue
             emit({"n": steps, "tool": "done", "arg": "", "ok": True,
                   "result": answer[:RESULT_CAP], "at": int(time.time() * 1000)})
             return "done", answer[:1800]
@@ -419,10 +660,31 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                 emit({"n": steps, "tool": name, "arg": _arg_summary(action),
                       "ok": False, "result": "", "phase": "started",
                       "at": int(time.time() * 1000)})
-            try:
-                ok, result = _normalize(tool["run"](args))
-            except Exception as e:
-                ok, result = False, f"{name} error: {str(e)[:RESULT_CAP]}"
+            if callable(tool.get("cancel")):
+                # E5: the tool declares cooperative cancellation —
+                # it runs under stop polling, and a stop landing
+                # mid-run signals its cancel hook and halts the
+                # loop here: the interrupted step is recorded, the
+                # halt is recorded, and NO further brain or tool
+                # call happens after this point.
+                outcome, ok, result = _call_handler_cancellable(
+                    tool, args, stop)
+                if outcome == "stopped":
+                    emit({"n": steps, "tool": name,
+                          "arg": _arg_summary(action), "ok": False,
+                          "result": ("STOPPED mid-step: a stop was "
+                                     "requested while this tool was "
+                                     "running; its cancellation was "
+                                     "signalled and the loop halted. "
+                                     "The step's effect may be partial."),
+                          "at": int(time.time() * 1000)})
+                    emit({"n": steps, "tool": "stopped", "arg": "",
+                          "ok": True,
+                          "result": "stop requested — loop halted during tool execution",
+                          "at": int(time.time() * 1000)})
+                    return "stopped", ""
+            else:
+                ok, result = _call_handler(tool, args)
             if (pending_verify and ok and not tool.get("mutating")
                     and not tool.get("needs_allow")):
                 # A read-only verification step completed — the brain
@@ -430,6 +692,11 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                 # lifts and mutating calls are judged normally again.
                 pending_verify = None
         result = result[:RESULT_CAP]
+        if ok:
+            # E6: a recorded OK result is evidence — the done gate
+            # verifies later done claims against exactly this list
+            # (plus the seed history's OK entries).
+            ok_steps.append((name, result))
         emit({"n": steps, "tool": name, "arg": _arg_summary(action),
               "ok": ok, "result": result, "at": int(time.time() * 1000)})
         # The result — success OR failure — becomes history, so the
@@ -447,8 +714,8 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
 # trigger helper only DECIDES resumability and starts the loop in
 # resume mode; wiring it into dispatch/cron is a later phase.
 
-TERMINAL_STATES = ("done", "failed", "stopped")
-TERMINAL_STEP_TOOLS = ("done", "fail", "stopped")
+TERMINAL_STATES = ("done", "failed", "stopped", "unverified")
+TERMINAL_STEP_TOOLS = ("done", "fail", "stopped", "unverified")
 
 UNKNOWN_RESULT = ("UNKNOWN: this step was started by a previous runner but its "
                   "result was never recorded — the runner died mid-step. Do NOT "
@@ -591,7 +858,7 @@ def resume_loop(job, tools=None, brain=None, record=None, stop=None, **kw):
     return run_loop(goal, tools, brain=brain, record=record, stop=stop,
                     seed_history=parsed["history"],
                     step_offset=parsed["last_n"],
-                    verify_first_for=verify_for, **kw)
+                    verify_first_for=verify_for, job=job, **kw)
 
 
 def resume_trigger(job, tools=None, **kw):
@@ -626,7 +893,109 @@ def run_agent_job(job, tools=None, **kw):
     if not goal:
         return "failed", "Agent job carries no task text."
     kw.setdefault("record_started", True)
-    return run_loop(goal, tools if tools is not None else default_tools(), **kw)
+    return run_loop(goal, tools if tools is not None else default_tools(),
+                    job=job, **kw)
+
+
+# ---------------------------------------------------------------- E5 status
+# Status-from-real-state: these builders read ONLY the job record —
+# no brain call, no model, no invented percentages. What the record
+# does not hold, the status does not claim.
+
+def build_job_status(job):
+    """Structured status for a job record, built from the record
+    alone: job state, the current goal (the chain's current goal,
+    or the job's task), step counts from steps[] (completed / ok /
+    failed / in-flight), the last recorded step, the chain position
+    when the job carries a chain, and the record's first/last
+    activity timestamps. A record with nothing in it — or no record
+    at all — returns {"has_data": False} and nothing else is
+    claimed."""
+    if not isinstance(job, dict):
+        return {"has_data": False}
+    steps = job.get("steps") if isinstance(job.get("steps"), list) else []
+    parsed = parse_recorded_steps(steps)
+    chain = _chain_state_from(job)
+    state = str(job.get("state") or "")
+    task = str(job.get("task") or job.get("goal") or "")
+    if not (state or task or steps or chain):
+        return {"has_data": False}
+    completed = parsed["completed"]
+    ok_n = sum(1 for e in completed if e.get("ok"))
+    last = completed[-1] if completed else None
+    ats = []
+    for e in steps:
+        if isinstance(e, dict):
+            try:
+                at = int(e.get("at") or 0)
+            except Exception:
+                at = 0
+            if at:
+                ats.append(at)
+    chain_out = None
+    goal = task or None
+    if chain:
+        goals = chain["goals"]
+        chain_out = {"status": chain["status"],
+                     "index": chain["index"],
+                     "total": len(goals),
+                     "completed": len(chain["handoffs"]),
+                     "halt_reason": chain["haltReason"]}
+        if chain["status"] != "done" and chain["index"] < len(goals):
+            goal = goals[chain["index"]]["goal"] or goal
+    return {
+        "has_data": True,
+        "state": state or None,
+        "terminal": job_terminal(job),
+        "goal": goal,
+        "steps": {"recorded": len(completed) + len(parsed["inflight"]),
+                  "completed": len(completed),
+                  "ok": ok_n,
+                  "failed": len(completed) - ok_n,
+                  "inflight": len(parsed["inflight"])},
+        "last_step": ({"n": _step_n(last),
+                       "tool": str(last.get("tool") or ""),
+                       "ok": bool(last.get("ok")),
+                       "result": str(last.get("result") or ""),
+                       "at": last.get("at")} if last else None),
+        "chain": chain_out,
+        "first_at": min(ats) if ats else None,
+        "last_at": max(ats) if ats else None,
+    }
+
+
+def format_job_status(job):
+    """The status as plain text lines, from build_job_status —
+    counts and positions only, never a percentage. An empty record
+    gets one plain sentence saying there is no data."""
+    st = build_job_status(job)
+    if not st["has_data"]:
+        return "No job data recorded yet — there is nothing to report."
+    lines = ["Job status (from the job record):"]
+    lines.append(f"- state: {st['state'] or 'not recorded'}"
+                 + (f" (terminal: {st['terminal']})" if st["terminal"] else ""))
+    if st["goal"]:
+        lines.append(f"- current goal: {st['goal']}")
+    s = st["steps"]
+    lines.append(f"- steps: {s['recorded']} recorded — {s['completed']} "
+                 f"completed ({s['ok']} ok, {s['failed']} failed), "
+                 f"{s['inflight']} in flight")
+    if st["last_step"]:
+        ls = st["last_step"]
+        lines.append(f"- last step: #{ls['n']} {ls['tool']} — "
+                     f"{'ok' if ls['ok'] else 'FAILED'} — {ls['result']}")
+    else:
+        lines.append("- last step: none recorded")
+    if st["chain"]:
+        c = st["chain"]
+        lines.append(f"- chain: goal {c['index'] + 1} of {c['total']} "
+                     f"({c['completed']} completed), status {c['status']}")
+        if c["halt_reason"]:
+            lines.append(f"- chain halt reason: {c['halt_reason']}")
+        remaining = c["total"] - c["index"] - 1
+        if c["status"] == "running" and remaining > 0:
+            lines.append(f"- remaining: {remaining} goal(s) after the current one")
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------------ E4 chain
@@ -663,7 +1032,10 @@ def _goal_spec(g):
     """Normalize one chain goal entry: a bare string is a goal with
     the job's full tool set; a dict may narrow the tools to a subset
     and/or carry its own Allow (E2 semantics: True, a callable
-    allow(name, args) -> bool, or a container of tool names)."""
+    allow(name, args) -> bool, or a container of tool names). E6: a
+    dict may also carry its own "evidence" requirements (the done
+    gate's declared checks for this goal) and "instructions" text
+    (the job instruction layer for this goal's run)."""
     if isinstance(g, str):
         return {"goal": g}
     if isinstance(g, dict):
@@ -672,6 +1044,10 @@ def _goal_spec(g):
             out["tools"] = [str(t) for t in g["tools"]]
         if "allow" in g:
             out["allow"] = g["allow"]
+        if isinstance(g.get("evidence"), (list, tuple)) and g["evidence"]:
+            out["evidence"] = list(g["evidence"])
+        if str(g.get("instructions") or ""):
+            out["instructions"] = str(g["instructions"])
         return out
     return {"goal": ""}
 
@@ -775,8 +1151,9 @@ def run_chain(job, tools=None, brain=None, record=None, stop=None,
     run_loop; a goal's own "allow" overrides the chain-wide one.
 
     Returns (status, output): "done" with the last goal's answer,
-    "failed" with the halt reason, "stopped", or "terminal" when
-    the chain had already halted before this call."""
+    "failed" with the halt reason, "stopped", "unverified" (E6 —
+    a goal's done claim failed its evidence gate), or "terminal"
+    when the chain had already halted before this call."""
     if not isinstance(job, dict):
         return "failed", "Chain asked for a job with no record."
     state = _chain_state_from(job)
@@ -842,6 +1219,11 @@ def run_chain(job, tools=None, brain=None, record=None, stop=None,
                 state["haltReason"] = f"goal {idx + 1} failed: {reason}"
                 _chain_emit(_record, state)
                 return "failed", reason
+            if parsed["terminal"] == "unverified":
+                state["status"] = "halted"
+                state["haltReason"] = f"goal {idx + 1} unverified: {reason}"
+                _chain_emit(_record, state)
+                return "unverified", reason
             if parsed["terminal"] == "stopped":
                 state["status"] = "halted"
                 state["haltReason"] = f"stopped during goal {idx + 1}"
@@ -865,6 +1247,16 @@ def run_chain(job, tools=None, brain=None, record=None, stop=None,
             goal_kw = dict(kw)
             goal_kw["allow"] = (gspec["allow"] if "allow" in gspec
                                 else goal_kw.get("allow"))
+            # E6: this goal's run serves a per-goal view of the job
+            # record — the goal's own instruction layer (when the
+            # descriptor carries one) and its declared evidence
+            # requirements ride into the loop with it.
+            goal_job = dict(job)
+            if gspec.get("instructions"):
+                goal_job["instructions"] = gspec["instructions"]
+            goal_kw["job"] = goal_job
+            if "evidence" in gspec:
+                goal_kw["evidence"] = gspec["evidence"]
             status, output = run_loop(goal_text, goal_tools, brain=brain,
                                       record=_record, stop=stop,
                                       seed_history=seed,
@@ -892,6 +1284,14 @@ def run_chain(job, tools=None, brain=None, record=None, stop=None,
             state["haltReason"] = f"stopped during goal {idx + 1}"
             _chain_emit(_record, state)
             return "stopped", ""
+        if status == "unverified":
+            # E6: the goal's done claim never produced its declared
+            # evidence — the chain halts with that reason recorded;
+            # later goals never start on an unproven completion.
+            state["status"] = "halted"
+            state["haltReason"] = f"goal {idx + 1} unverified: {output}"
+            _chain_emit(_record, state)
+            return "unverified", output
         state["status"] = "halted"
         state["haltReason"] = f"goal {idx + 1} failed: {output}"
         _chain_emit(_record, state)
