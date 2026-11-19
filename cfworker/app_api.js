@@ -297,6 +297,23 @@ async function appTalk(env, u, text, lang, voiceId) {
     h.push({ role: "assistant", content: a3 }); await remember(env, u.n, h);
     return { reply: a3, video_started: false, premium_required: false, brain: u.via || "shared" };
   }
+  // v120 (2026-11-19 WA screenshot, app parity): the mirror of the v24
+  // bare-approval gate — a bare NEGATION ("Ledha") with no pending
+  // confirmation must never reach the brain, which read it as
+  // declining a change ("Okay, no changes then.") when no change was
+  // on the table. A pending upload confirmation is declined for real;
+  // otherwise the last fact is confirmed plainly or the user is asked
+  // what the "no" refers to (bareNegationContextReply). Placed after
+  // setupAwaitingReply + chatUpload: their answer routing keeps claim.
+  if (isBareNegation(cleanText || text)) {
+    let a2;
+    if (await env.KV.get(`uppend:${u.n}`)) {
+      await env.KV.delete(`uppend:${u.n}`);
+      a2 = lang === "en" ? "Okay — I won't post it. Say \"upload\" again whenever you want it posted." : "Sare, upload cheyyaledhu. Post cheyali anukunte malli 'upload cheyu' ani cheppu.";
+    } else a2 = bareNegationContextReply(h.slice(0, -1), cleanText || text, lang);
+    h.push({ role: "assistant", content: a2 }); await remember(env, u.n, h);
+    return { reply: a2, video_started: false, premium_required: false, brain: u.via || "shared" };
+  }
   // R46: the old EDIT-only branch asked the user to attach a video — deleted.
   // Any video order without a user-supplied video falls through to the brain
   // and becomes a create from scratch (isNoVideoEditOrder + the reply guard).
@@ -2479,12 +2496,42 @@ function isSelfKnowledgeQuestion(text) {
 function selfKnowledgeReply(text, lang) {
   const low = String(text || "").toLowerCase();
   const te = teMixText(text) || lang !== "en";
+  // v120 (2026-11-19): the sheet now also carries the trained-not-
+  // connected fact (true since PRs #127–#134): Julie's ENGINE was
+  // trained on Claude Code's working method — she WORKS like Claude
+  // Code (agent loop, tools, verify gates) but is not CONNECTED to it.
   if (/\bclaude\b|\bcloude\b|\banthropic\b/.test(low)) return te
-    ? "Ledhu — nenu Claude tho connect avvaledhu. Nenu Julie ni: naa pani naa own free-model pool tho, naa own API keys tho, naa own server (Cloudflare + GitHub runners) meedha nadusthundhi. Accounts/keys kuda Setup lo nene create chestha."
-    : "No — I'm not connected to Claude. I'm Julie: I run on my own free-model pool with my own API keys on my own server (Cloudflare + GitHub runners), and I create accounts and keys myself in Setup.";
+    ? "Ledhu — nenu Claude tho connect avvaledhu. Nenu Julie ni: naa own free-model pool + naa own API keys tho, naa own server (Cloudflare + GitHub runners) meedha pani chestha. Naa engine Claude Code pani chese vidhanam meedha train ayyindhi — ade vidhanam lo pani chestha, kaani connect mathram avvaledhu."
+    : "No — I'm not connected to Claude. I'm Julie: I run on my own free-model pool with my own API keys on my own server (Cloudflare + GitHub runners). My engine was trained on Claude Code's way of working — I work that way, but I'm not connected to it.";
   return te
-    ? "Nenu Julie ni — naa own free-model pool + naa own API keys tho, naa own server (Cloudflare + GitHub runners) meedha pani chestha; Claude kaadhu. Videos create/edit, browse, accounts/keys setup — anni nene chestha."
-    : "I'm Julie — I run on my own free-model pool with my own API keys on my own server (Cloudflare + GitHub runners), not Claude. I create and edit videos, browse, and set up accounts and keys myself.";
+    ? "Nenu Julie ni — naa own free-model pool + naa own API keys tho, naa own server (Cloudflare + GitHub runners) meedha pani chestha; Claude kaadhu. Naa engine Claude Code pani chese vidhanam meedha train ayyindhi — ade vidhanam lo pani chestha, connect mathram avvaledhu. Videos create/edit, browse, accounts/keys setup — anni nene chestha."
+    : "I'm Julie — I run on my own free-model pool with my own API keys on my own server (Cloudflare + GitHub runners), not Claude. My engine was trained on Claude Code's way of working — I work that way, but I'm not connected to it. I create and edit videos, browse, and set up accounts and keys myself.";
+}
+// v120 (2026-11-19 WA screenshot): a BARE negation ("Ledha", "Kaadhu",
+// "No") is an ANSWER only when a real confirmation is pending in the
+// record (a setup allow ask, a retry offer, an upload confirmation).
+// With nothing pending it is not a reply about changes at all — live
+// failure: after the factual Claude answer, Ajju's "Ledha" (="no, I'm
+// not / it isn't") reached the brain, which read it as declining a
+// change and answered "Okay, no changes then." — there was no change
+// on the table. Both chat surfaces gate it structurally (handle /
+// appTalk): pending -> decline THAT ask; nothing pending -> confirm
+// the last fact plainly (when the last exchange was the Claude truth
+// answer) or ask what the "no" refers to. Never a change claim.
+const BARE_NEG_RX = /^\s*(ledha|ledhu|ledu|kaadhu|kadhu|kaadu|no|nope|vadhu|vaddhu)\s*[.!?]*\s*$/i;
+function isBareNegation(text) { return BARE_NEG_RX.test(String(text || "").trim()); }
+function bareNegationContextReply(hist, text, forceLang) {
+  let prevUser = "", lastAsst = "";
+  const hh = Array.isArray(hist) ? hist : [];
+  for (let i = hh.length - 1; i >= 0; i--) {
+    if (!lastAsst && hh[i].role === "assistant") lastAsst = String(hh[i].content || "");
+    if (!prevUser && hh[i].role === "user") prevUser = String(hh[i].content || "");
+    if (prevUser && lastAsst) break;
+  }
+  const te = forceLang ? forceLang !== "en" : !(/^\s*(no|nope)\b/i.test(String(text || "")) && prevUser && !teMixText(prevUser));
+  if ((prevUser && isSelfKnowledgeQuestion(prevUser)) || (/claude/i.test(lastAsst) && /(connect avvaledhu|not connected)/i.test(lastAsst)))
+    return te ? "Avunu, adhe nijam — nenu Claude tho connect avvaledhu; naa own free-model pool + naa own API keys tho ne pani chestha." : "Right, that's the truth — I'm not connected to Claude; I work on my own free-model pool and my own API keys.";
+  return te ? "Ardham kaaledhu — dheniki ledha antunnav? Em cheppali anukuntunnavo konchem clear ga cheppu." : "I'm not sure what that 'no' is for — tell me a little more?";
 }
 // v51 (F2): a busy/limit answer in chat is ONE short line — never a
 // paragraph wall. The brain sometimes expands the setup pitch into a
