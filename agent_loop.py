@@ -395,18 +395,83 @@ def _tool_job_state(args):
     return True, "; ".join(bits)
 
 
+def _tool_get_history(args):
+    """REAL read-only tool: retrieve the full step history from the job
+    record. Args: {limit?, offset?} — limit defaults to 100, offset
+    defaults to 0 (most recent first). Returns the steps with their
+    tool, args, ok/FAILED, result, and sequence number. The loop's
+    HISTORY_WINDOW limits what the brain sees by default; this tool
+    lets the brain access the complete record when context is needed."""
+    job = fetch_job_state()
+    if job is None:
+        return False, "job record unreachable via the runner channel"
+    steps = job.get("steps") or []
+    if not isinstance(steps, list):
+        return True, "no steps recorded yet"
+    # Parse args
+    try:
+        limit = int(args.get("limit") or 100)
+    except Exception:
+        limit = 100
+    try:
+        offset = int(args.get("offset") or 0)
+    except Exception:
+        offset = 0
+    limit = max(1, min(500, limit))  # clamp
+    offset = max(0, offset)
+    # Filter to completed/inflight entries (skip phase markers)
+    entries = []
+    for e in steps:
+        if not isinstance(e, dict):
+            continue
+        if e.get("phase") in ("started", "chain"):
+            continue
+        entries.append(e)
+    # Most recent first
+    entries.reverse()
+    total = len(entries)
+    slice_entries = entries[offset:offset + limit]
+    if not slice_entries:
+        return True, f"no steps in range (total={total}, offset={offset}, limit={limit})"
+    lines = [f"step history (total={total}, showing {len(slice_entries)} from offset {offset}):"]
+    for e in slice_entries:
+        tool = str(e.get("tool") or "?")
+        arg = str(e.get("arg") or "")
+        if len(arg) > 200:
+            arg = arg[:200] + "..."
+        ok = "ok" if e.get("ok") else "FAILED"
+        result = str(e.get("result") or "")
+        if len(result) > 300:
+            result = result[:300] + "..."
+        n = e.get("n") or "?"
+        lines.append(f"  #{n} {tool} ({ok}) arg={arg} -> {result}")
+    return True, "\n".join(lines)
+
+
 def default_tools():
     """The minimal E1 tool set: two stubs (noop/echo — they exist so
     rigs and smoke runs can exercise the loop with zero side effects)
-    plus one real read-only tool (job_state). Real tool families
-    (browser actions, file ops, render primitives) register in E2."""
+    plus real read-only tools (job_state, get_history). Real tool families
+    (browser actions, file ops, render primitives) register in E2.
+
+    Each dict includes E2 metadata (mutating, needs_allow, stub, schema)
+    so the loop's Allow gate and rigs that inspect the tool list work
+    consistently regardless of whether tools came from the Registry or
+    this fallback."""
     return [
         {"name": "noop", "desc": "Do nothing and report ok. Stub for smoke tests.",
-         "run": _tool_noop},
+         "run": _tool_noop, "mutating": False, "needs_allow": False,
+         "stub": True, "schema": {}},
         {"name": "echo", "desc": "Return the given text unchanged. Args: {text}. Stub.",
-         "run": _tool_echo},
+         "run": _tool_echo, "mutating": False, "needs_allow": False,
+         "stub": True, "schema": {"text": {"type": "string", "required": True, "desc": "the text to return"}}},
         {"name": "job_state", "desc": "Read this job's own record (state, current step, note, recorded step count, plan). Read-only, no side effects.",
-         "run": _tool_job_state},
+         "run": _tool_job_state, "mutating": False, "needs_allow": False,
+         "stub": False, "schema": {}},
+        {"name": "get_history", "desc": "Retrieve the full step history from the job record. Args: {limit?, offset?} — limit defaults to 100, offset defaults to 0 (most recent first). Read-only, no side effects.",
+         "run": _tool_get_history, "mutating": False, "needs_allow": False,
+         "stub": False, "schema": {"limit": {"type": "number", "required": False, "desc": "max steps to return (default 100, max 500)"},
+                                  "offset": {"type": "number", "required": False, "desc": "skip this many most-recent steps (default 0)"}}},
     ]
 
 
