@@ -2813,6 +2813,7 @@ async function appApi(req, env, url, ctx) {
     return appJson(req, { ok: true, vision: true, via, reply: ans });
   }
   if (p === "edit" && req.method === "POST") return appEdit(req, env, u, lang, body);
+  if (p === "agent" && req.method === "POST") return appAgentCreate(req, env, u, lang, body);
   if (p === "result") return appResult(req, env, u, url);
   if (p === "artifacts") return appArtifacts(req, env, u, url);
   if (p === "videos") {
@@ -2868,7 +2869,8 @@ async function appApi(req, env, url, ctx) {
     const lv = lvList[0] || null;
     const lastVideo = lv ? { n: lv.n, job: lv.job, state: lv.state, at: lv.at, doneAt: lv.doneAt || null, failedAt: lv.failedAt || null, has_result: !!lv.has_result } : null;
     const bal = await tokBalance(env, u.n);
-    return appJson(req, { ok: true, busy, last, runs: job ? [] : runs, job, lastVideo, tok: bal });
+    const agent = agentPublic(await agentJobFor(env, u.n).catch(() => null)); // engine integration: the current agent job's record-truth status rides the app status shape
+    return appJson(req, { ok: true, busy, last, runs: job ? [] : runs, job, lastVideo, tok: bal, agent });
   }
   if (p === "tokens") { return appJson(req, { ok: true, tok: await tokBalance(env, u.n) }); }
   if (p === "referral/me") { return appJson(req, { ok: true, ...(await refInfo(env, u.n)) }); }
@@ -5143,12 +5145,12 @@ const istMonth = () => new Date(Date.now() + 19800000).toISOString().slice(0, 7)
 // Rate: 100,000 tokens per minute of video. Weekly free 500,000 (5 lakh, IST week, Monday reset) — used first.
 // Bonus pool (referral etc.) never expires — used after weekly. Plan grants (monthly) last.
 // Owners + friends: unlimited. Referral: 1,000,000 both sides, 48h window, never expires.
-// Costs: chat 5,000 · assist 10,000 · voice 25,000/min · image 50,000 · video 100,000/min (short = 100K, 10-min = 1M).
+// Costs: chat 5,000 · assist 10,000 · agent job 10,000 · voice 25,000/min · image 50,000 · video 100,000/min (short = 100K, 10-min = 1M).
 // Rupee rate: 1M tokens = ₹19 (100K = ₹1.9 ≈ ₹2). Packs: ₹19→1M, ₹38→2M, ₹95→5M, ₹190→10M (one-time, never expire).
 // Plans (25% below pack value): Starter ₹29, Creator ₹129, Studio ₹319 — voice assistant included in every plan (v37, was +₹49/mo add-on).
 const TOK = {
   WEEKLY_FREE: 500_000, PRO_WEEKLY: 2_500_000, REF_REWARD: 1_000_000,
-  COST: { chat: 5000, assist: 10000, voice: 25000, image: 50000, video_edit: 100000, video_create: 100000 },
+  COST: { chat: 5000, assist: 10000, agent: 10000, voice: 25000, image: 50000, video_edit: 100000, video_create: 100000 },
   PER_MIN: 100_000,
 };
 const videoCost = mins => TOK.PER_MIN * Math.max(1, Math.ceil(mins || 1)); // 1 min = 100K (short), 10 min = 1M
@@ -6033,6 +6035,38 @@ async function startStagedEdit(env, u, stagedJob, kind, lang, notes, tpl, voiceI
   const h = await history(env, u.n); h.push({ role: "user", content: `[chat] video edit: ${EDIT_KINDS[kind].en}, ${lng}, ${len}${cleanNotes ? ", " + cleanNotes : ""}` }, { role: "assistant", content: en ? `Video ${num} — edit started. I'll tell you here when it's ready.` : `Video ${num} — edit start chesa. Ready ayyaka ikkada cheptha.` }); await remember(env, u.n, h);
   return { ok: true, num, job: stagedJob };
 }
+// Agent job creation (engine integration): POST /api/agent — the
+// authenticated creation path for a general agent job, gated by the
+// SAME token balance as every other creation (tokSpend, TOK.COST
+// .agent; no plan tiers, no new gating). The caller names the goal
+// and may attach evidence requirements (the loop's done-evidence
+// gate will hold the job to them), job instructions, and small text
+// files seeded into the job's workspace. One active agent job per
+// user (the browse rule). A dispatch failure refunds the spend in
+// full (the appEdit rule); a terminal failed/unverified outcome is
+// refunded by the result handler from the recorded spend.
+async function appAgentCreate(req, env, u, lang, body) {
+  const en = lang === "en";
+  const task = String(body.task || "").trim().slice(0, 600);
+  if (!task) return appJson(req, { ok: false, field: "task", error: en ? "Tell me what the agent should do." : "Agent em cheyyalo cheppu." }, 400);
+  let evidence = [];
+  if (body.evidence !== undefined) { evidence = agentEvidenceClean(body.evidence); if (!evidence) return appJson(req, { ok: false, field: "evidence", error: en ? "Evidence must be a list of {tool} / {tool, contains} / {tool, args} items." : "Evidence list sariga ledu." }, 400); }
+  let files = {};
+  if (body.files !== undefined) { files = agentFilesClean(body.files); if (!files) return appJson(req, { ok: false, field: "files", error: en ? "Files must be small text files with plain names (10 files, 64 KB total)." : "Files chinna text files ayi undali (10 files, 64 KB total)." }, 400); }
+  const prev = await agentJobFor(env, u.n).catch(() => null);
+  if (prev && ["queued", "running"].includes(prev.state)) return appJson(req, { ok: false, busy: true, job: prev.job, error: en ? "An agent job is already running. The next one can start after it finishes." : "Okka agent job already nadusthundhi. Adi ayyaka next di start avuthundi." }, 409);
+  const cost = TOK.COST.agent;
+  const tk = await tokSpend(env, u.n, cost); if (!tk.ok) return appJson(req, { ok: false, quota: true, error: tokMsg(lang, tk) }, 429);
+  const r = await startAgentJob(env, u.n, task, { evidence, instructions: String(body.instructions || "").slice(0, 4000), files }).catch(() => ({ ok: false, error: "dispatch" }));
+  if (!r.ok) {
+    await tokRefund(env, u.n, tk, cost);
+    if (r.error === "busy") return appJson(req, { ok: false, busy: true, job: r.job, error: en ? "An agent job is already running." : "Okka agent job already nadusthundhi." }, 409);
+    return appJson(req, { ok: false, error: en ? "The agent machine didn't start. Your tokens were returned — try again in a few minutes." : "Agent machine start avvaledu. Tokens venakki ichesa — konchem sepu tarvatha try cheyyi." }, 502);
+  }
+  await recordSpend(env, r.job, u.n, tk, cost);
+  const bal = await tokBalance(env, u.n);
+  return appJson(req, { ok: true, started: true, job: r.job, tok: bal });
+}
 async function appEdit(req, env, u, lang, body) {
   const en = lang === "en"; let f = null, b = body;
   if ((req.headers.get("content-type") || "").includes("multipart/form-data")) {
@@ -6482,6 +6516,109 @@ async function browseJobFor(env, n) {
 function browsePublic(j) {
   if (!j) return null;
   return { job: j.job, active: ["queued", "running", "paused"].includes(j.state), state: j.state, step: j.step || "", note: j.note || "", url: j.url || "", task: String(j.task || "").slice(0, 140), answer: j.answer || "", pauseReason: j.pauseReason || "", tc: !!j.tc, reported: !!j.reported, at: j.at || 0, upd: j.upd || 0 };
+}
+// ===== Agent jobs (engine integration): the E1–E9 general agent
+// engine (agent_loop.py + tools_registry.py) reaches production =====
+// An agent job rides the SAME setup runner channel as a browse job —
+// a setupjob:<id> record the runner polls, agentstep/agentsteps for
+// brain + step recording — with provider "agent", and it is NEVER
+// part of a setup chain (chain.current never points at it, so no
+// chain advance/finalize path can touch it; every such check keys on
+// chain.current === job). The runner is agent_runner.py (agent.yml):
+// it claims the job, seeds the record's files into a per-job
+// workspace, and runs the loop with the registry's file/compute
+// tools confined to that workspace. agentcur:<n> points at the
+// user's current agent job — status + stop resolve through it,
+// exactly like browsecur.
+async function agentDispatch(env, job) {
+  const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/agent.yml/dispatches`, { method: "POST", headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" }, body: JSON.stringify({ ref: "main", inputs: { job } }) }).catch(() => null);
+  return !!r && r.status === 204;
+}
+async function agentJobFor(env, n) {
+  const cur = parseRec(await env.KV.get(`agentcur:${n}`));
+  if (!cur || !cur.job) return null;
+  const j = parseRec(await env.KV.get(`setupjob:${cur.job}`));
+  if (!j || j.provider !== "agent") return null;
+  return j;
+}
+// Creation-time shape checks for the two structured job inputs.
+// Evidence items are the E6/E7 requirement shapes the loop's
+// done-evidence gate understands ({tool} / {tool, contains} /
+// {tool, args}); anything else is refused at creation, never
+// silently dropped. Files are TEXT seeds for the job workspace —
+// names are bare file names (the runner re-checks confinement
+// before writing), contents and totals are capped so the record
+// stays small.
+function agentEvidenceClean(ev) {
+  if (!Array.isArray(ev)) return null;
+  const out = [];
+  for (const r of ev.slice(0, 8)) {
+    if (!r || typeof r !== "object" || Array.isArray(r) || typeof r.tool !== "string" || !r.tool.trim()) return null;
+    const o = { tool: r.tool.trim().slice(0, 40) };
+    if (typeof r.contains === "string" && r.contains) o.contains = r.contains.slice(0, 200);
+    if (r.args !== undefined) {
+      if (!r.args || typeof r.args !== "object" || Array.isArray(r.args)) return null;
+      const s = JSON.stringify(r.args);
+      if (s.length > 1200) return null;
+      o.args = JSON.parse(s);
+    }
+    out.push(o);
+  }
+  return out;
+}
+function agentFilesClean(files) {
+  if (!files || typeof files !== "object" || Array.isArray(files)) return null;
+  const out = {};
+  let total = 0;
+  for (const [name, content] of Object.entries(files).slice(0, 10)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(name) || name.includes("..")) return null;
+    if (typeof content !== "string") return null;
+    total += content.length;
+    if (content.length > 20000 || total > 64000) return null;
+    out[name] = content;
+  }
+  return out;
+}
+async function startAgentJob(env, n, task, opts = {}) {
+  if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: "machine" };
+  const prev = await agentJobFor(env, n);
+  if (prev && ["queued", "running"].includes(prev.state)) return { ok: false, error: "busy", job: prev.job, state: prev.state, note: prev.note || "" };
+  const job = setupJobId();
+  const rec = { job, user: n, provider: "agent", flow: "agent", task: String(task || "").slice(0, 600), state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
+  if (opts.evidence && opts.evidence.length) rec.evidence = opts.evidence;
+  if (opts.instructions) rec.instructions = String(opts.instructions).slice(0, 4000);
+  if (opts.files && Object.keys(opts.files).length) rec.files = opts.files;
+  await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+  await env.KV.put(`agentcur:${n}`, JSON.stringify({ job, at: Date.now() }), { expirationTtl: 86400 * 2 });
+  const ok = await agentDispatch(env, job);
+  if (!ok) {
+    rec.state = "failed"; rec.note = "Agent machine start avvaledu (dispatch fail)."; rec.upd = Date.now();
+    await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    return { ok: false, error: "dispatch", job };
+  }
+  return { ok: true, job };
+}
+// The agent job's public status — built from the job RECORD alone
+// (the agent_loop.build_job_status rule): state, step counts from
+// steps[] (a {"phase":"started"} entry with no completion entry of
+// the same n is in flight), the last recorded step, and the DECLARED
+// evidence list. No percentages, nothing the record does not hold;
+// whether the evidence was SATISFIED is the gate's verdict, and it
+// is already the record's terminal state (done vs unverified).
+function agentPublic(j) {
+  if (!j) return null;
+  const steps = Array.isArray(j.steps) ? j.steps : [];
+  const startedN = new Set(), doneN = new Set();
+  let completed = 0, ok = 0, last = null;
+  for (const e of steps) {
+    if (!e || typeof e !== "object") continue;
+    if (e.phase === "started") { startedN.add(e.n); continue; }
+    completed++; doneN.add(e.n); if (e.ok) ok++; last = e;
+  }
+  let inflight = 0;
+  for (const n of startedN) if (!doneN.has(n)) inflight++;
+  const ev = Array.isArray(j.evidence) ? j.evidence : [];
+  return { job: j.job, active: ["queued", "running"].includes(j.state), state: j.state, step: j.step || "", note: j.note || "", task: String(j.task || "").slice(0, 140), answer: j.answer || "", steps: { recorded: steps.length, completed, ok, failed: completed - ok, inflight, last: last ? { n: last.n || 0, tool: last.tool || "", ok: !!last.ok, result: String(last.result || "").slice(0, 200) } : null }, evidence: { declared: ev.length, requirements: ev.map(r => ({ tool: String((r && r.tool) || ""), ...(r && r.contains ? { contains: String(r.contains).slice(0, 80) } : {}), verify: !!(r && r.args) })) }, at: j.at || 0, upd: j.upd || 0 };
 }
 function isBrowseOrder(text) {
   const t = String(text || "");
@@ -7650,6 +7787,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     let chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     const consent = parseRec(await env.KV.get(`setupconsent:${u.n}`));
     const browse = browsePublic(await browseJobFor(env, u.n).catch(() => null)); // v101: the current browse job rides every status shape (active card + terminal answer)
+    const agent = agentPublic(await agentJobFor(env, u.n).catch(() => null)); // engine integration: the current agent job rides the same status shapes, from its record alone
     const keys = {};
     // v95 (DO-burn): one batched read for all 24 provider keys instead of
     // one DO request each — setup/status is polled every 5-10s while a
@@ -7679,7 +7817,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       if (stalled) {
         const state = setupStateFor(null, null, stalled, keys);
         const autoLog = await autoLogRead(env, u.n);
-        return { ok: true, active: !!(browse && browse.active), consent: !!consent, finished: stripChainSecrets(stalled), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownCount, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (stalled && stalled.geminiVerify) || null, autoLog: autoLog.slice(0, 10), browse };
+        return { ok: true, active: !!(browse && browse.active), consent: !!consent, finished: stripChainSecrets(stalled), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownCount, needsSetup, sharedFallback, state, steps: setupSteps(null, null, stalled, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (stalled && stalled.geminiVerify) || null, autoLog: autoLog.slice(0, 10), browse, agent };
       }
       chain = parseRec(await env.KV.get(`setupchain:${u.n}`));
     }
@@ -7701,7 +7839,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
       try { auto = await maybeAutoCheck(env, u.n, (u.acct && u.acct.email) || "", false); } catch {}
       try { await scoutSweep(env, false); } catch {} // v91: model scout piggyback (24h global throttle inside)
       const autoLog = await autoLogRead(env, u.n);
-      return { ok: true, active: !!(browse && browse.active), consent: !!consent, finished: stripChainSecrets(fin), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownCount, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10), browse };
+      return { ok: true, active: !!(browse && browse.active), consent: !!consent, finished: stripChainSecrets(fin), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownCount, needsSetup, sharedFallback, state, steps: setupSteps(null, null, fin, keys, lang), gmail: await gmailStateFor(env, u.n, null), geminiVerify: (fin && fin.geminiVerify) || null, auto: auto ? { action: auto.action, providers: auto.providers || [] } : null, autoLog: autoLog.slice(0, 10), browse, agent };
     }
     let cur = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null;
     // v40 (R19): paused on email verification — try feeding the magic link
@@ -7749,7 +7887,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // of a bare "Setup running…". Additive field; older app builds ignore it.
     const action = (cur && cur.state === "paused") ? { kind: cur.pauseReason || "email", url: cur.url || "", label: setupPauseLine(cur.pauseReason || "email", lang), tc: !!cur.tc } : null;
     const autoLog = await autoLogRead(env, u.n);
-    return { ok: true, active: true, consent: !!consent, queued: queuedRun, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownKeyCount, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, geminiVerify: chain.geminiNeedsVerify || null, autoLog: autoLog.slice(0, 10), browse };
+    return { ok: true, active: true, consent: !!consent, queued: queuedRun, providers: chain.providers, done: chain.done, current: stripJobSecrets(cur), keys, keyList, keyTier: kt.tier, ownKeyCount: kt.ownKeyCount, needsSetup, sharedFallback, state, stalled, lastProgress: lastUpd || null, steps, action, gmail, geminiVerify: chain.geminiNeedsVerify || null, autoLog: autoLog.slice(0, 10), browse, agent };
   }
   if (p === "setup/start" && req.method === "POST") {
     if (!env.GH_TOKEN || !env.GH_REPO) return { ok: false, error: en ? "The setup machine isn't set up." : "Setup machine setup ledu." };
@@ -7834,6 +7972,8 @@ async function appSetupUser(req, env, u, p, body, lang) {
     if (chain && chain.current) { const j = parseRec(await env.KV.get(`setupjob:${chain.current}`)); if (j) { j.state = "stopped"; j.upd = Date.now(); await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 }); } }
     const bjStop = await browseJobFor(env, u.n).catch(() => null); // v101: the shared Stop button also halts a running browse
     if (bjStop && ["queued", "running", "paused"].includes(bjStop.state)) { bjStop.state = "stopped"; bjStop.upd = Date.now(); await env.KV.put(`setupjob:${bjStop.job}`, JSON.stringify(bjStop), { expirationTtl: 86400 * 2 }); }
+    const ajStop = await agentJobFor(env, u.n).catch(() => null); // engine integration: the shared Stop also halts a running agent job (its loop polls this state via worker_stop)
+    if (ajStop && ["queued", "running"].includes(ajStop.state)) { ajStop.state = "stopped"; ajStop.upd = Date.now(); await env.KV.put(`setupjob:${ajStop.job}`, JSON.stringify(ajStop), { expirationTtl: 86400 * 2 }); }
     // v104 (retention): record the outcome BEFORE deleting the chain —
     // a stop used to discard chain.failReason entirely, so a stopped
     // segment's per-provider terminal reasons vanished (live
@@ -8366,7 +8506,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // progress relay's terminal-sticky rule — a stopped job's record
     // is never rewritten.
     if (rec.provider !== "agent") return new Response("not an agent job", { status: 400 });
-    if (["done", "failed", "stopped"].includes(rec.state)) return Response.json({ ok: true, swallowed: "terminal" });
+    if (["done", "failed", "stopped", "unverified"].includes(rec.state)) return Response.json({ ok: true, swallowed: "terminal" });
     const s = (body && body.step) || {};
     const entry = { n: Number(s.n) || 0, tool: String(s.tool || "").slice(0, 40), arg: String(s.arg || "").slice(0, 200), ok: !!s.ok, result: String(s.result || "").slice(0, 600), at: Number(s.at) || Date.now() };
     // E3: a {"phase":"started"} marker (posted BEFORE a tool handler
@@ -8433,7 +8573,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     return Response.json({ ok: true });
   }
   if (p === "setup/runner/progress" && req.method === "POST") {
-    const state = ["queued", "running", "paused", "done", "failed", "stopped"].includes(body.state) ? body.state : "running";
+    const state = ["queued", "running", "paused", "done", "failed", "stopped", "unverified"].includes(body.state) ? body.state : "running"; // "unverified" (engine integration): an agent job's honest terminal state — its done claim failed the evidence gate. No setup/browse runner ever posts it; for them this list is unchanged in effect.
     const prevState = rec.state;
     // v115 (spam loop + stop-silence — Ajju 2026-11-17 17:32–17:38):
     // TERMINAL STATES ARE STICKY at this relay. Pre-fix the handler
@@ -8447,7 +8587,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // flipped it to "paused", the next post "transitioned" and sent.
     // A non-terminal post against a terminal record is now swallowed
     // whole — no state write, no relay, nothing reaches WhatsApp.
-    const prevTerminal115 = ["done", "failed", "stopped"].includes(prevState);
+    const prevTerminal115 = ["done", "failed", "stopped", "unverified"].includes(prevState);
     // A STOPPED job is dead, full stop: the stop (user's, or the
     // pause-skip's) already finalized or advanced everything it owned,
     // so ANY later post — even a terminal one — is swallowed. Pre-fix
@@ -8456,7 +8596,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     if (prevState === "stopped") {
       return Response.json({ ok: true, swallowed: "stopped-final" });
     }
-    if (prevTerminal115 && !["done", "failed", "stopped"].includes(state)) {
+    if (prevTerminal115 && !["done", "failed", "stopped", "unverified"].includes(state)) {
       return Response.json({ ok: true, swallowed: "terminal-sticky" });
     }
     // Defect A (stop means silence): even a terminal-to-terminal post
@@ -8540,7 +8680,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // posts progress on every small step; identical heartbeats used to burn
     // one KV write each and eat the free daily budget. Write only when the
     // meaningful state changed, on terminal states, or at most every 20s.
-    const meaningful = state !== prevState || rec.step !== prevStep || rec.note !== prevNote || askChanged || pauseDue115 || state === "done" || state === "failed" || state === "stopped";
+    const meaningful = state !== prevState || rec.step !== prevStep || rec.note !== prevNote || askChanged || pauseDue115 || state === "done" || state === "failed" || state === "stopped" || state === "unverified";
     if (meaningful || Date.now() - prevUpd > 20000) await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     // v109: a pause with NO structured ask (an email-verification
     // wait — the feed machinery's territory) still tells the WA
@@ -8653,12 +8793,27 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // here (it goes through setup/runner/key, sealed); account_id is kept
     // on the job record for the Cloudflare result.
     const provider = String(body.provider || rec.provider || "").trim();
-    const status = ["done", "failed", "stopped"].includes(String(body.status || "").trim()) ? String(body.status).trim() : "failed";
+    const rawStatus = String(body.status || "").trim();
+    // Engine integration: an agent job has a fourth honest terminal
+    // state, "unverified" (done claimed, evidence gate failed). It is
+    // accepted ONLY for agent records — every other provider keeps
+    // the exact done/failed/stopped coercion it has always had.
+    const status = ["done", "failed", "stopped"].includes(rawStatus) ? rawStatus : (rec.provider === "agent" && rawStatus === "unverified" ? "unverified" : "failed");
     const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
     if (body.account_id) { rec.accountId = String(body.account_id).slice(0, 80); }
     if (body.error) rec.note = String(body.error).slice(0, 300);
     if (rec.provider === "browse" && body.answer) rec.answer = String(body.answer).slice(0, 2000); // v101: the browse result — stored on the job, reported by appTalk + setup/status
     if (rec.provider === "browse") rec.state = status; // v101: the result post is authoritative for a browse job's terminal state (its progress post says the same; belt and braces)
+    if (rec.provider === "agent" && body.answer) rec.answer = String(body.answer).slice(0, 2000); // engine integration: the agent result — stored on the job, reported by setup/status + status
+    if (rec.provider === "agent") rec.state = status; // engine integration: the result post is authoritative for an agent job's terminal state (the browse rule)
+    // Engine integration: an agent outcome reaches the owner's
+    // WhatsApp too (one job, two windows — the v111 browse rule),
+    // once, behind the record's waToldAgent mark.
+    let agentTell = null;
+    if (rec.provider === "agent" && !rec.waToldAgent && /^\d{7,15}$/.test(String(rec.user || ""))) {
+      rec.waToldAgent = true;
+      agentTell = status; // composed after the refund attempt below, so any "tokens returned" line is true when sent
+    }
     // v111: a browse outcome is an OUTCOME — it reaches the owner's
     // WhatsApp too (one job, two windows; pre-fix the answer was
     // stored on the record and only the app chat ever reported it).
@@ -8670,6 +8825,18 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     rec.upd = Date.now();
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     if (browseTell111) { try { await waSendText(env, String(rec.user), browseTell111); } catch {} }
+    if (agentTell) {
+      // A failed / unverified agent job delivered nothing the user
+      // can use — its creation spend is refunded from the durable
+      // spend record (idempotent; the v73 rule), and the WhatsApp
+      // line claims the refund ONLY when refundJobSpend confirms a
+      // bucket write actually landed.
+      let refunded = false;
+      if (agentTell === "failed" || agentTell === "unverified") { try { refunded = await refundJobSpend(env, job, rec.user); } catch {} }
+      const refundLine = refunded ? " Tokens venakki ichesa." : "";
+      const tellText = agentTell === "done" ? `✓ Agent job ayipoyindhi${rec.answer ? ` — ${String(rec.answer).slice(0, 700)}` : ""}` : agentTell === "unverified" ? `⚠ Agent job UNVERIFIED — done ani claim chesindhi kaani evidence saripoledu${rec.note ? ` (${String(rec.note).slice(0, 160)})` : ""}.${refundLine}` : agentTell === "stopped" ? "Agent job stop ayyindhi." : `✗ Agent job fail ayyindhi${rec.note ? ` — ${String(rec.note).slice(0, 200)}` : ""}.${refundLine}`;
+      try { await waSendText(env, String(rec.user), tellText); } catch {}
+    }
     if (!chain || chain.current !== job) return Response.json({ ok: true, advanced: false });
     chain.failed = chain.failed || [];
     // v109: per-provider progress INTO the WhatsApp chat as it

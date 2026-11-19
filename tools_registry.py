@@ -72,9 +72,11 @@ file_read / file_write / file_append primitives, confined to a
 per-job workspace root, registered via register_workspace_tools()
 below exactly like the browser tools.
 
-Additive only: no production flow (browse / setup / video) imports
-this module yet, and providers.py / channel.py / brain content are
-untouched. agent_loop consumes the registry through as_tools().
+Production consumer (integration phase): agent_runner.py builds
+one registry per agent job (default + workspace + compute tools)
+and hands it to agent_loop through as_tools(). No existing
+production flow (browse / setup / video) imports this module, and
+providers.py / channel.py / brain content are untouched.
 """
 import agent_loop
 

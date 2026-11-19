@@ -28,9 +28,13 @@ resume a job from its record instead of restarting it.
 
 The loop itself is dependency-injected (brain / record / stop are
 callables) so rigs can drive it with a scripted fake brain — see
-e1test.py. It is NOT wired into any production job flow yet: browse.py,
-setup.py and the video pipelines keep their current behaviour; E1 is
-the engine core + proof, integration lands in later phases.
+e1test.py. INTEGRATION (the engine program's final phase) wired it
+into production dispatch for AGENT jobs only: POST /api/agent
+creates a setupjob record with provider "agent", agent.yml runs
+agent_runner.py, and that runner claims the job and executes it
+through run_agent_job / resume_trigger below. browse.py, setup.py
+and the video pipelines keep their current behaviour — no existing
+flow routes through this loop.
 
 E3 (persistence + resume) builds on the steps[] record: a runner is
 ephemeral, the record is not. With record_started on, the loop writes
@@ -1011,8 +1015,8 @@ def resume_trigger(job, tools=None, **kw):
     exists, not terminal, has steps) start the loop in resume mode
     and return its (status, output); otherwise return None — the
     caller decides what a non-resumable job means (fresh dispatch,
-    terminal report, ...). NOT wired into production dispatch/cron
-    yet; E3 is the mechanics + proof."""
+    terminal report, ...). Production caller: agent_runner.py tries
+    this first for every agent job it claims."""
     if not is_resumable(job):
         return None
     return resume_loop(job, tools, **kw)
@@ -1030,10 +1034,10 @@ def resume_current_job(tools=None, **kw):
 
 def run_agent_job(job, tools=None, **kw):
     """Thin convenience wrapper for a job record: the goal is the
-    job's task text. NOT wired into any production dispatch yet —
-    later engine phases call this from the runners. E3: fresh runs
-    through this wrapper checkpoint started markers by default, so
-    a job started here is resumable if its runner dies."""
+    job's task text. Production caller: agent_runner.py (agent jobs
+    created by POST /api/agent). E3: fresh runs through this wrapper
+    checkpoint started markers by default, so a job started here is
+    resumable if its runner dies."""
     goal = str(job.get("task") or job.get("goal") or "").strip()
     if not goal:
         return "failed", "Agent job carries no task text."

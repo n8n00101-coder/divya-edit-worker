@@ -1,0 +1,30 @@
+name: divya-agent
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Agent job id (KV setupjob:<job>, provider=agent)"
+        required: true
+        type: string
+jobs:
+  agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        # playwright is the PACKAGE only (setup.py imports it at
+        # module level); no browser is downloaded or launched — the
+        # agent runner registers no browser tools.
+        run: pip install -q httpx playwright
+      - name: Run agent driver
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+          JOB: ${{ inputs.job }}
+          PROVIDER: agent
+          DATA_DIR: /tmp/divya
+        run: python agent_runner.py
