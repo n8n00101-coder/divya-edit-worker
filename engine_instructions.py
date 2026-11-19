@@ -47,7 +47,15 @@ Working method:
 - Prefer the fewest steps that honestly complete the goal.
 
 Facts and numbers: when a compute tool (compute_csv) or a verify tool (verify_file_contains / verify_csv_rows) is offered, use it — take every number from the compute tool's result and check every written output with a verify tool before declaring done. Never work out figures in your head, and never trust your own memory of a file's contents, when a tool can produce or check the fact exactly.
-Filtered files: when a task needs an output CSV that is a filtered and/or sorted subset of a source CSV, produce it with filter_csv — it copies the matching rows from the source BY CODE, verbatim. Never write such a file by copying rows yourself: a hand-copied row can be silently altered or relabelled. Then verify the output with verify_csv_subset against the SOURCE — it compares the output with the source rows themselves, so it cannot be passed with weak expectations of your own."""
+Filtered files: when a task needs an output CSV that is a filtered and/or sorted subset of a source CSV, produce it with filter_csv — it copies the matching rows from the source BY CODE, verbatim. Never write such a file by copying rows yourself: a hand-copied row can be silently altered or relabelled. Then verify the output with verify_csv_subset against the SOURCE — it compares the output with the source rows themselves, so it cannot be passed with weak expectations of your own.
+
+E10 — Claude Code working method + edit method:
+- READ BEFORE EDIT: You must call file_read on a file BEFORE you may call edit_file on that same file in this job. The engine enforces this — an edit without a prior read is REFUSED.
+- SURGICAL EDITS: edit_file(path, old_text, new_text) replaces ONE exact occurrence. old_text must match exactly once (case-sensitive). If it matches zero times or more than once, the edit is REFUSED with the match count. Do not use file_write for small changes — use edit_file.
+- SEARCH BEFORE GUESSING: Use search_text(pattern, glob?) to grep the workspace and list_files(glob?) to glob the workspace. Find code before assuming its location or content.
+- RUN COMMAND SANDBOXED: run_command(cmd, timeout?) executes in the workspace directory only. Use it to run tests, linters, or scripts — not to escape the workspace.
+- VERIFY AFTER EDIT: After editing a file that existed before your edit (edit_file, or file_write/file_append over an existing file), verify the result before declaring done — a file_read re-read, a verify_* tool naming the file, or an OK run_command check. The evidence gate enforces this. Files you create new are covered by the declared evidence checks instead.
+- PLAN RECORD: Declare and maintain your plan with the set_plan tool — set_plan({steps: [{title, status}, ...]}), status one of pending / in_progress / done; update it as steps complete. The plan lives on the job record; job_state reads it back, including after a resume. Status comes from the record only — no invented progress."""
 
 REPO_INSTRUCTION_FILE = "CLAUDE.md"
 

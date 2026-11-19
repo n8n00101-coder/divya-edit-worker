@@ -347,16 +347,52 @@ def register_browser_tools(reg, page):
 
 # ---------------------------------------------------- workspace tools
 
-def register_workspace_tools(reg, root):
-    """Register the E2.5 workspace file tools (file_list / file_read
-    read-only; file_write / file_append mutating + needs Allow),
+def register_workspace_tools(reg, root, job_record=None):
+    """Register the E2.5 + E10 workspace file tools (file_list / file_read
+    read-only; file_write / file_append / edit_file mutating + needs Allow;
+    search_text / list_files read-only; run_command mutating + needs Allow),
     confined to the per-job workspace directory `root`. The real
     implementation lives in workspace_tools.py (imported lazily,
     like browse/setup above); see that module for the confinement
     contract — any path escaping the root is refused as a FAILED
-    step and the filesystem outside the root is never touched."""
+    step and the filesystem outside the root is never touched.
+
+    E10: job_record is used for read-before-edit enforcement.
+    It should be a mutable dict-like object that persists across
+    tool calls (the job record in agent_loop)."""
     import workspace_tools
-    return workspace_tools.register_workspace_tools(reg, root)
+    return workspace_tools.register_workspace_tools(reg, root, job_record)
+
+
+def register_plan_tool(reg, job_record):
+    """Register the E10 set_plan tool, bound to one job record dict.
+
+    The brain declares/replaces its plan (ordered {title, status}
+    steps); the plan is stored on the record and in the recorded
+    step's result, so it survives a kill+resume (agent_loop's
+    _plan_from_result reads it back; run_loop restores it from seed
+    history). Classification: mutating (it writes the record — so
+    it never lifts the E3 verify-first guard), but needs_allow is
+    False: it touches nothing outside the job's own record, so no
+    user Allow is spent on bookkeeping. Opt-in registration: a
+    caller that does not register it offers the brain exactly the
+    tools it built (the E2/E4 offered-list contract)."""
+    def _set_plan(args):
+        if job_record is None:
+            return False, ("set_plan unavailable: no job record is "
+                           "bound to this run")
+        return agent_loop._apply_set_plan(args, job_record)
+
+    reg.register(
+        "set_plan",
+        "Declare or replace your plan for this job: an ordered list "
+        "of steps with statuses. Args: {steps: [{title, status}]} — "
+        "status is pending | in_progress | done. Stored on the job "
+        "record; update it as steps complete.",
+        {"steps": {"type": "array", "required": True,
+                   "desc": "ordered plan steps: [{title, status}]"}},
+        _set_plan, mutating=True, needs_allow=False, timeout=15)
+    return reg
 
 
 # ----------------------------------------------------- compute tools

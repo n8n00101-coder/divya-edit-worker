@@ -300,10 +300,71 @@ def _tool_echo(args):
     return True, str(args.get("text") or "")
 
 
+PLAN_STEP_CAP = 8        # E10: max steps in one set_plan declaration
+PLAN_TITLE_CAP = 40      # E10: max chars per plan step title
+PLAN_STATUSES = ("pending", "in_progress", "done")
+
+
+def _plan_from_result(result):
+    """Parse the plan JSON a set_plan step recorded in its result
+    (\"plan: [{...}]\"), or None. The record IS the persistence: a
+    plan survives a dead runner because its set_plan step survives
+    in steps[] / seed history."""
+    text = str(result or "")
+    if text.startswith("ok: "):
+        text = text[4:]
+    if not text.startswith("plan: "):
+        return None
+    try:
+        plan = json.loads(text[len("plan: "):])
+    except Exception:
+        return None
+    return plan if isinstance(plan, list) and plan else None
+
+
+def _apply_set_plan(args, job):
+    """E10 set_plan handler (registered by
+    tools_registry.register_plan_tool, bound to one job record):
+    the brain declares or replaces the job's plan — an ordered
+    list of {title, status}.
+    The normalized plan is stored on the job record dict (when the
+    caller passed one) and returned as compact JSON in the step
+    result, so the recorded step itself carries the plan across a
+    kill+resume. Caps keep that JSON inside RESULT_CAP."""
+    steps_in = args.get("steps")
+    if not isinstance(steps_in, list) or not steps_in:
+        return False, ("refused: set_plan needs a non-empty 'steps' "
+                       "list of {title, status} items")
+    if len(steps_in) > PLAN_STEP_CAP:
+        return False, (f"refused: plan has {len(steps_in)} steps — "
+                       f"the cap is {PLAN_STEP_CAP}; declare the "
+                       f"current phase only")
+    plan = []
+    for item in steps_in:
+        if isinstance(item, str):
+            title, status = item, "pending"
+        elif isinstance(item, dict):
+            title = str(item.get("title") or "")
+            status = str(item.get("status") or "pending")
+        else:
+            return False, ("refused: each plan step must be a string "
+                           "or a {title, status} object")
+        title = title.strip()[:PLAN_TITLE_CAP]
+        if not title:
+            return False, "refused: a plan step has an empty title"
+        if status not in PLAN_STATUSES:
+            return False, (f"refused: status {status!r} — one of "
+                           f"{', '.join(PLAN_STATUSES)}")
+        plan.append({"title": title, "status": status})
+    if isinstance(job, dict):
+        job["plan"] = plan
+    return True, "plan: " + json.dumps(plan, ensure_ascii=False)
+
+
 def _tool_job_state(args):
     """REAL read-only tool: this job's own record, read through the
     existing runner job endpoint (the same read setup.get_job does).
-    Reports state/step/note only — no writes, nothing sealed."""
+    Reports state/step/note/plan only — no writes, nothing sealed."""
     job = fetch_job_state()
     if job is None:
         return False, "job record unreachable via the runner channel"
@@ -315,6 +376,22 @@ def _tool_job_state(args):
         bits.append(f"note={str(job['note'])[:160]}")
     nsteps = len(job.get("steps") or [])
     bits.append(f"recorded steps={nsteps}")
+    # E10: plan from the record — the plan field when present, else
+    # reconstructed from the last recorded set_plan step.
+    plan = job.get("plan")
+    if not (isinstance(plan, (list, tuple)) and plan):
+        plan = None
+        for st in job.get("steps") or []:
+            if (isinstance(st, dict) and st.get("tool") == "set_plan"
+                    and st.get("ok")):
+                plan = _plan_from_result(st.get("result")) or plan
+    if isinstance(plan, (list, tuple)) and plan:
+        def _fmt(p):
+            if isinstance(p, dict):
+                return f"[{p.get('status') or 'pending'}] {p.get('title') or ''}"
+            return str(p)
+        plan_lines = "\n".join(f"  - {_fmt(p)[:120]}" for p in plan[:10])
+        bits.append(f"plan:\n{plan_lines}")
     return True, "; ".join(bits)
 
 
@@ -328,7 +405,7 @@ def default_tools():
          "run": _tool_noop},
         {"name": "echo", "desc": "Return the given text unchanged. Args: {text}. Stub.",
          "run": _tool_echo},
-        {"name": "job_state", "desc": "Read this job's own record (state, current step, note, recorded step count). Read-only, no side effects.",
+        {"name": "job_state", "desc": "Read this job's own record (state, current step, note, recorded step count, plan). Read-only, no side effects.",
          "run": _tool_job_state},
     ]
 
@@ -501,7 +578,7 @@ def _verify_gap(req, events):
             f"with args {want_args!r}{where}")
 
 
-def _evidence_gaps(requirements, ok_steps, events=None):
+def _evidence_gaps(requirements, ok_steps, events=None, job=None):
     """The done-evidence gate's check: for every declared
     requirement, is there a recorded OK step satisfying it?
     ok_steps is a list of (tool, result) pairs — the goal's seed
@@ -510,6 +587,16 @@ def _evidence_gaps(requirements, ok_steps, events=None):
     each step's args + mutating flag + sequence number, which
     verify-style requirements (a dict with "args") are checked
     against; plain requirements keep the E6 check on ok_steps.
+
+    E10: Verify-after-edit gate — when evidence requirements are
+    declared, the gate also checks that any mutating file operation
+    (edit_file, file_write, file_append) on a file that EXISTED
+    before the job's first write to it is followed by a verification
+    step for that file (a file_read re-read, a verify_* tool naming
+    it, or an OK run_command after the edit). A file the job itself
+    created is not gated — creating outputs is the normal case the
+    E7/E8 declared-evidence checks already cover.
+
     Returns the list of gap descriptions (empty = gate passes)."""
     gaps = []
     for r in (requirements or []):
@@ -546,6 +633,77 @@ def _evidence_gaps(requirements, ok_steps, events=None):
             if req["contains"]:
                 want.append(f"a recorded OK result containing {req['contains']!r}")
             gaps.append("missing evidence: no " + " and ".join(want))
+
+    # E10: Verify-after-edit gate (divya-fixed semantics).
+    # Only edits of a PRE-EXISTING file are gated. Pre-existence is
+    # decided, per file, by (in order):
+    #   1. the workspace layer's record flag
+    #      "_e10_file_existed_before_<path>" on the job dict — set by
+    #      file_write/file_append at write time, when the registry
+    #      was built with the same job record (the production path);
+    #   2. inference from the run's own events: the file's first
+    #      mutating op was edit_file (an edit can only land on an
+    #      existing file), or an OK file_read / a compute/verify step
+    #      naming the file precedes its first write — the file was
+    #      provably there before the job touched it.
+    # Seed-history events carry args=None, so they prove nothing —
+    # a resumed run re-verifies in-run (the E7 convention).
+    if requirements and events:
+        mutating_file_tools = {"edit_file", "file_write", "file_append"}
+        first_mut = {}   # path -> (seq, tool) of its first mutating op
+        last_mut = {}    # path -> seq of its last mutating op
+        proof = {}       # path -> earliest seq proving pre-existence
+        for ev in events:
+            tool = str(ev.get("tool") or "")
+            args = ev.get("args") or {}
+            path = args.get("path")
+            if isinstance(path, str) and path:
+                if tool in mutating_file_tools:
+                    if path not in first_mut:
+                        first_mut[path] = (ev.get("seq", 0), tool)
+                    last_mut[path] = ev.get("seq", 0)
+                elif tool == "file_read":
+                    proof.setdefault(path, ev.get("seq", 0))
+            src = args.get("source")
+            if (isinstance(src, str) and src
+                    and tool not in mutating_file_tools):
+                proof.setdefault(src, ev.get("seq", 0))
+
+        def _is_verify_for(ev, path, after_seq):
+            if ev.get("seq", 0) <= after_seq:
+                return False
+            tool = str(ev.get("tool") or "")
+            if tool == "run_command":
+                # A command check has no path arg: an OK run after
+                # the last edit is the verification (the brief's
+                # "run the check after the change").
+                return True
+            if tool == "file_read" or tool.startswith("verify_"):
+                eargs = ev.get("args") or {}
+                return (eargs.get("path") == path
+                        or eargs.get("output") == path)
+            return False
+
+        for path, mut_seq in last_mut.items():
+            fseq, ftool = first_mut[path]
+            flag = (job.get("_e10_file_existed_before_" + path)
+                    if isinstance(job, dict) else None)
+            if isinstance(flag, bool):
+                existed = flag
+            else:
+                existed = (ftool == "edit_file"
+                           or (path in proof and proof[path] < fseq))
+            if not existed:
+                continue
+            if not any(_is_verify_for(ev, path, mut_seq)
+                       for ev in events):
+                gaps.append(
+                    f"verify-after-edit: file {path!r} was modified by a "
+                    f"mutating tool but no subsequent verification "
+                    f"(file_read, a verify_* tool, or run_command) was "
+                    f"recorded for it"
+                )
+
     return gaps
 
 
@@ -625,6 +783,15 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
     stop = stop or worker_stop
     by_name = {t["name"]: t for t in tools}
     history = [dict(h) for h in (seed_history or [])]
+    # E10: on a resumed run, restore the plan from the seed record's
+    # last set_plan step when the job dict does not already carry it
+    # — the record is the persistence, not any runner's memory.
+    if isinstance(job, dict) and not job.get("plan"):
+        for h in history:
+            if str(h.get("action") or "") == "set_plan":
+                restored = _plan_from_result(h.get("result"))
+                if restored:
+                    job["plan"] = restored
     t0 = time.time()
     steps = int(step_offset or 0)
     pending_verify = str(verify_first_for or "") or None
@@ -715,7 +882,7 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                 # MAX_DONE_VERIFY_FAILURES failed verifications the
                 # run ends UNVERIFIED — never done, never silent.
                 gaps = _evidence_gaps(evidence_reqs, ok_steps,
-                                      ok_events)
+                                      ok_events, job)
                 if gaps:
                     verify_failures += 1
                     gap_text = "; ".join(gaps)
@@ -839,7 +1006,7 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
         history.append({"action": name, "arg": _arg_summary(action),
                         "result": ("ok: " if ok else "FAILED: ") + result})
         if evidence_reqs and not _evidence_gaps(evidence_reqs,
-                                                ok_steps, ok_events):
+                                                ok_steps, ok_events, job):
             # E8 evidence auto-close: every declared requirement is
             # now satisfied by the recorded steps, so the run IS
             # done — mechanically, whether or not the brain notices
