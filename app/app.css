@@ -757,3 +757,23 @@ body.kb-open .composer-wrap{bottom:calc(6px + var(--sab))}
    selector's specificity and would otherwise win by position, stretching
    the Language seg to fill its row. Natural height here. */
 #s-settings .row.fld-seg .seg{flex:0 1 auto}
+
+/* ================= v66 (2026-11-19 screenshot): CHAT STACKING ==========
+   Ajju's phone screenshot: the floating hero (mascot + "Online" pill) sat
+   OVER the first message — the pill covered the word "What" in "I'm ready
+   to help! What would you like…" — the avatar circle covered the top of
+   a user bubble, and scrolled message text showed as fragments ("y,",
+   "'t") in the gaps between the glass header circles. Root cause: the
+   v52 float put .chat-hero position:absolute over #msgs and gave #msgs
+   only padding-top:160px — a 4px clearance under the hero that ANY
+   scroll defeats (a real history auto-scrolls; scrolled content moves
+   under floating chrome by design). Fix = proper stacking on the chat
+   screen ONLY: the screen reserves the appbar's height as top padding,
+   so the #msgs scroll box itself starts below the circles and its
+   content is clipped at that edge — it can never slide under them; the
+   hero returns to normal flow directly above the list; the list keeps
+   just a small top gap. Other screens keep the v52 float (their .scroll
+   insets were audited clean). Intentionally last in the file. */
+#s-chat{padding-top:calc(66px + var(--sat))}
+#s-chat .chat-hero{position:static;top:auto;left:auto;right:auto;z-index:auto}
+#s-chat .msgs{padding-top:10px}

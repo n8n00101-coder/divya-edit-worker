@@ -1774,9 +1774,27 @@ async function appTalk(env, u, text, lang, voiceId) {
     h.push({ role: "assistant", content: dr }); await remember(env, u.n, h);
     return { reply: dr, video_started: false, premium_required: false, brain: u.via || "shared" };
   }
+  // v119 (2026-11-19 screenshot): a SELF-KNOWLEDGE question (Claude
+  // connection, which engine/model, who made Julie, what she can do) is
+  // answered from the fixed truth sheet — never the model, which
+  // answered "Cloude tho connect ayi unnava" with a canned refusal.
+  if (isSelfKnowledgeQuestion(text)) {
+    const sk = selfKnowledgeReply(text, lang);
+    h.push({ role: "assistant", content: sk }); await remember(env, u.n, h);
+    return { reply: sk, video_started: false, premium_required: false, brain: u.via || "shared" };
+  }
   // v38 (R48): API-key / provider / "AI down" questions never reach the
   // model — answer with the R48 one-allow Setup flow instead.
   if (isSetupQuestion(text)) {
+    // v119 (2026-11-19 screenshot): a NAMED provider gets its REAL state
+    // read back in one short line (providerSetupStateReply) — never the
+    // canned paragraph, which next to the global "Setup is done" feed
+    // read as a done-claim for a provider nobody had checked.
+    const sp = setupProviderInText(text);
+    if (sp) {
+      const sr = await providerSetupStateReply(env, u.n, sp, lang, text).catch(() => null);
+      if (sr) { h.push({ role: "assistant", content: sr }); await remember(env, u.n, h); return { reply: sr, video_started: false, premium_required: false, brain: u.via || "shared" }; }
+    }
     const sg = setupGuideReply(lang);
     h.push({ role: "assistant", content: sg }); await remember(env, u.n, h);
     return { reply: sg, video_started: false, premium_required: false, brain: u.via || "shared" };
@@ -1968,6 +1986,15 @@ async function appTalk(env, u, text, lang, voiceId) {
   // honest no-claim replacement (a started create carries its own
   // structural reply and is untouched).
   if (!started && waFabricationHit(ans)) ans = lang === "en" ? "I can't confirm that from my records — tell me what you need and I'll do exactly that." : "Adhi naa records tho confirm cheyalenu — em kavali cheppu, adhe chestha.";
+  // v119 REFUSAL NET (app parity with the WA v112 net): a canned model
+  // refusal ("Sorry, I can't help.") surviving the brain is replaced by
+  // the honest brain-down line. The app path screened menu dumps and
+  // fabrication but never refusals — userBrain returns the pool's raw
+  // text — so the bare refusal leaked live on 2026-11-19 as the whole
+  // answer to "Cloude tho connect ayi unnava". Self-knowledge questions
+  // no longer reach the model at all (truth sheet above); this net is
+  // for every other ordinary question a model refuses out of habit.
+  if (!started && isRefusalText(ans, true)) ans = brainDownReply(lang);
   { const prevA = [...h].reverse().find(m => m.role === "assistant"); if (ans && prevA && String(prevA.content || "") === ans) ans = antiRepeatLine(cleanText, lang); } // v51 (F3): never a verbatim repeat of the previous reply
   // v91: proactive limit warning — appended to the reply itself (rides
   // the chat path into the live response AND history), once per week,
@@ -3953,6 +3980,80 @@ function setupGuideReply(lang) {
   // that flow on WA; this text remains only as the app-side fallback).
   if (lang === "en") return "Setup and API keys are my job, not yours — I create the accounts and keys myself and keep them working. If setup is not finished yet, just say 'sare' here — I take your allow in this chat and start it myself; everything else runs in the background. You never have to create a key or watch a limit.";
   return "Setup mariyu API keys pani naadhe, needhi kaadhu — accounts, keys anni nene create chesi pani chesela chuskunta. Setup inka complete avvakapothe ikkade 'sare' ani cheppu — allow ikkade theeskoni nene start chestha; migilina pani motham background lo jaruguthundi. Nuvvu key create cheyyalsina pani ledhu, limit chuskone pani asalu ledhu.";
+}
+// v119 (2026-11-19 screenshot): a setup request naming ONE provider
+// ("Cerebras acc create chesi, api key automatic ga conncet chesko") got
+// the canned R48 paragraph, and the app's global "Setup is done ✓" feed
+// line landed right under it — together they read as "Cerebras is done"
+// when NO Cerebras state had ever been checked. The mechanism rule now:
+// a provider-specific setup claim is emitted ONLY after reading that
+// provider's real records (saved-key list, chain, current job, finished
+// record), and it is ONE short line stating the true state. The generic
+// paragraph remains only for provider-less setup questions.
+const TE_MIX_RX = /\b(chesi|chesko|chesa|unnava|unnav|unnaava|ayyi|ayi|enti|emiti|ela|eppudu|inka|ledhu|ledu|kaadhu|kadhu|tho|naaku|neeku|nenu|nuvvu|malli|ippudu|avuthund|avuthundi|chesthunna|chesthunnav|cheppu|kavali|unnaya|unnayi|ayindha|ayyindha)\b/i;
+const teMixText = t => TE_MIX_RX.test(String(t || ""));
+const SETUP_PROVIDER_ALIASES = { "hugging face": "huggingface", "google ai studio": "gemini", "ai studio": "gemini" };
+function setupProviderInText(text) {
+  const t = " " + String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, " ") + " ";
+  for (const a of Object.keys(SETUP_PROVIDER_ALIASES)) if (t.includes(" " + a + " ")) return SETUP_PROVIDER_ALIASES[a];
+  const ids = new Set([...Object.keys(SETUP_PROVIDERS), ...WA_SETUP_PROVIDERS]);
+  for (const id of ids) if (t.includes(" " + id + " ")) return id;
+  return null;
+}
+async function providerSetupStateReply(env, n, id, lang, text) {
+  const name = (SETUP_PROVIDERS[id] && SETUP_PROVIDERS[id].name) || id;
+  const te = teMixText(text) || lang !== "en";
+  const kl = await setupKeyList(env, n).catch(() => null);
+  const row = kl && kl.keys.find(k => k.id === id);
+  if (row && row.ok) return te ? `${name} already connect ayyi undhi ✓ — key pani chesthundhi.` : `${name} is already connected ✓ — its key works.`;
+  const chain = parseRec(await env.KV.get(`setupchain:${n}`));
+  const fin = parseRec(await env.KV.get(`setupdone:${n}`));
+  const ranNoKey = te ? `${name} setup run ayyindhi kaani pani chese key inka confirm avvaledhu — malli check cheyana?` : `${name} setup ran, but a working key isn't confirmed yet — shall I check it again?`;
+  if (chain) {
+    const cur = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null;
+    if (cur && cur.provider === id) {
+      if (cur.state === "paused") { const pl = setupPauseLine(cur.pauseReason || "email", lang); return te ? `${name} setup pause lo undhi — ${pl}` : `${name} setup is paused — ${pl}`; }
+      return te ? `${name} setup ippudu nadusthundhi — complete ayyaka ikkade cheptha.` : `${name} setup is running right now — I'll tell you here when it finishes.`;
+    }
+    if (Array.isArray(chain.done) && chain.done.includes(id)) return ranNoKey;
+    if (Array.isArray(chain.failed) && chain.failed.includes(id)) return te ? `${name} setup try chesanu kaani complete avvaledhu — malli run cheyala? 'sare' cheppu.` : `${name} setup was tried but didn't complete — shall I run it again? Say 'sare'.`;
+    if (Array.isArray(chain.providers) && chain.providers.includes(id)) return te ? `${name} inka queue lo undhi — setup nadusthundhi, dhaani varaku inka raaledhu.` : `${name} is still in the queue — setup is running and hasn't reached it yet.`;
+  }
+  if (fin && Array.isArray(fin.done) && fin.done.includes(id)) return ranNoKey;
+  if (row && !row.ok) return te ? `${name} key save ayyindhi kaani test lo pani cheyaledhu — malli run cheyala? 'sare' cheppu.` : `${name}'s key is saved but failed its test — shall I run it again? Say 'sare'.`;
+  return te ? `${name} setup inka start avvaledhu — 'sare' ante nene ippude start chestha.` : `${name} setup hasn't started yet — say 'sare' and I'll start it now.`;
+}
+// v119 (2026-11-19 screenshot): SELF-KNOWLEDGE questions — what Julie
+// is connected to, which engine/models she runs on, who made her, what
+// she can do — are answered from this FIXED TRUTH SHEET, structurally,
+// never from the model. Live failure: "Cloude tho connect ayi unnava"
+// (are you connected to Claude?) reached the model and came back as the
+// canned refusal "Sorry, I can't help." Truth: Julie is NOT connected
+// to Claude/Claude Code; she runs on her own free-model provider pool
+// with her own keys on her own server (Cloudflare Worker + GitHub
+// Actions runners), and she creates accounts/keys herself in Setup.
+function isSelfKnowledgeQuestion(text) {
+  const t = String(text || "");
+  if (isCreateOrder(t) || isNoVideoEditOrder(t) || isDeployOrder(t) || isBrowseOrder(t)) return false;
+  const low = t.toLowerCase();
+  if (/\bclaude\b|\bcloude\b|\banthropic\b/.test(low)) return true;
+  if (/\b(which|what|emi|enti|em)\s+(model|engine|ai|llm)\b/.test(low) && /(use|vaduthunnav|vaduthunnava|unnava|unnav|are\s+you|running|tho|meedha|pai)/.test(low)) return true;
+  if (/\b(nee|your)\s+(engine|model|brain)\s+(enti|emiti|what|which)\b/.test(low)) return true;
+  if (/\b(who|evaru)\b[^.?!]{0,30}\b(made|created|built)\b/.test(low) && /\b(you|ninnu|nin)\b/.test(low)) return true;
+  if (/\b(ninnu|nin)\s+(evaru|yaaru)\b/.test(low)) return true;
+  if (/^(what\s+can\s+you\s+do|emi\s+cheyagalav|ememi\s+cheyagalav|nuvvu\s+em\s+cheyagalav)\b/.test(low.trim())) return true;
+  if (/(connect|link)\s*(ayi|ayyi|chesi)?\s*(unnava|unnav|unnaava)\s*\??\s*$/.test(low.trim()) && !setupProviderInText(t) && !waConnKind(t)) return true;
+  return false;
+}
+function selfKnowledgeReply(text, lang) {
+  const low = String(text || "").toLowerCase();
+  const te = teMixText(text) || lang !== "en";
+  if (/\bclaude\b|\bcloude\b|\banthropic\b/.test(low)) return te
+    ? "Ledhu — nenu Claude tho connect avvaledhu. Nenu Julie ni: naa pani naa own free-model pool tho, naa own API keys tho, naa own server (Cloudflare + GitHub runners) meedha nadusthundhi. Accounts/keys kuda Setup lo nene create chestha."
+    : "No — I'm not connected to Claude. I'm Julie: I run on my own free-model pool with my own API keys on my own server (Cloudflare + GitHub runners), and I create accounts and keys myself in Setup.";
+  return te
+    ? "Nenu Julie ni — naa own free-model pool + naa own API keys tho, naa own server (Cloudflare + GitHub runners) meedha pani chestha; Claude kaadhu. Videos create/edit, browse, accounts/keys setup — anni nene chestha."
+    : "I'm Julie — I run on my own free-model pool with my own API keys on my own server (Cloudflare + GitHub runners), not Claude. I create and edit videos, browse, and set up accounts and keys myself.";
 }
 // v102: the ONLY user-facing text when every brain in the pool failed.
 // It claims nothing about limits, quotas or job state — none of which
