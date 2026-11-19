@@ -15,6 +15,10 @@
 //   ccpull: wrong key -> 403; right key -> oldest pending first,
 //     each marked "picked"; a second pull never re-hands a picked
 //     message; an empty queue pulls empty.
+//   Picked recovery: a fresh pick is NOT re-served; a stale pick
+//     (>10 min, bridge died/restarted) IS re-served once and
+//     re-marked with a fresh pickedAt; a done record is NEVER
+//     re-served.
 //   ccreply: the reply is sent on WhatsApp to the message's user
 //     and the record lands "done" with the reply stored; a repeat
 //     post is a no-op ({already:true}, no second send); an unknown
@@ -225,6 +229,41 @@ delete env.CC_BRIDGE_KEY;
 rb = await runner("/api/setup/runner/ccpull", {}, "test-bridge");
 check(rb.status === 403, "C27 with CC_BRIDGE_KEY unset, the bridge key is rejected (behavior unchanged)");
 env.CC_BRIDGE_KEY = "test-bridge";
+
+// =====================================================================
+// Picked-message recovery: stale picks (>10 min) are re-served
+// ID2 is still "picked" (empty reply was refused in C14, never
+// completed). ID1 and IDB are "done".
+// =====================================================================
+const setRec = (id, patch) => { const cur = getRec(`ccmsg:${id}`); store.set(`ccmsg:${id}`, JSON.stringify({ ...cur, ...patch })); };
+
+// (1) Freshly picked is NOT re-served
+setRec(ID2, { pickedAt: Date.now() });
+r = await runner("/api/setup/runner/ccpull", {});
+check(r.json && r.json.ok && r.json.messages.length === 0,
+  "C29 a freshly picked record is NOT re-served");
+
+// (2) Stale pick (>10 min) IS re-served once and re-marked fresh
+const staleAt = Date.now() - 11 * 60 * 1000;
+setRec(ID2, { pickedAt: staleAt });
+r = await runner("/api/setup/runner/ccpull", {});
+check(r.json && r.json.ok && r.json.messages.length === 1 && r.json.messages[0].id === ID2 && r.json.messages[0].text === "stop",
+  "C30 a stale pick (>10 min) IS re-served");
+const reRec = getRec(`ccmsg:${ID2}`);
+check(reRec.state === "picked" && reRec.pickedAt > staleAt && (Date.now() - reRec.pickedAt) < 10000,
+  "C31 the re-served record is re-marked picked with a fresh pickedAt");
+r = await runner("/api/setup/runner/ccpull", {});
+check(r.json && r.json.ok && r.json.messages.length === 0,
+  "C32 the re-served record is NOT handed out again on the next pull (re-served once)");
+
+// (3) Done is NEVER re-served, even with a very old pick time
+setRec(ID1, { pickedAt: Date.now() - 60 * 60 * 1000 });
+setRec(IDB, { pickedAt: Date.now() - 60 * 60 * 1000 });
+setRec(ID2, { pickedAt: Date.now() });
+r = await runner("/api/setup/runner/ccpull", {});
+check(r.json && r.json.ok && r.json.messages.length === 0
+  && getRec(`ccmsg:${ID1}`).state === "done" && getRec(`ccmsg:${IDB}`).state === "done",
+  "C33 done records are NEVER re-served, even when their pick time is stale");
 
 tells = await waSend("cc off");
 check(store.get(`ccmode:${OWNER}`) !== "1", "C28 cleanup: cc mode off again");
