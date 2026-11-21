@@ -7353,8 +7353,9 @@ async function maybeAutoCheck(env, n, email, force) {
   return { checked: true, action: "provisioning", providers: candidates, why, health, usage, skippedCool };
 }
 async function autoCheckAll(env) {
-  // Scheduled path (needs a cron trigger configured — none is set today):
-  // run the autonomous check for every user with a one-tap allow on file.
+  // Scheduled path (the Worker cron — */15 since 2026-11-21; it ran
+  // every minute before that, see the DO-burn fix): run the autonomous
+  // check for every user with a one-tap allow on file.
   try {
     const list = await env.KV.list({ prefix: "setupconsent:" });
     for (const k of (list.keys || [])) {
@@ -7366,15 +7367,16 @@ async function autoCheckAll(env) {
     }
   } catch {}
   // v91: the model scout rides this same periodic path (globally
-  // throttled inside scoutSweep) — no separate cron exists today.
+  // throttled inside scoutSweep) — it rides the Worker cron, no
+  // separate trigger of its own.
   try { await scoutSweep(env, false); } catch {}
 }
 
 // ===== v91: MODEL SCOUT + PROACTIVE LIMIT WARNING (Ajju, 2026-11-15) =====
 // Scout: Julie keeps adding NEW free models to her own rotation. A
 // sweep (at most once per 24h, piggybacked on the v39 periodic paths —
-// autoCheckAll + the setup/status opportunistic check; NO cron trigger
-// is configured on this Worker) diffs the providers' live FREE model
+// autoCheckAll + the setup/status opportunistic check; the Worker
+// cron — */15 since 2026-11-21) diffs the providers' live FREE model
 // lists against the rotation, ping-tests each new candidate with ONE
 // real chat call, and appends only the models that answer correctly —
 // always LAST in their provider's order. It never removes a model and
@@ -8023,7 +8025,8 @@ async function maybeFeedVerifyLink(env, job, chainAt) {
 }
 async function feedAwaitingVerifyLinks(env) {
   // v92 (Ajju: "Gmail ni eppudu monitor cheskuntu undali" — Julie must
-  // watch Gmail herself): the cron sweep. Every minute, independent of
+  // watch Gmail herself): the cron sweep. Every 15 minutes (the Worker
+  // cron; it ran every minute until 2026-11-21), independent of
   // the app being open and of any runner still waiting, find every
   // setup job still paused on an email verification and feed it its
   // link from the owner's connected Gmail. A user whose setup is stuck
@@ -9325,9 +9328,21 @@ export class JulieState {
     }
     if (b.op === "del") { sql.exec("DELETE FROM kv WHERE k = ?", b.key); return Response.json({ ok: true }); }
     if (b.op === "list") {
-      const like = String(b.prefix || "").replace(/[%_\\]/g, "\\$&") + "%";
-      const rows = [...sql.exec("SELECT k, exp FROM kv WHERE k LIKE ? ESCAPE '\\' ORDER BY k LIMIT ?", like, b.limit || 1000)];
-      return Response.json({ keys: rows.filter(r => !r.exp || r.exp >= now).map(r => ({ name: r.k })), list_complete: true, cacheStatus: null });
+      // 2026-11-21 (DO-burn fix): index range scan instead of a LIKE
+      // prefix scan. The old LIKE query read ~the whole kv table on
+      // every call — the cron sweeps alone burned 2,229 rows/min, 64%
+      // of the free daily rows_read budget, and hit the 5M cap on
+      // 2026-11-19. k is the PRIMARY KEY, so k >= prefix AND
+      // k < prefix+"\ufffd" walks only the matching index range.
+      // Expired rows encountered are deleted in the same pass, so the
+      // table stops growing (they used to be filtered in JS only,
+      // never removed).
+      const prefix = String(b.prefix || "");
+      const rows = [...sql.exec("SELECT k, exp FROM kv WHERE k >= ? AND k < ? ORDER BY k LIMIT ?", prefix, prefix + "\ufffd", b.limit || 1000)];
+      const live = [], dead = [];
+      for (const r of rows) { if (r.exp && r.exp < now) dead.push(r.k); else live.push(r.k); }
+      for (const k of dead) sql.exec("DELETE FROM kv WHERE k = ?", k);
+      return Response.json({ keys: live.map(k => ({ name: k })), list_complete: true, cacheStatus: null });
     }
     if (b.op === "mget") {
       // v95 (DO-burn): one DO request for many keys. setup/status used to
@@ -9470,14 +9485,15 @@ function wrapEnv(env) {
 }
 
 export default {
-  // Optional cron ping of the call server (no cron set: SnapDeploy free hours are limited).
+  // Cron ping of the call server (the Worker cron runs */15 since
+  // 2026-11-21; it ran every minute before that — see the DO-burn fix).
   async scheduled(ev, env, ctx) {
     env = wrapEnv(env);
     ctx.waitUntil(fetch((env.CALL_URL || CALL_URL) + "/health").then(r => env.KV.put("dbg:callping", `${new Date().toISOString()} ${r.status}`, { expirationTtl: 86400 * 2 })).catch(() => {}));
     // v39 Phase 2: autonomous key-health + usage check for every user with
-    // a one-tap allow on file (throttled inside maybeAutoCheck). Fires only
-    // when a cron trigger is configured — until then the setup/status
-    // opportunistic trigger is the live path.
+    // a one-tap allow on file (throttled inside maybeAutoCheck). Fires on
+    // the Worker cron (*/15 since 2026-11-21); the setup/status
+    // opportunistic trigger covers the gaps between ticks.
     ctx.waitUntil(autoCheckAll(env).catch(() => {}));
     // v92: Gmail self-heal sweep — feed verification links to every
     // setup job still waiting on one, app open or not.
