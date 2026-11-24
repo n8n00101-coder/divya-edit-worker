@@ -191,6 +191,22 @@ jobs:
               print("W8 seed job ->", json.dumps(call({"op": "put", "key": "job:" + W8JOB, "value": recf})))
           _jf = call({"op": "get", "key": "job:" + W8JOB}).get("v") or {}
           print("W8 job ->", json.dumps({"mode": _jf.get("mode"), "to": _jf.get("to"), "brief_head": str(_jf.get("brief") or "")[:60]}))
+          # Wave 9 live: the doorlog route end-to-end (seed a runner
+          # job, POST a door failure with the runner key, read the
+          # door log back through /internal/state, clean up).
+          import httpx as _hx
+          W9JOB = "jobw9live00000000001"
+          if not call({"op": "get", "key": "setupjob:" + W9JOB}).get("exists"):
+              now = int(_t.time() * 1000)
+              print("W9 seed job ->", json.dumps(call({"op": "put", "key": "setupjob:" + W9JOB, "value": {"job": W9JOB, "user": "w9testlive", "provider": "openrouter", "flow": "email", "state": "running", "step": "api-key", "note": "", "at": now, "upd": now}})))
+              _r = _hx.post(WORKER + "/api/setup/runner/doorlog", params={"job": W9JOB},
+                            json={"provider": "openrouter", "step": "api-key", "reason": "W9 live smoke: layout failure shape (synthetic)."},
+                            headers={"x-runner-key": KEY}, timeout=30)
+              print("W9 doorlog POST ->", _r.status_code, _r.text[:80])
+          _df = call({"op": "get", "key": "doorfail:w9testlive"}).get("v")
+          print("W9 doorfail ->", json.dumps(_df))
+          print("W9 cleanup job ->", json.dumps(call({"op": "del", "key": "setupjob:" + W9JOB})))
+          print("W9 cleanup doorfail ->", json.dumps(call({"op": "del", "key": "doorfail:w9testlive"})))
           # Wave 6 part 5: job 5 = job 4's task against the FIXED
           # resume (workspace snapshots). Kill mid-run, re-dispatch,
           # expect done + evidence.
