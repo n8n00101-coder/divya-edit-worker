@@ -9664,6 +9664,48 @@ export default {
       if (text) { const hh = await history(env, uu.n); hh.push({ role: "assistant", content: text }); await remember(env, uu.n, hh); }
       return Response.json({ ok: true, notice: text, balance: await tokBalance(env, uu.n) });
     }
+    // Shadow programme Wave 0 (2026-11-24): guarded read/write access
+    // to the Worker's OWN state store (the wrapEnv/DO facade — the same
+    // store the writer uses), so a fix can be verified by fetch-back
+    // instead of against the frozen pre-migration KV shadow. Ops:
+    // get (one key), list (prefix, names only), del (one key, returns
+    // read-back proof). Redaction is enforced HERE, server-side: for
+    // the secret families (tok:, ukey:, upass:, sess:) a get returns
+    // metadata only — exists, byte length, and the record's own
+    // state/ok/provider fields — NEVER the stored value.
+    if (url.pathname === "/internal/state" && req.method === "POST") {
+      if (!env.RUNNER_KEY || req.headers.get("x-runner-key") !== env.RUNNER_KEY) return new Response("no", { status: 403 });
+      const b = await req.json().catch(() => ({}));
+      const SECRET_FAMS = ["tok:", "ukey:", "upass:", "sess:"];
+      const isSecret = k => SECRET_FAMS.some(p => k.startsWith(p));
+      if (b.op === "get") {
+        const k = String(b.key || "");
+        if (!k) return Response.json({ ok: false, error: "key required" }, { status: 400 });
+        const raw = await env.KV.get(k).catch(() => null);
+        if (raw == null) return Response.json({ ok: true, key: k, exists: false });
+        if (isSecret(k)) {
+          let parsed = null; try { parsed = JSON.parse(raw); } catch {}
+          const meta = { ok: true, key: k, exists: true, redacted: true, bytes: raw.length };
+          if (parsed && typeof parsed === "object") { if (parsed.state !== undefined) meta.state = parsed.state; if (typeof parsed.ok === "boolean") meta.keyOk = parsed.ok; if (parsed.provider) meta.provider = parsed.provider; }
+          return Response.json(meta);
+        }
+        let v = raw; try { v = JSON.parse(raw); } catch {}
+        return Response.json({ ok: true, key: k, exists: true, v });
+      }
+      if (b.op === "list") {
+        const prefix = String(b.prefix || "");
+        const r = await env.KV.list({ prefix, limit: Math.min(Number(b.limit) || 1000, 1000) }).catch(() => ({ keys: [] }));
+        return Response.json({ ok: true, prefix, keys: (r.keys || []).map(x => x.name), complete: !!r.list_complete });
+      }
+      if (b.op === "del") {
+        const k = String(b.key || "");
+        if (!k) return Response.json({ ok: false, error: "key required" }, { status: 400 });
+        await env.KV.delete(k);
+        const back = await env.KV.get(k).catch(() => null);
+        return Response.json({ ok: true, key: k, deleted: back == null });
+      }
+      return Response.json({ ok: false, error: "op must be get|list|del" }, { status: 400 });
+    }
     // v113: one-shot YouTube channel re-check across ALL of a user's
     // keyspaces (RUNNER_KEY-guarded, proof only — the /internal/scout
     // pattern). Resolves seeds from an email (account record -> phone

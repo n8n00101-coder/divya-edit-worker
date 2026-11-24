@@ -1,0 +1,42 @@
+name: stateproof
+on:
+  workflow_dispatch:
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read live state through /internal/state
+        env:
+          RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          URL = "https://divya.n8n00101.workers.dev/internal/state"
+          KEY = os.environ["RUNNER_KEY"]
+          def call(body):
+              req = urllib.request.Request(URL, method="POST", data=json.dumps(body).encode(),
+                                           headers={"content-type": "application/json", "x-runner-key": KEY})
+              with urllib.request.urlopen(req, timeout=60) as r:
+                  return json.loads(r.read())
+          # C-13: did the consent record survive in the DO?
+          g = call({"op": "get", "key": "setupconsent:917993610173"})
+          print("C13 setupconsent:917993610173 ->", json.dumps(g)[:300])
+          if g.get("exists"):
+              print("C13 del ->", json.dumps(call({"op": "del", "key": "setupconsent:917993610173"})))
+              print("C13 re-get ->", json.dumps(call({"op": "get", "key": "setupconsent:917993610173"})))
+          # Key-family census (names/counts only; secret families are
+          # never value-read by this script).
+          prefixes = ["acct:", "ph:", "link:", "em:", "ukey:", "tok:", "gaccts:",
+                      "setupchain:", "setupdone:", "setupjob:", "setuphist:", "scout:",
+                      "hist:", "sess:", "oauth:", "wasetupask:", "setupalways:",
+                      "setupstop:", "verify:", "job:", "agentjob:", "dbg:", "otp:"]
+          for p in prefixes:
+              r = call({"op": "list", "prefix": p, "limit": 1000})
+              ks = r.get("keys", [])
+              print(f"CENSUS {p} count={len(ks)}")
+              if p in ("ph:", "link:", "em:", "setupchain:", "setupdone:", "wasetupask:", "setupalways:", "setupstop:", "scout:", "ukey:", "gaccts:") and ks:
+                  print(f"CENSUS {p} names={json.dumps(ks[:60])}")
+          # Ajju identity + retry-arm records (non-secret families).
+          for k in ["setupdone:919951950173", "setupdone:917993610173", "scout:last"]:
+              print("GET", k, "->", json.dumps(call({"op": "get", "key": k}))[:400])
+          PY
