@@ -1703,6 +1703,55 @@ TC_PAUSE_MSG = "Sign-in okkasari nuvve cheyyi — Divya browser screen ikkade ap
 
 _TC_FRAME_LAST = {"at": 0.0, "hash": ""}
 
+# W7 (2026-11-24): page-death handling for the frame poster. A page
+# the flow was driving can die mid-run (target closed / crashed /
+# navigated away by a popup flow); every later frame call then threw
+# "Target page closed" and the log filled with `tc frame failed`
+# spam while the live view froze on a dead page. The poster now
+# re-acquires a live page from the same context instead.
+_TC_DEAD_SEEN = {"page_id": None}
+
+
+def _tc_live_page(page, exclude=None):
+    """Return a LIVE page for framing: the given page if it is open;
+    otherwise a sibling from its context (last open page, else a
+    fresh one), healing _CUR["page"] so progress() frames the live
+    page too. None when the whole context is gone. `exclude` is a
+    page that just failed a screenshot — it may still claim to be
+    open, so it is never handed back."""
+    try:
+        if page is not None and page is not exclude and not page.is_closed():
+            return page
+    except Exception:
+        pass
+    try:
+        ctx = page.context if page is not None else None
+        if ctx is None:
+            return None
+        for cand in reversed(list(ctx.pages)):
+            if cand is exclude:
+                continue
+            try:
+                if not cand.is_closed():
+                    _CUR["page"] = cand
+                    return cand
+            except Exception:
+                continue
+        newp = ctx.new_page()
+        _CUR["page"] = newp
+        return newp
+    except Exception:
+        return None
+
+
+def _tc_skip_dead(page):
+    """One log line per dead page object, then silence — a dead
+    context must not spam the run log on every progress tick."""
+    if _TC_DEAD_SEEN["page_id"] == id(page):
+        return
+    _TC_DEAD_SEEN["page_id"] = id(page)
+    print("tc frame skipped: no live page (target closed, context gone)")
+
 
 def tc_post_frame(page, force=False, fast=False):
     """Stream one screenshot of the live browser to the Worker (the app
@@ -1727,7 +1776,25 @@ def tc_post_frame(page, force=False, fast=False):
         now = time.time()
         if now - _TC_FRAME_LAST["at"] < (0.35 if fast else (0.9 if force else 2.5)):
             return
-        shot = page.screenshot(type="jpeg", quality=(42 if fast else 55))
+        # W7: never screenshot a dead page — re-acquire first.
+        live = _tc_live_page(page)
+        if live is None:
+            _tc_skip_dead(page)
+            return
+        page = live
+        try:
+            shot = page.screenshot(type="jpeg", quality=(42 if fast else 55))
+        except Exception:
+            # The page died between the liveness check and the shot:
+            # one re-acquire (excluding the page that just failed) +
+            # retry, then the skip path — never a "Target page
+            # closed" failure line.
+            live = _tc_live_page(page, exclude=page)
+            if live is None:
+                _tc_skip_dead(page)
+                return
+            page = live
+            shot = page.screenshot(type="jpeg", quality=(42 if fast else 55))
         import hashlib
         digest = hashlib.sha256(shot).hexdigest()
         if digest == _TC_FRAME_LAST["hash"]:
@@ -1737,7 +1804,11 @@ def tc_post_frame(page, force=False, fast=False):
         httpx.post(f"{WORKER}/api/setup/runner/tcframe", params={"job": JOB},
                    json={"img": img, "url": page.url}, headers=H, timeout=20)
         _TC_FRAME_LAST.update({"at": now, "hash": digest})
+        _TC_DEAD_SEEN["page_id"] = None
     except Exception as e:
+        if "Target page" in str(e) or "Target closed" in str(e):
+            _tc_skip_dead(page)
+            return
         print("tc frame failed:", e)
 
 
