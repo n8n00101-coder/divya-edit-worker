@@ -114,4 +114,22 @@ jobs:
               print("W6 seed job ->", json.dumps(call({"op": "put", "key": "setupjob:" + W6JOB, "value": rec})))
               print("W6 seed cur ->", json.dumps(call({"op": "put", "key": "agentcur:w6testlive", "value": {"job": W6JOB, "at": now}})))
           print("W6 job ->", json.dumps(call({"op": "get", "key": "setupjob:" + W6JOB}))[:1200])
+          # Wave 6 part 2: kill-and-resume job — a heavier task
+          # (12 customers, three deliverable files) so the loop has
+          # a real mid-run window.
+          W6JOB2 = "a6e00000000000000002"
+          if not call({"op": "get", "key": "setupjob:" + W6JOB2}).get("exists"):
+              now = int(_t.time() * 1000)
+              rows = ["customer,item,qty,price"]
+              data = [("Ananya","Notebook",2,150),("Ravi","Pen",5,40),("Ananya","Bag",1,900),("Ravi","Notebook",1,150),("Meena","Pen",10,40),("Kiran","Bag",2,900),("Meena","Notebook",3,150),("Kiran","Pen",4,40),("Divya","Lamp",1,750),("Arjun","Desk",1,2400),("Divya","Pen",6,40),("Arjun","Chair",2,1350),("Sana","Bag",1,900),("Sana","Lamp",2,750),("Ravi","Lamp",1,750),("Meena","Bag",1,900),("Kiran","Desk",1,2400),("Ananya","Chair",1,1350),("Divya","Notebook",4,150),("Arjun","Pen",8,40)]
+              for c,i,q,p in data: rows.append(f"{c},{i},{q},{p}")
+              rec2 = {"job": W6JOB2, "user": "w6testlive", "provider": "agent", "flow": "agent",
+                      "task": "Read orders.csv in your workspace. (1) Compute the total spend per customer and write totals.csv (header customer,total, one row per customer). (2) Write summary.txt naming the top customer by total spend and the grand total across all customers. (3) Write top_customers.csv containing only the customers whose total is over 1000, same columns. Verify each file after writing it.",
+                      "state": "queued", "step": "starting", "note": "", "at": now, "upd": now,
+                      "files": {"orders.csv": "\n".join(rows) + "\n"},
+                      "evidence": [{"tool": "file_write", "contains": "totals.csv"}, {"tool": "file_write", "contains": "summary.txt"}, {"tool": "file_write", "contains": "top_customers.csv"}]}
+              print("W6 seed job2 ->", json.dumps(call({"op": "put", "key": "setupjob:" + W6JOB2, "value": rec2})))
+              print("W6 seed cur2 ->", json.dumps(call({"op": "put", "key": "agentcur:w6testlive", "value": {"job": W6JOB2, "at": now}})))
+          _j2 = call({"op": "get", "key": "setupjob:" + W6JOB2}).get("v") or {}
+          print("W6 job2 ->", json.dumps({"state": _j2.get("state"), "step": _j2.get("step"), "note": _j2.get("note"), "steps": len(_j2.get("steps") or []), "answer": str(_j2.get("answer") or "")[:120]}))
           PY
