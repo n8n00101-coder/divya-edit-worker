@@ -53,4 +53,16 @@ jobs:
           # Ajju identity + retry-arm records (non-secret families).
           for k in ["setupdone:919951950173", "setupdone:917993610173", "scout:last"]:
               print("GET", k, "->", json.dumps(call({"op": "get", "key": k}))[:400])
+          # Wave 2 identity facts: email index entries for Ajju's
+          # mailboxes, the acct records behind them, tok: key NAMES
+          # (list never returns values), and gaccts indexes.
+          for e in ["markk34200@gmail.com", "mike0123l098@gmail.com", "n8n00101@gmail.com",
+                    "aaha04671@gmail.com", "aoz709215@gmail.com", "n8n000221@gmail.com"]:
+              print("EM", e, "->", json.dumps(call({"op": "get", "key": "em:" + e}))[:200])
+          print("TOKNAMES", json.dumps(call({"op": "list", "prefix": "tok:", "limit": 100}).get("keys", [])))
+          print("ACCTNAMES", json.dumps(call({"op": "list", "prefix": "acct:", "limit": 100}).get("keys", [])[:1500]))
+          for u in ["u_1ae98fe781f28d88292377bc", "u_c3a7d44f625995a315d79632",
+                    "u_83e04b25a999b9114429b6c5", "u_157dcd2a08241c33c2fd311a"]:
+              print("GACCTS", u, "->", json.dumps(call({"op": "get", "key": "gaccts:" + u}))[:500])
+          print("GACCTS 917993610173 ->", json.dumps(call({"op": "get", "key": "gaccts:917993610173"}))[:500])
           PY
