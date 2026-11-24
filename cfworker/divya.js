@@ -4596,8 +4596,8 @@ async function waCountReply(env, user) {
     const L = [];
     if (names.length) L.push(`Ippati varaku nee ${names.length} API keys ready ga unnayi: ${names.join(", ")}.`);
     if (chain) {
-      const done = chain.done || [], failed = chain.failed || [], skipped = chain.skipped || [];
-      const settled = done.length + failed.length + skipped.length;
+      const done = chain.done || [], failed = chain.failed || [], skipped = skippedIds(chain);
+      const settled = chainSettledCount(chain);
       const cur = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null;
       L.push(`Setup chain nadusthundhi: ${settled}/${(chain.providers || []).length} ayyayi${done.length ? ` — ready: ${done.map(setupProvName).join(", ")}` : ""}${failed.length ? `; fail: ${failed.map(setupProvName).join(", ")}` : ""}${cur ? `; ippudu ${setupProvName(cur.provider)} ${cur.state === "paused" ? "aagindhi" : "nadusthundhi"}` : ""}.`);
     } else if (fin && Date.now() - (fin.at || 0) < 86400000) {
@@ -4607,8 +4607,27 @@ async function waCountReply(env, user) {
     return L.join("\n");
   } catch { return "State chadhavadam lo chinna issue — konchem sepu tarvatha malli adugu."; }
 }
+// Shadow W1 / census C-02: chain.skipped's canonical shape is an
+// OBJECT ({ providerId: { kind, at } }) — written by setupPauseSkip
+// and waSkipCurrent — but legacy records may hold an array or null.
+// Every consumer goes through skippedIds(), so no site ever calls
+// .length/.includes on the object (the NaN reporters at the count
+// sites and the TypeError in the failure-advance filters). Settled
+// counts are UNION counts: a skipped provider also sits in
+// chain.failed (both skip writers record it there for the advance
+// and finalize paths), so adding the list lengths double-counts it.
+function skippedIds(chain) {
+  const s = chain && chain.skipped;
+  if (!s) return [];
+  if (Array.isArray(s)) return s.map(String);
+  if (typeof s === "object") return Object.keys(s);
+  return [];
+}
+function chainSettledCount(chain) {
+  return new Set([...(chain.done || []), ...(chain.failed || []), ...skippedIds(chain)]).size;
+}
 function waChainOutcomeText(chain, provider, okStatus, reason) {
-  const settled = (chain.done || []).length + (chain.failed || []).length + (chain.skipped || []).length;
+  const settled = chainSettledCount(chain);
   const total = (chain.providers || []).length;
   return okStatus ? `✓ ${setupProvName(provider)} ready — key save ayyindhi. (${settled}/${total})` : `✗ ${setupProvName(provider)} fail ayyindhi${reason ? ` — ${reason}` : ""}. Next provider ki velthunna. (${settled}/${total})`;
 }
@@ -7167,7 +7186,7 @@ async function chainFailAdvance(env, rec) {
   chain.failReason = chain.failReason || {};
   if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80);
   chain.waTold = chain.waTold || {};
-  const remaining = (chain.providers || []).filter(p => !(chain.done || []).includes(p) && !chain.failed.includes(p) && !(chain.skipped || []).includes(p));
+  const remaining = (chain.providers || []).filter(p => !(chain.done || []).includes(p) && !chain.failed.includes(p) && !skippedIds(chain).includes(p));
   if (!chain.waTold[rec.provider] && remaining.length && /^\d{7,15}$/.test(String(rec.user || ""))) {
     chain.waTold[rec.provider] = "failed";
     let msg = waChainOutcomeText(chain, rec.provider, false, String(rec.note || "").replace(/^paused-[a-z]+\s*/i, "").slice(0, 70));
@@ -8631,7 +8650,7 @@ async function setupStartNext(env, n) {
   if (!Array.isArray(chain.providers)) return { ok: false, error: "bad chain" };
   if (!Array.isArray(chain.done)) chain.done = [];
   chain.failed = Array.isArray(chain.failed) ? chain.failed : [];
-  const nextId = chain.providers.find(id => !chain.done.includes(id) && !chain.failed.includes(id));
+  const nextId = chain.providers.find(id => !chain.done.includes(id) && !chain.failed.includes(id) && !skippedIds(chain).includes(id));
   // v24: record the outcome before deleting the chain — otherwise the app has
   // nothing to show when the setup ends (the mini-box just vanished).
   // v38 merge fix: if NO provider produced a key, the run failed (not done).
@@ -9203,7 +9222,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // Only "stopped" (the user stopped the setup) ends the whole chain.
     if (state === "failed") {
       const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
-      if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80); chain.waTold = chain.waTold || {}; const remaining110 = (chain.providers || []).filter(p => !(chain.done || []).includes(p) && !chain.failed.includes(p) && !(chain.skipped || []).includes(p)); if (!chain.waTold[rec.provider] && remaining110.length && /^\d{7,15}$/.test(String(rec.user || ""))) { chain.waTold[rec.provider] = "failed"; let msg110 = waChainOutcomeText(chain, rec.provider, false, String(rec.note || "").replace(/^paused-[a-z]+\s*/i, "").slice(0, 70)); if (rec.verifyWait || rec.mailFetch) msg110 += ` Mail feed: ${waFeedReasonText(rec.mailFetch)}.`; try { await waSendText(env, String(rec.user), msg110); } catch {} if ((rec.verifyWait || rec.mailFetch === "no-gmail-token") && !(chain.feedCardAt && Date.now() - chain.feedCardAt < 30 * 60000)) { chain.feedCardAt = Date.now(); try { await connectMenu(env, String(rec.user)); } catch {} } } await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
+      if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80); chain.waTold = chain.waTold || {}; const remaining110 = (chain.providers || []).filter(p => !(chain.done || []).includes(p) && !chain.failed.includes(p) && !skippedIds(chain).includes(p)); if (!chain.waTold[rec.provider] && remaining110.length && /^\d{7,15}$/.test(String(rec.user || ""))) { chain.waTold[rec.provider] = "failed"; let msg110 = waChainOutcomeText(chain, rec.provider, false, String(rec.note || "").replace(/^paused-[a-z]+\s*/i, "").slice(0, 70)); if (rec.verifyWait || rec.mailFetch) msg110 += ` Mail feed: ${waFeedReasonText(rec.mailFetch)}.`; try { await waSendText(env, String(rec.user), msg110); } catch {} if ((rec.verifyWait || rec.mailFetch === "no-gmail-token") && !(chain.feedCardAt && Date.now() - chain.feedCardAt < 30 * 60000)) { chain.feedCardAt = Date.now(); try { await connectMenu(env, String(rec.user)); } catch {} } } await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
     }
     if (state === "stopped") { const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`)); if (chain && chain.current === job) { const finRec = { state, done: chain.done, failed: chain.failed || [], skipped: chain.skipped || null, provider: rec.provider, note: rec.note || "", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, rec.user, finRec); await env.KV.put(`setupdone:${rec.user}`, JSON.stringify(finRec), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${rec.user}`); } }
     return Response.json({ ok: true });

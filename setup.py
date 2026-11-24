@@ -876,81 +876,14 @@ def wait_for_fed_link(seconds=240, poll=20, page=None, name=""):
         time.sleep(poll)
 
 
-def solve_audio_captcha(page):
-    """Try the audio challenge: download the audio, transcribe on-device."""
-    try:
-        # Open the audio challenge (reCAPTCHA / hCaptcha audio button).
-        for frame in page.frames:
-            try:
-                btn = frame.locator("button#recaptcha-audio-button, button[title*='audio' i], button[aria-label*='audio' i]").first
-                if btn.count():
-                    btn.click(timeout=5000)
-                    break
-            except Exception:
-                pass
-        time.sleep(2)
-        audio_url = None
-        for frame in page.frames:
-            try:
-                a = frame.locator("audio source, audio").first
-                if a.count():
-                    audio_url = a.get_attribute("src")
-                    if audio_url:
-                        break
-            except Exception:
-                pass
-        if not audio_url:
-            return False
-        import urllib.request
-        data = urllib.request.urlopen(audio_url, timeout=30).read()
-        open("/tmp/captcha.mp3", "wb").write(data)
-        # v39: the first Whisper model download can take minutes on a cold
-        # runner — say so, or the app shows a frozen "running" meanwhile.
-        progress("running", "captcha", "Audio captcha transcribe chesthunna.", page.url)
-        from faster_whisper import WhisperModel
-        model = WhisperModel("tiny", device="cpu", compute_type="int8")
-        segs, _ = model.transcribe("/tmp/captcha.mp3")
-        text = "".join(s.text for s in segs).strip()
-        digits = re.sub(r"[^0-9]", "", text)
-        if len(digits) < 3:
-            return False
-        for frame in page.frames:
-            try:
-                inp = frame.locator("input#audio-response, input[name*='audio' i]").first
-                if inp.count():
-                    inp.fill(digits)
-                    frame.locator("button#recaptcha-verify-button").first.click(timeout=5000)
-                    time.sleep(2)
-                    return True
-            except Exception:
-                pass
-        return False
-    except Exception as e:
-        print("audio captcha failed:", e)
-        return False
-
-
-def _has_audio_alternative(page):
-    """True if an audio-challenge button exists anywhere (incl. iframes)."""
-    try:
-        if page.locator("button#recaptcha-audio-button, button[title*='audio' i], button[aria-label*='audio' i]").count():
-            return True
-        for frame in page.frames:
-            try:
-                if frame.locator("button#recaptcha-audio-button, button[title*='audio' i], button[aria-label*='audio' i]").count():
-                    return True
-            except Exception:
-                pass
-    except Exception:
-        pass
-    return False
-
-
 def maybe_captcha(page):
-    """If a captcha is showing, try to solve it with the user's one-allow
-    consent. Audio-first, always; if an audio alternative exists, use it
-    (one retry). Only a challenge with NO audio alternative pauses for
-    Take Control. Returns True when the page is clear (or was solved).
+    """If a captcha is showing, PAUSE for Take Control — only, always.
+    Shadow W1 / census C-03 (2026-11-24): the runner NEVER solves a
+    captcha — not with consent, not via the audio challenge (the old
+    audio-challenge solver and both its call sites are deleted; Ajju's
+    rule is that captchas are never evaded, and Julie's own pause text has
+    always said she cannot cross them). Returns True when the page is
+    clear (no visible challenge, or the user finished Take Control).
     v39 C7d: a provider's security iframe merely EXISTING (Stripe's
     invisible hCaptcha, always on the page) is not a challenge — only act
     when a captcha iframe is actually VISIBLE, or challenge text shows."""
@@ -974,17 +907,8 @@ def maybe_captcha(page):
                 vis = False
         if not vis:
             return True
-        progress("running", "captcha", "Captcha vachindhi — ne permission tho solve chesthunna.", page.url)
-        if solve_audio_captcha(page):
-            time.sleep(2)
-            return True
-        # Audio solve failed but an audio alternative is present — retry once.
-        if _has_audio_alternative(page):
-            progress("running", "captcha", "Audio captcha malli try chesthunna.", page.url)
-            if solve_audio_captcha(page):
-                time.sleep(2)
-                return True
-        # Image challenge with no working audio alternative: last resort pause.
+        # C-03: a visible captcha pauses for Take Control. No solve
+        # attempt of any kind precedes this pause.
         progress("paused", "captcha", CAPTCHA_PAUSE_MSG, page.url)
         if wait_pause():
             return False
