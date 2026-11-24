@@ -569,6 +569,36 @@ async function startVoiceBatch(env, user, lines, lang) {
   }
 }
 
+// Free AI video generation (Ajju order 2026-11-24): ONE clip from a
+// text prompt, rendered by the runner's videogen.py with Wan 2.2
+// TI2V-5B (Apache-2.0 open weights) on the user's OWN Kaggle GPU —
+// the only model from the "Stop Paying for Higgsfield" list that
+// fits free infra (Seedance/Seedream are hosted-only, MiniMax H3's
+// open weights need ~134 GB / Blackwell routes, Nano Banana has no
+// free API tier; verification: FREE_VIDEO_MODELS.md). Same discipline
+// as startVoiceBatch: job record first, edit.yml dispatch, jobown
+// registration; a failed dispatch returns null so the caller refunds
+// and answers honestly.
+async function startVideogen(env, user, prompt) {
+  const job = crypto.randomUUID().slice(0, 8);
+  await env.KV.put(`job:${job}`, JSON.stringify({ mode: "videogen", prompt, to: user }), { expirationTtl: 86400 });
+  const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/edit.yml/dispatches`, {
+    method: "POST",
+    headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" },
+    body: JSON.stringify({ ref: "main", inputs: { job } }),
+  }).catch(() => null);
+  if (!r || r.status !== 204) { await env.KV.delete(`job:${job}`).catch(() => {}); return null; }
+  try {
+    await env.KV.put(`curjob:${user}`, job, { expirationTtl: 86400 * 2 });
+    const num = await histNext(env, user);
+    await histPut(env, user, { n: num, job, title: `AI video: ${prompt.slice(0, 60)}`, topic: prompt.slice(0, 200), kind: "short", lang: "en", length: "short", at: Date.now(), state: "editing", name: "video", src: "videogen", template: null, notes: "Wan 2.2 on your Kaggle GPU", has_result: false, yt: null, ig: null });
+    await env.KV.put(`jobown:${job}`, user, { expirationTtl: 86400 * 3 });
+    return { job, num };
+  } catch (e) {
+    throw e;
+  }
+}
+
 async function startCreate(env, user, brief, userPrompt) {
   await env.KV.put(`busy:${user}`, "1", { expirationTtl: 1200 });
   const job = crypto.randomUUID().slice(0, 8);
@@ -2876,6 +2906,24 @@ async function appApi(req, env, url, ctx) {
     const vb = await startVoiceBatch(env, u.n, lines, vlang).catch(() => null);
     if (!vb) return appJson(req, { ok: false, error: lang === "en" ? "The voice machine didn't start (dispatch failed). Please try again." : "Voice machine start avvaledu (dispatch fail). Malli try cheyyi." }, 502);
     return appJson(req, { ok: true, job: vb.job, num: vb.num });
+  }
+  // Free AI video generation (2026-11-24): a prompt -> one Wan 2.2
+  // clip on the user's own Kaggle GPU (runner videogen.py). Charged
+  // TOK.COST.video_create (token-only gate, like every creation);
+  // dispatch failure refunds exactly once via the in-memory receipt,
+  // success records the spend against the job (v51 discipline). The
+  // render needs the user's Kaggle connected — without it there is
+  // no compute provider, so refuse BEFORE charging.
+  if (p === "videogen" && req.method === "POST") {
+    const prompt = String(body.prompt || "").trim().slice(0, 1000);
+    if (!prompt) return appJson(req, { ok: false, error: lang === "en" ? "A prompt is missing." : "Prompt ledhu." }, 400);
+    const krec = await env.KV.get(`ukey:${u.n}:kaggle`).catch(() => null);
+    if (!krec) return appJson(req, { ok: false, error: lang === "en" ? "Connect Kaggle in Setup first — the video renders on your own free GPU." : "Mundu Setup lo Kaggle connect cheyyi — video nee free GPU meedhane render avthundhi." }, 400);
+    const tk = await tokSpend(env, u.n, TOK.COST.video_create); if (!tk.ok) return appJson(req, { ok: false, quota: true, error: tokMsg(lang, tk) }, 429);
+    const vg = await startVideogen(env, u.n, prompt).catch(() => null);
+    if (!vg) { await tokRefund(env, u.n, tk, TOK.COST.video_create); return appJson(req, { ok: false, error: lang === "en" ? "The video machine didn't start (dispatch failed). Your tokens were returned." : "Video machine start avvaledu (dispatch fail). Nee tokens venakki ichesa." }, 502); }
+    await recordSpend(env, vg.job, u.n, tk, TOK.COST.video_create);
+    return appJson(req, { ok: true, job: vg.job, num: vg.num });
   }
   if (p === "model" || p.startsWith("model/")) return appModel(req, env, u, p, body, lang);
   if (p.startsWith("deploy/")) return appDeploy(req, env, u, p, body, lang);
