@@ -191,11 +191,17 @@ def _normalize_spec(spec):
                 cols = val
             elif isinstance(val, dict) and "a" in val and "b" in val:
                 cols = [val["a"], val["b"]]
+            elif isinstance(val, str) and "*" in val:
+                # W6 job a6e…06: the brain's natural first shape is
+                # the string "qty*price" — rejecting it poisoned the
+                # run (the model later declared the working tool
+                # broken). Accept it.
+                cols = [part.strip() for part in val.split("*")]
             if not cols or len(cols) != 2 \
                     or not all(isinstance(c, str) and c for c in cols):
                 return None, ("spec multiply_sum must name exactly "
                               "two columns — {\"columns\": "
-                              "[\"qty\", \"price\"]}")
+                              "[\"qty\", \"price\"]} or \"qty*price\"")
             out["multiply_sum"] = {"columns": list(cols)}
         elif key == "count":
             if val is True or isinstance(val, dict) \
