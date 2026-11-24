@@ -168,6 +168,18 @@ jobs:
               print("W6 seed cur4 ->", json.dumps(call({"op": "put", "key": "agentcur:w6testlive", "value": {"job": W6JOB4, "at": now}})))
           _j4 = call({"op": "get", "key": "setupjob:" + W6JOB4}).get("v") or {}
           print("W6 job4 ->", json.dumps({"state": _j4.get("state"), "step": _j4.get("step"), "note": str(_j4.get("note") or "")[:160], "steps": len(_j4.get("steps") or []), "answer": str(_j4.get("answer") or "")[:120]}))
+          # Wave 7: one real browse job (frame-poster fix live run).
+          W7JOB = "b7e00000000000000001"
+          if not call({"op": "get", "key": "setupjob:" + W7JOB}).get("exists"):
+              now = int(_t.time() * 1000)
+              recb = {"job": W7JOB, "user": "w7testlive", "provider": "browse", "flow": "browse",
+                      "task": "Open https://example.com and report the main heading text shown on the page.",
+                      "startUrl": "https://example.com", "state": "queued", "step": "starting",
+                      "note": "", "url": "https://example.com", "at": now, "upd": now}
+              print("W7 seed browse ->", json.dumps(call({"op": "put", "key": "setupjob:" + W7JOB, "value": recb})))
+              print("W7 seed browsecur ->", json.dumps(call({"op": "put", "key": "browsecur:w7testlive", "value": {"job": W7JOB, "at": now}})))
+          _jb = call({"op": "get", "key": "setupjob:" + W7JOB}).get("v") or {}
+          print("W7 browse ->", json.dumps({"state": _jb.get("state"), "step": _jb.get("step"), "note": str(_jb.get("note") or "")[:170], "url": _jb.get("url"), "answer": str(_jb.get("answer") or "")[:200]}))
           # Wave 6 part 5: job 5 = job 4's task against the FIXED
           # resume (workspace snapshots). Kill mid-run, re-dispatch,
           # expect done + evidence.
