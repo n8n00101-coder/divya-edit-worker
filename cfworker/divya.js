@@ -5005,6 +5005,20 @@ async function setupJournal(env, n, fin) {
 // bare put, so a lost write resurrected a stale picture in the
 // reporters until TTL. All of them route through here now.
 async function putSetupDone(env, n, finRec) {
+  // W9: surface the door log — when this outcome names failed
+  // providers, append the newest door failure recorded for one of
+  // them (the runner's own step + reason), so the verdict a human
+  // reads carries WHY the door failed, not just that it did.
+  try {
+    const failed = [...(Array.isArray(finRec.failed) ? finRec.failed : []), ...(finRec.provider ? [finRec.provider] : [])];
+    if (failed.length && typeof finRec.note === "string" && finRec.note && !finRec.note.includes("(door:")) {
+      const doors = parseRec(await env.KV.get(`doorfail:${n}`));
+      if (Array.isArray(doors)) {
+        const hit = [...doors].reverse().find(d => d && failed.includes(d.provider));
+        if (hit) finRec.note = `${finRec.note} (door: ${hit.provider} @ ${hit.step || "flow"} — ${String(hit.reason || "").slice(0, 120)})`.slice(0, 600);
+      }
+    }
+  } catch {}
   for (let att = 0; att < 2; att++) {
     try {
       await env.KV.put(`setupdone:${n}`, JSON.stringify(finRec), { expirationTtl: 86400 });
@@ -9270,6 +9284,24 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     if (rec.provider !== "agent") return new Response("not an agent job", { status: 400 });
     const snap = parseRec(await env.KV.get(`agentws:${job}`));
     return Response.json({ ok: true, files: (snap && snap.files) || {} });
+  }
+  // W9 (2026-11-24): the DOOR LOG. Every provider-door failure the
+  // runner meets (a changed keys page, a modal the flow did not
+  // know, a wall) lands in ONE place — doorfail:<user>, newest
+  // last, capped — instead of dying inside an Actions log nobody
+  // reads. putSetupDone surfaces the newest matching entry in the
+  // outcome note, so a changed page is a same-day fix, not a
+  // silent week. Reasons are the flow's own failure strings (they
+  // never carry a key — failures happen before/without one).
+  if (p === "setup/runner/doorlog" && req.method === "POST") {
+    const user = rec.user || "";
+    if (!user) return new Response("no user", { status: 400 });
+    const entry = { provider: String((body && body.provider) || rec.provider || "").slice(0, 40), step: String((body && body.step) || "").slice(0, 60), reason: String((body && body.reason) || "").slice(0, 240), job, at: Date.now() };
+    const cur = parseRec(await env.KV.get(`doorfail:${user}`));
+    const list = Array.isArray(cur) ? cur : [];
+    list.push(entry);
+    await env.KV.put(`doorfail:${user}`, JSON.stringify(list.slice(-20)), { expirationTtl: 86400 * 7 });
+    return Response.json({ ok: true, logged: list.length });
   }
   if (p === "setup/runner/job") {
     // v48 (Take Control): hand the runner the inputs the user queued in

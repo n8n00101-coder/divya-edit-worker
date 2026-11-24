@@ -2458,6 +2458,27 @@ def flow_email_signup(page, job, cfg):
         click(page, ["button:has-text('Create')", "button:has-text('New key')", "button:has-text('Generate')", "button:has-text('Create API key')", "button:has-text('Create key')"])
         page.wait_for_timeout(4000)
         key = extract_key(page, cfg["key_patterns"])
+    if not key and cfg.get("key_modal_name"):
+        # W9: the Create click only OPENED a modal whose key-name
+        # field is required — the real Create stays disabled until a
+        # name is typed, so no key ever appears (OpenRouter's
+        # current door). Name the key, confirm inside the dialog,
+        # then extract again. Best-effort: any miss falls through to
+        # the honest layout failure below.
+        try:
+            dlg = page.locator("[role='dialog']").first
+            if dlg.count() and dlg.is_visible():
+                inp = dlg.locator("input[type='text'], input:not([type])").first
+                if inp.count():
+                    inp.fill("Julie")
+                    page.wait_for_timeout(400)
+                btn = dlg.locator("button:has-text('Create'), button:has-text('Confirm'), button:has-text('Generate')").first
+                if btn.count():
+                    btn.click()
+                    page.wait_for_timeout(3500)
+                    key = extract_key(page, cfg["key_patterns"])
+        except Exception:
+            pass
     if not key:
         # The key may be in a modal/input — look for a long token-like value.
         try:
@@ -3962,7 +3983,12 @@ FLOWS = {
              "key_patterns": [r"(gsk_[A-Za-z0-9]{20,})"]},
     "openrouter": {"name": "OpenRouter", "url": "https://openrouter.ai/sign-up",
                    "login_url": "https://openrouter.ai/sign-in",
-                   "keys_url": "https://openrouter.ai/keys", "flow": "email",
+                   # W9 (2026-11-24): keys moved to /settings/keys and
+                   # creation is a modal with a REQUIRED name field —
+                   # the old /keys URL + bare Create click is the
+                   # Nov 23 door failure.
+                   "keys_url": "https://openrouter.ai/settings/keys", "flow": "email",
+                   "key_modal_name": True,
                    "key_patterns": [r"(sk-or-v1-[A-Za-z0-9\-]{20,})", r"(sk-or-[A-Za-z0-9\-]{20,})"]},
     "gemini": {"name": "Gemini", "url": "https://aistudio.google.com/",
                "keys_url": "https://aistudio.google.com/apikey", "flow": "google",
@@ -4155,6 +4181,24 @@ def run_flow(page, job, cfg):
         return _fail(f"{cfg['name']} flow aagipoyindhi: {e}. Take Control tho try cheyyi.")
 
 
+def door_log(provider, cfg, result):
+    """W9 (2026-11-24): post one door failure to the Worker's door
+    log (doorfail:<user>) — the ONE place door failures land, which
+    putSetupDone surfaces in the outcome note. Until now a changed
+    provider page failed silently inside an Actions log and the
+    same door kept failing for a week. Best-effort: logging never
+    breaks the chain. Failure reasons never carry a key (the door
+    failed before/without one)."""
+    try:
+        httpx.post(f"{WORKER}/api/setup/runner/doorlog", params={"job": JOB},
+                   json={"provider": provider,
+                         "step": str(LAST_PROGRESS.get("step") or "")[:60],
+                         "reason": str((result or {}).get("error") or "")[:240]},
+                   headers=H, timeout=20)
+    except Exception as e:
+        print("door log failed:", e)
+
+
 def run_provider(browser, job, cfg, provider):
     """Run one provider with a bounded retry (max 2 tries). A failure is
     returned, never raised — the caller moves on to the next provider."""
@@ -4185,12 +4229,15 @@ def run_provider(browser, job, cfg, provider):
         # v39 C7: a verification-resume failure must NOT retry — retrying
         # re-submits the email, sends another magic link and pauses again.
         if (last.get("extra") or {}).get("no_retry"):
+            door_log(provider, cfg, last)
             return last
         # v68 (speed): wall-class failures never heal on retry — one
         # attempt is enough; move on and let the user Take Control.
         if any(m in str(last.get("error") or "").lower() for m in _WALL_MARKERS + ("security wall",)):
+            door_log(provider, cfg, last)
             return last
         # "failed": retry once (bounded), then give up on THIS provider only.
+    door_log(provider, cfg, last)
     return last
 
 
