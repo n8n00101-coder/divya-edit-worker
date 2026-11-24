@@ -1,0 +1,57 @@
+name: directorproof
+on:
+  workflow_dispatch:
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Seed + read the Director Layer proof job via /internal/state
+        env:
+          RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time as _t, urllib.request, urllib.error
+          URL = "https://divya.n8n00101.workers.dev/internal/state"
+          KEY = os.environ["RUNNER_KEY"]
+          def call(body):
+              req = urllib.request.Request(URL, method="POST", data=json.dumps(body).encode(),
+                                           headers={"content-type": "application/json", "x-runner-key": KEY,
+                                                    "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      return json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  print("HTTP", e.code, "body:", e.read()[:200])
+                  raise
+          JOB = "dd100000000000000001"
+          # Director Layer proof: ONE real agent job — build a small
+          # web app and put it live. Seeded in startAgentJob's exact
+          # shape (the token-gated app route is the normal door; this
+          # proof drives the record + the same agent.yml dispatch
+          # the Worker sends). Seed only if absent (idempotent).
+          if not call({"op": "get", "key": "setupjob:" + JOB}).get("exists"):
+              now = int(_t.time() * 1000)
+              rec = {"job": JOB, "user": "directortest", "provider": "agent", "flow": "agent",
+                     "task": "Build a small web app and put it live: a focus timer page — a 25-minute countdown with Start, Pause and Reset buttons and a counter of completed focus sessions — as ONE self-contained index.html file in your workspace. Publish it with publish_app, verify the live page yourself with fetch_url, and deliver the public URL in your answer.",
+                     "state": "queued", "step": "starting", "note": "", "at": now, "upd": now,
+                     "directorRequired": True,
+                     "evidence": [{"tool": "publish_app"}, {"tool": "fetch_url"}]}
+              print("DIR seed job ->", json.dumps(call({"op": "put", "key": "setupjob:" + JOB, "value": rec})))
+              print("DIR seed cur ->", json.dumps(call({"op": "put", "key": "agentcur:directortest", "value": {"job": JOB, "at": now}})))
+          j = call({"op": "get", "key": "setupjob:" + JOB}).get("v") or {}
+          print("DIR job state ->", json.dumps({"state": j.get("state"), "step": j.get("step"),
+                "note": str(j.get("note") or "")[:200], "steps": len(j.get("steps") or []),
+                "answer": str(j.get("answer") or "")[:300]}))
+          d = j.get("director") or {}
+          plan = d.get("plan") or {}
+          print("DIR plan ->", json.dumps({"vision": plan.get("vision"),
+                "steps": [s.get("title") for s in (plan.get("steps") or [])],
+                "acceptance": [s.get("acceptance") for s in (plan.get("steps") or [])],
+                "risks": plan.get("risks")})[:1600])
+          print("DIR checks ->", json.dumps(d.get("checks"))[:1200])
+          print("DIR reviews ->", json.dumps(d.get("reviews"))[:1200])
+          for s in (j.get("steps") or []):
+              print("DIR step ->", json.dumps({"n": s.get("n"), "tool": s.get("tool"), "ok": s.get("ok"),
+                    "phase": s.get("phase"), "arg": str(s.get("arg") or "")[:90],
+                    "result": str(s.get("result") or "")[:130]}))
+          PY
