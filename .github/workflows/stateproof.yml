@@ -81,4 +81,17 @@ jobs:
           print("BACKFILL read link:917993610173 ->", json.dumps(call({"op": "get", "key": "link:917993610173"}))[:400])
           print("BACKFILL list link: ->", json.dumps(call({"op": "list", "prefix": "link:", "limit": 100})))
           print("POOL scout:models ->", json.dumps(call({"op": "get", "key": "scout:models"}))[:600])
+          # Wave 4 live proof: a dead-runner test chain (single
+          # provider, signin pause 20 min old — past the skip budget).
+          # The */15 cron's supervisor sweep must settle it with NO
+          # user poll: job stopped, chain finalized, setupdone
+          # written. Seed only if absent (idempotent across runs).
+          import time as _t
+          if not call({"op": "get", "key": "setupchain:w4testlive"}).get("exists"):
+              now = int(_t.time() * 1000)
+              print("W4 seed chain ->", json.dumps(call({"op": "put", "key": "setupchain:w4testlive", "value": {"providers": ["groq"], "done": [], "failed": [], "current": "w4job1", "email": "w4test@example.invalid", "at": now - 3600000, "browser": "profile"}})))
+              print("W4 seed job ->", json.dumps(call({"op": "put", "key": "setupjob:w4job1", "value": {"job": "w4job1", "provider": "groq", "user": "w4testlive", "state": "paused", "pauseReason": "signin", "pausedAt": now - 20 * 60000, "upd": now - 20 * 60000, "at": now - 3600000}})))
+          print("W4 chain ->", json.dumps(call({"op": "get", "key": "setupchain:w4testlive"}))[:300])
+          print("W4 job ->", json.dumps(call({"op": "get", "key": "setupjob:w4job1"}))[:400])
+          print("W4 done ->", json.dumps(call({"op": "get", "key": "setupdone:w4testlive"}))[:400])
           PY
