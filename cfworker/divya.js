@@ -4593,9 +4593,16 @@ async function waConnReply(env, user, svc) {
     // no-channel, never as a channel name.
     const yt = accts.filter(a => a.yt), ytCh = yt.filter(a => a.ytChannelId), ytNo = yt.filter(a => !a.ytChannelId);
     const gm = accts.filter(a => a.gmail);
+    // W5 / C-11: grant STATE is part of the report — an expired
+    // grant is named expired (with the remedy), and "Gmail kuda
+    // chadhavagalanu" is claimed ONLY for a grant whose state is
+    // proven healthy ("ok"); "unknown" (legacy-derived, never
+    // token-tested) earns no health claim either.
+    const gmOk = gm.filter(a => a.state === "ok"), gmExp = gm.filter(a => a.state === "expired"), gmUnk = gm.filter(a => a.state !== "ok" && a.state !== "expired");
+    const ytExp = yt.filter(a => a.state === "expired");
     const L = [];
-    if (yt.length) L.push(`YouTube: ${yt.length} account${yt.length > 1 ? "s" : ""} connect ayyayi${ytCh.length ? ` — channel: ${ytCh.map(a => a.ytChannel || a.email).join(", ")}` : ""}${ytNo.length ? `${ytCh.length ? "; " : " — "}${ytNo.length} account lo YouTube channel kanipinchaledu (channel unna account connect chesthe uploads avuthayi)` : ""}.`);
-    if (gm.length) L.push(`Google: ${gm.length} account${gm.length > 1 ? "s" : ""} connect ayyayi (${gm.map(a => a.email).filter(Boolean).join(", ")}) — Gmail kuda chadhavagalanu.`);
+    if (yt.length) L.push(`YouTube: ${yt.length} account${yt.length > 1 ? "s" : ""} connect ayyayi${ytCh.length ? ` — channel: ${ytCh.map(a => a.ytChannel || a.email).join(", ")}` : ""}${ytNo.length ? `${ytCh.length ? "; " : " — "}${ytNo.length} account lo YouTube channel kanipinchaledu (channel unna account connect chesthe uploads avuthayi)` : ""}${ytExp.length ? ` ${ytExp.length} account grant expire ayyindhi (${ytExp.map(a => a.email).filter(Boolean).join(", ")}) — reconnect kavali.` : ""}.`);
+    if (gm.length) L.push(`Google: ${gm.length} account${gm.length > 1 ? "s" : ""} connect ayyayi (${gm.map(a => a.email).filter(Boolean).join(", ")})${gmOk.length ? " — Gmail kuda chadhavagalanu" : ""}${gmExp.length ? `. ${gmExp.length} account grant expire ayyindhi (${gmExp.map(a => a.email).filter(Boolean).join(", ")}) — reconnect kavali, appudu Gmail chadhavagalanu` : ""}${gmUnk.length ? `. ${gmUnk.length} account state inka confirm avvaledu — okkasari use chesthe telusthundhi` : ""}.`);
     for (const p of ["instagram", "facebook", "telegram"]) if (toks[p]) L.push(`${PROVIDERS[p].title.replace(/ connect$/, "")}: connect ayyindhi.`);
     if (!L.length) return "Inka okka account kuda connect avvaledu. Connect card pampisthunna — oka row tap chesi, aa site lo login chesthe ayipothundhi.";
     // The ASKED service leads: if he named one and it has no grant,
@@ -4687,6 +4694,7 @@ function waChainOutcomeText(chain, provider, okStatus, reason) {
 function waFeedReasonText(r) {
   switch (String(r || "")) {
     case "no-gmail-token": return "nee Google connect ee account ki ledu — mail chadhavaledu";
+    case "gmail-expired": return "nee Google connect expire ayyindhi — reconnect chesthe mail chadhavagalanu";
     case "no-mail-yet": return "verification mail inka raledu";
     case "mail-no-link": return "mail vachindhi kani andulo verification link dorakaledu";
     case "needs-scope": return "Gmail permission scope ledu";
@@ -7309,7 +7317,7 @@ async function chainFailAdvance(env, rec) {
     let msg = waChainOutcomeText(chain, rec.provider, false, String(rec.note || "").replace(/^paused-[a-z]+\s*/i, "").slice(0, 70));
     if (rec.verifyWait || rec.mailFetch) msg += ` Mail feed: ${waFeedReasonText(rec.mailFetch)}.`;
     try { await waSendText(env, String(rec.user), msg); } catch {}
-    if ((rec.verifyWait || rec.mailFetch === "no-gmail-token") && !(chain.feedCardAt && Date.now() - chain.feedCardAt < 30 * 60000)) { chain.feedCardAt = Date.now(); try { await connectMenu(env, String(rec.user)); } catch {} }
+    if ((rec.verifyWait || rec.mailFetch === "no-gmail-token" || rec.mailFetch === "gmail-expired") && !(chain.feedCardAt && Date.now() - chain.feedCardAt < 30 * 60000)) { chain.feedCardAt = Date.now(); try { await connectMenu(env, String(rec.user)); } catch {} }
   }
   chain.current = null;
   await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
@@ -7794,7 +7802,7 @@ async function gAccts(env, n) {
   const list = [];
   if (g || y) {
     const email = (g && g.who) || "";
-    list.push({ id: gAcctId(email || (y && y.who) || "acct1"), email, ytChannel: y && !y.noChannel ? gYtTitle(y.who) : "", ytChannelId: (y && !y.noChannel && y.ytChannelId) || "", ytNoChannel: !!(y && (y.noChannel || !gYtTitle(y.who))), gmail: !!g, yt: !!y, state: "ok", at: (g && g.at) || (y && y.at) || 0 });
+    list.push({ id: gAcctId(email || (y && y.who) || "acct1"), email, ytChannel: y && !y.noChannel ? gYtTitle(y.who) : "", ytChannelId: (y && !y.noChannel && y.ytChannelId) || "", ytNoChannel: !!(y && (y.noChannel || !gYtTitle(y.who))), gmail: !!g, yt: !!y, state: "unknown", at: (g && g.at) || (y && y.at) || 0 }); // W5 / C-18: a legacy-derived entry is UNPROVEN, never "ok" — health is claimed only after a token call proves it (the refresh path marks expired; a successful one is what "ok" means)
   }
   return gAcctsNormalize({ list, def: list.length ? list[0].id : null });
 }
@@ -8119,15 +8127,21 @@ async function fetchVerifyLinkOwn(env, n, provider, job, chainAt, opts) {
   if (!order.length) return { ok: false, reason: "no-gmail-token" };
   let last = { ok: false, reason: "no-gmail-token" };
   let definitive = null;
+  let sawToken = false;
   for (const id of order) {
     const tok = await googleToken(env, n, id);
     if (!tok) continue;
+    sawToken = true;
     const r = await fetchVerifyLinkTok(tok, provider, job, chainAt, opts);
     if (r.ok) return r;
     last = r;
     if (r.reason === "mail-no-link") return r;
     if ((r.reason === "needs-scope" || r.reason === "api-not-enabled") && !definitive) definitive = r;
   }
+  // W5 / C-11 mirror: accounts EXISTED but every token was dead —
+  // that is an EXPIRED grant, not "no connect". The reason text must
+  // tell the user to reconnect, not that they never connected.
+  if (!sawToken && order.length) return { ok: false, reason: "gmail-expired" };
   return definitive || last;
 }
 async function fetchVerifyLinkTok(tok, provider, job, chainAt, opts) {
@@ -8243,7 +8257,7 @@ async function maybeFeedVerifyLink(env, job, chainAt) {
       // count — fail the provider FAST with the class reason; the
       // runner's next poll sees the terminal state and the chain
       // advances through the normal path. Never dozens of tries.
-      if (r.reason === "no-gmail-token") {
+      if (r.reason === "no-gmail-token" || r.reason === "gmail-expired") { // W5: an expired grant is the same dead class — never a spin
         job.mailDead = (job.mailDead || 0) + 1;
         if (job.mailDead >= 3 && job.state === "paused") {
           job.state = "failed";
@@ -8336,6 +8350,7 @@ async function gmailStateFor(env, n, job) {
   if (job && (job.verifyLink || job.verifyCode)) return { state: "ok", provider };
   const mf = (job && job.mailFetch) || "";
   if (mf === "no-gmail-token") return { state: "no-token", provider };
+  if (mf === "gmail-expired") return { state: "expired", provider }; // W5: the app's re-consent card gets the true state too
   if (mf === "needs-scope") return { state: "needs-scope", provider };
   if (mf === "api-not-enabled") return { state: "api-not-enabled", provider };
   if (mf === "no-mail-yet") return { state: "no-mail-yet", provider };
@@ -9438,7 +9453,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     // Only "stopped" (the user stopped the setup) ends the whole chain.
     if (state === "failed") {
       const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
-      if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80); chain.waTold = chain.waTold || {}; const remaining110 = (chain.providers || []).filter(p => !(chain.done || []).includes(p) && !chain.failed.includes(p) && !skippedIds(chain).includes(p)); if (!chain.waTold[rec.provider] && remaining110.length && /^\d{7,15}$/.test(String(rec.user || ""))) { chain.waTold[rec.provider] = "failed"; let msg110 = waChainOutcomeText(chain, rec.provider, false, String(rec.note || "").replace(/^paused-[a-z]+\s*/i, "").slice(0, 70)); if (rec.verifyWait || rec.mailFetch) msg110 += ` Mail feed: ${waFeedReasonText(rec.mailFetch)}.`; try { await waSendText(env, String(rec.user), msg110); } catch {} if ((rec.verifyWait || rec.mailFetch === "no-gmail-token") && !(chain.feedCardAt && Date.now() - chain.feedCardAt < 30 * 60000)) { chain.feedCardAt = Date.now(); try { await connectMenu(env, String(rec.user)); } catch {} } } await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
+      if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80); chain.waTold = chain.waTold || {}; const remaining110 = (chain.providers || []).filter(p => !(chain.done || []).includes(p) && !chain.failed.includes(p) && !skippedIds(chain).includes(p)); if (!chain.waTold[rec.provider] && remaining110.length && /^\d{7,15}$/.test(String(rec.user || ""))) { chain.waTold[rec.provider] = "failed"; let msg110 = waChainOutcomeText(chain, rec.provider, false, String(rec.note || "").replace(/^paused-[a-z]+\s*/i, "").slice(0, 70)); if (rec.verifyWait || rec.mailFetch) msg110 += ` Mail feed: ${waFeedReasonText(rec.mailFetch)}.`; try { await waSendText(env, String(rec.user), msg110); } catch {} if ((rec.verifyWait || rec.mailFetch === "no-gmail-token" || rec.mailFetch === "gmail-expired") && !(chain.feedCardAt && Date.now() - chain.feedCardAt < 30 * 60000)) { chain.feedCardAt = Date.now(); try { await connectMenu(env, String(rec.user)); } catch {} } } await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
     }
     if (state === "stopped") { const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`)); if (chain && chain.current === job) { const finRec = { state, done: chain.done, failed: chain.failed || [], skipped: chain.skipped || null, provider: rec.provider, note: rec.note || "", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, rec.user, finRec); await putSetupDone(env, rec.user, finRec); await env.KV.delete(`setupchain:${rec.user}`); } }
     return Response.json({ ok: true });
