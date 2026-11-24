@@ -714,14 +714,20 @@ async function handle(env, m) {
     if (id.startsWith("ytpick:")) { const r = await chatUploadPick(env, { n: user }, id.slice(7), "te", "wa").catch(() => null); if (r) return say(env, user, r.reply); }
     // v109: the setup Allow card's buttons — a tap is the same grant
     // as typing "sare" (waGrantSetup), or a clean refusal that disarms.
-    if (id === "waallow:yes") { const r = await waGrantSetup(env, user).catch(() => "Setup start cheyyaleka poyanu — 'setup cheyu' ani malli cheppu."); return say(env, user, r); }
+    if (id === "waallow:yes") { // W3 / C-04 residual: a button tap grants only against an ARMED ask (or a live chain, whose start reports progress) — a stale card in chat history must not start a chain months later.
+      const armed = (await env.KV.get(`wasetupask:${user}`)) || (await env.KV.get(`waretrypend:${user}`)) || (await env.KV.get(`setupchain:${user}`));
+      if (!armed) return say(env, user, "Ee card pathadhi — ippudu pending setup ask em ledu, em start cheyyaledhu. Setup kavali ante 'setup cheyu' ani cheppu.");
+      const r = await waGrantSetup(env, user).catch(() => "Setup start cheyyaleka poyanu — 'setup cheyu' ani malli cheppu."); return say(env, user, r); }
     // v110: Always allow — the standing grant is recorded FIRST
     // (setupalways:, mirrored to the linked app account), then this
     // request proceeds exactly like an Allow tap. Future setup /
     // deploy asks on WA skip the card (waSetupRespond honours the
     // grant) but every piece of work is still reported in chat.
-    if (id === "waallow:always") { await waSetAlwaysGrant(env, user).catch(() => {}); const r = await waGrantSetup(env, user).catch(() => "Setup start cheyyaleka poyanu — 'setup cheyu' ani malli cheppu."); return say(env, user, `Always allow pettukunna ✓ — future lo setup/deploy asks malli adagakunda chestha, ayyina prathi pani ikkade cheptha.\n${r}`); }
-    if (id === "waallow:no") { await env.KV.delete(`wasetupask:${user}`).catch(() => {}); await env.KV.delete(`waretrypend:${user}`).catch(() => {}); return say(env, user, "Sare, setup start cheyyaledhu. Kavali ante 'setup cheyu' ani cheppu, ikkade adugutha."); }
+    if (id === "waallow:always") { const armed = (await env.KV.get(`wasetupask:${user}`)) || (await env.KV.get(`waretrypend:${user}`)) || (await env.KV.get(`setupchain:${user}`));
+      if (!armed) return say(env, user, "Ee card pathadhi — ippudu pending setup ask em ledu, em start cheyyaledhu. Setup kavali ante 'setup cheyu' ani cheppu.");
+      await waSetAlwaysGrant(env, user).catch(() => {}); const r = await waGrantSetup(env, user).catch(() => "Setup start cheyyaleka poyanu — 'setup cheyu' ani malli cheppu."); return say(env, user, `Always allow pettukunna ✓ — future lo setup/deploy asks malli adagakunda chestha, ayyina prathi pani ikkade cheptha.\n${r}`); }
+    if (id === "waallow:no") { await env.KV.delete(`wasetupask:${user}`).catch(() => {}); await env.KV.delete(`waretrypend:${user}`).catch(() => {}); await waClearAlwaysGrant(env, user).catch(() => {}); // W3 / C-15: "Don't allow" also revokes a standing Always-allow grant — the card's three options keep the symmetry they promise
+      return say(env, user, "Sare, setup start cheyyaledhu. Always-allow emaina unte adhi kuda teesesa. Kavali ante 'setup cheyu' ani cheppu, ikkade adugutha."); }
     // v111: the process view's action buttons — the same state
     // transitions the app's live-view controls perform (Continue =
     // setup/continue's record write; Stop = setup/stop's, shared
@@ -804,6 +810,12 @@ async function handle(env, m) {
     // here as text — route it through ccRoute too (typed texts were
     // already handled at the top of handle(), before every flow).
     if (await ccRoute(env, user, text)) return;
+    // W3 / C-15: "always allow cancel" revokes the standing grant —
+    // checked BEFORE the stop block ("cancel" is a stop word and the
+    // generic stop path would swallow the phrase) and before
+    // waAllowFlow (whose armed-ask branch would read "allow" as
+    // SETTING the grant).
+    if (/always\s*allow\s*(cancel|revoke|aapu|stop|off|remove|teesi|tey)|standing\s*allow\s*(cancel|aapu|stop)/i.test(text)) { await waClearAlwaysGrant(env, user).catch(() => {}); await env.KV.delete(`wasetupask:${user}`).catch(() => {}); const a2 = "Always allow cancel chesa ✓ — next setup/deploy ki malli nee Allow adugutha."; const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); }
     // v99 (WA discipline): STOP is structural — handled here, before
     // every conversational flow, never by the brain. It cancels the
     // running create (flag + refund + pointers + History), and the
@@ -956,11 +968,11 @@ async function handle(env, m) {
     // waGrantSetup's retry branch); with nothing retryable the
     // message flows on untouched.
     { const rk = waRetryKind(text);
-      if (rk) { const a2 = await waRetryOffer(env, user).catch(() => null); if (a2) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); } } }
+      if (rk) { const coll = {}; const a2 = await waRetryOffer(env, user, coll).catch(() => null); if (a2) { const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); if (coll.card) { try { await wa(env, user, coll.card); } catch {} } return say(env, user, a2); } } }
     // v107: "ikade adugu allow chestha" — the user explicitly asks
     // Julie to take the allow HERE. That is a setup-need expression:
     // answer with the in-chat allow ask, never an app-menu errand.
-    if (/(ik+ade|ikkade)\s+adugu|ask\s+(me\s+)?here/i.test(text)) { const a2 = await waSetupRespond(env, user); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); }
+    if (/(ik+ade|ikkade)\s+adugu|ask\s+(me\s+)?here/i.test(text)) { const coll = {}; const a2 = await waSetupRespond(env, user, coll); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); if (coll.card) { try { await wa(env, user, coll.card); } catch {} } return say(env, user, a2); }
     // v109: a question about Julie's own system (shared brains, own
     // keys, setup, server, tokens) is answered from the fixed truth
     // sheet — the brain invented an architecture for exactly this
@@ -997,7 +1009,7 @@ async function handle(env, m) {
     // set up -> one truthful line; chain running -> progress; setup
     // actually needed -> the allow is asked in THIS chat and the
     // grant starts the chain from here (waAllowFlow above).
-    if (isSetupQuestion(text)) { const a2 = await waSetupRespond(env, user); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); return say(env, user, a2); }
+    if (isSetupQuestion(text)) { const coll = {}; const a2 = await waSetupRespond(env, user, coll); const hh = await history(env, user); hh.push({ role: "user", content: text }, { role: "assistant", content: a2 }); await remember(env, user, hh); if (coll.card) { try { await wa(env, user, coll.card); } catch {} } return say(env, user, a2); }
     // v102: a HOW / process question is answered structurally with the
     // real process, in the user's language mix — it never reaches the
     // brain (which turned it into a CREATE on 2026-11-16) and never
@@ -1652,6 +1664,14 @@ async function setupAwaitingReply(env, u, text, lang) {
     // A field answer is a short plain value. Questions, orders and
     // bare approvals are not answers — they flow on normally.
     if (t.length > 120 || /\?/.test(t) || /^(ok|sare|avunu|haa|yes|cheyu|cheyyi)\s*[.!?]*$/i.test(t) || isCreateOrder(t) || isBrowseOrder(t)) return null;
+    // W3 / C-12: status-shaped lines are QUESTIONS, never field
+    // values — Tenglish status lines routinely carry no "?" ("setup
+    // ela undhi", "groq em ayindhi", "enti idhi"), and pre-fix they
+    // were typed into provider forms as the user's name. A line the
+    // setup/status routers would claim, or one opening with a
+    // question word, flows on and is answered as a question; the ask
+    // stays open for the real answer.
+    if (isSetupQuestion(t) || waStatusKind(t) || /^(enti|endhi|ela|enduku|eppudu|ekkada|evaru|em|emi)\b/i.test(t) || /\b(em\s*ayindhi|ayindha|undha|avuthundha|chesthundha)\b/i.test(t)) return null;
     const r = await setupDeliverUserInput(env, u.n, t);
     if (r.ok) return en ? `Got it — entering it for ${provName} and continuing.` : `Theeskunna — ${provName} lo enter chesi continue chesthunna.`;
     if (r.error === "bad-value") return en ? `That doesn't look right for the ${aw.field || "detail"} — send it once more, exactly as it should be entered.` : `Adhi sarigga ledu — ${aw.field || "detail"} malli okkasari correct ga pampu.`;
@@ -4406,6 +4426,10 @@ async function waSetupStatusLine(env, user) {
   if (chain) return waSetupProgressLine(env, user, chain); // v109: per-provider counts from the chain record, not a summary guess
 
   const fin = parseRec(await env.KV.get(`setupdone:${user}`));
+  // W3 / C-14: the same outcome rule as waSetupRespond — "complete"
+  // requires state "done" AND an empty failed list; a done-with-
+  // failures chain names its failures and points at the retry door.
+  if (fin && fin.state === "done" && (fin.failed || []).length) return `Setup complete avvaledu — ${(fin.done || []).length} providers ayyayi, ${fin.failed.length} fail ayyayi (${fin.failed.map(setupProvName).join(", ")}). 'failed vi malli try cheyu' ani cheppu, avi matrame malli try chestha.`;
   if (fin && fin.state === "done") return `Setup complete ayyindhi ✓ — ${(fin.done || []).length} providers ready, keys anni save ayyayi.`;
   if (fin && ["failed", "stalled", "stopped"].includes(fin.state)) return `Setup complete avvaledu — ${(fin.done || []).length} providers ayyayi. Malli start cheyala? 'setup cheyu' ani cheppu, ikkade nunchi chestha.`;
   const kl = await setupKeyList(env, user).catch(() => ({ count: 0 }));
@@ -4876,6 +4900,13 @@ async function waStopBrowserJob(env, user) {
     if (chain.current) { const j = parseRec(await env.KV.get(`setupjob:${chain.current}`)); if (j && ["queued", "running", "paused"].includes(j.state)) { j.state = "stopped"; j.upd = Date.now(); await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 }); } }
     try { const cj = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null; const finRec = { state: "stopped", done: chain.done || [], failed: chain.failed || [], skipped: chain.skipped || null, provider: (cj && cj.provider) || null, note: "User stopped the setup.", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, user, finRec); await env.KV.put(`setupdone:${user}`, JSON.stringify(finRec), { expirationTtl: 86400 }); } catch {}
     await env.KV.delete(`setupchain:${user}`);
+    // W3 / C-13: a Stop is a durable fact, not a moment — record it so
+    // the auto-provisioner refuses to restart what the user stopped
+    // (maybeAutoCheck reads it) and disarm any pending ask, so a bare
+    // "sare" in ordinary chat cannot resurrect the chain (C-05 trap).
+    await env.KV.put(`setupstop:${user}`, JSON.stringify({ at: Date.now() }), { expirationTtl: 86400 * 7 }).catch(() => {});
+    await env.KV.delete(`wasetupask:${user}`).catch(() => {});
+    await env.KV.delete(`waretrypend:${user}`).catch(() => {});
     did = "setup";
   }
   const bj = await browseJobFor(env, user).catch(() => null);
@@ -5021,7 +5052,7 @@ function waRetryKind(text) {
   if (/^\s*(malli\s*try|retry)(\s+cheyu|\s+cheyyi)?\s*[.!]*\s*$/i.test(t)) return "retry";
   return null;
 }
-async function waRetryOffer(env, user) {
+async function waRetryOffer(env, user, collect) {
   const r = await waRetryableFailed(env, user);
   if (!r) return null;
   const names = r.ids.map(setupProvName).join(", ");
@@ -5036,7 +5067,11 @@ async function waRetryOffer(env, user) {
   if (await waAlwaysGrant(env, user)) return waRetryStart(env, user, r.ids);
   await env.KV.put(`waretrypend:${user}`, JSON.stringify({ ids: r.ids, at: Date.now() }), { expirationTtl: 1800 });
   await env.KV.put(`wasetupask:${user}`, JSON.stringify({ at: Date.now(), retry: true }), { expirationTtl: 1800 });
-  try { wa(env, user, { type: "interactive", interactive: { type: "button", body: { text: `Fail ayina providers malli try cheyala? ${names}` }, action: { buttons: [{ type: "reply", reply: { id: "waallow:yes", title: "Allow ✓" } }, { type: "reply", reply: { id: "waallow:always", title: "Always allow" } }, { type: "reply", reply: { id: "waallow:no", title: "Don't allow" } }] } } }); } catch {}
+  // W3 / C-07: card folded into the caller's one composed reply when
+  // a collector is passed (inbound path); direct send otherwise.
+  const cardPayload = { type: "interactive", interactive: { type: "button", body: { text: `Fail ayina providers malli try cheyala? ${names}` }, action: { buttons: [{ type: "reply", reply: { id: "waallow:yes", title: "Allow ✓" } }, { type: "reply", reply: { id: "waallow:always", title: "Always allow" } }, { type: "reply", reply: { id: "waallow:no", title: "Don't allow" } }] } } };
+  if (collect) collect.card = cardPayload;
+  else try { wa(env, user, cardPayload); } catch {}
   return `Fail ayinavi: ${names} — malli try cheyala? Allow nokku leda 'sare' ani cheppu.${r.captcha.length ? ` ${r.captcha.map(setupProvName).join(", ")} daggara captcha vasthe okkasari nee tap kavali — appudu ikkade cheptha.` : ""}`;
 }
 // v115 SKIP (Ajju 2026-11-17 17:32, verbatim: "Leave groq conncer
@@ -5187,17 +5222,48 @@ async function waAlwaysGrant(env, user) {
 }
 async function waSetAlwaysGrant(env, user) {
   const rec = JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", via: "wa" });
-  await env.KV.put(`setupalways:${user}`, rec);
-  try { const a = await acctFind(env, user); if (a && a.uid) await env.KV.put(`setupalways:${a.uid}`, rec); if (a && a.phone && a.phone !== user) await env.KV.put(`setupalways:${a.phone}`, rec); } catch {}
+  // W3 / C-15: the standing grant EXPIRES (30 days) — an irrevocable,
+  // never-expiring consent record is a promise the card never made.
+  await env.KV.put(`setupalways:${user}`, rec, { expirationTtl: 86400 * 30 });
+  try { for (const id of await linkedUserIds(env, user)) { if (id !== user) await env.KV.put(`setupalways:${id}`, rec, { expirationTtl: 86400 * 30 }); } } catch {}
+}
+// W3 / C-15: the revoke path that never existed — "Don't allow" on a
+// later card and the WA phrase "always allow cancel" both land here.
+// Deletes the grant under the user AND every linked identity.
+async function waClearAlwaysGrant(env, user) {
+  await env.KV.delete(`setupalways:${user}`).catch(() => {});
+  try { for (const id of await linkedUserIds(env, user)) { if (id !== user) await env.KV.delete(`setupalways:${id}`).catch(() => {}); } } catch {}
 }
 // The setup-need responder for the WA surface: state first (never
 // pitch setup at a user who is already set up), else ask the allow
 // HERE and arm the pending-allow record the grant is matched against.
-async function waSetupRespond(env, user) {
+async function waSetupRespond(env, user, collect) {
   const chain = parseRec(await env.KV.get(`setupchain:${user}`));
   if (chain) return waSetupStatusLine(env, user);
   const kl = await setupKeyList(env, user).catch(() => ({ count: 0 }));
   const fin = parseRec(await env.KV.get(`setupdone:${user}`));
+  const finFailed = fin && Array.isArray(fin.failed) ? fin.failed.length : 0;
+  // W3 / C-05: the last chain STOPPED or FAILED — this is a retry
+  // moment, never a fresh pitch and never a re-armed fresh ask (the
+  // 2026-11-17 17:38 trap: a bare "sare" in ordinary chat restarted
+  // a full chain minutes after the user's Stop). The retry offer
+  // owns the reply; its grant starts only the failed set.
+  if (fin && (fin.state === "stopped" || fin.state === "failed")) {
+    const r = await waRetryOffer(env, user, collect).catch(() => null);
+    if (r) return r;
+    return fin.state === "stopped"
+      ? `Setup madhyalo stop ayyindhi — ayina keys alaage unnayi (${kl.count}). Malli modalupettali ante 'setup cheyu' ani cheppu.`
+      : `Setup fail ayyindhi — ayina keys alaage unnayi (${kl.count}). Malli try cheyala ante 'failed vi malli try cheyu' ani cheppu.`;
+  }
+  // W3 / C-14: "setup complete" is a claim about the OUTCOME record:
+  // it requires the chain's state "done" AND an empty failed list.
+  // Keys alone (some sealed, the chain failed around them) never earn
+  // the line — the failures are named and the retry door is offered.
+  if (fin && fin.state === "done" && finFailed > 0) {
+    const r = await waRetryOffer(env, user, collect).catch(() => null);
+    if (r) return r;
+    return `${finFailed} providers fail ayyayi — migatha ${kl.count} keys ready ga unnayi. 'failed vi malli try cheyu' ani cheppu, avi matrame malli try chestha.`;
+  }
   if (kl.count > 0 || (fin && fin.state === "done")) return `Nee keys ready ga unnayi (${kl.count || (fin.done || []).length}) — setup complete. Provider down ani anipisthe backup brains silent ga pani chesthayi; nenu check chesi cheptha.`;
   // v110: a standing Always-allow grant means no re-ask — proceed
   // exactly like a fresh Allow tap (the work is still reported).
@@ -5206,9 +5272,14 @@ async function waSetupRespond(env, user) {
   // v109: the allow ALSO arrives as a tap card (Meta Cloud API reply
   // buttons — the same channel the connect list already uses). The
   // tap lands back in handle() as an interactive reply and is the
-  // same grant as typing "sare" (waGrantSetup). Fire-and-forget: the
-  // text ask below stands on its own if the card cannot be sent.
-  try { wa(env, user, { type: "interactive", interactive: { type: "button", body: { text: "Setup allow — accounts + API keys anni nene create chestha. Madhyalo code vasthe ikkade adugutha, type chesthe chaalu." }, action: { buttons: [{ type: "reply", reply: { id: "waallow:yes", title: "Allow ✓" } }, { type: "reply", reply: { id: "waallow:always", title: "Always allow" } }, { type: "reply", reply: { id: "waallow:no", title: "Don't allow" } }] } } }); } catch {}
+  // same grant as typing "sare" (waGrantSetup).
+  // W3 / C-07: the card is PART of this one composed reply — when the
+  // caller passes a collector (the inbound path), the card goes into
+  // it and the single send site emits text + card together; event
+  // paths without a collector keep the direct send.
+  const cardPayload = { type: "interactive", interactive: { type: "button", body: { text: "Setup allow — accounts + API keys anni nene create chestha. Madhyalo code vasthe ikkade adugutha, type chesthe chaalu." }, action: { buttons: [{ type: "reply", reply: { id: "waallow:yes", title: "Allow ✓" } }, { type: "reply", reply: { id: "waallow:always", title: "Always allow" } }, { type: "reply", reply: { id: "waallow:no", title: "Don't allow" } }] } } };
+  if (collect) collect.card = cardPayload;
+  else try { wa(env, user, cardPayload); } catch {}
   return "Setup + API keys anni nene create chestha — Allow nokku leda 'sare' ani cheppu, ikkade nunchi start chestha.";
 }
 // Starts the chain from a WhatsApp allow — the same records the app's
@@ -5220,6 +5291,7 @@ async function waSetupStart(env, user, email) {
   // progress instead of starting a duplicate chain.
   const live115 = parseRec(await env.KV.get(`setupchain:${user}`));
   if (live115) return waSetupProgressLine(env, user, live115);
+  await env.KV.delete(`setupstop:${user}`).catch(() => {}); // W3 / C-13: a fresh manual Allow clears the stop suppression
   const ids = WA_SETUP_PROVIDERS.filter(id => SETUP_PROVIDERS[id]);
   await env.KV.put(`setupconsent:${user}`, JSON.stringify({ at: Date.now(), scope: "accounts+keys+captchas+server", providers: ids, email }), { expirationTtl: 86400 * 7 });
   const pass = setupPass();
@@ -5243,6 +5315,13 @@ async function waAllowFlow(env, user, text) {
   const t = String(text || "").trim();
   const mailPend = parseRec(await env.KV.get(`wasetupmail:${user}`));
   if (mailPend) {
+    // W3 / C-12 cross-ask ownership: while a setup job's own ask
+    // (OTP / field) is open, IT owns the next message — an
+    // email-shaped line typed for another purpose must not be
+    // consumed as the setup email and start a second chain under the
+    // waiting job (the census's cross-ask hijack).
+    { const open = await awaitingJobFor(env, user).catch(() => null);
+      if (open && open.j && open.j.awaiting && open.j.state === "paused" && open.j.awaiting.expires && Date.now() <= open.j.awaiting.expires) return null; }
     if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t) && t.length <= 120) {
       await env.KV.delete(`wasetupmail:${user}`); await env.KV.delete(`wasetupask:${user}`);
       return waSetupStart(env, user, t.toLowerCase());
@@ -5252,7 +5331,7 @@ async function waAllowFlow(env, user, text) {
   const ask = parseRec(await env.KV.get(`wasetupask:${user}`));
   // v110: a typed "always allow" while the ask is armed = the card's
   // Always-allow button: standing grant recorded, then the grant.
-  if (ask && /always\s*allow/i.test(t)) { await waSetAlwaysGrant(env, user).catch(() => {}); const r = await waGrantSetup(env, user); return `Always allow pettukunna ✓ — future lo setup/deploy asks malli adagakunda chestha, ayyina prathi pani ikkade cheptha.\n${r}`; }
+  if (ask && /always\s*allow/i.test(t) && !/(cancel|revoke|aapu|stop|off|remove|teesi|tey)/i.test(t)) { await waSetAlwaysGrant(env, user).catch(() => {}); const r = await waGrantSetup(env, user); return `Always allow pettukunna ✓ — future lo setup/deploy asks malli adagakunda chestha, ayyina prathi pani ikkade cheptha.\n${r}`; }
   if (ask && WA_ALLOW_RX.test(t)) return waGrantSetup(env, user);
   // v115 (consent is a SINGLE edge): after "start chesa", a stray
   // acknowledgement ("sare", "ok", "K", "dheeniki ok chepa anthe") is
@@ -7386,6 +7465,14 @@ async function maybeAutoCheck(env, n, email, force) {
     const hadSetup = !!(await env.KV.get(`setupdone:${n}`)) || !!(await env.KV.get(`joined:${n}`));
     if (hadSetup) await autoLogAppend(env, n, { provider: "", action: "skipped", why: "one-tap allow expired or missing — needs one tap in Setup", result: "needs-consent" });
     return { checked: true, action: "needs-consent" };
+  }
+  // W3 / C-13: a user Stop outranks the standing consent record —
+  // the auto-provisioner never restarts a stopped setup on its own.
+  // Only a fresh manual Allow (waSetupStart deletes setupstop:)
+  // re-arms provisioning.
+  if (!force && await env.KV.get(`setupstop:${n}`)) {
+    await autoLogAppend(env, n, { provider: "", action: "skipped", why: "user ee setup ni stop chesadu — auto ga malli start avvadhu; manual Allow kavali", result: "stopped-by-user" });
+    return { checked: true, action: "stopped-by-user" };
   }
   const chain = parseRec(await env.KV.get(`setupchain:${n}`));
   if (chain) return { checked: true, action: "already-running" };
