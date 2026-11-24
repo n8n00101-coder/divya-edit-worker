@@ -71,8 +71,23 @@ _SENTENCE_RE = re.compile(r"(?<=[.!?…।])\s+")
 _TE_BLOCK = re.compile(r"[ఀ-౿]")
 _HI_BLOCK = re.compile(r"[ऀ-ॿ]")
 
+class VoiceEnvError(RuntimeError):
+    """ENVIRONMENT failure in the fixed-voice leg: the engine checkout,
+    a dependency, or the canonical ref is missing/broken — the leg
+    never got to GENERATE. Distinct from a ship-bar (quality) failure,
+    which stays a plain RuntimeError: callers may degrade honestly on
+    VoiceEnvError (with the degradation recorded), but must NEVER
+    substitute another voice for a quality failure (the owner's
+    no-substitution rule)."""
+
+
 # teltest.yml-proven pins (+ the gate stack). Installed lazily, once,
 # only when a Telugu house-voice job actually needs them.
+# librosa is REQUIRED: the engine's gates.py imports it at module top
+# (load/rms/pyin), and its absence hard-killed a whole film job on
+# 2026-11-24 (Wave 8, job 3) because it was in neither this list nor
+# _ensure_deps' probes — the import surfaced as a bare
+# ModuleNotFoundError three layers up.
 _BOOTSTRAP = [
     [sys.executable, "-m", "pip", "install", "-q",
      "torch==2.6.0", "torchaudio==2.6.0",
@@ -81,7 +96,7 @@ _BOOTSTRAP = [
      "git+https://github.com/ai4bharat/IndicF5.git",
      "transformers==4.49.0", "numpy<2", "soundfile", "datasets<3.2",
      "huggingface_hub<0.30", "pyarrow<18",
-     "faster-whisper", "resemblyzer==0.1.4"],
+     "faster-whisper", "resemblyzer==0.1.4", "librosa"],
 ]
 
 
@@ -151,15 +166,23 @@ def engine_dir():
 def _load_engine():
     d = engine_dir()
     if d is None:
-        raise RuntimeError(
+        raise VoiceEnvError(
             "telugu fixed voice: julie-ai-voice-engine checkout not "
             "found (looked in $JULIE_VOICE_ENGINE_DIR, ./engine, "
             "~/workspace/julie-ai-voice-engine) — the ship gates live "
             "in the engine repo and are never re-implemented here")
     if d not in sys.path:
         sys.path.insert(0, d)
-    import engine as voice_engine
-    import gates as voice_gates
+    try:
+        import engine as voice_engine
+        import gates as voice_gates
+    except ImportError as e:
+        # gates.py imports librosa + faster_whisper at module top; a
+        # missing one must surface as an ENVIRONMENT failure (typed,
+        # named), never as a bare ModuleNotFoundError that kills the
+        # whole job three layers up (Wave 8 job 3, 2026-11-24).
+        raise VoiceEnvError(
+            f"telugu fixed voice: engine import failed — {e}") from e
     return voice_engine, voice_gates
 
 
@@ -173,6 +196,7 @@ def _ensure_deps():
         import soundfile  # noqa: F401
         import faster_whisper  # noqa: F401
         import resemblyzer  # noqa: F401
+        import librosa  # noqa: F401 — gates.py imports it at top level
         return
     except ImportError:
         pass
@@ -181,7 +205,7 @@ def _ensure_deps():
     for cmd in _BOOTSTRAP:
         p = subprocess.run(cmd, capture_output=True, text=True)
         if p.returncode != 0:
-            raise RuntimeError(
+            raise VoiceEnvError(
                 "telugu fixed voice: dependency bootstrap failed: "
                 + (p.stderr or p.stdout)[-300:])
     try:
@@ -190,8 +214,9 @@ def _ensure_deps():
         import soundfile  # noqa: F401
         import faster_whisper  # noqa: F401
         import resemblyzer  # noqa: F401
+        import librosa  # noqa: F401
     except ImportError as e:
-        raise RuntimeError(
+        raise VoiceEnvError(
             f"telugu fixed voice: dependency still missing after "
             f"bootstrap: {e}")
 
@@ -325,7 +350,7 @@ def synth_to_file(text, out, lang="te"):
     settings = engine.load_settings()
     ref_name, ref_wav, ref_text, anchor = load_refs()
     if not os.path.exists(ref_wav):
-        raise RuntimeError(
+        raise VoiceEnvError(
             f"telugu fixed voice: canonical ref missing at {ref_wav}")
     model = _load_model()
     LAST_TELUGU = []

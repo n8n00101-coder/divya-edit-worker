@@ -1246,8 +1246,30 @@ async def synth_voice(text, voice, mood, out, ref=None):
             # refs. Its own ref ships in this repo; a user refvoice
             # never overrides the locked house voice.
             import indicf5_tts
-            words = await asyncio.to_thread(
-                indicf5_tts.synth_to_file, text, out, lang)
+            try:
+                words = await asyncio.to_thread(
+                    indicf5_tts.synth_to_file, text, out, lang)
+            except indicf5_tts.VoiceEnvError as _env_e:
+                # ENVIRONMENT failure only (engine checkout / deps /
+                # ref missing — the leg never generated a take; the
+                # 2026-11-24 Wave-8 job-3 librosa crash class): the
+                # job must NOT die with the voice leg. Degrade to the
+                # built-in Telugu voice and RECORD the degradation in
+                # the job's pace log, so the delivered film's record
+                # says plainly that the house voice was not used and
+                # why. A ship-bar (quality) failure is a plain
+                # RuntimeError and still raises — no voice is ever
+                # substituted for a take that failed the owner's bar.
+                _fb = VOICES[("te", "female")]
+                print(f"synth_voice: fixed Telugu voice unavailable "
+                      f"({_env_e}); degrading to {_fb} — recorded",
+                      flush=True)
+                CLONE_PACE_RECORDS.append(
+                    {"voice": voice, "lang": "te", "degraded": True,
+                     "degraded_to": _fb,
+                     "reason": str(_env_e)[:200]})
+                words = await tts(text, _fb, mood, out)
+                return words, _fb
             for _rec in getattr(indicf5_tts, "LAST_TELUGU", []):
                 CLONE_PACE_RECORDS.append(
                     {"voice": voice, "lang": "te", **_rec})
