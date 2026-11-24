@@ -90,7 +90,7 @@ ROW_CAP = 200_000            # max data rows compute/verify will read
 VERIFY_READ_CAP = 8 * 1024 * 1024   # max bytes verify_file_contains reads
 
 _SPEC_KEYS = ("filter", "group_by", "sum", "count", "count_where",
-              "top_by_sum")
+              "top_by_sum", "multiply_sum")
 _EXPECT_KEYS = ("row_count", "must_contain", "must_not_contain",
                 "sorted")
 
@@ -177,6 +177,26 @@ def _normalize_spec(spec):
                                   "a column — a string or "
                                   "{\"column\": ...}")
                 out["sum"] = scol
+        elif key == "multiply_sum":
+            # W6 (live-proven gap, 2026-11-24): line totals —
+            # sum of a*b over two columns (qty x price) — were NOT
+            # expressible, and two production agent jobs died on
+            # exactly that ("required calculation not supported by
+            # tools"). Accepted shapes: {"columns": [a, b]}, a bare
+            # [a, b] list, or {"a": ..., "b": ...}.
+            cols = None
+            if isinstance(val, dict) and isinstance(val.get("columns"), list):
+                cols = val["columns"]
+            elif isinstance(val, list):
+                cols = val
+            elif isinstance(val, dict) and "a" in val and "b" in val:
+                cols = [val["a"], val["b"]]
+            if not cols or len(cols) != 2 \
+                    or not all(isinstance(c, str) and c for c in cols):
+                return None, ("spec multiply_sum must name exactly "
+                              "two columns — {\"columns\": "
+                              "[\"qty\", \"price\"]}")
+            out["multiply_sum"] = {"columns": list(cols)}
         elif key == "count":
             if val is True or isinstance(val, dict) \
                     or val == "true":
@@ -411,6 +431,19 @@ def register_compute_tools(reg, root):
             bad = need_col(scol, "sum")
             if bad:
                 return spec_fail(bad)
+        mspec = spec.get("multiply_sum")
+        mcols = None
+        if mspec is not None:
+            if not isinstance(mspec, dict) \
+                    or not isinstance(mspec.get("columns"), list) \
+                    or len(mspec["columns"]) != 2:
+                return spec_fail("spec multiply_sum must be an "
+                                 "object {\"columns\": [a, b]}")
+            mcols = mspec["columns"]
+            for mc in mcols:
+                bad = need_col(mc, "multiply_sum")
+                if bad:
+                    return spec_fail(bad)
         cw = spec.get("count_where")
         cw_col = cw_gt = None
         if cw is not None:
@@ -432,10 +465,10 @@ def register_compute_tools(reg, root):
             return spec_fail("spec top_by_sum needs both "
                              "group_by and sum in the same spec")
         if not (want_count or scol is not None or cw is not None
-                or gcol is not None):
+                or gcol is not None or mspec is not None):
             return spec_fail("spec computes nothing — give at "
                              "least one of count, sum, "
-                             "count_where, group_by")
+                             "count_where, group_by, multiply_sum")
 
         picked = [(i + 1, r) for i, r in enumerate(rows)
                   if fcol is None or str(r.get(fcol, "")) == feq]
@@ -463,6 +496,17 @@ def register_compute_tools(reg, root):
                     if d > cw_gt:
                         n += 1
                 out["count_where"] = n
+            if mcols is not None:
+                total = Decimal(0)
+                for rowno, r in members:
+                    da, bad = _num(r.get(mcols[0], ""), mcols[0], rowno)
+                    if bad:
+                        return None, bad
+                    db, bad = _num(r.get(mcols[1], ""), mcols[1], rowno)
+                    if bad:
+                        return None, bad
+                    total += da * db
+                out["multiply_sum"] = str(total)
             return out, None
 
         facts = {"path": rel, "rows": len(picked)}
@@ -758,7 +802,7 @@ def register_compute_tools(reg, root):
         "compute_csv",
         "Compute exact facts from a workspace CSV with CODE (never in your head). Args: {path, spec}. Spec example: "
         + _SPEC_EXAMPLE +
-        " — flat string forms (\"sum\": \"amount_inr\") and nested forms (\"sum\": {\"column\": \"amount_inr\"}, \"count\": {}) are both accepted. Returns JSON facts. Read-only.",
+        " — flat string forms (\"sum\": \"amount_inr\") and nested forms (\"sum\": {\"column\": \"amount_inr\"}, \"count\": {}) are both accepted. For LINE TOTALS — the sum of one column times another, like qty x price — use \"multiply_sum\": {\"columns\": [\"qty\", \"price\"]}; combined with \"group_by\" it returns that product-sum per group. Returns JSON facts. Read-only.",
         {"path": {"type": "string", "required": True,
                   "desc": "CSV path inside the workspace"},
          "spec": {"type": "object", "required": True,
