@@ -65,4 +65,20 @@ jobs:
                     "u_83e04b25a999b9114429b6c5", "u_157dcd2a08241c33c2fd311a"]:
               print("GACCTS", u, "->", json.dumps(call({"op": "get", "key": "gaccts:" + u}))[:500])
           print("GACCTS 917993610173 ->", json.dumps(call({"op": "get", "key": "gaccts:917993610173"}))[:500])
+          # Wave 2 backfill: Ajju's identity set (evidence: em: index —
+          # markk34200 -> 1ae98fe…, mike0123l098 -> 157dcd2…; gaccts —
+          # n8n00101@gmail.com grant id a130megv under BOTH c3a7d44… and
+          # 83e04b2…; ukey openrouter under 919951950173; gaccts under
+          # 917993610173). u_f9aa32… deliberately excluded: no
+          # non-secret record attributes it to anyone.
+          SET = ["917993610173", "919951950173",
+                 "u_1ae98fe781f28d88292377bc", "1ae98fe781f28d88292377bc",
+                 "u_157dcd2a08241c33c2fd311a", "157dcd2a08241c33c2fd311a",
+                 "u_c3a7d44f625995a315d79632", "c3a7d44f625995a315d79632",
+                 "u_83e04b25a999b9114429b6c5", "83e04b25a999b9114429b6c5"]
+          for mid in SET:
+              print("BACKFILL put link:" + mid, "->", json.dumps(call({"op": "put", "key": "link:" + mid, "value": SET})))
+          print("BACKFILL read link:917993610173 ->", json.dumps(call({"op": "get", "key": "link:917993610173"}))[:400])
+          print("BACKFILL list link: ->", json.dumps(call({"op": "list", "prefix": "link:", "limit": 100})))
+          print("POOL scout:models ->", json.dumps(call({"op": "get", "key": "scout:models"}))[:600])
           PY
