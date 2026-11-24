@@ -132,4 +132,19 @@ jobs:
               print("W6 seed cur2 ->", json.dumps(call({"op": "put", "key": "agentcur:w6testlive", "value": {"job": W6JOB2, "at": now}})))
           _j2 = call({"op": "get", "key": "setupjob:" + W6JOB2}).get("v") or {}
           print("W6 job2 ->", json.dumps({"state": _j2.get("state"), "step": _j2.get("step"), "note": _j2.get("note"), "steps": len(_j2.get("steps") or []), "answer": str(_j2.get("answer") or "")[:120]}))
+          # Wave 6 part 3: kill-and-resume — many small steps (one
+          # bill file per customer, worked one at a time) so the
+          # loop runs for minutes, not seconds.
+          W6JOB3 = "a6e00000000000000003"
+          if not call({"op": "get", "key": "setupjob:" + W6JOB3}).get("exists"):
+              now = int(_t.time() * 1000)
+              rec3 = {"job": W6JOB3, "user": "w6testlive", "provider": "agent", "flow": "agent",
+                      "task": "Read orders.csv in your workspace. The customers are: Ananya, Ravi, Meena, Kiran, Divya, Arjun, Sana. For EACH customer, one at a time, in that order: compute that customer's total spend (qty x price summed) and write a file named bill_<customer>.txt (for example bill_Ananya.txt) containing exactly two lines: the customer name on line 1 and their total as a plain number on line 2. Finish one customer's file completely before starting the next. When all seven files are written, write done.txt containing the word COMPLETE.",
+                      "state": "queued", "step": "starting", "note": "", "at": now, "upd": now,
+                      "files": {"orders.csv": "\n".join(rows) + "\n"},
+                      "evidence": [{"tool": "file_write", "contains": "done.txt"}]}
+              print("W6 seed job3 ->", json.dumps(call({"op": "put", "key": "setupjob:" + W6JOB3, "value": rec3})))
+              print("W6 seed cur3 ->", json.dumps(call({"op": "put", "key": "agentcur:w6testlive", "value": {"job": W6JOB3, "at": now}})))
+          _j3 = call({"op": "get", "key": "setupjob:" + W6JOB3}).get("v") or {}
+          print("W6 job3 ->", json.dumps({"state": _j3.get("state"), "step": _j3.get("step"), "note": str(_j3.get("note") or "")[:160], "steps": len(_j3.get("steps") or []), "answer": str(_j3.get("answer") or "")[:120]}))
           PY
