@@ -180,6 +180,17 @@ jobs:
               print("W7 seed browsecur ->", json.dumps(call({"op": "put", "key": "browsecur:w7testlive", "value": {"job": W7JOB, "at": now}})))
           _jb = call({"op": "get", "key": "setupjob:" + W7JOB}).get("v") or {}
           print("W7 browse ->", json.dumps({"state": _jb.get("state"), "step": _jb.get("step"), "note": str(_jb.get("note") or "")[:170], "url": _jb.get("url"), "answer": str(_jb.get("answer") or "")[:200]}))
+          # Wave 8: one 1-minute create job through the current
+          # pipeline (edit.yml -> runner.py -> doc.py HF leg).
+          W8JOB = "c8e00000000000000001"
+          if not call({"op": "get", "key": "job:" + W8JOB}).get("exists"):
+              recf = {"mode": "create",
+                      "brief": "How trees talk to each other through underground fungal networks — a 1-minute documentary with real footage, narration and captions.\nFINAL VIDEO LENGTH: exactly 1 minutes",
+                      "recent": [], "to": "w8testlive",
+                      "user_prompt": "Make a 1 minute video about how trees communicate underground through fungi networks, with real footage and narration."}
+              print("W8 seed job ->", json.dumps(call({"op": "put", "key": "job:" + W8JOB, "value": recf})))
+          _jf = call({"op": "get", "key": "job:" + W8JOB}).get("v") or {}
+          print("W8 job ->", json.dumps({"mode": _jf.get("mode"), "to": _jf.get("to"), "brief_head": str(_jf.get("brief") or "")[:60]}))
           # Wave 6 part 5: job 5 = job 4's task against the FIXED
           # resume (workspace snapshots). Kill mid-run, re-dispatch,
           # expect done + evidence.
