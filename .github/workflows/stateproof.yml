@@ -226,21 +226,22 @@ jobs:
           # Wave 6 part 8: job 8 — mechanism test sized to the free
           # brain: 3 customers, 6 files + done.txt. Kill + resume.
           W6JOB8 = "a6e00000000000000008"
-          if not call({"op": "get", "key": "setupjob:" + W6JOB8}).get("exists"):
+          W6JOB9 = W6JOB8.replace("08", "09")
+          if not call({"op": "get", "key": "setupjob:" + W6JOB9}).get("exists"):
               now = int(_t.time() * 1000)
               rows8 = ["customer,item,qty,price",
                        "Ananya,Notebook,2,150", "Ravi,Pen,5,40", "Ananya,Bag,1,900",
                        "Ravi,Notebook,1,150", "Meena,Pen,10,40", "Meena,Notebook,3,150"]
-              rec8 = {"job": W6JOB8, "user": "w6testlive", "provider": "agent", "flow": "agent",
+              rec8 = {"job": W6JOB9, "user": "w6testlive", "provider": "agent", "flow": "agent",
                       "task": "Read orders.csv in your workspace. The customers are: Ananya, Ravi, Meena. Use compute_csv with group_by customer and multiply_sum of qty and price to get each customer's total spend. Then, for EACH customer one at a time in that order: (a) write bill_<customer>.txt with the customer name on line 1 and their total as a plain number on line 2; (b) write items_<customer>.txt listing that customer's items from orders.csv, one per line as item x qty. Finish both files for one customer before starting the next. When all 6 files are written, write done.txt containing the word COMPLETE.",
                       "state": "queued", "step": "starting", "note": "", "at": now, "upd": now,
                       "files": {"orders.csv": "\n".join(rows8) + "\n"},
                       "evidence": [{"tool": "file_write", "contains": "done.txt"}]}
-              print("W6 seed job8 ->", json.dumps(call({"op": "put", "key": "setupjob:" + W6JOB8, "value": rec8})))
+              print("W6 seed job9 ->", json.dumps(call({"op": "put", "key": "setupjob:" + W6JOB9, "value": rec8})))
               print("W6 seed cur8 ->", json.dumps(call({"op": "put", "key": "agentcur:w6testlive", "value": {"job": W6JOB8, "at": now}})))
-          _j8 = call({"op": "get", "key": "setupjob:" + W6JOB8}).get("v") or {}
-          _ws8 = call({"op": "get", "key": "agentws:" + W6JOB8}).get("v") or {}
-          print("W6 job8 ->", json.dumps({"state": _j8.get("state"), "step": _j8.get("step"), "note": str(_j8.get("note") or "")[:170], "steps": len(_j8.get("steps") or []), "ws_files": len((_ws8.get("files") or {})), "answer": str(_j8.get("answer") or "")[:120]}))
+          _j8 = call({"op": "get", "key": "setupjob:" + W6JOB9}).get("v") or {}
+          _ws8 = call({"op": "get", "key": "agentws:" + W6JOB9}).get("v") or {}
+          print("W6 job9 ->", json.dumps({"state": _j8.get("state"), "step": _j8.get("step"), "note": str(_j8.get("note") or "")[:170], "steps": len(_j8.get("steps") or []), "ws_files": len((_ws8.get("files") or {})), "answer": str(_j8.get("answer") or "")[:120]}))
           for _s in (_j6.get("steps") or []):
               print("W6 job6 step ->", json.dumps({"n": _s.get("n"), "tool": _s.get("tool"), "ok": _s.get("ok"), "phase": _s.get("phase"), "arg": str(_s.get("arg") or "")[:110], "result": str(_s.get("result") or "")[:130]}))
           PY
