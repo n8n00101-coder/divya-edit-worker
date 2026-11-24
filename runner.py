@@ -229,6 +229,53 @@ async def voicebatch_job(j, wa, note):
     await note(f"🎙️ {note_txt}. Files History lo unnayi.")
 
 
+async def videogen_job(j, wa, note):
+    """Free AI video generation (Ajju order 2026-11-24): render ONE
+    clip from a text prompt with Wan 2.2 TI2V-5B (Apache-2.0 open
+    weights) on the owner's own Kaggle GPU — the only model from the
+    video's list that fits free infra (see videogen.py's header for
+    the per-model verification). The clip returns through the normal
+    runner result channel (res:<job>) and a WhatsApp note. Kaggle
+    limit/error is reported honestly — no second provider exists for
+    video, and accounts are never rotated."""
+    import videogen as vg
+    prompt = str(j.get("prompt") or "").strip()
+    kag = j.get("KAGGLE") or {}
+    if not (kag.get("user") and kag.get("key")):
+        app_state("failed", "Videogen ki Kaggle connect avvaledu — Setup lo Kaggle connect cheyyi.")
+        await note("⚠️ Video generation ki Kaggle GPU connect avvaledu. Setup lo Kaggle connect chesthe nee free GPU meedha render avthundhi.")
+        return
+    client = vg.KaggleVideogenClient(kag["user"], kag["key"])
+
+    def on_status(st):
+        if st:
+            app_state("running", f"Kaggle GPU lo video render avthundhi ({st})…")
+
+    app_state("running", "Kaggle GPU lo video render start ayyindhi…")
+    out = await asyncio.to_thread(vg.run_videogen, prompt, kaggle=client,
+                                  on_status=on_status)
+    if not out.get("ok"):
+        reason = out.get("reason") or "error"
+        detail = str(out.get("detail") or "")[:160]
+        app_state("failed", f"Videogen {reason}: {detail}")
+        if reason == "limit":
+            await note("⚠️ Kaggle GPU limit ayyindhi — video render avvaledu. Konchem sepu tarvatha malli try cheyyi.")
+        elif reason == "timeout":
+            await note("⚠️ Kaggle chala slow ga undhi (time ayipoyindhi) — video ready avvaledu. Malli try cheyyi.")
+        else:
+            await note("⚠️ Video render fail ayyindhi. Konchem sepu tarvatha malli try cheyyi.")
+        return
+    info = out.get("info") or {}
+    note_txt = (f"AI video ready (Wan 2.2, {info.get('width', '')}x{info.get('height', '')}, "
+                f"render {info.get('render_s', '?')}s on {info.get('gpu', 'Kaggle GPU')})")
+    rr = httpx.post(f"{WORKER}/api/runner/result", params={"job": JOB, "note": note_txt[:290]},
+                    content=out["mp4"], headers={"x-runner-key": KEY, "content-type": "video/mp4"}, timeout=300)
+    print("videogen result upload", rr.status_code)
+    if rr.status_code == 200:
+        mark_result_delivered()
+    await note(f"🎬 {note_txt}. Video History lo undhi.")
+
+
 async def ytupload_job(j, wa):
     """v113 (WA->YouTube audit #9): the RUNNER leg of a YouTube upload.
     The Worker minted a fresh access token onto the job record; the
@@ -371,6 +418,8 @@ async def _run_job(j):
     try:
         if j.get("mode") == "voicebatch":
             return await voicebatch_job(j, wa, note)
+        if j.get("mode") == "videogen":
+            return await videogen_job(j, wa, note)
         if j.get("mode") == "edit_create":
             return await edit_create_job(j, wa, note)
         if j.get("mode") == "create":
