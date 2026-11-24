@@ -61,4 +61,10 @@ jobs:
               print("DIR step ->", json.dumps({"n": s.get("n"), "tool": s.get("tool"), "ok": s.get("ok"),
                     "phase": s.get("phase"), "arg": str(s.get("arg") or "")[:90],
                     "result": str(s.get("result") or "")[:130]}))
+          # Brain-health peek: the newest dbg: records (the agentstep
+          # failure trail lives there when the pool misbehaves).
+          dbg = call({"op": "list", "prefix": "dbg:", "limit": 1000}).get("keys", [])
+          print("DIR dbg count ->", len(dbg))
+          for k in dbg[-3:]:
+              print("DIR dbg ->", k, json.dumps(call({"op": "get", "key": k}).get("v"))[:300])
           PY
