@@ -182,13 +182,14 @@ jobs:
           print("W7 browse ->", json.dumps({"state": _jb.get("state"), "step": _jb.get("step"), "note": str(_jb.get("note") or "")[:170], "url": _jb.get("url"), "answer": str(_jb.get("answer") or "")[:200]}))
           # Wave 8: one 1-minute create job through the current
           # pipeline (edit.yml -> runner.py -> doc.py HF leg).
-          W8JOB = "c8e00000000000000002"
+          W8JOB = "c8e00000000000000003"
           if not call({"op": "get", "key": "job:" + W8JOB}).get("exists"):
               recf = {"mode": "create",
                       "brief": "How trees talk to each other through underground fungal networks — a 1-minute documentary with real forest footage and on-screen captions.\nFINAL VIDEO LENGTH: exactly 1 minutes",
                       "recent": [], "to": "w8testlive",
                       "user_prompt": "Make a 1 minute documentary video about how trees communicate underground through fungi networks, with real forest footage."}
               print("W8 seed job ->", json.dumps(call({"op": "put", "key": "job:" + W8JOB, "value": recf})))
+              print("W8 seed jobown ->", json.dumps(call({"op": "put", "key": "jobown:" + W8JOB, "value": "w8testlive"})))
           _jf = call({"op": "get", "key": "job:" + W8JOB}).get("v") or {}
           print("W8 job ->", json.dumps({"mode": _jf.get("mode"), "to": _jf.get("to"), "brief_head": str(_jf.get("brief") or "")[:60]}))
           # Wave 9 live: the doorlog route end-to-end (seed a runner
