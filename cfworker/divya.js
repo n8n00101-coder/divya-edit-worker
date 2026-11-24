@@ -1308,6 +1308,7 @@ async function oauthRoutes(env, url) {
         a = { uid, name: String(prof?.name || email.split("@")[0]).slice(0, 60), email, phone: "", pphone: "", pw: "", pwv: 1, created: Date.now(), google: true };
         await acctPut(env, a); await env.KV.put(`em:${email}`, uid);
       }
+      await linkIdentities(env, { uid: a.uid, phone: a.phone, email }); // W2: Google login — uid + email (+ phone if set) are all known here
       // v40 (R19): store the Google OAuth token under the app user id so the
       // Worker itself can read verification mail server-side (fetchVerifyLink)
       // and feed the magic link to the setup runner. nid matches appAuth's
@@ -1328,6 +1329,7 @@ async function oauthRoutes(env, url) {
       try { reg97 = await gAcctRegister(env, s.user, s.prov, rec97, em97); } catch {}
       if (reg97 && !reg97.ok && reg97.cap) return page(`Already ${GACCT_CAP} Google accounts connect ayyi unnayi — kotta account add cheyyalante mundhu Julie app lo okati remove cheyyi. (Account limit reached — remove one in the Julie app first.)`);
       if (!reg97 || !reg97.ok) await env.KV.put(`tok:${s.user}:${s.prov}`, JSON.stringify(rec97));
+      if (em97) await linkIdentities(env, { anyId: s.user, email: em97 }); // W2: connect user + Google email are both known here
     } else {
       await env.KV.put(`tok:${s.user}:${s.prov}`, JSON.stringify(rec97));
     }
@@ -1335,13 +1337,13 @@ async function oauthRoutes(env, url) {
     // email verification IS the unblock — the grant was just stored
     // under this same user, so feed the link NOW instead of waiting
     // for the runner's next poll, and tell the chat it resumed.
-    if (s.prov === "google") { try { const chain110 = parseRec(await env.KV.get(`setupchain:${s.user}`)); if (chain110 && chain110.current) { const job110 = parseRec(await env.KV.get(`setupjob:${chain110.current}`)); if (job110 && job110.state === "paused" && ((job110.pauseReason || "email") === "email" || job110.verifyWait)) { const upd110 = await maybeFeedVerifyLink(env, job110, chain110.at || 0); if (upd110 && upd110.state === "running" && !s.app) await say(env, s.user, `Google connect ayyindhi ✓ — ${setupProvName(job110.provider)} verification link feed chesa, setup continue avuthundhi.`); } } } catch {} }
+    if (s.prov === "google") { try { let chain110 = null; for (const cid of await linkedUserIds(env, s.user)) { chain110 = parseRec(await env.KV.get(`setupchain:${cid}`)); if (chain110) break; } if (chain110 && chain110.current) { const job110 = parseRec(await env.KV.get(`setupjob:${chain110.current}`)); if (job110 && job110.state === "paused" && ((job110.pauseReason || "email") === "email" || job110.verifyWait)) { const upd110 = await maybeFeedVerifyLink(env, job110, chain110.at || 0); if (upd110 && upd110.state === "running" && !s.app) await say(env, s.user, `Google connect ayyindhi ✓ — ${setupProvName(job110.provider)} verification link feed chesa, setup continue avuthundhi.`); } } } catch {} }
     // v111: the same connect is also the unblock for a FINISHED
     // chain's failed door providers — with no chain running, the
     // retry offer fires now (its allow card rides with it; with an
     // Always-allow grant on file the retry starts at once and this
     // line is its start report).
-    if (s.prov === "google" && !s.app) { try { const chain111 = parseRec(await env.KV.get(`setupchain:${s.user}`)); if (!chain111) { const offer111 = await waRetryOffer(env, s.user).catch(() => null); if (offer111) await say(env, s.user, offer111); } } catch {} }
+    if (s.prov === "google" && !s.app) { try { let chain111 = null; for (const cid of await linkedUserIds(env, s.user)) { chain111 = parseRec(await env.KV.get(`setupchain:${cid}`)); if (chain111) break; } if (!chain111) { const offer111 = await waRetryOffer(env, s.user).catch(() => null); if (offer111) await say(env, s.user, offer111); } } catch {} }
     // v61: app-originated connects return INTO the app (the old plain
     // page dead-ended app users on the API host, outside Julie).
     if (s.app) return Response.redirect("https://divya-app.n8n00101.workers.dev/?connected=" + encodeURIComponent(s.prov), 302);
@@ -2988,7 +2990,7 @@ async function appApi(req, env, url, ctx) {
       const ownCount = (await setupKeyList(env, u.n)).count;
       if (ownCount < 5) { const inv = await inviterOf(env, u.n); if (inv) { const k = await openKey(env, inv, "gemini"); if (k) { ans = await geminiVision(k); if (ans) via = "inviter-gemini"; } } }
     } catch {}
-    if (!ans && env.GEMINI_KEY) try { ans = await geminiVision(env.GEMINI_KEY); if (ans) via = "shared-gemini"; } catch {}
+    if (!ans) try { const gkV = env.GEMINI_KEY || (await scoutTestKey(env, "gemini").catch(() => null))?.key; if (gkV) { ans = await geminiVision(gkV); if (ans) via = "shared-gemini"; } } catch {} // W2/R1: env.GEMINI_KEY is unset live — ride the owner's sealed key like the chat tier
     if (!ans && env.AI) try {
       const prompt = (lg === "en" ? "You are Julie, a helpful assistant. Look at the image carefully and answer the user's question. Read all text in the image exactly. Reply in English." : "You are Julie, a helpful assistant. Look at the image carefully and answer the user's question. Read all text in the image exactly. Reply in Romanized Telugu (Telugu written in Latin letters).") + "\n\n" + q;
       const r = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", { image: Array.from(unb64(data)), prompt, max_tokens: 900 });
@@ -4091,20 +4093,27 @@ async function chatWithFallback(env, u, messages) {
   const sorry = /^Sorry ra, naa AI brain/;
   // v48 (R54): the user's own saved model (Manual — Add Model) is the
   // brain FIRST when present; any failure falls through to the chain.
-  try {
-    const crec = JSON.parse((await env.KV.get(`umodel:${u.n}`)) || "null");
-    if (crec && crec.base && crec.model) { const ck = await openKey(env, u.n, "custom"); if (ck) { const out = await customChat(ck, crec, messages).catch(() => ""); if (out) { u.via = "own-model"; return out; } } }
-  } catch {}
-  // hardening: each own-key step (openKey lookup + call) is isolated in
-  // try/catch — a throw in one step (e.g. a storage error inside openKey)
-  // falls through to the next provider instead of aborting the chain,
-  // exactly like the per-call .catch fallthrough below.
-  try { const gk = await openKey(env, u.n, "groq");
-    if (gk) { const genv = { ...env, GROQ_KEY: gk }; const out = await groq(genv, messages).catch(() => ""); if (genv.__q429 && !u.keyQuota) u.keyQuota = "groq"; if (out && !sorry.test(out)) { u.via = "own-groq"; return out; } } } catch {}
-  try { const ok = await openKey(env, u.n, "openrouter");
-    if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "openrouter"; if (out) { u.via = "own-openrouter"; return out; } } } catch {}
-  try { const gmk = await openKey(env, u.n, "gemini");
-    if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "gemini"; if (out) { u.via = "own-gemini"; return out; } } } catch {}
+  // W2 / R2 (C-01, the model-path face): the own tier resolves the
+  // PERSON — every linked keyspace is tried per provider, the
+  // caller's own id first. Pre-W2 a key sealed under any other of the
+  // user's identities was invisible to their own chats (Ajju's
+  // OpenRouter key sat under his other number all along). Each step
+  // stays isolated in try/catch (the hardening rule): a throw in one
+  // step falls through to the next provider instead of aborting.
+  const ownIds = [String(u.n)];
+  try { for (const id of await linkedUserIds(env, u.n)) if (!ownIds.includes(id)) ownIds.push(id); } catch {}
+  for (const oid of ownIds) {
+    try {
+      const crec = JSON.parse((await env.KV.get(`umodel:${oid}`)) || "null");
+      if (crec && crec.base && crec.model) { const ck = await openKey(env, oid, "custom"); if (ck) { const out = await customChat(ck, crec, messages).catch(() => ""); if (out) { u.via = "own-model"; return out; } } }
+    } catch {}
+    try { const gk = await openKey(env, oid, "groq");
+      if (gk) { const genv = { ...env, GROQ_KEY: gk }; const out = await groq(genv, messages).catch(() => ""); if (genv.__q429 && !u.keyQuota) u.keyQuota = "groq"; if (out && !sorry.test(out)) { u.via = "own-groq"; return out; } } } catch {}
+    try { const ok = await openKey(env, oid, "openrouter");
+      if (ok) { const out = await orChat(env, ok, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "openrouter"; if (out) { u.via = "own-openrouter"; return out; } } } catch {}
+    try { const gmk = await openKey(env, oid, "gemini");
+      if (gmk) { const out = await geminiChat(env, gmk, messages).catch(() => ""); if (env.__q429 && !u.keyQuota) u.keyQuota = "gemini"; if (out) { u.via = "own-gemini"; return out; } } } catch {}
+  }
   // v88 (F11): INVITER tier — own keys exhausted. A user who joined via a
   // referral code and still has FEWER than 5 own working models borrows
   // the INVITER's keys, in the same order as the own tier (custom model
@@ -4129,8 +4138,17 @@ async function chatWithFallback(env, u, messages) {
   } catch {}
   const shared = await groq(env, messages).catch(() => "");
   if (shared && !sorry.test(shared)) { u.via = "shared"; return shared; }
-  if (env.OPENROUTER_KEY) { const out = await orChat(env, env.OPENROUTER_KEY, messages).catch(() => ""); if (out) { u.via = "shared-openrouter"; return out; } }
-  if (env.GEMINI_KEY) { const out = await geminiChat(env, env.GEMINI_KEY, messages).catch(() => ""); if (out) { u.via = "shared-gemini"; return out; } }
+  // W2 / R1: the shared OpenRouter/Gemini tiers rode env secrets that
+  // were never set on the live Worker (bindings audit 2026-11-24:
+  // OPENROUTER_KEY / GEMINI_KEY absent) — the tiers could never fire
+  // and the "pool" was Groq-only for a keyless user. They now fall
+  // back to the owners' sealed keys (the scoutTestKey pattern —
+  // opened inside the Worker only), making the shared pool three
+  // providers deep again.
+  const orShared = env.OPENROUTER_KEY || (await scoutTestKey(env, "openrouter").catch(() => null))?.key;
+  if (orShared) { const out = await orChat(env, orShared, messages).catch(() => ""); if (out) { u.via = "shared-openrouter"; return out; } }
+  const gmShared = env.GEMINI_KEY || (await scoutTestKey(env, "gemini").catch(() => null))?.key;
+  if (gmShared) { const out = await geminiChat(env, gmShared, messages).catch(() => ""); if (out) { u.via = "shared-gemini"; return out; } }
   u.via = "none";
   return "";
 }
@@ -5009,7 +5027,7 @@ async function waRetryOffer(env, user) {
   const names = r.ids.map(setupProvName).join(", ");
   if (r.door.length) {
     let hasGrant = false;
-    try { hasGrant = !!(await env.KV.get(`tok:${user}:google`)); if (!hasGrant) { const idx = await gAccts(env, user); hasGrant = (idx.list || []).length > 0; } } catch {}
+    try { for (const id of await linkedUserIds(env, user)) { if (await env.KV.get(`tok:${id}:google`)) { hasGrant = true; break; } const idx = await gAccts(env, id); if ((idx.list || []).length > 0) { hasGrant = true; break; } } } catch {} // W2 / C-22: the door-gate reads the person's grants, not one keyspace's
     if (!hasGrant) {
       try { await connectMenu(env, user); } catch {}
       return `Fail ayina providers: ${names}. Veetilo ${r.door.map(setupProvName).join(", ")} ki nee Google connect kavali — paine connect card pampina, Google connect cheyyi. Connect ayyaka 'failed vi malli try cheyu' ani cheppu, retry ikkade start chestha.`;
@@ -5209,6 +5227,7 @@ async function waSetupStart(env, user, email) {
   const idn = await waIdentityFor(env, user, email).catch(() => ({ name: "", phone: "" }));
   const chain = { providers: ids, done: [], failed: [], current: null, email, pass, at: Date.now(), browser: "profile", userName: idn.name || "", userPhone: idn.phone || user, startId: null, via: "wa" };
   await env.KV.put(`setupchain:${user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 });
+  await linkIdentities(env, { anyId: user, email }); // W2: phone + chain email are both known here — write the identity link
   await env.KV.delete(`wafeed:${user}`).catch(() => {}); // v111: a new job starts quiet — a feed never carries over
   const next = await setupStartNext(env, user);
   if (!next.ok) { await env.KV.delete(`setupchain:${user}`).catch(() => {}); return "Setup machine start avvaledu — konchem sepu tarvatha malli 'setup cheyu' ani cheppu."; }
@@ -6192,6 +6211,7 @@ async function acctPublic(req, env, p, body) {
     await env.KV.put(sk, String(sc + 1), { expirationTtl: 3600 });
     const a = { uid: hexOf(crypto.getRandomValues(new Uint8Array(12))), name, email, phone: "", pphone: phone, pw: await pwMake(String(body.password)), pwv: 1, created: Date.now() };
     await acctPut(env, a); await env.KV.put(`em:${email}`, a.uid);
+    await linkIdentities(env, { uid: a.uid, email }); // W2: signup — uid + email known here (phone links at verify, below)
     const token = await newSession(env, a);
     let phone_status = "none", phone_msg = "";
     if (phone) {
@@ -6270,6 +6290,7 @@ async function acctPrivate(req, env, u, p, body) {
     if (other && other !== a.uid) return appJson(req, { ok: false, error: en ? "This phone is already linked to another account." : "Ee phone inkoka account ki link ayyi undi." }, 409);
     if (a.phone && a.phone !== c.phone) await env.KV.delete(`ph:${a.phone}`);
     a.phone = c.phone; a.pphone = ""; await acctPut(env, a); await env.KV.put(`ph:${c.phone}`, a.uid);
+    await linkIdentities(env, { uid: a.uid, phone: c.phone, email: a.email }); // W2: phone-verify completion — uid + verified phone + email all known here
     const al = appAllowed(env, c.phone);
     return appJson(req, { ok: true, phone: c.phone, owner: al.owner, premium: await isPremium(env, c.phone) });
   }
@@ -7468,7 +7489,10 @@ async function scoutTestKey(env, provider) {
   // The scout's test calls ride an OWNER's sealed key (opened only here,
   // inside the Worker — the same pattern chatWithFallback uses). Groq
   // needs none: the shared env key is its test key.
-  for (const n of scoutOwnerNs(env)) { try { const k = await openKey(env, n, provider); if (k) return { n, key: k }; } catch {} }
+  // W2 / R3: walk the owner's LINKED ids too — the Gemini key lives
+  // under a linked uid of the owner, not the owner's own keyspace, so
+  // pre-W2 every Gemini sweep leg skipped with "no owner test key".
+  for (const n of scoutOwnerNs(env)) { const ids = await linkedUserIds(env, n).catch(() => [n]); for (const id of ids) { try { const k = await openKey(env, id, provider); if (k) return { n: id, key: k }; } catch {} } }
   return null;
 }
 const SCOUT_PING = [{ role: "user", content: `Reply with exactly this token and nothing else: ${SCOUT_TOKEN}` }];
@@ -7506,23 +7530,27 @@ async function scoutSweep(env, force) {
   await env.KV.put("scout:last", String(now), { expirationTtl: 86400 * 8 });
   const store = await scoutModels(env);
   const summary = { ran: true, at: now, tested: [], added: [], skipped: [] };
-  let addBudget = SCOUT_MAX_ADD;
+  // W2 / R4: PER-PROVIDER add caps. Pre-W2 one global budget of
+  // SCOUT_MAX_ADD was eaten in provider order (Groq, then OpenRouter)
+  // before the Gemini leg ever ran — both recorded sweeps added 0
+  // Gemini models for exactly this reason.
+  const addBudgets = { groq: SCOUT_MAX_ADD, openrouter: SCOUT_MAX_ADD, gemini: SCOUT_MAX_ADD };
   const logN = scoutOwnerNs(env)[0] || "";
   const note = async (provider, model, action, why, result) => { if (logN) await autoLogAppend(env, logN, { provider: "scout", action, why: `${provider}/${model} — ${why}`, result }); };
   const skip = async (provider, model, why) => { summary.skipped.push({ provider, model, why }); await note(provider, model, "model-skipped", why, "skipped"); await scoutLog(env, { provider, model, action: "skipped", why }); };
-  const add = async (provider, model) => { store[provider].push(model); summary.added.push({ provider, model }); addBudget--; await note(provider, model, "model-added", "passed the scout ping test — joined the rotation at the end", "added"); await scoutLog(env, { provider, model, action: "added" }); };
+  const add = async (provider, model) => { store[provider].push(model); summary.added.push({ provider, model }); addBudgets[provider]--; await note(provider, model, "model-added", "passed the scout ping test — joined the rotation at the end", "added"); await scoutLog(env, { provider, model, action: "added" }); };
   // ---- Groq: candidates = the shared key's live list, minus the rotation ----
   try {
     const gk = (env.GROQ_KEY || "").split(",").map(s => s.trim()).filter(Boolean)[0];
     if (!gk) summary.skipped.push({ provider: "groq", model: "*", why: "no shared GROQ_KEY" });
-    else if (addBudget <= 0) await skip("groq", "*", "sweep add-cap reached");
+    else if (addBudgets.groq <= 0) await skip("groq", "*", "sweep add-cap reached");
     else {
       const live = await liveModels(env, gk);
       const excl = /whisper|guard|tts|playai|orpheus|compound|prompt/i;
       const cands = live.filter(id => !CHAT_MODELS.includes(id) && !VISION_MODELS.includes(id) && !store.groq.includes(id) && !excl.test(id)).slice(0, SCOUT_MAX_TEST);
       if (!cands.length) summary.skipped.push({ provider: "groq", model: "*", why: "no new candidates" });
       for (const m of cands) {
-        if (addBudget <= 0) { await skip("groq", "*", "sweep add-cap reached"); break; }
+        if (addBudgets.groq <= 0) { await skip("groq", "*", "sweep add-cap reached"); break; }
         const t = await scoutPingGroq(gk, m); summary.tested.push({ provider: "groq", model: m, pass: t.pass });
         if (t.pass) await add("groq", m); else await skip("groq", m, t.why);
       }
@@ -7536,13 +7564,13 @@ async function scoutSweep(env, force) {
     const curWin = JSON.parse((await env.KV.get("or:free")) || "[]");
     const cands = data.filter(m => String(m.id).endsWith(":free") && ((m.architecture?.output_modalities || ["text"]).includes("text")) && !/image|audio|embed|rerank|moderation/i.test(m.id) && !pref.includes(m.id) && !curWin.includes(m.id) && !store.openrouter.includes(m.id)).map(m => m.id).slice(0, SCOUT_MAX_TEST);
     if (!cands.length) summary.skipped.push({ provider: "openrouter", model: "*", why: "no new candidates" });
-    else if (addBudget <= 0) await skip("openrouter", "*", "sweep add-cap reached");
+    else if (addBudgets.openrouter <= 0) await skip("openrouter", "*", "sweep add-cap reached");
     else {
       const tk = await scoutTestKey(env, "openrouter");
       if (!tk) { for (const m of cands) await skip("openrouter", m, "no owner test key"); }
       else {
         for (const m of cands) {
-          if (addBudget <= 0) { await skip("openrouter", "*", "sweep add-cap reached"); break; }
+          if (addBudgets.openrouter <= 0) { await skip("openrouter", "*", "sweep add-cap reached"); break; }
           const t = await scoutPingOpenRouter(tk.key, m); summary.tested.push({ provider: "openrouter", model: m, pass: t.pass });
           if (t.pass) await add("openrouter", m); else await skip("openrouter", m, t.why);
         }
@@ -7552,7 +7580,7 @@ async function scoutSweep(env, force) {
   } catch (e) { summary.skipped.push({ provider: "openrouter", model: "*", why: String(e).slice(0, 120) }); }
   // ---- Gemini: candidates = free-tier families only (flash / gemma) ----
   try {
-    if (addBudget <= 0) await skip("gemini", "*", "sweep add-cap reached");
+    if (addBudgets.gemini <= 0) await skip("gemini", "*", "sweep add-cap reached");
     else {
       const tk = await scoutTestKey(env, "gemini");
       if (!tk) summary.skipped.push({ provider: "gemini", model: "*", why: "no owner test key" });
@@ -7563,7 +7591,7 @@ async function scoutSweep(env, force) {
         const cands = data.filter(m => (m.supportedGenerationMethods || []).includes("generateContent")).map(m => String(m.name || "").replace(/^models\//, "")).filter(id => /(flash|gemma)/i.test(id) && !bad.test(id) && !["gemini-2.5-flash", "gemini-2.0-flash"].includes(id) && !store.gemini.includes(id)).slice(0, SCOUT_MAX_TEST);
         if (!cands.length) summary.skipped.push({ provider: "gemini", model: "*", why: "no new candidates" });
         for (const m of cands) {
-          if (addBudget <= 0) { await skip("gemini", "*", "sweep add-cap reached"); break; }
+          if (addBudgets.gemini <= 0) { await skip("gemini", "*", "sweep add-cap reached"); break; }
           const t = await scoutPingGemini(tk.key, m); summary.tested.push({ provider: "gemini", model: m, pass: t.pass });
           if (t.pass) await add("gemini", m); else await skip("gemini", m, t.why);
         }
@@ -7910,9 +7938,45 @@ function isApiDisabled(status, errObj) {
 // whichever surface the user touched. Every grant/state read that
 // matters resolves across the link: the id itself, the account found
 // by verified phone (acctFind), and that account's uid + phone.
+// Shadow W2 / census C-01 (RC-1): identity as a WRITE-TIME invariant.
+// linkIdentities is called at every moment the facts are already in
+// hand — WA setup start (phone + email), OAuth completion (user id +
+// Google email), Google login / app signup (uid + email), phone-verify
+// completion (uid + verified phone) — and merges every identifier of
+// the same person into one equivalence set, stored as link:<id> ->
+// JSON array under EVERY member id. linkedUserIds then resolves the
+// set from any member. Pre-W2 the link family was never written by
+// anyone (live census 2026-11-24: link: count = 0, ph: count = 0), so
+// every bridge consumer silently ran single-keyspace.
+async function linkIdentities(env, parts) {
+  try {
+    const cand = new Set();
+    const addUid = u => { if (!u) return; const s = String(u); cand.add(s); cand.add(s.startsWith("u_") ? s.slice(2) : "u_" + s); };
+    if (parts.uid) addUid(parts.uid);
+    if (parts.anyId) { const s = String(parts.anyId); if (/^\d{7,15}$/.test(s)) cand.add(s); else addUid(s); }
+    if (parts.phone) { const p = normPhone(parts.phone); if (p) cand.add(p); }
+    if (parts.email) { const e = normEmail(parts.email); if (e) { const uid = await env.KV.get(`em:${e}`); if (uid) addUid(uid); } }
+    for (const id of [...cand]) { const cur = parseRec(await env.KV.get(`link:${id}`)); if (Array.isArray(cur)) for (const m of cur) cand.add(String(m)); }
+    for (const id of [...cand]) { const a = await acctGet(env, String(id).replace(/^u_/, "")).catch(() => null); if (a) { addUid(a.uid); if (a.phone) cand.add(String(a.phone)); } }
+    const set = [...cand].filter(Boolean).slice(0, 16);
+    if (set.length < 2) return set;
+    const val = JSON.stringify(set);
+    for (const id of set) await env.KV.put(`link:${id}`, val);
+    return set;
+  } catch { return []; }
+}
 async function linkedUserIds(env, user) {
   const ids = [String(user)];
-  try { const a = await acctFind(env, user); if (a) { if (a.uid && !ids.includes(String(a.uid))) ids.push(String(a.uid)); if (a.phone && !ids.includes(String(a.phone))) ids.push(String(a.phone)); } } catch {}
+  const push = id => { if (id && !ids.includes(String(id))) ids.push(String(id)); };
+  try { const a = await acctFind(env, user); if (a) { push(a.uid); if (a.uid) push(String(a.uid).startsWith("u_") ? String(a.uid).slice(2) : "u_" + a.uid); if (a.phone) push(a.phone); } } catch {}
+  try {
+    let frontier = [...ids];
+    for (let hop = 0; hop < 2 && frontier.length; hop++) {
+      const next = [];
+      for (const id of frontier) { const set = parseRec(await env.KV.get(`link:${id}`)); if (Array.isArray(set)) for (const m of set) if (!ids.includes(String(m))) { push(m); next.push(String(m)); } }
+      frontier = next;
+    }
+  } catch {}
   return ids;
 }
 async function fetchVerifyLink(env, n, provider, job, chainAt, opts) {
@@ -8180,6 +8244,21 @@ const KEYLIST_PROVIDERS = [["groq", "Groq"], ["openrouter", "OpenRouter"], ["gem
   // via the Kaggle card, or CREATED by the automate chain (flow_kaggle).
   ["kaggle", "Kaggle (GPU compute)"]];
 async function setupKeyList(env, n) {
+  // W2 / C-06: the key list is a property of the PERSON, not of one
+  // keyspace — merge over linkedUserIds (the user's own id first, so
+  // its rows win a provider tie). Pre-W2 this read ukey:<n> only, so
+  // Ajju's OpenRouter key (sealed under his other number) was
+  // invisible to his chats, the inviter gate and the reporters.
+  const ids = await linkedUserIds(env, n).catch(() => [String(n)]);
+  const byId = new Map();
+  for (const id of ids) {
+    const part = await setupKeyListOwn(env, id).catch(() => null);
+    if (part) for (const row of part.keys) if (!byId.has(row.id)) byId.set(row.id, row);
+  }
+  const keys = [...byId.values()];
+  return { count: keys.filter(r => r.ok).length, keys };
+}
+async function setupKeyListOwn(env, n) {
   const rows = [];
   for (const [id, name] of KEYLIST_PROVIDERS) {
     const r = parseRec(await env.KV.get(`ukey:${n}:${id}`));
@@ -9723,7 +9802,19 @@ export default {
         const back = await env.KV.get(k).catch(() => null);
         return Response.json({ ok: true, key: k, deleted: back == null });
       }
-      return Response.json({ ok: false, error: "op must be get|list|del" }, { status: 400 });
+      if (b.op === "put") {
+        // Guarded write for one-off record repairs (e.g. the Wave 2
+        // identity backfill). Secret families are REFUSED — this route
+        // never writes credential material. Returns read-back proof.
+        const k = String(b.key || "");
+        if (!k) return Response.json({ ok: false, error: "key required" }, { status: 400 });
+        if (isSecret(k)) return Response.json({ ok: false, error: "secret family refused" }, { status: 400 });
+        const v = typeof b.value === "string" ? b.value : JSON.stringify(b.value ?? null);
+        await env.KV.put(k, v);
+        const back = await env.KV.get(k).catch(() => null);
+        return Response.json({ ok: true, key: k, written: back === v });
+      }
+      return Response.json({ ok: false, error: "op must be get|list|del|put" }, { status: 400 });
     }
     // v113: one-shot YouTube channel re-check across ALL of a user's
     // keyspaces (RUNNER_KEY-guarded, proof only — the /internal/scout
