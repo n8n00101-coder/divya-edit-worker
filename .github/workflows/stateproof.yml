@@ -205,4 +205,6 @@ jobs:
           _j6 = call({"op": "get", "key": "setupjob:" + W6JOB6}).get("v") or {}
           _ws6 = call({"op": "get", "key": "agentws:" + W6JOB6}).get("v") or {}
           print("W6 job6 ->", json.dumps({"state": _j6.get("state"), "step": _j6.get("step"), "note": str(_j6.get("note") or "")[:160], "steps": len(_j6.get("steps") or []), "ws_files": len((_ws6.get("files") or {})), "answer": str(_j6.get("answer") or "")[:120]}))
+          for _s in (_j6.get("steps") or []):
+              print("W6 job6 step ->", json.dumps({"n": _s.get("n"), "tool": _s.get("tool"), "ok": _s.get("ok"), "phase": _s.get("phase"), "arg": str(_s.get("arg") or "")[:110], "result": str(_s.get("result") or "")[:130]}))
           PY
