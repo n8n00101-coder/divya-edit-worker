@@ -175,6 +175,31 @@ CANCEL_GRACE_S = 3    # E5: after signalling a tool's cancel hook, how
 MAX_DONE_VERIFY_FAILURES = 2   # E6: failed done-verifications tolerated
                                # before the run ends UNVERIFIED
 
+# DIRECTOR LAYER (2026-11-24): the plan/check/review discipline.
+# The shadows gave Julie Muse's hands (loop, tools, pool,
+# browser); this layer is the part that decides WHAT the hands do:
+# a written vision+plan before any work, a verified check after
+# every plan step, and a final review against the vision before
+# delivery — all enforced by the loop, not requested in a prompt.
+DIRECTOR_VISION_CAP = 300      # chars of vision text
+DIRECTOR_STEPS_CAP = 8         # plan steps (PLAN_STEP_CAP's twin)
+DIRECTOR_TITLE_CAP = 48        # chars per plan step title
+DIRECTOR_ACCEPT_CAP = 110      # chars per acceptance check
+DIRECTOR_RISK_CAP = 80         # chars per risk/unknown
+DIRECTOR_RISKS_CAP = 4         # risks per plan
+DIRECTOR_EVIDENCE_CAP = 240    # chars of check evidence
+DIRECTOR_SUMMARY_CAP = 400     # chars of review summary
+DIRECTOR_DEFECT_CAP = 120      # chars per review defect
+DIRECTOR_DEFECTS_CAP = 6       # defects per review (incl. carried)
+DIRECTOR_PLAN_REFUSALS = 8     # refused actions before the run
+                               # fails honestly for want of a plan
+DIRECTOR_GATE_FAILURES = 2     # rejected done claims at the
+                               # check/review gate before UNVERIFIED
+DIRECTOR_STEP_REWORK = 2       # failed checks per plan step before
+                               # the defect is carried to the review
+DIRECTOR_REWORK_LOOPS = 1      # full rework loops a review may
+                               # order before the job fails honestly
+
 
 # ---------------------------------------------------------------- plumbing
 # Defaults talk to the Worker over the same env + runner-key channel
@@ -359,6 +384,246 @@ def _apply_set_plan(args, job):
     if isinstance(job, dict):
         job["plan"] = plan
     return True, "plan: " + json.dumps(plan, ensure_ascii=False)
+
+
+# ------------------------------------------------- DIRECTOR LAYER
+# The director record lives on the job dict (job["director"]) and
+# is mirrored to the Worker (setup/runner/agentdirector) after every
+# mutation, so the DO's copy — rec.director on the setupjob record —
+# is the audit trail the Wave-0 /internal/state route reads back.
+# Shape: {"plan": {vision, steps: [{title, acceptance}], risks, at},
+#         "checks": [{step, verdict, evidence, at}],
+#         "reviews": [{verdict, summary, defects, at}]}
+# The handlers below are the only writers; run_loop's gates are the
+# only enforcers. A rig that never registers these tools and never
+# passes director=True runs the pre-director loop exactly.
+
+def worker_director_post(kind, data):
+    """Best-effort mirror of one director mutation (plan / check /
+    review / sync) onto the job record in the Worker. Same
+    discipline as worker_record: a lost post is logged, never
+    fatal — agent_runner's terminal sync re-sends the full state
+    before the outcome is reported."""
+    worker = _worker()
+    if not worker or not _job_id():
+        return
+    try:
+        httpx.post(f"{worker}/api/setup/runner/agentdirector",
+                   params={"job": _job_id()},
+                   json={"kind": kind, "data": data},
+                   headers=_headers(), timeout=20)
+    except Exception as e:
+        print("agentdirector post failed:", e, flush=True)
+
+
+def worker_director_sync(job):
+    """Re-send the job's whole director state (terminal sync)."""
+    if isinstance(job, dict) and isinstance(job.get("director"), dict):
+        worker_director_post("sync", job["director"])
+
+
+def _director_state(job):
+    if isinstance(job, dict):
+        d = job.get("director")
+        if isinstance(d, dict):
+            return d
+    return None
+
+
+def _director_plan(job):
+    """The job's director plan dict, or None when no valid plan
+    record exists — the plan gate's single source of truth."""
+    d = _director_state(job)
+    if d:
+        p = d.get("plan")
+        if isinstance(p, dict) and isinstance(p.get("steps"), list) \
+                and p["steps"]:
+            return p
+    return None
+
+
+def _apply_director_plan(args, job):
+    """director_plan handler (registered by
+    tools_registry.register_director_tools, bound to one job
+    record): the brain writes the job's VISION + PLAN before any
+    work — the finished deliverable and what 'good' looks like,
+    ordered steps each carrying a concrete acceptance check, and
+    the risks/unknowns it will verify rather than assume. A plan
+    may be replaced freely until the first step check exists;
+    after that it is locked — a wrong plan is named by the final
+    review, never silently swapped."""
+    if not isinstance(job, dict):
+        return False, ("director_plan unavailable: no job record is "
+                       "bound to this run")
+    d = job.get("director") if isinstance(job.get("director"), dict) \
+        else {}
+    if d.get("checks"):
+        return False, ("refused: the director plan is locked — step "
+                       "checks are already recorded against it. Work "
+                       "the plan; the final review is where a wrong "
+                       "plan gets named, not silently replaced.")
+    vision = str(args.get("vision") or "").strip()
+    if len(vision) < 12:
+        return False, ("refused: a vision is required — a few lines "
+                       "naming the finished deliverable, who it is "
+                       "for, and what 'good' looks like for THIS task")
+    steps_in = args.get("steps")
+    if not isinstance(steps_in, list) or not steps_in:
+        return False, ("refused: director_plan needs a non-empty "
+                       "'steps' list of {title, acceptance} items")
+    if len(steps_in) > DIRECTOR_STEPS_CAP:
+        return False, (f"refused: plan has {len(steps_in)} steps — "
+                       f"the cap is {DIRECTOR_STEPS_CAP}; plan the "
+                       f"whole job in fewer, larger steps")
+    steps = []
+    for item in steps_in:
+        if not isinstance(item, dict):
+            return False, ("refused: each plan step must be a "
+                           "{title, acceptance} object")
+        title = str(item.get("title") or "").strip()[:DIRECTOR_TITLE_CAP]
+        acc = str(item.get("acceptance") or "").strip()[:DIRECTOR_ACCEPT_CAP]
+        if not title or not acc:
+            return False, ("refused: every plan step needs a title "
+                           "AND a concrete acceptance check — what "
+                           "will be true, observably, when it is done")
+        steps.append({"title": title, "acceptance": acc})
+    risks_in = args.get("risks") if isinstance(args.get("risks"), list) \
+        else []
+    risks = [str(r).strip()[:DIRECTOR_RISK_CAP]
+             for r in risks_in[:DIRECTOR_RISKS_CAP] if str(r).strip()]
+    plan = {"vision": vision[:DIRECTOR_VISION_CAP], "steps": steps,
+            "risks": risks, "at": int(time.time() * 1000)}
+    job["director"] = {"plan": plan, "checks": [], "reviews": []}
+    worker_director_post("plan", plan)
+    return True, (f"director-plan recorded: {len(steps)} steps. Work "
+                  f"them IN ORDER; after each step call director_check "
+                  f"with evidence from real tool results; before done, "
+                  f"verify the deliverable itself and call "
+                  f"director_review.")
+
+
+def _apply_director_check(args, job):
+    """director_check handler: the brain checks ONE plan step
+    against its acceptance check, with evidence from real tool
+    results. Checks land in plan order (an earlier unchecked step
+    refuses a later step's check). A fail verdict spends that
+    step's rework budget (DIRECTOR_STEP_REWORK); past the budget
+    the defect is carried to the final review — mechanically
+    appended there by _apply_director_review, so it cannot be
+    silently dropped."""
+    plan = _director_plan(job)
+    if not plan:
+        return False, ("refused: no director plan exists yet — call "
+                       "director_plan first")
+    d = job["director"]
+    try:
+        step = int(args.get("step"))
+    except Exception:
+        return False, ("refused: 'step' must be the 1-based plan "
+                       "step number")
+    nsteps = len(plan["steps"])
+    if step < 1 or step > nsteps:
+        return False, (f"refused: step {step} is outside the plan "
+                       f"(1..{nsteps})")
+    verdict = str(args.get("verdict") or "").strip().lower()
+    if verdict not in ("pass", "fail"):
+        return False, "refused: verdict must be 'pass' or 'fail'"
+    evidence = str(args.get("evidence") or "").strip()
+    if len(evidence) < 8:
+        return False, ("refused: evidence is required — state what "
+                       "the tool results actually showed, not what "
+                       "you intended")
+    checks = d.setdefault("checks", [])
+    checked = {c.get("step") for c in checks if isinstance(c, dict)}
+    missing_earlier = [i for i in range(1, step) if i not in checked]
+    if missing_earlier:
+        return False, (f"refused: plan step(s) {missing_earlier} have "
+                       f"no check yet — check steps in plan order")
+    entry = {"step": step, "verdict": verdict,
+             "evidence": evidence[:DIRECTOR_EVIDENCE_CAP],
+             "at": int(time.time() * 1000)}
+    checks.append(entry)
+    worker_director_post("check", entry)
+    fails = sum(1 for c in checks
+                if c.get("step") == step and c.get("verdict") == "fail")
+    done_count = len({c.get("step") for c in checks})
+    if verdict == "pass":
+        return True, (f"director-check recorded: step {step} PASS "
+                      f"({done_count}/{nsteps} steps checked).")
+    if fails <= DIRECTOR_STEP_REWORK:
+        return True, (f"director-check recorded: step {step} FAIL "
+                      f"(rework {fails}/{DIRECTOR_STEP_REWORK}). "
+                      f"Rework this step NOW, then director_check it "
+                      f"again — do not move on yet.")
+    return True, (f"director-check recorded: step {step} FAIL — "
+                  f"rework budget exhausted; the defect is carried "
+                  f"to the final review as a known defect. Continue "
+                  f"with the next step.")
+
+
+def _apply_director_review(args, job):
+    """director_review handler: the brain's final review of the
+    deliverable against the VISION and every step check. Refused
+    until every plan step carries a check. Steps whose LATEST
+    check failed are appended to the review's defect list by the
+    handler itself — a deliver verdict cannot hide them. The loop
+    acts on the verdict: deliver arms the done gate, rework spends
+    the one rework loop, fail ends the job as failed with the
+    review's summary as the reason."""
+    plan = _director_plan(job)
+    if not plan:
+        return False, ("refused: no director plan exists yet — call "
+                       "director_plan first")
+    d = job["director"]
+    checks = d.get("checks") or []
+    checked = {c.get("step") for c in checks if isinstance(c, dict)}
+    missing = [i for i in range(1, len(plan["steps"]) + 1)
+               if i not in checked]
+    if missing:
+        return False, (f"refused: cannot review yet — plan step(s) "
+                       f"{missing} have no director_check")
+    verdict = str(args.get("verdict") or "").strip().lower()
+    if verdict not in ("deliver", "rework", "fail"):
+        return False, ("refused: verdict must be 'deliver', "
+                       "'rework' or 'fail'")
+    summary = str(args.get("summary") or "").strip()
+    if len(summary) < 8:
+        return False, ("refused: a summary is required — the "
+                       "review's judgement of the deliverable "
+                       "against the vision, in your own words")
+    defects_in = args.get("defects") if isinstance(args.get("defects"),
+                                                    list) else []
+    defects = [str(x).strip()[:DIRECTOR_DEFECT_CAP]
+               for x in defects_in[:DIRECTOR_DEFECTS_CAP]
+               if str(x).strip()]
+    # Carried defects: steps whose latest check is a fail are known
+    # defects of this delivery — appended mechanically.
+    latest = {}
+    for c in checks:
+        if isinstance(c, dict):
+            latest[c.get("step")] = c.get("verdict")
+    for i in sorted(k for k, v in latest.items() if v == "fail"):
+        carried = f"plan step {i} failed its check"
+        if carried not in defects:
+            defects.append(carried)
+    entry = {"verdict": verdict,
+             "summary": summary[:DIRECTOR_SUMMARY_CAP],
+             "defects": defects[:DIRECTOR_DEFECTS_CAP],
+             "at": int(time.time() * 1000)}
+    d.setdefault("reviews", []).append(entry)
+    worker_director_post("review", entry)
+    if verdict == "deliver":
+        return True, ("director-review recorded: DELIVER. Now "
+                      "declare done — the answer must name the "
+                      "deliverable and state only what the recorded "
+                      "results showed.")
+    if verdict == "rework":
+        return True, ("director-review recorded: REWORK. Fix the "
+                      "defects, re-check the affected steps, then "
+                      "review again.")
+    return True, ("director-review recorded: FAIL. The loop ends "
+                  "this job as failed, with your summary as the "
+                  "reason.")
 
 
 def _tool_job_state(args):
@@ -777,7 +1042,7 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
              allow=None, seed_history=None, step_offset=0,
              verify_first_for=None, record_started=False,
              job=None, instructions=None, load_instructions=True,
-             evidence=None):
+             evidence=None, director=False):
     """Run the general agent loop.
 
     goal:        the task text (job-type agnostic).
@@ -837,6 +1102,26 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                  satisfied, the loop ends the run DONE itself
                  ("evidence complete — auto-closed") instead of
                  waiting for the brain to declare done.
+
+    director:    DIRECTOR LAYER — when True (production agent jobs,
+                 via agent_runner), the loop enforces the plan /
+                 check / review discipline mechanically: no tool
+                 step executes before a director_plan record exists
+                 on the job (the plan gate — a bounded number of
+                 refused actions, then the run fails honestly); a
+                 done claim is rejected until every plan step
+                 carries a director_check and a FRESH director_review
+                 with verdict "deliver" exists (the review gate —
+                 rejected claims end UNVERIFIED, like the evidence
+                 gate); a review verdict of "fail" ends the run as
+                 failed with the review's summary, and "rework"
+                 spends the single rework loop. Any work after a
+                 review makes it stale. The E8 auto-close is disabled
+                 while the layer is active — done passes the review
+                 gate or not at all. Requires the job dict (the
+                 director state lives on it) and the director tools
+                 registered in `tools`. Default False: every other
+                 caller runs the pre-director loop exactly.
 
     Returns (status, output): status is "done" | "failed" |
     "stopped" | "unverified" (E6 — done claimed without the
@@ -904,6 +1189,16 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                               "seq": i - len(history)})
     verify_failures = 0
 
+    # DIRECTOR LAYER state (inert unless director=True): refused
+    # actions at the plan gate, rejected done claims at the
+    # check/review gate, rework loops spent, and whether the latest
+    # deliver-review is still fresh (any real work or fresh check
+    # after it makes it stale — the deliverable it judged changed).
+    plan_refusals = 0
+    director_gate_failures = 0
+    d_rework_loops = 0
+    d_review_fresh = False
+
     def emit(entry):
         try:
             record(entry)
@@ -939,6 +1234,62 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
                 history.append({"action": "done",
                                 "result": "rejected: empty answer — an answer must state what the tool results actually showed"})
                 continue
+            if director and not _director_plan(job):
+                # DIRECTOR plan gate, done side: a job with no plan
+                # record has executed nothing and cannot be done.
+                history.append({"action": "done",
+                                "result": "FAILED: director plan gate — no plan record exists for this job. Call director_plan first (vision, steps with acceptance checks, risks); a job without a plan does not execute and cannot be done."})
+                continue
+            if director:
+                # DIRECTOR check/review gate: every plan step must
+                # carry a check, and a FRESH deliver-review must
+                # exist — delivery without a review record is
+                # impossible here, not just discouraged. Rejected
+                # claims follow the evidence gate's shape: named
+                # gaps, a bounded budget, then UNVERIFIED.
+                dplan = _director_plan(job)
+                dstate = _director_state(job) or {}
+                checked = {c.get("step") for c in (dstate.get("checks") or [])
+                           if isinstance(c, dict)}
+                missing = [i for i in range(1, len(dplan["steps"]) + 1)
+                           if i not in checked]
+                dgaps = []
+                if missing:
+                    dgaps.append("plan step(s) " + ", ".join(str(i) for i in missing)
+                                 + " have no director_check")
+                reviews = dstate.get("reviews") or []
+                latest = reviews[-1] if reviews else None
+                if not latest or latest.get("verdict") != "deliver" \
+                        or not d_review_fresh:
+                    dgaps.append("no fresh director_review with verdict "
+                                 "'deliver' — verify the deliverable "
+                                 "itself, compare it with the vision and "
+                                 "every step check, then director_review")
+                if dgaps:
+                    director_gate_failures += 1
+                    gap_text = "; ".join(dgaps)
+                    emit({"n": steps, "tool": "verify", "arg": "",
+                          "ok": False, "phase": "director",
+                          "result": ("done claim rejected — director "
+                                     "gate: " + gap_text)[:RESULT_CAP],
+                          "at": int(time.time() * 1000)})
+                    if director_gate_failures >= DIRECTOR_GATE_FAILURES:
+                        reason = (f"UNVERIFIED: done was claimed "
+                                  f"{director_gate_failures} times "
+                                  f"without the director layer's "
+                                  f"checks/review — {gap_text}")
+                        emit({"n": steps, "tool": "unverified", "arg": "",
+                              "ok": False,
+                              "result": reason[:RESULT_CAP],
+                              "at": int(time.time() * 1000)})
+                        return "unverified", reason[:1800]
+                    history.append(
+                        {"action": "verify",
+                         "result": ("FAILED: done rejected — director "
+                                    "gate: " + gap_text + ". Complete "
+                                    "the missing checks/review, then "
+                                    "declare done again.")})
+                    continue
             if evidence_reqs:
                 # E6 done-evidence gate: the claim is verified
                 # against the recorded steps BEFORE it is accepted.
@@ -987,8 +1338,29 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
         name = str(action.get("tool") or "")
         args = action.get("args") if isinstance(action.get("args"), dict) else {}
         tool = by_name.get(name)
+        # DIRECTOR plan gate: until a plan record exists, nothing
+        # executes except the plan call itself and the read-only
+        # record tools (job_state / get_history — the brain may
+        # look at its own record before planning). A refused call
+        # is a FAILED step with the reason, exactly like the E2/E3
+        # refusals — the handler never runs.
+        gate_refusal = None
+        if director and not _director_plan(job) \
+                and name not in ("director_plan", "job_state",
+                                 "get_history"):
+            gate_refusal = (
+                "REFUSED (director plan gate): no plan record exists "
+                "for this job yet — nothing executes before the plan. "
+                "Call director_plan NOW with {vision, steps: "
+                "[{title, acceptance}], risks}: the vision names the "
+                "finished deliverable and what 'good' looks like for "
+                "THIS task; every step carries a concrete acceptance "
+                "check you will verify afterwards with director_check.")
         if tool is None:
             ok, result = False, f"unknown tool {name!r} — available tools: {', '.join(sorted(by_name)) or '(none)'}"
+        elif gate_refusal is not None:
+            plan_refusals += 1
+            ok, result = False, gate_refusal
         elif pending_verify and (tool.get("mutating") or tool.get("needs_allow")):
             # E3 verify-first guard: a previous runner started the
             # pending_verify step and died before recording its
@@ -1070,8 +1442,60 @@ def run_loop(goal, tools, brain=None, record=None, stop=None,
         # is the whole point of the loop (browse discipline).
         history.append({"action": name, "arg": _arg_summary(action),
                         "result": ("ok: " if ok else "FAILED: ") + result})
-        if evidence_reqs and not _evidence_gaps(evidence_reqs,
-                                                ok_steps, ok_events, job):
+        if director and gate_refusal is not None \
+                and plan_refusals >= DIRECTOR_PLAN_REFUSALS:
+            # The plan gate's honest end: the brain would not plan,
+            # so the job does not execute — failed, never improvised.
+            reason = (f"Director layer: no plan was produced after "
+                      f"{plan_refusals} refused actions — a job "
+                      f"without a vision+plan record does not execute.")
+            emit({"n": steps, "tool": "fail", "arg": "", "ok": False,
+                  "result": reason[:RESULT_CAP],
+                  "at": int(time.time() * 1000)})
+            return "failed", reason[:1800]
+        if director and name == "director_review" and ok:
+            # DIRECTOR review outcomes, acted on by the loop (the
+            # handler only records): fail ends the job as failed
+            # with the review's own summary; rework spends the one
+            # rework loop (a second rework verdict fails honestly);
+            # deliver arms the review gate until any further work
+            # makes it stale.
+            dstate = _director_state(job) or {}
+            reviews = dstate.get("reviews") or []
+            latest = reviews[-1] if reviews else None
+            if latest:
+                rv = str(latest.get("verdict") or "")
+                if rv == "fail":
+                    reason = ("Director review failed this job: "
+                              + str(latest.get("summary") or ""))[:600]
+                    emit({"n": steps, "tool": "fail", "arg": "",
+                          "ok": False, "result": reason[:RESULT_CAP],
+                          "at": int(time.time() * 1000)})
+                    return "failed", reason[:1800]
+                if rv == "rework":
+                    if d_rework_loops >= DIRECTOR_REWORK_LOOPS:
+                        reason = ("Director review: rework budget "
+                                  "exhausted — the deliverable still "
+                                  "does not match the vision: "
+                                  + str(latest.get("summary") or ""))[:600]
+                        emit({"n": steps, "tool": "fail", "arg": "",
+                              "ok": False,
+                              "result": reason[:RESULT_CAP],
+                              "at": int(time.time() * 1000)})
+                        return "failed", reason[:1800]
+                    d_rework_loops += 1
+                    d_review_fresh = False
+                elif rv == "deliver":
+                    d_review_fresh = True
+        if director and d_review_fresh \
+                and name not in ("job_state", "get_history",
+                                 "director_review"):
+            # Work (or a fresh check) after a deliver-review: the
+            # deliverable it judged has changed — the review is
+            # stale and the done gate will demand a fresh one.
+            d_review_fresh = False
+        if evidence_reqs and not director and not _evidence_gaps(
+                evidence_reqs, ok_steps, ok_events, job):
             # E8 evidence auto-close: every declared requirement is
             # now satisfied by the recorded steps, so the run IS
             # done — mechanically, whether or not the brain notices

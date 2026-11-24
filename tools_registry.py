@@ -402,6 +402,188 @@ def register_plan_tool(reg, job_record):
     return reg
 
 
+def register_director_tools(reg, job_record):
+    """Register the DIRECTOR LAYER tools (2026-11-24), bound to one
+    job record dict: director_plan (vision + steps with acceptance
+    checks + risks, written before any work), director_check (one
+    plan step verified against its acceptance, with evidence),
+    director_review (the final deliver / rework / fail verdict).
+    The handlers live in agent_loop (_apply_director_*) and store
+    on the job record + mirror to the Worker, so the record IS the
+    audit trail. Classification mirrors set_plan: mutating (they
+    write the record — so they never lift the E3 verify-first
+    guard), needs_allow False (bookkeeping inside the job's own
+    record spends no user Allow). The loop's gates (agent_loop
+    run_loop, director=True) supply the enforcement; these tools
+    are the brain's side of the contract."""
+    def _plan(args):
+        if job_record is None:
+            return False, ("director_plan unavailable: no job record "
+                           "is bound to this run")
+        return agent_loop._apply_director_plan(args, job_record)
+
+    def _check(args):
+        if job_record is None:
+            return False, ("director_check unavailable: no job record "
+                           "is bound to this run")
+        return agent_loop._apply_director_check(args, job_record)
+
+    def _review(args):
+        if job_record is None:
+            return False, ("director_review unavailable: no job "
+                           "record is bound to this run")
+        return agent_loop._apply_director_review(args, job_record)
+
+    reg.register(
+        "director_plan",
+        "Record the director plan BEFORE any other work. Args: "
+        "{vision, steps: [{title, acceptance}], risks: []}. The "
+        "engine refuses all other tools until this exists.",
+        {"vision": {"type": "string", "required": True,
+                    "desc": "the finished deliverable + what good looks like"},
+         "steps": {"type": "array", "required": True,
+                   "desc": "ordered steps: [{title, acceptance}]"},
+         "risks": {"type": "array", "required": False,
+                   "desc": "risks/unknowns to verify, not assume"}},
+        _plan, mutating=True, needs_allow=False, timeout=15)
+    reg.register(
+        "director_check",
+        "Check ONE plan step against its acceptance, in plan order. "
+        "Args: {step: 1-based number, verdict: 'pass'|'fail', "
+        "evidence: what the tool results showed}.",
+        {"step": {"type": "integer", "required": True,
+                  "desc": "1-based plan step number"},
+         "verdict": {"type": "string", "required": True,
+                     "desc": "pass | fail"},
+         "evidence": {"type": "string", "required": True,
+                      "desc": "evidence from real tool results"}},
+        _check, mutating=True, needs_allow=False, timeout=15)
+    reg.register(
+        "director_review",
+        "Final review of the deliverable vs the vision + all step "
+        "checks. Args: {verdict: 'deliver'|'rework'|'fail', summary, "
+        "defects: []}. Required before done.",
+        {"verdict": {"type": "string", "required": True,
+                     "desc": "deliver | rework | fail"},
+         "summary": {"type": "string", "required": True,
+                     "desc": "the review's judgement, in your words"},
+         "defects": {"type": "array", "required": False,
+                     "desc": "known defects, honestly listed"}},
+        _review, mutating=True, needs_allow=False, timeout=15)
+    return reg
+
+
+def register_fetch_tool(reg):
+    """Register fetch_url: the read-only verify instrument — GET a
+    URL and read back its status, title and text head, with an
+    optional exact-substring check. This is how a job verifies a
+    deliverable that lives at a URL (a published page) instead of
+    trusting its own write. http/https only; local/private hosts
+    refused. Read-only, no Allow."""
+    def _fetch(args):
+        import re as _re
+        import httpx
+        url = str(args.get("url") or "").strip()
+        if not _re.match(r"^https?://", url):
+            return False, "fetch_url needs an http(s) URL"
+        host = _re.sub(r"^https?://", "", url).split("/")[0] \
+            .split("@")[-1].split(":")[0].lower()
+        if host in ("localhost",) or host.startswith("127.") \
+                or host.startswith("169.254.") or host == "::1":
+            return False, "refused: local/private hosts are not fetched"
+        contains = str(args.get("contains") or "")
+        try:
+            r = httpx.get(url, follow_redirects=True, timeout=25,
+                          headers={"user-agent": "JulieAgent/1.0 (fetch_url verify)"})
+        except Exception as e:
+            return False, f"fetch failed: {str(e)[:160]}"
+        text = r.text or ""
+        m = _re.search(r"<title[^>]*>(.*?)</title>", text,
+                       _re.I | _re.S)
+        title = _re.sub(r"\s+", " ", m.group(1)).strip()[:120] if m else ""
+        plain = _re.sub(r"<[^>]+>", " ", text)
+        plain = _re.sub(r"\s+", " ", plain).strip()[:900]
+        bits = [f"status {r.status_code}", f"final url: {str(r.url)[:160]}"]
+        if title:
+            bits.append(f"title: {title}")
+        if contains:
+            bits.append(f"contains {contains!r}: "
+                        f"{'YES' if contains in text else 'NO'}")
+        bits.append("text: " + plain)
+        return (r.status_code < 400), "; ".join(bits)[:1500]
+
+    reg.register(
+        "fetch_url",
+        "Fetch a URL and read it back — verify a published page "
+        "yourself. Args: {url, contains?}. Returns status, title, "
+        "and whether 'contains' appears in the page.",
+        {"url": {"type": "string", "required": True,
+                 "desc": "http(s) URL to fetch"},
+         "contains": {"type": "string", "required": False,
+                      "desc": "exact text that must appear in the page"}},
+        _fetch, mutating=False, needs_allow=False, timeout=40)
+    return reg
+
+
+def register_publish_tool(reg, root):
+    """Register publish_app: publish ONE workspace HTML file as
+    this job's live web app on Julie's own Worker (the
+    setup/runner/agentpage route stores it under page:<job>; the
+    public /p/<job> route serves it). The page slot is keyed by
+    THIS job's id — the tool can only ever publish the job's own
+    file to the job's own slot, the same confinement argument as
+    the workspace writes (agent_runner Allows it on that basis).
+    Returns the public URL; the job verifies it with fetch_url."""
+    def _publish(args):
+        import os
+        import httpx
+        import workspace_tools
+        path = str(args.get("path") or "index.html")
+        target = workspace_tools._confined(os.path.realpath(root), path)
+        if target is None or target == os.path.realpath(root):
+            return False, f"refused: {path!r} escapes the workspace"
+        try:
+            with open(target, encoding="utf-8") as f:
+                html = f.read()
+        except Exception as e:
+            return False, f"cannot read {path}: {str(e)[:120]}"
+        if len(html) > 131072:
+            return False, (f"refused: {path} is {len(html)} chars — "
+                           f"the publish cap is 131072 (one "
+                           f"self-contained page)")
+        if "<" not in html or ("<html" not in html.lower()
+                               and "<!doctype" not in html.lower()):
+            return False, (f"refused: {path} does not look like an "
+                           f"HTML page")
+        worker = agent_loop._worker()
+        if not worker or not agent_loop._job_id():
+            return False, "publish channel unavailable (no worker/job)"
+        try:
+            r = httpx.post(f"{worker}/api/setup/runner/agentpage",
+                           params={"job": agent_loop._job_id()},
+                           json={"html": html},
+                           headers=agent_loop._headers(), timeout=30)
+        except Exception as e:
+            return False, f"publish failed: {str(e)[:160]}"
+        if r.status_code != 200:
+            return False, (f"publish refused by the Worker "
+                           f"(HTTP {r.status_code})")
+        url = str((r.json() or {}).get("url") or "")
+        if not url:
+            return False, "publish returned no URL"
+        return True, f"published: {url} ({len(html)} chars from {path})"
+
+    reg.register(
+        "publish_app",
+        "Publish a workspace HTML file as this job's live web app. "
+        "Args: {path: 'index.html'}. Returns the public URL — "
+        "verify it with fetch_url before reviewing.",
+        {"path": {"type": "string", "required": False,
+                  "desc": "workspace HTML file (default index.html)"}},
+        _publish, mutating=True, needs_allow=True, timeout=45)
+    return reg
+
+
 # ----------------------------------------------------- compute tools
 
 def register_compute_tools(reg, root):

@@ -7021,7 +7021,7 @@ async function startAgentJob(env, n, task, opts = {}) {
   const prev = await agentJobFor(env, n);
   if (prev && ["queued", "running"].includes(prev.state)) return { ok: false, error: "busy", job: prev.job, state: prev.state, note: prev.note || "" };
   const job = setupJobId();
-  const rec = { job, user: n, provider: "agent", flow: "agent", task: String(task || "").slice(0, 600), state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now() };
+  const rec = { job, user: n, provider: "agent", flow: "agent", task: String(task || "").slice(0, 600), state: "queued", step: "starting", note: "", at: Date.now(), upd: Date.now(), directorRequired: true };
   if (opts.evidence && opts.evidence.length) rec.evidence = opts.evidence;
   if (opts.instructions) rec.instructions = String(opts.instructions).slice(0, 4000);
   if (opts.files && Object.keys(opts.files).length) rec.files = opts.files;
@@ -9285,6 +9285,98 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     const snap = parseRec(await env.KV.get(`agentws:${job}`));
     return Response.json({ ok: true, files: (snap && snap.files) || {} });
   }
+  // DIRECTOR LAYER (2026-11-24): the director record — the job's
+  // vision+plan, per-step checks, and final review — is merged
+  // onto the job record itself (rec.director), so the record the
+  // Wave-0 /internal/state route reads back IS the audit trail:
+  // Julie's own plan, in her own state, not an agent's summary of
+  // it. The runner mirrors every mutation here as it happens
+  // (kind plan / check / review) and re-sends the whole state once
+  // before reporting the outcome (kind sync). Shapes are capped
+  // to the runner-side caps (agent_loop's DIRECTOR_* constants);
+  // anything malformed is refused, never stored half-cleaned.
+  if (p === "setup/runner/agentdirector" && req.method === "POST") {
+    if (rec.provider !== "agent") return new Response("not an agent job", { status: 400 });
+    if (["done", "failed", "stopped", "unverified"].includes(rec.state)) return Response.json({ ok: true, swallowed: "terminal" });
+    const kind = String((body && body.kind) || "");
+    const data = (body && body.data) || {};
+    const cleanPlan = (pl) => {
+      if (!pl || typeof pl !== "object") return null;
+      const vision = String(pl.vision || "").slice(0, 300);
+      const stepsIn = Array.isArray(pl.steps) ? pl.steps.slice(0, 8) : [];
+      if (!vision || !stepsIn.length) return null;
+      const steps = [];
+      for (const s of stepsIn) {
+        const t = String((s && s.title) || "").slice(0, 48);
+        const a = String((s && s.acceptance) || "").slice(0, 110);
+        if (!t || !a) return null;
+        steps.push({ title: t, acceptance: a });
+      }
+      const risks = (Array.isArray(pl.risks) ? pl.risks : []).slice(0, 4).map(r => String(r || "").slice(0, 80)).filter(Boolean);
+      return { vision, steps, risks, at: Number(pl.at) || Date.now() };
+    };
+    const cleanCheck = (c) => {
+      if (!c || typeof c !== "object") return null;
+      const step = Number(c.step) || 0;
+      const verdict = String(c.verdict || "");
+      const evidence = String(c.evidence || "").slice(0, 240);
+      if (step < 1 || step > 8 || !["pass", "fail"].includes(verdict) || !evidence) return null;
+      return { step, verdict, evidence, at: Number(c.at) || Date.now() };
+    };
+    const cleanReview = (r) => {
+      if (!r || typeof r !== "object") return null;
+      const verdict = String(r.verdict || "");
+      const summary = String(r.summary || "").slice(0, 400);
+      if (!["deliver", "rework", "fail"].includes(verdict) || !summary) return null;
+      const defects = (Array.isArray(r.defects) ? r.defects : []).slice(0, 6).map(x => String(x || "").slice(0, 120)).filter(Boolean);
+      return { verdict, summary, defects, at: Number(r.at) || Date.now() };
+    };
+    const d = (rec.director && typeof rec.director === "object") ? rec.director : {};
+    if (kind === "sync") {
+      const plan = cleanPlan(data.plan);
+      if (!plan) return new Response("bad director sync", { status: 400 });
+      const checks = (Array.isArray(data.checks) ? data.checks : []).map(cleanCheck).filter(Boolean).slice(-60);
+      const reviews = (Array.isArray(data.reviews) ? data.reviews : []).map(cleanReview).filter(Boolean).slice(-12);
+      rec.director = { plan, checks, reviews };
+    } else if (kind === "plan") {
+      const plan = cleanPlan(data);
+      if (!plan) return new Response("bad director plan", { status: 400 });
+      rec.director = { plan, checks: [], reviews: [] };
+    } else if (kind === "check") {
+      if (!d.plan) return new Response("no director plan", { status: 400 });
+      const c = cleanCheck(data);
+      if (!c) return new Response("bad director check", { status: 400 });
+      d.checks = Array.isArray(d.checks) ? d.checks : [];
+      d.checks.push(c);
+      if (d.checks.length > 60) d.checks = d.checks.slice(-60);
+      rec.director = d;
+    } else if (kind === "review") {
+      if (!d.plan) return new Response("no director plan", { status: 400 });
+      const r = cleanReview(data);
+      if (!r) return new Response("bad director review", { status: 400 });
+      d.reviews = Array.isArray(d.reviews) ? d.reviews : [];
+      d.reviews.push(r);
+      if (d.reviews.length > 12) d.reviews = d.reviews.slice(-12);
+      rec.director = d;
+    } else return new Response("bad director kind", { status: 400 });
+    rec.upd = Date.now();
+    await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
+    return Response.json({ ok: true, checks: (rec.director.checks || []).length, reviews: (rec.director.reviews || []).length });
+  }
+  // DIRECTOR LAYER: publish_app's server half. An agent job
+  // publishes ONE self-contained HTML file as its live web app:
+  // stored under page:<job> (a media prefix — real KV, large
+  // values) and served publicly by the /p/<job> route. The slot
+  // is keyed by the job id, so a job can only ever publish its
+  // own page — the runner Allows the tool on that confinement.
+  if (p === "setup/runner/agentpage" && req.method === "POST") {
+    if (rec.provider !== "agent") return new Response("not an agent job", { status: 400 });
+    if (["done", "failed", "stopped", "unverified"].includes(rec.state)) return Response.json({ ok: true, swallowed: "terminal" });
+    const html = String((body && body.html) || "");
+    if (!html || html.length > 131072 || !html.includes("<")) return new Response("bad page", { status: 400 });
+    await env.KV.put(`page:${job}`, html, { expirationTtl: 86400 * 30 });
+    return Response.json({ ok: true, url: `${new URL(req.url).origin}/p/${job}` });
+  }
   // W9 (2026-11-24): the DOOR LOG. Every provider-door failure the
   // runner meets (a changed keys page, a modal the flow did not
   // know, a wall) lands in ONE place — doorfail:<user>, newest
@@ -9724,7 +9816,7 @@ export class JulieState {
 }
 // v71: refvoice:/refcand: hold reference-voice AUDIO BYTES — they are
 // media too and must stay in real KV (the state store is text-only).
-const KV_MEDIA_PREFIXES = ["upl:", "res:", "refvoice:", "refcand:"];
+const KV_MEDIA_PREFIXES = ["upl:", "res:", "refvoice:", "refcand:", "page:"];
 function wrapEnv(env) {
   if (!env || !env.KV || !env.STATE) return env;
   const real = env.KV;
@@ -10111,6 +10203,15 @@ export default {
       const bytes = job ? (await env.KV.get(`upl:${job}`, "arrayBuffer").catch(() => null)) || (await env.KV.get(`res:${job}`, "arrayBuffer").catch(() => null)) : null;
       if (!bytes) return new Response("not found", { status: 404 });
       return new Response(bytes, { headers: { "content-type": "video/mp4", "cache-control": "public, max-age=3600" } });
+    }
+    // Public app page (Director Layer, 2026-11-24): /p/<job> serves the
+    // HTML an agent job published as its live web app (publish_app ->
+    // setup/runner/agentpage -> page:<job>).
+    if (url.pathname.startsWith("/p/") && req.method === "GET") {
+      const job = url.pathname.slice(3).replace(/[^a-z0-9]/g, "");
+      const html = job ? await env.KV.get(`page:${job}`).catch(() => null) : null;
+      if (!html) return new Response("not found", { status: 404 });
+      return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "public, max-age=300" } });
     }
     if (url.pathname.startsWith("/c/") || url.pathname.startsWith("/oauth/")) { const r = await oauthRoutes(env, url); if (r) return r; }
     if (url.pathname === "/privacy") return legalPage("privacy");

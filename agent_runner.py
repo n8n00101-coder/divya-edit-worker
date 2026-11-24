@@ -55,8 +55,14 @@ DEADLINE_S = 25 * 60  # workflow timeout is 35 min; finish well inside it
 # this unattended runner never grants; an agent job's brain gets
 # the honest refusal and verifies with file_read / verify_* tools
 # instead (divya's call, E10 review 2026-11-19).
+# DIRECTOR LAYER (2026-11-24): publish_app joins them on the same
+# confinement argument — it publishes THIS job's own workspace
+# file to THIS job's own page slot (page:<job>, served at
+# /p/<job>) and can touch nothing else. Every job this runner
+# claims runs under the director layer (agent_loop run_loop,
+# director=True): plan gate, per-step checks, final review gate.
 SANDBOX_ALLOW = ("file_write", "file_append", "filter_csv",
-                 "edit_file")
+                 "edit_file", "publish_app")
 
 
 def workspace_root():
@@ -176,6 +182,12 @@ def build_tools(root, job=None):
     tools_registry.register_workspace_tools(reg, root, job_record=job)
     tools_registry.register_compute_tools(reg, root)
     tools_registry.register_plan_tool(reg, job)
+    # DIRECTOR LAYER: the plan/check/review tools (bound to the
+    # same job dict the loop gates on), the fetch_url verify
+    # instrument, and publish_app (this job's page slot).
+    tools_registry.register_director_tools(reg, job)
+    tools_registry.register_fetch_tool(reg)
+    tools_registry.register_publish_tool(reg, root)
     return reg.as_tools()
 
 
@@ -224,14 +236,21 @@ def main():
         res = agent_loop.resume_trigger(job, tools, allow=SANDBOX_ALLOW,
                                         deadline_s=DEADLINE_S,
                                         record=recording,
-                                        observation=resume_note)
+                                        observation=resume_note,
+                                        director=True)
         if res is None:
             res = agent_loop.run_agent_job(job, tools, allow=SANDBOX_ALLOW,
                                            deadline_s=DEADLINE_S,
-                                           record=recording)
+                                           record=recording,
+                                           director=True)
         status, out = res
     except Exception as e:
         status, out = "failed", f"Agent run aagipoyindhi: {str(e)[:200]}"
+    # DIRECTOR LAYER: re-send the full director state before the
+    # outcome is reported, so the record the owner (and any later
+    # audit) reads holds the plan/checks/review even if an
+    # incremental mirror post was lost mid-run.
+    agent_loop.worker_director_sync(job)
     if status == "terminal":
         print(f"agent: job already terminal ({out}) — nothing to run", flush=True)
         return
