@@ -94,4 +94,9 @@ jobs:
           print("W4 chain ->", json.dumps(call({"op": "get", "key": "setupchain:w4testlive"}))[:300])
           print("W4 job ->", json.dumps(call({"op": "get", "key": "setupjob:w4job1"}))[:400])
           print("W4 done ->", json.dumps(call({"op": "get", "key": "setupdone:w4testlive"}))[:400])
+          # Wave 4 cleanup: the proof is recorded (run 45341147081 —
+          # watchdog settle "stalled" in the DO); remove the synthetic
+          # records so no test chain lingers in production state.
+          for k in ("setupchain:w4testlive", "setupjob:w4job1", "setupdone:w4testlive", "setuphist:w4testlive"):
+              print("W4 cleanup del", k, "->", json.dumps(call({"op": "del", "key": k})))
           PY
