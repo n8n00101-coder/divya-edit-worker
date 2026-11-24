@@ -1,6 +1,12 @@
 name: directorproof
 on:
   workflow_dispatch:
+    inputs:
+      job:
+        description: "Director proof job id"
+        required: false
+        default: "dd100000000000000001"
+        type: string
 jobs:
   proof:
     runs-on: ubuntu-latest
@@ -8,6 +14,7 @@ jobs:
       - name: Seed + read the Director Layer proof job via /internal/state
         env:
           RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+          PROOF_JOB: ${{ inputs.job }}
         run: |
           python3 - <<'PY'
           import json, os, time as _t, urllib.request, urllib.error
@@ -23,7 +30,7 @@ jobs:
               except urllib.error.HTTPError as e:
                   print("HTTP", e.code, "body:", e.read()[:200])
                   raise
-          JOB = "dd100000000000000001"
+          JOB = os.environ.get("PROOF_JOB") or "dd100000000000000001"
           # Director Layer proof: ONE real agent job — build a small
           # web app and put it live. Seeded in startAgentJob's exact
           # shape (the token-gated app route is the normal door; this
