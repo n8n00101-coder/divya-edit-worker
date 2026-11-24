@@ -9242,6 +9242,35 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     await env.KV.put(`setupjob:${job}`, JSON.stringify(rec), { expirationTtl: 86400 * 2 });
     return Response.json({ ok: true, steps: rec.steps.length });
   }
+  // W6 (live-proven resume gap, 2026-11-24): agent workspaces live
+  // on EPHEMERAL runners — a killed runner took every intermediate
+  // file with it, and the resumed loop, reading a history full of
+  // writes the fresh workspace had never seen, failed a job it had
+  // half finished. The runner now snapshots its workspace here
+  // after mutating steps and restores it before resuming, so a
+  // resume continues from BOTH the step record and the files.
+  // Text files only, capped like the creation-time seeds.
+  if (p === "setup/runner/agentws" && req.method === "POST") {
+    if (rec.provider !== "agent") return new Response("not an agent job", { status: 400 });
+    if (["done", "failed", "stopped", "unverified"].includes(rec.state)) return Response.json({ ok: true, swallowed: "terminal" });
+    const raw = (body && body.files) || {};
+    const files = {};
+    let total = 0, bad = false;
+    for (const [name, content] of Object.entries(raw).slice(0, 40)) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(name) || name.includes("..") || typeof content !== "string" || content.length > 64000) { bad = true; break; }
+      total += content.length;
+      if (total > 262144) { bad = true; break; }
+      files[name] = content;
+    }
+    if (bad) return new Response("bad files", { status: 400 });
+    await env.KV.put(`agentws:${job}`, JSON.stringify({ files, at: Date.now() }), { expirationTtl: 86400 * 2 });
+    return Response.json({ ok: true, files: Object.keys(files).length });
+  }
+  if (p === "setup/runner/agentws" && req.method === "GET") {
+    if (rec.provider !== "agent") return new Response("not an agent job", { status: 400 });
+    const snap = parseRec(await env.KV.get(`agentws:${job}`));
+    return Response.json({ ok: true, files: (snap && snap.files) || {} });
+  }
   if (p === "setup/runner/job") {
     // v48 (Take Control): hand the runner the inputs the user queued in
     // the app since the last poll, then clear the queue — read-and-clear,

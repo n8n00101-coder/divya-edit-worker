@@ -89,6 +89,81 @@ def seed_files(job, root):
         print(f"agent: seeded {name} ({len(str(content))} chars)", flush=True)
 
 
+# W6 (2026-11-24): workspace snapshots. Runners are ephemeral —
+# a killed runner's workspace died with it, and the resumed loop
+# failed a half-finished job because its history named files the
+# fresh workspace had never seen (production job a6e…04). The
+# runner snapshots the workspace to the Worker (agentws) after
+# every mutating step and restores it before a resume, so the
+# record and the files travel together. Best-effort throughout:
+# a snapshot failure never breaks the loop.
+_SNAP_TOOLS = ("file_write", "file_append", "edit_file", "filter_csv")
+_SNAP_MAX_FILE = 64000
+_SNAP_MAX_TOTAL = 262144
+
+
+def snapshot_ws(root):
+    try:
+        import httpx
+        files = {}
+        total = 0
+        root_real = os.path.realpath(root)
+        for dirpath, _dirs, names in os.walk(root_real):
+            for name in sorted(names):
+                if len(files) >= 40:
+                    break
+                path = os.path.join(dirpath, name)
+                rel = os.path.relpath(path, root_real)
+                if os.path.sep != "/":
+                    rel = rel.replace(os.path.sep, "/")
+                if "/" in rel:
+                    continue  # snapshots are flat, like the seeds
+                try:
+                    if os.path.getsize(path) > _SNAP_MAX_FILE:
+                        continue
+                    with open(path, encoding="utf-8") as f:
+                        content = f.read()
+                except Exception:
+                    continue  # binary or unreadable — not a text deliverable
+                total += len(content)
+                if total > _SNAP_MAX_TOTAL:
+                    break
+                files[rel] = content
+        if files:
+            httpx.post(f"{S.WORKER}/api/setup/runner/agentws",
+                       params={"job": JOB}, json={"files": files},
+                       headers=S.H, timeout=20)
+    except Exception as e:
+        print(f"agent: workspace snapshot failed: {e}", flush=True)
+
+
+def restore_ws(root):
+    """Write the last snapshot (if any) into this runner's fresh
+    workspace before the loop starts. Returns the file count."""
+    try:
+        import httpx
+        r = httpx.get(f"{S.WORKER}/api/setup/runner/agentws",
+                      params={"job": JOB}, headers=S.H, timeout=20)
+        files = (r.json() or {}).get("files") or {}
+        if not files:
+            return 0
+        root_real = os.path.realpath(root)
+        os.makedirs(root_real, exist_ok=True)
+        n = 0
+        for name, content in files.items():
+            target = workspace_tools._confined(root_real, str(name))
+            if target is None or target == root_real:
+                continue
+            with open(target, "w", encoding="utf-8") as f:
+                f.write(str(content))
+            n += 1
+        print(f"agent: restored {n} workspace file(s) from snapshot", flush=True)
+        return n
+    except Exception as e:
+        print(f"agent: workspace restore failed: {e}", flush=True)
+        return 0
+
+
 def build_tools(root, job=None):
     """The registry for an agent job: the context-free tools
     (job_state + stubs) plus the workspace file tools and the
@@ -112,8 +187,15 @@ def main():
     print(f"agent: job task={str(job.get('task') or '')[:80]!r}", flush=True)
     root = workspace_root()
     seed_files(job, root)
+    restore_ws(root)  # W6: a resumed job gets its files back too
     tools = build_tools(root, job=job)
     S.progress("running", "start", "Agent job start ayyindhi — pani chesthunna.", "")
+
+    def recording(entry):
+        agent_loop.worker_record(entry)
+        if entry.get("tool") in _SNAP_TOOLS and entry.get("ok"):
+            snapshot_ws(root)
+
     try:
         # A record with steps from a dead runner resumes (E3); a
         # fresh record starts through run_agent_job. resume_trigger
@@ -121,10 +203,12 @@ def main():
         # tuple when the job already finished — reported by silence
         # below, because a terminal record is final.
         res = agent_loop.resume_trigger(job, tools, allow=SANDBOX_ALLOW,
-                                        deadline_s=DEADLINE_S)
+                                        deadline_s=DEADLINE_S,
+                                        record=recording)
         if res is None:
             res = agent_loop.run_agent_job(job, tools, allow=SANDBOX_ALLOW,
-                                           deadline_s=DEADLINE_S)
+                                           deadline_s=DEADLINE_S,
+                                           record=recording)
         status, out = res
     except Exception as e:
         status, out = "failed", f"Agent run aagipoyindhi: {str(e)[:200]}"
