@@ -194,15 +194,16 @@ jobs:
           # Wave 9 live: the doorlog route end-to-end (seed a runner
           # job, POST a door failure with the runner key, read the
           # door log back through /internal/state, clean up).
-          import httpx as _hx
+          import urllib.request as _ur
           W9JOB = "jobw9live00000000001"
           if not call({"op": "get", "key": "setupjob:" + W9JOB}).get("exists"):
               now = int(_t.time() * 1000)
               print("W9 seed job ->", json.dumps(call({"op": "put", "key": "setupjob:" + W9JOB, "value": {"job": W9JOB, "user": "w9testlive", "provider": "openrouter", "flow": "email", "state": "running", "step": "api-key", "note": "", "at": now, "upd": now}})))
-              _r = _hx.post(WORKER + "/api/setup/runner/doorlog", params={"job": W9JOB},
-                            json={"provider": "openrouter", "step": "api-key", "reason": "W9 live smoke: layout failure shape (synthetic)."},
-                            headers={"x-runner-key": KEY}, timeout=30)
-              print("W9 doorlog POST ->", _r.status_code, _r.text[:80])
+              _req = _ur.Request(WORKER + "/api/setup/runner/doorlog?job=" + W9JOB,
+                                 data=json.dumps({"provider": "openrouter", "step": "api-key", "reason": "W9 live smoke: layout failure shape (synthetic)."}).encode(),
+                                 headers={"x-runner-key": KEY, "content-type": "application/json"}, method="POST")
+              with _ur.urlopen(_req, timeout=30) as _resp:
+                  print("W9 doorlog POST ->", _resp.status, _resp.read().decode()[:80])
           _df = call({"op": "get", "key": "doorfail:w9testlive"}).get("v")
           print("W9 doorfail ->", json.dumps(_df))
           print("W9 cleanup job ->", json.dumps(call({"op": "del", "key": "setupjob:" + W9JOB})))
