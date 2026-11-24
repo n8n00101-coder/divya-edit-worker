@@ -196,7 +196,7 @@ jobs:
           # door log back through /internal/state, clean up).
           import urllib.request as _ur
           W9JOB = "jobw9live00000000001"
-          if not call({"op": "get", "key": "setupjob:" + W9JOB}).get("exists"):
+          if True:
               now = int(_t.time() * 1000)
               print("W9 seed job ->", json.dumps(call({"op": "put", "key": "setupjob:" + W9JOB, "value": {"job": W9JOB, "user": "w9testlive", "provider": "openrouter", "flow": "email", "state": "running", "step": "api-key", "note": "", "at": now, "upd": now}})))
               _req = _ur.Request("https://divya.n8n00101.workers.dev/api/setup/runner/doorlog?job=" + W9JOB,
