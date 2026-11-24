@@ -4898,7 +4898,7 @@ async function waStopBrowserJob(env, user) {
   const chain = parseRec(await env.KV.get(`setupchain:${user}`));
   if (chain) {
     if (chain.current) { const j = parseRec(await env.KV.get(`setupjob:${chain.current}`)); if (j && ["queued", "running", "paused"].includes(j.state)) { j.state = "stopped"; j.upd = Date.now(); await env.KV.put(`setupjob:${chain.current}`, JSON.stringify(j), { expirationTtl: 86400 * 2 }); } }
-    try { const cj = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null; const finRec = { state: "stopped", done: chain.done || [], failed: chain.failed || [], skipped: chain.skipped || null, provider: (cj && cj.provider) || null, note: "User stopped the setup.", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, user, finRec); await env.KV.put(`setupdone:${user}`, JSON.stringify(finRec), { expirationTtl: 86400 }); } catch {}
+    try { const cj = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null; const finRec = { state: "stopped", done: chain.done || [], failed: chain.failed || [], skipped: chain.skipped || null, provider: (cj && cj.provider) || null, note: "User stopped the setup.", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, user, finRec); await putSetupDone(env, user, finRec); } catch {}
     await env.KV.delete(`setupchain:${user}`);
     // W3 / C-13: a Stop is a durable fact, not a moment — record it so
     // the auto-provisioner refuses to restart what the user stopped
@@ -4988,6 +4988,23 @@ async function setupJournal(env, n, fin) {
     const rec = { state: fin.state || "failed", done: fin.done || [], failed: fin.failed || [], skipped: fin.skipped || null, failReason: fin.failReason || null, provider: fin.provider || null, note: fin.note || "", at: fin.at || Date.now(), journaledAt: Date.now() };
     await env.KV.put(`setuphist:${n}`, JSON.stringify(rec), { expirationTtl: 86400 * 30 });
   } catch {}
+}
+// W4 / C-16 (the Muse shadow: every write verified by read-back
+// FROM THE SAME STORE): the ONE way setupdone: is written — put,
+// read back, rewrite once on mismatch. The v114 standard existed
+// only inside setupStartNext's finalize; every other terminal
+// writer (watchdog, both runner handlers, both stop paths) used a
+// bare put, so a lost write resurrected a stale picture in the
+// reporters until TTL. All of them route through here now.
+async function putSetupDone(env, n, finRec) {
+  for (let att = 0; att < 2; att++) {
+    try {
+      await env.KV.put(`setupdone:${n}`, JSON.stringify(finRec), { expirationTtl: 86400 });
+      const back = parseRec(await env.KV.get(`setupdone:${n}`));
+      if (back && back.at === finRec.at) return true;
+    } catch {}
+  }
+  return false;
 }
 // Last-resort rebuild: the chain's own job records (job.chain = the
 // chain's full provider list). Only a COMPLETE cluster — every
@@ -7207,7 +7224,7 @@ async function setupWatchdog(env, n, chain) {
   // day's writes). The verdict is still returned for THIS response;
   // the records are re-finalized on a later call once writes recover.
   await setupJournal(env, n, fin); // v114: the stall outcome is journaled like every terminal outcome
-  try { await env.KV.put(`setupdone:${n}`, JSON.stringify(fin), { expirationTtl: 86400 }); } catch {}
+  await putSetupDone(env, n, fin); // W4 / C-16: verified write
   try { await env.KV.delete(`setupchain:${n}`); } catch {}
   // v114: a stall-finalized chain must not strand its current job in
   // a non-terminal state — live 2026-11-15/16 left 14 resend/brevo
@@ -8241,6 +8258,39 @@ async function maybeFeedVerifyLink(env, job, chainAt) {
     return job;
   } catch { return job; }
 }
+// W4 / C-10 (the Claude Code shadow's supervisor): the watchdog and
+// the pause-skip were built into the status READ path — they fired
+// only when someone happened to poll. A runner that died mid-pause
+// stranded its chain silently until a human asked. The cron now
+// owns them: every tick, every live chain gets its watchdog verdict
+// and its pause-budget check, no user poll involved.
+// W4 / C-21: the same pass recomputes verify:awaiting FROM LIVE JOB
+// STATE — the marker is a pure function of what the jobs say right
+// now, never of which transition happened to be observed (the old
+// transition-written marker read "0" while a job sat paused on an
+// email wait, and the feed sweep skipped its scan on that word).
+async function setupSupervisorSweep(env) {
+  try {
+    const list = await env.KV.list({ prefix: "setupchain:" });
+    let anyAwaiting = false;
+    for (const k of (list.keys || [])) {
+      const n = k.name.slice("setupchain:".length);
+      try {
+        let chain = parseRec(await env.KV.get(k.name));
+        if (!chain) continue;
+        if (chain.current) {
+          const job = parseRec(await env.KV.get(`setupjob:${chain.current}`));
+          if (job && job.state === "paused" && !job.verifyLink && !job.verifyCode && ((job.pauseReason || "email") === "email" || job.verifyWait)) anyAwaiting = true;
+        }
+        const fin = await setupWatchdog(env, n, chain).catch(() => null);
+        if (fin) continue; // settled by the watchdog this tick
+        chain = parseRec(await env.KV.get(k.name));
+        if (chain) await setupPauseSkip(env, n, chain).catch(() => {});
+      } catch {}
+    }
+    try { await env.KV.put("verify:awaiting", anyAwaiting ? "1" : "0"); } catch {}
+  } catch {}
+}
 async function feedAwaitingVerifyLinks(env) {
   // v92 (Ajju: "Gmail ni eppudu monitor cheskuntu undali" — Julie must
   // watch Gmail herself): the cron sweep. Every 15 minutes (the Worker
@@ -8567,7 +8617,7 @@ async function appSetupUser(req, env, u, p, body, lang) {
     // segment's per-provider terminal reasons vanished (live
     // 2026-11-16 the run was driven by stop+restart segments and the
     // reasons were lost on every rotation).
-    if (chain) { try { const cj = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null; const finRec = { state: "stopped", done: chain.done || [], failed: chain.failed || [], skipped: chain.skipped || null, provider: (cj && cj.provider) || null, note: "User stopped the setup.", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, u.n, finRec); await env.KV.put(`setupdone:${u.n}`, JSON.stringify(finRec), { expirationTtl: 86400 }); } catch {} }
+    if (chain) { try { const cj = chain.current ? parseRec(await env.KV.get(`setupjob:${chain.current}`)) : null; const finRec = { state: "stopped", done: chain.done || [], failed: chain.failed || [], skipped: chain.skipped || null, provider: (cj && cj.provider) || null, note: "User stopped the setup.", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, u.n, finRec); await putSetupDone(env, u.n, finRec); } catch {} }
     await env.KV.delete(`setupchain:${u.n}`);
     return { ok: true };
   }
@@ -8826,7 +8876,7 @@ async function setupStartNext(env, n) {
     // once on any mismatch, so a lost write is caught HERE instead
     // of being discovered later as a silently dead retry arm.
     await setupJournal(env, n, finRec);
-    for (let att = 0; att < 2; att++) { try { await env.KV.put(`setupdone:${n}`, JSON.stringify(finRec), { expirationTtl: 86400 }); const back = parseRec(await env.KV.get(`setupdone:${n}`)); if (back && back.at === finRec.at) break; } catch {} }
+    await putSetupDone(env, n, finRec); // W4 / C-16: the v114 verified write, now the shared helper
     await env.KV.delete(`setupchain:${n}`);
     // v107: a WhatsApp-started chain reports its outcome IN the
     // WhatsApp chat (the owner id is the phone number) — the WA user
@@ -9390,7 +9440,7 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`));
       if (chain && chain.current === job) { chain.failed = chain.failed || []; if (!chain.failed.includes(rec.provider)) chain.failed.push(rec.provider); chain.failReason = chain.failReason || {}; if (!chain.failReason[rec.provider]) chain.failReason[rec.provider] = String(rec.note || "").slice(0, 80); chain.waTold = chain.waTold || {}; const remaining110 = (chain.providers || []).filter(p => !(chain.done || []).includes(p) && !chain.failed.includes(p) && !skippedIds(chain).includes(p)); if (!chain.waTold[rec.provider] && remaining110.length && /^\d{7,15}$/.test(String(rec.user || ""))) { chain.waTold[rec.provider] = "failed"; let msg110 = waChainOutcomeText(chain, rec.provider, false, String(rec.note || "").replace(/^paused-[a-z]+\s*/i, "").slice(0, 70)); if (rec.verifyWait || rec.mailFetch) msg110 += ` Mail feed: ${waFeedReasonText(rec.mailFetch)}.`; try { await waSendText(env, String(rec.user), msg110); } catch {} if ((rec.verifyWait || rec.mailFetch === "no-gmail-token") && !(chain.feedCardAt && Date.now() - chain.feedCardAt < 30 * 60000)) { chain.feedCardAt = Date.now(); try { await connectMenu(env, String(rec.user)); } catch {} } } await env.KV.put(`setupchain:${rec.user}`, JSON.stringify(chain), { expirationTtl: 86400 * 7 }); await deferAdvance(); }
     }
-    if (state === "stopped") { const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`)); if (chain && chain.current === job) { const finRec = { state, done: chain.done, failed: chain.failed || [], skipped: chain.skipped || null, provider: rec.provider, note: rec.note || "", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, rec.user, finRec); await env.KV.put(`setupdone:${rec.user}`, JSON.stringify(finRec), { expirationTtl: 86400 }); await env.KV.delete(`setupchain:${rec.user}`); } }
+    if (state === "stopped") { const chain = parseRec(await env.KV.get(`setupchain:${rec.user}`)); if (chain && chain.current === job) { const finRec = { state, done: chain.done, failed: chain.failed || [], skipped: chain.skipped || null, provider: rec.provider, note: rec.note || "", at: Date.now(), failReason: chain.failReason || null }; await setupJournal(env, rec.user, finRec); await putSetupDone(env, rec.user, finRec); await env.KV.delete(`setupchain:${rec.user}`); } }
     return Response.json({ ok: true });
   }
   if (p === "setup/runner/linkbad" && req.method === "POST") {
@@ -9509,8 +9559,9 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       if (tellFail) { try { await waSendText(env, waOwner, waChainOutcomeText(chain, provider, false, chain.failReason[provider])); } catch {} }
       await deferAdvance(); return Response.json({ ok: true, advanced: true }); }
     // stopped: the user stopped the setup — end the whole chain.
-    await setupJournal(env, rec.user, { state: "stopped", done: chain.done, failed: chain.failed, provider, note: rec.note || "", at: Date.now(), failReason: chain.failReason || null }); // v114
-    await env.KV.put(`setupdone:${rec.user}`, JSON.stringify({ state: "stopped", done: chain.done, failed: chain.failed, provider, note: rec.note || "", at: Date.now() }), { expirationTtl: 86400 });
+    { const finRec = { state: "stopped", done: chain.done, failed: chain.failed, provider, note: rec.note || "", at: Date.now(), failReason: chain.failReason || null };
+      await setupJournal(env, rec.user, finRec); // v114
+      await putSetupDone(env, rec.user, finRec); } // W4 / C-16: verified write (one record, one timestamp — journal and outcome now agree)
     await env.KV.delete(`setupchain:${rec.user}`);
     return Response.json({ ok: true, advanced: false });
   }
@@ -9728,6 +9779,11 @@ export default {
     // the Worker cron (*/15 since 2026-11-21); the setup/status
     // opportunistic trigger covers the gaps between ticks.
     ctx.waitUntil(autoCheckAll(env).catch(() => {}));
+    // W4 / C-10: the supervisor sweep — watchdog + pause-skip for
+    // every live chain, plus the verify:awaiting recompute (C-21).
+    // Runs BEFORE the feed sweep so the marker it writes is fresh
+    // when the feed decides whether to scan.
+    ctx.waitUntil(setupSupervisorSweep(env).catch(() => {}));
     // v92: Gmail self-heal sweep — feed verification links to every
     // setup job still waiting on one, app open or not.
     ctx.waitUntil(feedAwaitingVerifyLinks(env).catch(() => {}));
