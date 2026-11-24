@@ -202,10 +202,17 @@ def main():
     # restored workspace proves them — so say so, every step.
     resume_note = None
     if job.get("steps"):
+        # W6 jobs a6e…05/09 lessons, both directions: the brain must
+        # not burn its budget re-verifying finished outputs (05),
+        # and must not refuse for want of input data it may simply
+        # read again (09 — it treated re-reading orders.csv as
+        # forbidden and quit on honesty grounds).
         resume_note = ("RESUMED after an interruption. Your completed steps are in the "
                        "history and every file they wrote is present in the workspace "
                        "again (restored exactly). Steps with ok results are COMPLETE — "
-                       "do not rewrite, re-read or re-verify them. Continue with the "
+                       "do not rewrite or re-verify finished OUTPUT files. Reading "
+                       "INPUT files (like the seeded CSV) again is always allowed and "
+                       "expected whenever you need their contents. Continue with the "
                        "first unfinished part of the task only.")
 
     try:
