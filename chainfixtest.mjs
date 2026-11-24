@@ -275,5 +275,36 @@ const finF = getRec(DONE);
 check(finF && finF.state === "stopped" && finF.failReason && /silent death/.test(finF.failReason.groq || ""), "F3 setup/stop RETAINS failReason in setupdone (was discarded with the chain)");
 check(!getRec(CHAIN), "F4 chain deleted on stop as before");
 
+// =====================================================================
+// GROUP G — Shadow W1 / census C-02: object-shaped chain.skipped must
+// never break the failure paths (pre-fix: (chain.skipped || [])
+// .includes(p) threw a TypeError inside the progress handler's failed
+// branch and chainFailAdvance, and the count reporters printed NaN).
+// =====================================================================
+r = await call("POST", "/api/setup/start", { email: "a@b.co", providers: ["groq", "together", "cohere"], startId: "tap-g" });
+const JG1 = r.json.job;
+r = await runner("POST", `/api/setup/runner/progress?job=${JG1}`, { state: "paused", step: "captcha", reason: "captcha", note: "Paused: IMAGE CAPTCHA" });
+const jg1 = getRec(`setupjob:${JG1}`);
+jg1.pausedAt = Date.now() - 26 * 60 * 1000; // captcha budget is 25 min
+putRec(`setupjob:${JG1}`, jg1);
+r = await call("GET", "/api/setup/status");
+chain = getRec(CHAIN);
+check(chain && chain.skipped && !Array.isArray(chain.skipped) && chain.skipped.groq && chain.skipped.groq.kind === "captcha", "G1 pause-skip wrote the OBJECT skipped shape");
+const JG2 = chain.current;
+check(!!JG2 && JG2 !== JG1, "G2 chain advanced past the skip");
+r = await runner("POST", `/api/setup/runner/progress?job=${JG2}`, { state: "failed", step: "error", note: "door exploded" });
+check(r.json && r.json.ok === true, "G3 failed progress post accepted with object skipped on the chain (no TypeError)");
+await sleep(150); // deferAdvance settles
+chain = getRec(CHAIN);
+check(chain && (chain.failed || []).includes("together"), "G4 the failure was recorded (the failed branch completed)");
+check(chain && chain.current && chain.current !== JG2, "G5 the chain advanced past the failure");
+check(chain && chain.skipped && chain.skipped.groq && chain.skipped.groq.kind === "captcha", "G6 the skip record survived the failure intact");
+const JG3 = chain.current;
+r = await runner("POST", `/api/setup/runner/progress?job=${JG3}`, { state: "failed", step: "error", note: "door exploded too" });
+await sleep(150);
+const finG = getRec(DONE);
+check(finG && finG.state === "failed" && finG.skipped && finG.skipped.groq && finG.skipped.groq.kind === "captcha", "G7 finalize preserved the object skipped shape + kind");
+check(!getRec(CHAIN), "G8 chain cleared at finalize");
+
 console.log(fails === 0 ? "\nALL PASS" : `\n${fails} FAILURES`);
 process.exit(fails === 0 ? 0 : 1);
