@@ -196,6 +196,18 @@ def main():
         if entry.get("tool") in _SNAP_TOOLS and entry.get("ok"):
             snapshot_ws(root)
 
+    # W6 (job a6e…05 lesson): a resumed brain re-read and re-verified
+    # the files its history said were done, and burned the segment's
+    # whole step budget before finishing. The steps ARE done — the
+    # restored workspace proves them — so say so, every step.
+    resume_note = None
+    if job.get("steps"):
+        resume_note = ("RESUMED after an interruption. Your completed steps are in the "
+                       "history and every file they wrote is present in the workspace "
+                       "again (restored exactly). Steps with ok results are COMPLETE — "
+                       "do not rewrite, re-read or re-verify them. Continue with the "
+                       "first unfinished part of the task only.")
+
     try:
         # A record with steps from a dead runner resumes (E3); a
         # fresh record starts through run_agent_job. resume_trigger
@@ -204,7 +216,8 @@ def main():
         # below, because a terminal record is final.
         res = agent_loop.resume_trigger(job, tools, allow=SANDBOX_ALLOW,
                                         deadline_s=DEADLINE_S,
-                                        record=recording)
+                                        record=recording,
+                                        observation=resume_note)
         if res is None:
             res = agent_loop.run_agent_job(job, tools, allow=SANDBOX_ALLOW,
                                            deadline_s=DEADLINE_S,
