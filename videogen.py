@@ -95,12 +95,12 @@ def main():
     vae = AutoencoderKLWan.from_pretrained(
         CFG["model"], subfolder="vae", torch_dtype=torch.float32)
     pipe = WanPipeline.from_pretrained(
-        CFG["model"], vae=vae, torch_dtype=torch.float16)
-    pipe.enable_model_cpu_offload()
-    try:
-        pipe.vae.enable_tiling()
-    except Exception as e:
-        print("vae tiling unavailable:", e)
+        CFG["model"], vae=vae, torch_dtype=torch.float16,
+        low_cpu_mem_usage=True)
+    # PROVEN recipe (Kaggle proof kernel v2, 2026-11-24): sequential
+    # offload rendered end-to-end on a T4 (peak VRAM 11.93 GB). The
+    # earlier model-offload variant died on Kaggle (DeadKernelError).
+    pipe.enable_sequential_cpu_offload()
     info["load_s"] = round(time.time() - t0, 1)
 
     gen = torch.Generator(device="cpu").manual_seed(CFG["seed"])
