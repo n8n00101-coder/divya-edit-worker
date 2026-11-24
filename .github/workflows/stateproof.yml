@@ -205,6 +205,24 @@ jobs:
           _j6 = call({"op": "get", "key": "setupjob:" + W6JOB6}).get("v") or {}
           _ws6 = call({"op": "get", "key": "agentws:" + W6JOB6}).get("v") or {}
           print("W6 job6 ->", json.dumps({"state": _j6.get("state"), "step": _j6.get("step"), "note": str(_j6.get("note") or "")[:160], "steps": len(_j6.get("steps") or []), "ws_files": len((_ws6.get("files") or {})), "answer": str(_j6.get("answer") or "")[:120]}))
+          # Wave 6 part 7: job 7 — same task again after the
+          # string-spec fix. Kill early, resume, expect done.
+          W6JOB7 = "a6e00000000000000007"
+          if not call({"op": "get", "key": "setupjob:" + W6JOB7}).get("exists"):
+              now = int(_t.time() * 1000)
+              rows7 = ["customer,item,qty,price"]
+              data7 = [("Ananya","Notebook",2,150),("Ravi","Pen",5,40),("Ananya","Bag",1,900),("Ravi","Notebook",1,150),("Meena","Pen",10,40),("Kiran","Bag",2,900),("Meena","Notebook",3,150),("Kiran","Pen",4,40),("Divya","Lamp",1,750),("Arjun","Desk",1,2400),("Divya","Pen",6,40),("Arjun","Chair",2,1350),("Sana","Bag",1,900),("Sana","Lamp",2,750),("Ravi","Lamp",1,750),("Meena","Bag",1,900),("Kiran","Desk",1,2400),("Ananya","Chair",1,1350),("Divya","Notebook",4,150),("Arjun","Pen",8,40)]
+              for c,i,q,p in data7: rows7.append(f"{c},{i},{q},{p}")
+              rec7 = {"job": W6JOB7, "user": "w6testlive", "provider": "agent", "flow": "agent",
+                      "task": "Read orders.csv in your workspace. The customers are: Ananya, Ravi, Meena, Kiran, Divya, Arjun, Sana. Use compute_csv with group_by customer and multiply_sum of qty and price to get each customer's total spend. Then, for EACH customer one at a time in that order: (a) write bill_<customer>.txt with the customer name on line 1 and their total as a plain number on line 2; (b) write items_<customer>.txt listing that customer's items from orders.csv, one per line as item x qty. Finish both files for one customer before starting the next. When all 14 files are written, write done.txt containing the word COMPLETE.",
+                      "state": "queued", "step": "starting", "note": "", "at": now, "upd": now,
+                      "files": {"orders.csv": "\n".join(rows7) + "\n"},
+                      "evidence": [{"tool": "file_write", "contains": "done.txt"}]}
+              print("W6 seed job7 ->", json.dumps(call({"op": "put", "key": "setupjob:" + W6JOB7, "value": rec7})))
+              print("W6 seed cur7 ->", json.dumps(call({"op": "put", "key": "agentcur:w6testlive", "value": {"job": W6JOB7, "at": now}})))
+          _j7 = call({"op": "get", "key": "setupjob:" + W6JOB7}).get("v") or {}
+          _ws7 = call({"op": "get", "key": "agentws:" + W6JOB7}).get("v") or {}
+          print("W6 job7 ->", json.dumps({"state": _j7.get("state"), "step": _j7.get("step"), "note": str(_j7.get("note") or "")[:160], "steps": len(_j7.get("steps") or []), "ws_files": len((_ws7.get("files") or {})), "answer": str(_j7.get("answer") or "")[:120]}))
           for _s in (_j6.get("steps") or []):
               print("W6 job6 step ->", json.dumps({"n": _s.get("n"), "tool": _s.get("tool"), "ok": _s.get("ok"), "phase": _s.get("phase"), "arg": str(_s.get("arg") or "")[:110], "result": str(_s.get("result") or "")[:130]}))
           PY
