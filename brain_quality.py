@@ -206,16 +206,24 @@ def _distinct_line(plan, scene, no):
         "Stay with the {s} for one more breath.",
         "The {s} is where the room quietly turns.",
     )
-    best, best_sim = None, 2.0
+    ranked = []
     for subj in subjects or ["room"]:
         for tpl in templates:
             cand = tpl.format(s=subj)
             sim = max((_line_sim(cand, o) for o in others), default=0.0)
-            if sim < best_sim:
-                best, best_sim = cand, sim
-            if sim <= 0.5:
-                return cand
-    return best or "And that feeling is exactly where this story begins."
+            ranked.append((sim, cand))
+    ranked.sort(key=lambda x: x[0])
+    if not ranked:
+        return "And that feeling is exactly where this story begins."
+    # Two sentences: a repaired beat must carry real narration
+    # length, not a 9-word stub that shrinks the film.
+    first = ranked[0][1]
+    second = ""
+    for sim, cand in ranked[1:]:
+        if cand != first and _line_sim(cand, first) <= 0.5:
+            second = cand
+            break
+    return first + (" " + second if second else "")
 
 
 def _stamp_or_strip_source(plan, scene, no):
