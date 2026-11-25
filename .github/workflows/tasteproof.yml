@@ -41,7 +41,7 @@ jobs:
                   raise
           JOB = os.environ.get("PROOF_JOB") or "ta57e001"
           brief = ("topic: the spotlight effect — why we think everyone is watching us, "
-                   "75 seconds, English narration, documentary explainer in WHO TAUGHT US long sheet style. "
+                   "75 seconds, in English, documentary explainer in WHO TAUGHT US long sheet style. "
                    "FINAL VIDEO LENGTH: exactly 75 seconds (±2s) — do not make it longer or shorter.")
           rec = {"mode": "create", "brief": brief, "recent": "", "to": "tasteproof",
                  "user_prompt": brief, "tasteProfile": "wtu_long_sheet"}
