@@ -201,10 +201,15 @@ def _stamp_or_strip_source(plan, scene, no):
     for entry in research:
         if not isinstance(entry, dict):
             continue
-        entry_words = set(_words(str(entry.get("title") or "") + " " +
-                                 str(entry.get("snippet") or entry.get("text") or "")))
+        title_words = set(_words(str(entry.get("title") or "")))
+        entry_words = title_words | set(_words(
+            str(entry.get("snippet") or entry.get("text") or "")))
         overlap = len(vo_words & entry_words)
-        if overlap > best_overlap:
+        title_overlap = len(vo_words & title_words)
+        # A stamp must be backed by the entry's TITLE, not generic
+        # snippet words — an irrelevant retrieved entry must never
+        # become this beat's source.
+        if title_overlap >= 2 and overlap > best_overlap:
             best, best_overlap = entry, overlap
     if best is not None and best_overlap >= 3 and str(best.get("title") or "").strip():
         scene["source_ref"] = str(best.get("title")).strip()
@@ -224,6 +229,9 @@ def _stamp_or_strip_source(plan, scene, no):
     if kept and len(kept) < len(sentences):
         scene["vo"] = " ".join(kept)
         scene.pop("value", None)
+        if taste_pack.source_required(scene):
+            # The label itself carries the claim — clear it.
+            scene["label"] = ""
         return f"beat {no}: removed unsourced claim sentence(s)"
     if sentences and not kept:
         # Beat-specific non-claim fallback: identical fallback lines
@@ -238,6 +246,8 @@ def _stamp_or_strip_source(plan, scene, no):
         )
         scene["vo"] = _fallbacks[(int(no) - 1) % len(_fallbacks)]
         scene.pop("value", None)
+        if taste_pack.source_required(scene):
+            scene["label"] = ""
         return f"beat {no}: unsourced claim line replaced with a non-claim line"
     return None
 

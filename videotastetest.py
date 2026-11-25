@@ -122,8 +122,8 @@ check("T9 rule map complete",
 
 # T10: source repair stamps a matched research source and strips an
 # unresolvable claim; the variety cap ignores footage (sheet default).
-rep_plan = {"research": [{"title": "Spotlight effect study Gilovich",
-                          "snippet": "people overestimate attention"}],
+rep_plan = {"research": [{"title": "Spotlight effect: people overestimate attention",
+                          "snippet": "study participants overestimated attention"}],
             "scenes": [
                 {"no": 1, "vo": "In one study, 46 percent of people "
                                 "overestimated the attention on them.",
@@ -132,7 +132,7 @@ rep_plan = {"research": [{"title": "Spotlight effect study Gilovich",
                  "label": "Growth", "queries": ["older man street"]}]}
 brain_quality.repair_plan(rep_plan, prof)
 check("T10 repair stamps matched source",
-      rep_plan["scenes"][0].get("source") == "Spotlight effect study Gilovich",
+      rep_plan["scenes"][0].get("source") == "Spotlight effect: people overestimate attention",
       str(rep_plan["scenes"][0]))
 check("T10 repair strips unresolvable claim",
       not taste_pack.source_required(rep_plan["scenes"][1]),
