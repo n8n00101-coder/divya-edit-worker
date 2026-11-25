@@ -1,0 +1,98 @@
+name: tasteproof
+on:
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Taste proof job id"
+        required: false
+        default: "ta57e001"
+        type: string
+concurrency:
+  group: tasteproof-${{ inputs.job }}
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout the locked voice engine
+        uses: actions/checkout@v4
+        with:
+          repository: n8n00101-coder/julie-ai-voice-engine
+          path: engine
+      - name: Seed the taste proof job via /internal/state
+        env:
+          RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+          PROOF_JOB: ${{ inputs.job }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request, urllib.error
+          URL = "https://divya.n8n00101.workers.dev/internal/state"
+          KEY = os.environ["RUNNER_KEY"]
+          def call(body):
+              req = urllib.request.Request(URL, method="POST", data=json.dumps(body).encode(),
+                                           headers={"content-type": "application/json", "x-runner-key": KEY,
+                                                    "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      return json.loads(r.read())
+              except urllib.error.HTTPError as e:
+                  print("HTTP", e.code, "body:", e.read()[:200])
+                  raise
+          JOB = os.environ.get("PROOF_JOB") or "ta57e001"
+          brief = ("topic: the spotlight effect — why we think everyone is watching us, "
+                   "75 seconds, documentary explainer in WHO TAUGHT US long sheet style. "
+                   "FINAL VIDEO LENGTH: exactly 75 seconds (±2s) — do not make it longer or shorter.")
+          rec = {"mode": "create", "brief": brief, "recent": "", "to": "tasteproof",
+                 "user_prompt": brief, "tasteProfile": "wtu_long_sheet"}
+          print("TASTE seed ->", json.dumps(call({"op": "put", "key": "job:" + JOB, "value": rec})))
+          back = call({"op": "get", "key": "job:" + JOB}).get("v") or {}
+          print("TASTE seed readback tasteProfile ->", back.get("tasteProfile"), "mode ->", back.get("mode"))
+          PY
+      - name: Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-noto-core fonts-dejavu-core > /dev/null
+          pip install -q httpx==0.27.2 numpy pillow edge-tts yt-dlp
+      - name: Run the taste proof create job
+        env:
+          WORKER_URL: ${{ vars.WORKER_URL }}
+          RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+          DIVYA_ENGINE: ${{ vars.DIVYA_ENGINE || 'v2' }}
+          PYTHONUNBUFFERED: "1"
+        run: python runner.py "${{ inputs.job }}"
+      - name: Read back the job record
+        if: always()
+        env:
+          RUNNER_KEY: ${{ secrets.RUNNER_KEY }}
+          PROOF_JOB: ${{ inputs.job }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          URL = "https://divya.n8n00101.workers.dev/internal/state"
+          KEY = os.environ["RUNNER_KEY"]
+          JOB = os.environ.get("PROOF_JOB") or "ta57e001"
+          req = urllib.request.Request(URL, method="POST",
+                                       data=json.dumps({"op": "get", "key": "job:" + JOB}).encode(),
+                                       headers={"content-type": "application/json", "x-runner-key": KEY,
+                                                "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"})
+          with urllib.request.urlopen(req, timeout=60) as r:
+              v = (json.loads(r.read()).get("v") or {})
+          vd = v.get("videoDirector") or {}
+          print("TASTE readback keys ->", sorted(v.keys()))
+          print("TASTE readback tasteProfile ->", v.get("tasteProfile"))
+          print("TASTE readback videoDirector verdict ->", (vd.get("review") or {}).get("verdict"))
+          print("TASTE readback videoDirector checks ->", len(vd.get("checks") or []))
+          print("TASTE readback videoDirector defects ->", json.dumps((vd.get("review") or {}).get("defects"))[:600])
+          PY
+      - name: Upload proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tasteproof-${{ inputs.job }}
+          if-no-files-found: warn
+          path: |
+            /tmp/divya/**/*.mp4
+            /tmp/divya/**/project.json
+            /tmp/divya/**/compliance_report.json
+            /tmp/divya/**/taste_frames/*.jpg
