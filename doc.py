@@ -1040,6 +1040,8 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
                 if not _crit_fails:
                     break
                 _fixes_taste = _bq_taste.repair_plan(p, _prof_taste)
+                print(f"taste repair pass {_pass_taste + 1}: "
+                      + ("; ".join(_fixes_taste[:6]) or "no fixes"))
                 if not _fixes_taste:
                     break
                 p.setdefault("plan_fixes", []).extend(_fixes_taste)
@@ -1052,7 +1054,9 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
                 raise RuntimeError(
                     "TASTE DIRECTOR GATE: critic still failing after "
                     "bounded repair: " + "; ".join(
-                        f"{c.get('rule')} s{c.get('scene')}" for c in _crit_fails[:4]))
+                        f"{c.get('rule')} s{c.get('scene')}: "
+                        f"{str(c.get('detail') or '')[:90]}"
+                        for c in _crit_fails[:4]))
             print(f"taste director: profile {_prof_taste['id']}, "
                   f"{len(p['video_director']['plan']['steps'])} beat checks armed")
     except RuntimeError:
