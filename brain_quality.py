@@ -176,6 +176,48 @@ def critic_review(plan, profile=None):
     return checks
 
 
+def _line_sim(a, b):
+    wa, wb = set(_words(a)), set(_words(b))
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / max(1, min(len(wa), len(wb)))
+
+
+def _distinct_line(plan, scene, no):
+    """A non-claim line for this beat that does not restate any other
+    beat's line (the story check fails >65% shared content words)."""
+    others = [str(s.get("vo") or "") for s in (plan or {}).get("scenes") or []
+              if s is not scene]
+    subjects = []
+    _label = str(scene.get("label") or "").strip()
+    if _label and not taste_pack.source_required({"vo": "", "label": _label}):
+        subjects.append(_label.lower())
+    for q in scene.get("queries") or []:
+        if str(q).strip():
+            subjects.append(" ".join(str(q).split()[:3]).lower())
+    _pw = _words(scene.get("promise") or scene.get("why"))[:3]
+    if len(_pw) >= 2:
+        subjects.append(" ".join(_pw))
+    templates = (
+        "Watch the {s} again, a little more closely.",
+        "That moment with the {s} carries the weight here.",
+        "Notice how the {s} changes the feeling in the room.",
+        "The {s} makes that small pause harder to ignore.",
+        "Stay with the {s} for one more breath.",
+        "The {s} is where the room quietly turns.",
+    )
+    best, best_sim = None, 2.0
+    for subj in subjects or ["room"]:
+        for tpl in templates:
+            cand = tpl.format(s=subj)
+            sim = max((_line_sim(cand, o) for o in others), default=0.0)
+            if sim < best_sim:
+                best, best_sim = cand, sim
+            if sim <= 0.5:
+                return cand
+    return best or "And that feeling is exactly where this story begins."
+
+
 def _stamp_or_strip_source(plan, scene, no):
     """TASTE-SOURCE repair: stamp a resolved research source onto the
     scene, or deterministically remove the unsourced claim.
@@ -234,26 +276,9 @@ def _stamp_or_strip_source(plan, scene, no):
             scene["label"] = ""
         return f"beat {no}: removed unsourced claim sentence(s)"
     if sentences and not kept:
-        # Beat-specific non-claim fallback: identical fallback lines
-        # would restate each other and fail the story check, so the
-        # line carries this beat's own visible subject.
-        _subject = ""
-        _label = str(scene.get("label") or "").strip()
-        if _label and not taste_pack.source_required({"vo": "", "label": _label}):
-            _subject = _label.lower()
-        if not _subject:
-            _qs = [q for q in (scene.get("queries") or []) if str(q).strip()]
-            if _qs:
-                _subject = " ".join(str(_qs[0]).split()[:3]).lower()
-        _templates = (
-            "Watch the {s} again, a little more closely.",
-            "That moment with the {s} carries the weight here.",
-            "Notice how the {s} changes the feeling in the room.",
-            "The {s} makes that small pause harder to ignore.",
-        )
-        scene["vo"] = (_templates[(int(no) - 1) % len(_templates)].format(s=_subject)
-                       if _subject else
-                       "And that feeling is exactly where this story begins.")
+        # Beat-specific non-claim fallback, chosen to not restate
+        # any other beat's line.
+        scene["vo"] = _distinct_line(plan, scene, no)
         scene.pop("value", None)
         if taste_pack.source_required(scene):
             scene["label"] = ""
@@ -327,6 +352,18 @@ def repair_plan(plan, profile=None):
                 fixes.append(
                     f"beat {no}: variety demotion {kind} -> footage "
                     f"({kind} capped at {allowed}/{len(scenes)})")
+    # BRAIN-RESTATEMENT repair: a later beat that restates an earlier
+    # one gets a distinct non-claim line built from its own subject.
+    scenes = (plan or {}).get("scenes") or []
+    for j in range(len(scenes)):
+        for i in range(j):
+            if _line_sim(scenes[i].get("vo"), scenes[j].get("vo")) > 0.65:
+                no = int(scenes[j].get("no") or j + 1)
+                scenes[j]["vo"] = _distinct_line(plan, scenes[j], no)
+                fixes.append(
+                    f"beat {no}: restatement of beat {i + 1} replaced "
+                    "with a distinct line")
+                break
     return fixes
 
 
