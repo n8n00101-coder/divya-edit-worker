@@ -1420,6 +1420,7 @@ async def create_job(j, wa, note):
                     "taste_profile": _taste_profile_id,
                     "tasteDirectorRequired": True,
                     "footage_only": bool(_taste_prof.get("footage_only")),
+                    "allow_cta": bool(_taste_prof.get("allow_cta", True)),
                 })
                 if _target_s:
                     _base_cfg["duration_s"] = float(_target_s)
@@ -1523,11 +1524,17 @@ async def create_job(j, wa, note):
                         print("duration gate: re-planning with a "
                               "shorter script:", str(e)[:150])
                         _brief_run = (_brief_run +
-                                      "\nHARD LENGTH NOTE: the previous "
-                                      "script's voice overran the ordered "
-                                      "length. Write noticeably FEWER "
-                                      "words per scene so the total voice "
-                                      "fits the ordered length.")
+                                      ("\nHARD LENGTH NOTE: the previous "
+                                       "script's voice ran SHORT of the "
+                                       "ordered length. Write noticeably "
+                                       "MORE words per scene so the total "
+                                       "voice fills the ordered length.")
+                                      if "underrun" in str(e) else
+                                      ("\nHARD LENGTH NOTE: the previous "
+                                       "script's voice overran the ordered "
+                                       "length. Write noticeably FEWER "
+                                       "words per scene so the total voice "
+                                       "fits the ordered length."))
                         continue
                     raise
         size = os.path.getsize(res["path"]) / 1e6
@@ -1548,7 +1555,9 @@ async def create_job(j, wa, note):
                 print("videodirector post:", _vr.status_code)
             except Exception as _e_vd:
                 print("videodirector post failed:", str(_e_vd)[:120])
-            _vd_verdict = (((_vd_rec or {}).get("review") or {}).get("verdict"))
+            _vd_review = ((_vd_rec or {}).get("review")
+                          or (((_vd_rec or {}).get("reviews") or [{}])[-1]))
+            _vd_verdict = (_vd_review or {}).get("verdict")
             if _vd_verdict != "deliver":
                 _vd_defs = (((_vd_rec or {}).get("review") or {}).get("defects") or [])
                 _vd_line = ("Taste director gate: video deliver cheyyaledu — "

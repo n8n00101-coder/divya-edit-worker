@@ -92,6 +92,10 @@ jobs:
           name: tasteproof-${{ inputs.job }}
           if-no-files-found: warn
           path: |
+            /tmp/doc_*/**/*.mp4
+            /tmp/doc_*/**/project.json
+            /tmp/doc_*/**/compliance_report.json
+            /tmp/doc_*/**/taste_frames/*.jpg
             /tmp/divya/**/*.mp4
             /tmp/divya/**/project.json
             /tmp/divya/**/compliance_report.json

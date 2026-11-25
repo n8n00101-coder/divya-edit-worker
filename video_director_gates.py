@@ -16,6 +16,7 @@ CRITICAL_RULES = {
     "TASTE-SOURCE", "TASTE-SOURCE-CARD", "TASTE-LABEL", "TASTE-GRAPHIC",
     "TASTE-BANNED-VISUAL", "TASTE-HOOK", "TASTE-QUERY", "TASTE-CAPTION",
     "TASTE-VARIETY", "TASTE-FOOTAGE", "TASTE-AUDIO", "TASTE-FRAME",
+    "TASTE-DURATION",
     "BRAIN-HOOK", "BRAIN-RESTATEMENT", "BRAIN-CLAIM", "CRITIC-HOOK",
     "FG-SHARE", "FG-FACT", "FG-TEASE", "VHIST", "MQ-LRA", "MQ-SILENCE",
     "MQ-BLACK", "MQ-FREEZE", "MQ-BLANK", "MQ-REPEAT", "MQ-AVSYNC",
@@ -145,6 +146,16 @@ def checks_from_bundle(plan, profile=None, compliance_checks=None,
                 "rule": "TASTE-AUDIO", "status": "PASS" if ok else "FAIL",
                 "detail": f"LRA {float(lra):.2f} (floor {float(profile.get('lra_min') or 0):.1f})",
                 "scene": None})
+        dur = media_info.get("duration")
+        if dur is not None:
+            dmin = float(profile.get("duration_min_s") or 0)
+            dmax = float(profile.get("duration_max_s") or 0)
+            ok = (not dmin or float(dur) >= dmin) and \
+                 (not dmax or float(dur) <= dmax)
+            all_checks.append({
+                "rule": "TASTE-DURATION", "status": "PASS" if ok else "FAIL",
+                "detail": f"duration {float(dur):.1f}s (profile {dmin:.0f}-{dmax:.0f}s)",
+                "scene": None})
     director_checks = []
     for i, scene in enumerate(scenes, 1):
         beat_fails = [c for c in all_checks
@@ -201,6 +212,7 @@ def apply_checks_and_review(plan, profile=None, compliance_checks=None,
     rec["checks"] = (rec.get("checks") or []) + dchecks
     review = final_review(rec, dchecks, all_checks)
     rec["reviews"] = (rec.get("reviews") or []) + [review]
+    rec["review"] = review
     plan["video_director"] = rec
     plan["taste_checks"] = all_checks
     return review

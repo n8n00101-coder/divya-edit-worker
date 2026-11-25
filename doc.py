@@ -3980,8 +3980,15 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # rendered everything and let the runner's backstop trimmer
     # amputate the ending (the CTA scene) off the delivered film.
     _dur_t = _duration_target_s(brief, cfg, spec)
-    if _dur_t and not plan_override and (cfg or {}).get("kind") != "long":
+    _is_taste_dur = bool((cfg or {}).get("taste_profile"))
+    if _dur_t and not plan_override and \
+            ((cfg or {}).get("kind") != "long" or _is_taste_dur):
         _check_duration_gate(total, _dur_t)
+        if _is_taste_dur and total < _dur_t * 0.8:
+            raise DurationOverrunError(
+                f"duration underrun: voice ran {total:.1f}s against "
+                f"the {_dur_t:.0f}s ordered length — re-plan with "
+                "MORE words per scene so the film fills its length")
     if notify: await notify("Voice ready. Scenes render chestunna (animation + music).")
     # v69: stock B-roll for ~half the scenes (see _attach_broll). Runs
     # BEFORE the pre-render geometry QC so the QC renders the real
@@ -4366,12 +4373,13 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                 _taste_review = _vdg_post.apply_checks_and_review(
                     p, _prof_post, compliance_checks=_checks,
                     frame_qc=_fq, frame_taste=_ftaste_post,
-                    media_info={"lra": _lra_post})
+                    media_info={"lra": _lra_post, "duration": total})
                 _checks += [c for c in (p.get("taste_checks") or [])
                             if c.get("rule") not in {x.get("rule") for x in _checks}
                             or c.get("status") == "FAIL"]
                 print(f"taste director post-render: {_taste_review.get('verdict')} "
-                      f"defects={len(_taste_review.get('defects') or [])}")
+                      f"defects={len(_taste_review.get('defects') or [])}: "
+                      + "; ".join(str(d)[:110] for d in (_taste_review.get('defects') or [])[:6]))
         except Exception as _e_post:
             try:
                 import taste_pack as _tp_post2
@@ -4452,7 +4460,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         import taste_pack as _tp_block
         if _tp_block.is_taste_job(cfg, brief, spec):
             import video_director_gates as _vdg_block
-            if not _vdg_block.delivery_allowed(p):
+            _allowed_block, _why_block = _vdg_block.delivery_allowed(p)
+            if not _allowed_block:
                 _rev_block = ((p.get("video_director") or {}).get("review") or {})
                 _defs_block = _rev_block.get("defects") or []
                 raise RuntimeError(
