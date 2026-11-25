@@ -357,6 +357,22 @@ def repair_plan(plan, profile=None):
             scene["visual"] = _rotate_visual(no)
             scene.pop("lib_visual", None)
             scene["graphic_type"] = "footage"
+        if no == 1 and len(str(scene.get("vo") or "").split()) > 22:
+            import re as _re_hook
+            _sents = [s.strip() for s in _re_hook.split(
+                r"(?<=[.!?])\s+", str(scene.get("vo") or "")) if s.strip()]
+            _kept, _count = [], 0
+            for _s in _sents:
+                _w = len(_s.split())
+                if _kept and _count + _w > 20:
+                    break
+                _kept.append(_s)
+                _count += _w
+            _new_vo = " ".join(_kept)
+            if len(_new_vo.split()) > 22:
+                _new_vo = " ".join(_new_vo.split()[:20]).rstrip(",;") + "."
+            scene["vo"] = _new_vo
+            fixes.append(f"beat 1: hook trimmed to {len(_new_vo.split())} words")
         if not str(scene.get("label") or "").strip():
             _lw = _words(scene.get("vo"))[:2]
             if _lw:
