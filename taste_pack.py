@@ -301,8 +301,11 @@ def cfg_for_profile(profile):
 
 
 def _text(scene):
+    # Viewer-facing claim text only: the spoken line, its label and
+    # its spoken value. The director's internal `why` rationale is
+    # never a viewer claim and must not trigger the source gate.
     return " ".join(str((scene or {}).get(k) or "")
-                    for k in ("vo", "label", "why", "value", "source"))
+                    for k in ("vo", "label", "value"))
 
 
 def scene_numbers(scene):

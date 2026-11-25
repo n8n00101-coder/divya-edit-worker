@@ -206,7 +206,7 @@ def _stamp_or_strip_source(plan, scene, no):
         overlap = len(vo_words & entry_words)
         if overlap > best_overlap:
             best, best_overlap = entry, overlap
-    if best is not None and best_overlap >= 2 and str(best.get("title") or "").strip():
+    if best is not None and best_overlap >= 3 and str(best.get("title") or "").strip():
         scene["source_ref"] = str(best.get("title")).strip()
         scene["source"] = str(best.get("title")).strip()
         return (f"beat {no}: matched research source "
@@ -226,7 +226,17 @@ def _stamp_or_strip_source(plan, scene, no):
         scene.pop("value", None)
         return f"beat {no}: removed unsourced claim sentence(s)"
     if sentences and not kept:
-        scene["vo"] = "And that feeling is exactly where this story begins."
+        # Beat-specific non-claim fallback: identical fallback lines
+        # would restate each other and fail the story check.
+        _fallbacks = (
+            "And that feeling is exactly where this story begins.",
+            "But the moment itself tells a quieter story.",
+            "Watch the room again, a little more closely.",
+            "That small pause carries the whole weight here.",
+            "Notice how the room changes around that thought.",
+            "The next moment makes the feeling harder to ignore.",
+        )
+        scene["vo"] = _fallbacks[(int(no) - 1) % len(_fallbacks)]
         scene.pop("value", None)
         return f"beat {no}: unsourced claim line replaced with a non-claim line"
     return None
