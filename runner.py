@@ -1413,6 +1413,9 @@ async def create_job(j, wa, note):
                     "kind": str(_taste_prof.get("kind") or "short"),
                     "width": int(_taste_prof["width"]),
                     "height": int(_taste_prof["height"]),
+                    # Channel profiles narrate in their channel
+                    # language (WTU long/short + AI reels: English).
+                    "lang": str(_taste_prof.get("lang") or "en"),
                     "orientation": str(_taste_prof.get("orientation") or "portrait"),
                     "taste_profile": _taste_profile_id,
                     "tasteDirectorRequired": True,
