@@ -288,6 +288,15 @@ def beat_layers(scene, plan, first=False):
     num = _number(value) if value else None
     taste_profile = str((plan or {}).get("taste_profile") or "")
     graphic_type = str(scene.get("graphic_type") or "")
+    if graphic_type == "diagram":
+        graphic_type = str(scene.get("diagram_kind") or "wave")
+    if taste_profile and scene.get("graphic_locked"):
+        # Variety repair demoted this beat to footage: no card/chart
+        # may reappear at render; a viewer-safe label may ride only.
+        if label:
+            return [{"type": "lower_third", "name": label.title(),
+                     "role": _vo_excerpt(scene)}]
+        return None
     if taste_profile and graphic_type in ("wave", "growth", "checks", "arrow"):
         layers.append({
             "type": "diagram",

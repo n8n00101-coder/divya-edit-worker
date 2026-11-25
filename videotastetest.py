@@ -145,6 +145,23 @@ var_fails = [c for c in taste_pack.profile_checks(many_footage, prof)
              if c["rule"] == "TASTE-VARIETY" and c["status"] == "FAIL"]
 check("T10 variety cap ignores footage", not var_fails, str(var_fails))
 
+# T11: variety repair demotes excess graphics to locked footage and
+# the visual pass does not re-assign them.
+var_plan = {"scenes": [{"no": i + 1, "vo": "The feeling grows later tonight.",
+                        "label": "Feeling", "graphic_type": "diagram",
+                        "diagram_kind": "growth",
+                        "queries": ["person street night"]}
+                       for i in range(12)]}
+brain_quality.repair_plan(var_plan, prof)
+brain_quality.enrich_visuals(var_plan["scenes"], prof)
+var_fails2 = [c for c in taste_pack.profile_checks(var_plan, prof)
+              if c["rule"] == "TASTE-VARIETY" and c["status"] == "FAIL"]
+check("T11 variety repair caps diagrams", not var_fails2, str(var_fails2))
+locked = [s for s in var_plan["scenes"] if s.get("graphic_locked")]
+check("T11 demoted beats stay locked footage",
+      len(locked) == 9 and all(s.get("graphic_type") == "footage" for s in locked),
+      str([(s.get("no"), s.get("graphic_type")) for s in var_plan["scenes"]]))
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)

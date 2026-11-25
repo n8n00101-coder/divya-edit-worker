@@ -130,7 +130,11 @@ def enrich_visuals(scenes, profile=None):
         promise = str(scene.get("promise") or scene.get("why") or
                       scene.get("label") or scene.get("vo") or "").strip()
         scene["promise"] = promise[:240]
-        if need_source and sourced:
+        if scene.get("graphic_locked"):
+            # A variety repair demoted this beat to footage; the
+            # visual pass must not re-assign the graphic it removed.
+            scene["graphic_type"] = scene.get("graphic_type") or "footage"
+        elif need_source and sourced:
             scene["graphic_type"] = "source_card"
         elif _diagram_kind(scene) in (profile.get("diagram_kinds") or ()):
             scene["graphic_type"] = "diagram"
@@ -267,6 +271,33 @@ def repair_plan(plan, profile=None):
                 queries = [" ".join(words[:3])]
                 fixes.append(f"beat {no}: derived visible-subject query '{queries[0]}'")
         scene["queries"] = queries[:2]
+    # TASTE-VARIETY repair: no graphic type may fill >25% of beats.
+    # Excess graphic beats are demoted to footage (the sheet default)
+    # and locked so the next visual pass cannot re-assign them.
+    # Source-card beats with a spoken number keep their card first;
+    # the source field itself is never removed by demotion.
+    scenes = (plan or {}).get("scenes") or []
+    if len(scenes) >= 8:
+        from collections import Counter
+        hist = Counter(taste_pack.graphic_type(s) for s in scenes
+                       if taste_pack.graphic_type(s) != "footage")
+        allowed = max(2, int(0.25 * len(scenes)))
+        for kind, count in hist.items():
+            if count < 3 or count / len(scenes) <= 0.25:
+                continue
+            beats = [s for s in scenes
+                     if taste_pack.graphic_type(s) == kind]
+            if kind == "source_card":
+                beats.sort(key=lambda s: (0 if taste_pack.scene_numbers(s) else 1,
+                                          int(s.get("no") or 0)))
+            for scene in beats[allowed:]:
+                no = int(scene.get("no") or 0)
+                scene["graphic_type"] = "footage"
+                scene["graphic_locked"] = True
+                scene.pop("diagram_kind", None)
+                fixes.append(
+                    f"beat {no}: variety demotion {kind} -> footage "
+                    f"({kind} capped at {allowed}/{len(scenes)})")
     return fixes
 
 
