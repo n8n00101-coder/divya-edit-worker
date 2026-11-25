@@ -3008,7 +3008,7 @@ def music(total, starts, moods, path, hits=None, payoff=None,
             _a = int(max(0.0, _bounds[_i]) * SR)
             _b = int(min(_bounds[_i + 1], total) * SR)
             if _b > _a:
-                _g[_a:_b] = 0.45 + 0.85 * float(intensity[_i])
+                _g[_a:_b] = 0.25 + 1.35 * float(intensity[_i])
         _k = max(1, int(0.35 * SR))
         _ker = np.ones(_k) / _k
         _g = np.convolve(np.pad(_g, (_k, _k), mode="edge"),
@@ -4354,13 +4354,27 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                         "graphic_type": _s_post.get("graphic_type") or "",
                         "source_required": bool(_s_post.get("source_required")),
                     })
-                _vision_post = None
-                try:
-                    import vision as _vis_post
-                    if _vis_post.available():
-                        _vision_post = _vis_post.describe_images
-                except Exception:
-                    _vision_post = None
+                async def _vision_post(images, question):
+                    # Primary: vision.describe_images. Fallback: the
+                    # doc3 vision route (the same leg strict b-roll
+                    # verification uses) so a Groq-only payload still
+                    # gets a real frame judgement instead of UNVERIFIED.
+                    try:
+                        import vision as _vis_post
+                        if _vis_post.available():
+                            return await _vis_post.describe_images(images, question)
+                    except Exception:
+                        pass
+                    import doc3 as _doc3_post
+                    _jpgs = []
+                    for _im in images or []:
+                        if isinstance(_im, (bytes, bytearray)):
+                            _jpgs.append(bytes(_im))
+                        else:
+                            with open(str(_im), "rb") as _f:
+                                _jpgs.append(_f.read())
+                    _txt, _prov = _doc3_post.vision(question, _jpgs, 600)
+                    return _txt, _prov
                 _ftaste_post = await _ftq_post.audit_beats(
                     out, _beats_post, os.path.join(wd, "taste_frames"),
                     vision=_vision_post)

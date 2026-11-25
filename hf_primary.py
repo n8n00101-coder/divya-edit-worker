@@ -157,7 +157,7 @@ _XFADE_OK = {"fade", "fadeblack", "fadewhite", "dissolve",
 _RULE_ROTATION = ("fade", "slideleft", "dissolve", "slideright")
 
 
-def _xfade_for(plan_name, idx, layer_types):
+def _xfade_for(plan_name, idx, layer_types, taste=False):
     """The xfade transition INTO beat `idx`: the editing plan's
     own transition name when it maps to a real xfade, else a
     rule default. A hard cut is never the default — film 3 cut
@@ -186,7 +186,9 @@ def _xfade_for(plan_name, idx, layer_types):
             # rendering of the intent at a beat boundary.
             return "dissolve"
     if idx == 0:
-        return "fadeblack"          # dip from black: chapter open
+        # Taste films open on content, never a black dip (the sheet
+        # hook is footage from the first frame).
+        return "fade" if taste else "fadeblack"
     if "data_chart" in (layer_types or []):
         return "dissolve"
     if "map_card" in (layer_types or []):
@@ -431,7 +433,8 @@ def plan_beats(p, wd, cfg):
                       "flags": rep.get("flags") or [],
                       "transition": _xfade_for(
                           plan_name, i,
-                          [l.get("type") for l in layers]),
+                          [l.get("type") for l in layers],
+                          taste=bool(p.get("taste_profile"))),
                       "treatment": treatment})
     report = {"beats_considered": len(p.get("scenes") or []),
               "beats_ready": len(beats), "declined": declined,

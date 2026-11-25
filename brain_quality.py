@@ -153,6 +153,23 @@ def enrich_visuals(scenes, profile=None):
         scene["rework_action"] = (
             "re-plan this beat with a new visual decision; do not re-render the same plan"
         )
+        # Executed music arc: hook high, turning dip, payoff high —
+        # the mix must breathe or the LRA sound floor fails.
+        if scene.get("music_intensity") is None:
+            n = len(scenes or [])
+            mood = str(scene.get("mood") or "").lower()
+            if i == 0:
+                scene["music_intensity"] = 1.0
+            elif i == n - 1:
+                scene["music_intensity"] = 1.0
+            elif n >= 5 and i == int(n * 0.6):
+                scene["music_intensity"] = 0.05
+            elif mood in ("tense", "excited", "mystery"):
+                scene["music_intensity"] = 0.8
+            elif mood in ("sad", "calm"):
+                scene["music_intensity"] = 0.25
+            else:
+                scene["music_intensity"] = 0.5
     return scenes
 
 
@@ -360,6 +377,48 @@ def repair_plan(plan, profile=None):
                 fixes.append(
                     f"beat {no}: variety demotion {kind} -> footage "
                     f"({kind} capped at {allowed}/{len(scenes)})")
+    # VHIST repair: cap the EFFECTIVE visual type (lib_visual/visual)
+    # the same way — excess beats become plain footage-backed cards.
+    # Beats whose visual cannot draw (data visual with no spoken
+    # number, filmstrip/checklist with no label) are demoted first.
+    scenes = (plan or {}).get("scenes") or []
+    for scene in scenes:
+        vis = str(scene.get("visual") or "").lower()
+        if vis in ("counter", "donut", "bar", "bar_compare", "graph", "gauge") \
+                and not taste_pack.scene_numbers(scene):
+            no = int(scene.get("no") or 0)
+            scene["visual"] = "card"
+            fixes.append(f"beat {no}: data visual '{vis}' with no spoken number -> card")
+    if len(scenes) >= 8:
+        from collections import Counter as _CounterV
+
+        def _eff(s):
+            return str(s.get("lib_visual") or s.get("visual") or "card").lower()
+
+        def _drawable(s):
+            kind = _eff(s)
+            if kind in ("filmstrip", "checklist", "list", "icon_row"):
+                return bool(str(s.get("label") or "").strip())
+            return True
+
+        hist = _CounterV(_eff(s) for s in scenes)
+        allowed_v = max(2, int(0.25 * len(scenes)))
+        vplan = (plan or {}).get("visual_plan") or []
+        for kind, count in hist.items():
+            if count < 3 or count / len(scenes) <= 0.25:
+                continue
+            beats = [s for s in scenes if _eff(s) == kind]
+            beats.sort(key=lambda s: (0 if _drawable(s) else 1,
+                                      int(s.get("no") or 0)))
+            for scene in beats[allowed_v:]:
+                no = int(scene.get("no") or 0)
+                scene["visual"] = "card"
+                scene.pop("lib_visual", None)
+                if 1 <= no <= len(vplan) and isinstance(vplan[no - 1], dict):
+                    vplan[no - 1]["visual_concept"] = "card"
+                fixes.append(
+                    f"beat {no}: visual variety demotion {kind} -> card "
+                    f"({kind} capped at {allowed_v}/{len(scenes)})")
     # BRAIN-RESTATEMENT repair: a later beat that restates an earlier
     # one gets a distinct non-claim line built from its own subject.
     scenes = (plan or {}).get("scenes") or []
