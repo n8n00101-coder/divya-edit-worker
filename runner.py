@@ -1536,6 +1536,22 @@ async def create_job(j, wa, note):
                                        "words per scene so the total voice "
                                        "fits the ordered length."))
                         continue
+                    # Taste-guarantee bounded rework: a rework
+                    # verdict re-plans the film ONCE with the
+                    # director's defects named in the brief; a
+                    # second failure is honest (refund path).
+                    if _taste_prof and not attempt and \
+                            "delivery blocked — review rework" in str(e):
+                        print("taste rework: re-planning once with "
+                              "director defects:", str(e)[:200])
+                        _brief_run = (_brief_run +
+                                      "\nTASTE REWORK NOTE: the previous "
+                                      "cut failed Julie's taste director "
+                                      "review: " + str(e)[:400] +
+                                      " Re-plan the failing beats with "
+                                      "new visual decisions; every beat "
+                                      "must visibly show its line.")
+                        continue
                     raise
         size = os.path.getsize(res["path"]) / 1e6
         print("video", res["path"], round(size, 2), "MB", res.get("duration"))

@@ -127,8 +127,10 @@ def enrich_visuals(scenes, profile=None):
         need_source = taste_pack.source_required(scene)
         sourced = taste_pack.has_source(scene)
         scene["source_required"] = bool(need_source)
-        promise = str(scene.get("promise") or scene.get("why") or
-                      scene.get("label") or scene.get("vo") or "").strip()
+        # The promise is what the FRAME must show: the viewer-facing
+        # label/line subject, not the director's internal rationale.
+        promise = str(scene.get("label") or scene.get("vo") or
+                      scene.get("promise") or scene.get("why") or "").strip()
         scene["promise"] = promise[:240]
         if scene.get("graphic_locked"):
             # A variety repair demoted this beat to footage; the
@@ -191,6 +193,14 @@ def critic_review(plan, profile=None):
             rule["id"], True,
             f"feedback rule loaded: {rule['rule']} (gate {rule['gate']})"))
     return checks
+
+
+_ROTATE_VISUALS = ("question", "heart", "check", "clock", "warning",
+                   "battery", "calendar", "strike", "curve", "four")
+
+
+def _rotate_visual(no):
+    return _ROTATE_VISUALS[(int(no) - 1) % len(_ROTATE_VISUALS)]
 
 
 def _line_sim(a, b):
@@ -340,11 +350,18 @@ def repair_plan(plan, profile=None):
             fixes.append(f"beat {no}: cleared internal label '{scene.get('label')}'")
             scene["label"] = ""
         vis = str(scene.get("visual") or "").lower()
-        if vis in (profile.get("banned_visuals") or ()):
+        if vis in (profile.get("banned_visuals") or ()) or vis == "photo_frame":
             fixes.append(f"beat {no}: banned visual '{vis}' -> footage")
-            # First beat must open on content, never a card.
-            scene["visual"] = "question" if no == 1 else "card"
+            # Rotate content visuals over the footage — demoting
+            # everything to one card flattens the visual histogram.
+            scene["visual"] = _rotate_visual(no)
+            scene.pop("lib_visual", None)
             scene["graphic_type"] = "footage"
+        if not str(scene.get("label") or "").strip():
+            _lw = _words(scene.get("vo"))[:2]
+            if _lw:
+                scene["label"] = " ".join(_lw).upper()[:40]
+                fixes.append(f"beat {no}: restored viewer label '{scene['label']}'")
         if scene.get("graphic_type") == "source_card" and not taste_pack.has_source(scene):
             fixes.append(f"beat {no}: source_card without source -> footage")
             scene["graphic_type"] = "footage"
@@ -397,7 +414,7 @@ def repair_plan(plan, profile=None):
         if vis in ("counter", "donut", "bar", "bar_compare", "graph", "gauge") \
                 and not taste_pack.scene_numbers(scene):
             no = int(scene.get("no") or 0)
-            scene["visual"] = "card"
+            scene["visual"] = _rotate_visual(no)
             fixes.append(f"beat {no}: data visual '{vis}' with no spoken number -> card")
     if len(scenes) >= 8:
         from collections import Counter as _CounterV
@@ -424,12 +441,12 @@ def repair_plan(plan, profile=None):
                                       int(s.get("no") or 0)))
             for scene in beats[allowed_v:]:
                 no = int(scene.get("no") or 0)
-                scene["visual"] = "card"
+                scene["visual"] = _rotate_visual(no)
                 scene.pop("lib_visual", None)
                 if 1 <= no <= len(vplan) and isinstance(vplan[no - 1], dict):
-                    vplan[no - 1]["visual_concept"] = "card"
+                    vplan[no - 1]["visual_concept"] = _rotate_visual(no)
                 fixes.append(
-                    f"beat {no}: visual variety demotion {kind} -> card "
+                    f"beat {no}: visual variety demotion {kind} -> {_rotate_visual(no)} "
                     f"({kind} capped at {allowed_v}/{len(scenes)})")
     # BRAIN-RESTATEMENT repair: a later beat that restates an earlier
     # one gets a distinct non-claim line built from its own subject.

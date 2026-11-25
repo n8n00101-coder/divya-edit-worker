@@ -498,7 +498,7 @@ def jpeg_bytes(im, maxside=512, q=82):
 
 # ---------------- vision (Gemini preferred, Groq fallback) ----------------
 GEMINI_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash"]
-GROQ_VISION = [m for m in os.environ.get("GROQ_VISION_MODELS", "qwen/qwen3.8-27b,meta-llama/llama-4-scout-17b-16e-instruct").split(",") if m]
+GROQ_VISION = [m for m in os.environ.get("GROQ_VISION_MODELS", "qwen/qwen3.8-27b").split(",") if m]
 VISION_STATE = {"gemini_ok": None, "used": {}}
 REJECTED = set()  # (sentence, image url) pairs the vision check already refused
 

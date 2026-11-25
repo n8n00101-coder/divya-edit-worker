@@ -4159,10 +4159,17 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         "track": "music.wav" if _music_on else None,
         "level": ("ducked under the voice (sidechain, -6..-8 dB class)"
                   if _music_on else "off — explicit ask in the prompt/amendments")}
+    _taste_mix = bool((cfg or {}).get("taste_profile"))
+    _mus_vol = "0.85" if _taste_mix else "0.45"
+    _duck = ("sidechaincompress=threshold=0.03:ratio=4:attack=15:release=350"
+             if _taste_mix else
+             "sidechaincompress=threshold=0.015:ratio=10:attack=15:release=350")
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", f"{wd}/voice.wav", "-i", f"{wd}/music.wav", "-i", f"{wd}/music_sfx.wav", "-filter_complex",
                     # v36 (Blind E1): the music is ducked -12 dB under the voice
                     # (volume 0.55 -> 0.45, sidechain threshold 0.02 -> 0.015).
-                    "[0:a]asplit[v1][v2];[1:a]volume=0.45[m];[m][v2]sidechaincompress=threshold=0.015:ratio=10:attack=15:release=350[md];"
+                    # Taste films: louder bed + gentler duck so the executed
+                    # music arc moves the loudness range (LRA floor).
+                    f"[0:a]asplit[v1][v2];[1:a]volume={_mus_vol}[m];[m][v2]{_duck}[md];"
                     "[v1]highpass=f=70,acompressor=threshold=0.1:ratio=3,volume=1.5[vv];[2:a]volume=0.55[sx];"
                     # v32 (M6, Mark): final loudnorm -14 LUFS (was alimiter)
                     # v79 (R11): true peak -1 dB (was -1.5; the compromise
@@ -4373,8 +4380,18 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                         else:
                             with open(str(_im), "rb") as _f:
                                 _jpgs.append(_f.read())
-                    _txt, _prov = _doc3_post.vision(question, _jpgs, 600)
-                    return _txt, _prov
+                    _last_err = None
+                    for _attempt in range(3):
+                        try:
+                            _txt, _prov = _doc3_post.vision(question, _jpgs, 600)
+                            if _txt:
+                                return _txt, _prov
+                            _last_err = RuntimeError("vision returned empty")
+                        except Exception as _e_vis:
+                            _last_err = _e_vis
+                        if _attempt < 2:
+                            await asyncio.sleep(20 * (_attempt + 1))
+                    raise _last_err or RuntimeError("vision unavailable")
                 _ftaste_post = await _ftq_post.audit_beats(
                     out, _beats_post, os.path.join(wd, "taste_frames"),
                     vision=_vision_post)
