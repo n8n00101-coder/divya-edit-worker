@@ -297,7 +297,7 @@ def beat_layers(scene, plan, first=False):
         # may reappear at render; a viewer-safe label may ride only.
         if label:
             return [{"type": "lower_third", "name": label.title(),
-                     "role": _vo_excerpt(scene)}]
+                     "role": ""}]
         return None
     if taste_profile and graphic_type in ("wave", "growth", "checks", "arrow"):
         layers.append({
@@ -350,7 +350,7 @@ def beat_layers(scene, plan, first=False):
             layers.append({
                 "type": "lower_third",
                 "name": label.title(),
-                "role": _vo_excerpt(scene),
+                "role": "",
             })
     elif first:
         layers.append({
@@ -367,7 +367,7 @@ def beat_layers(scene, plan, first=False):
             "type": "lower_third",
             "name": label.title(),
             "role": (f"Source: {src}" if src
-                     else _vo_excerpt(scene)),
+                     else ("" if taste_profile else _vo_excerpt(scene))),
         })
     return layers or None
 

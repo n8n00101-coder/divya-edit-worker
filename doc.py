@@ -3901,7 +3901,9 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             voice = VOICES[("en", "male_calm")]
     p["_voice_used"] = voice
     if notify: await notify(f"Script ready: {p['title']} ({len(p['scenes'])} scenes, {p['lang']}). Voice, animation, music chestunna.")
-    gap = 0.45  # v32 (M13, Mark 1a1c1028211d08d1 §1 step 6): 0.45 s breathing room per scene
+    # Taste films breathe longer between beats: the music lifts in
+    # the gaps, which is what moves the loudness range (LRA floor).
+    gap = 1.1 if (cfg or {}).get("taste_profile") else 0.45
     # v71: with a saved reference voice, every scene goes through
     # synth_voice (closest voice + pace match); the voice it picks on
     # the first scene carries to the rest. Without one: plain tts().
@@ -4381,7 +4383,7 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                             with open(str(_im), "rb") as _f:
                                 _jpgs.append(_f.read())
                     _last_err = None
-                    for _attempt in range(3):
+                    for _attempt in range(4):
                         try:
                             _txt, _prov = _doc3_post.vision(question, _jpgs, 600)
                             if _txt:
@@ -4389,8 +4391,8 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                             _last_err = RuntimeError("vision returned empty")
                         except Exception as _e_vis:
                             _last_err = _e_vis
-                        if _attempt < 2:
-                            await asyncio.sleep(20 * (_attempt + 1))
+                        if _attempt < 3:
+                            await asyncio.sleep(45 * (_attempt + 1))
                     raise _last_err or RuntimeError("vision unavailable")
                 _ftaste_post = await _ftq_post.audit_beats(
                     out, _beats_post, os.path.join(wd, "taste_frames"),

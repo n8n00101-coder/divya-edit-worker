@@ -1421,6 +1421,7 @@ async def create_job(j, wa, note):
                     "tasteDirectorRequired": True,
                     "footage_only": bool(_taste_prof.get("footage_only")),
                     "allow_cta": bool(_taste_prof.get("allow_cta", True)),
+                    "caption_spec": {"words": [3, 5]},
                 })
                 if _target_s:
                     _base_cfg["duration_s"] = float(_target_s)
@@ -1489,7 +1490,7 @@ async def create_job(j, wa, note):
         else:
             _brief_run = j.get("brief", "")
             _DOE = getattr(create, "DurationOverrunError", None)
-            for attempt in range(2):
+            for attempt in range(3 if _taste_prof else 2):
                 try:
                     # v28: the last 5 looks (from KV, via the job) so the look never
                     # repeats — only the v2 engine (doc.py, pick_look) takes it.
@@ -1520,7 +1521,7 @@ async def create_job(j, wa, note):
                     # (refund) instead of delivering a film whose
                     # ending was trimmed off.
                     if _DOE is not None and isinstance(e, _DOE) \
-                            and not attempt:
+                            and attempt < (2 if _taste_prof else 1):
                         print("duration gate: re-planning with a "
                               "shorter script:", str(e)[:150])
                         _brief_run = (_brief_run +
@@ -1540,7 +1541,7 @@ async def create_job(j, wa, note):
                     # verdict re-plans the film ONCE with the
                     # director's defects named in the brief; a
                     # second failure is honest (refund path).
-                    if _taste_prof and not attempt and \
+                    if _taste_prof and attempt < 2 and \
                             "delivery blocked — review rework" in str(e):
                         print("taste rework: re-planning once with "
                               "director defects:", str(e)[:200])
