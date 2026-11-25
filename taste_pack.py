@@ -454,7 +454,11 @@ def profile_checks(plan, profile):
         checks.extend(validate_scene(scene, profile, i))
     if len(scenes) >= 8:
         from collections import Counter
-        hist = Counter(graphic_type(s) for s in scenes)
+        # Footage is the sheet default, not a graphic — the variety
+        # cap governs GRAPHIC types only (a film that is mostly
+        # footage is correct, not repetitive).
+        hist = Counter(graphic_type(s) for s in scenes
+                       if graphic_type(s) != "footage")
         for kind, count in hist.items():
             if count >= 3 and count / len(scenes) > 0.25:
                 checks.append(_check(

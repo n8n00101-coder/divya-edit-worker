@@ -120,6 +120,31 @@ rmap = taste_pack.rule_map()
 check("T9 rule map complete",
       all(k in rmap for k in ("TASTE-SOURCE", "TASTE-CAPTION", "TASTE-AUDIO", "TASTE-FRAME")))
 
+# T10: source repair stamps a matched research source and strips an
+# unresolvable claim; the variety cap ignores footage (sheet default).
+rep_plan = {"research": [{"title": "Spotlight effect study Gilovich",
+                          "snippet": "people overestimate attention"}],
+            "scenes": [
+                {"no": 1, "vo": "In one study, 46 percent of people "
+                                "overestimated the attention on them.",
+                 "label": "The study", "queries": ["crowd people walking"]},
+                {"no": 2, "vo": "Scientists found the effect grows with age.",
+                 "label": "Growth", "queries": ["older man street"]}]}
+brain_quality.repair_plan(rep_plan, prof)
+check("T10 repair stamps matched source",
+      rep_plan["scenes"][0].get("source") == "Spotlight effect study Gilovich",
+      str(rep_plan["scenes"][0]))
+check("T10 repair strips unresolvable claim",
+      not taste_pack.source_required(rep_plan["scenes"][1]),
+      str(rep_plan["scenes"][1]))
+many_footage = {"scenes": [{"no": i + 1, "vo": "A quiet street at dawn.",
+                            "label": "Street", "graphic_type": "footage",
+                            "queries": ["quiet street dawn"]}
+                           for i in range(10)]}
+var_fails = [c for c in taste_pack.profile_checks(many_footage, prof)
+             if c["rule"] == "TASTE-VARIETY" and c["status"] == "FAIL"]
+check("T10 variety cap ignores footage", not var_fails, str(var_fails))
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)

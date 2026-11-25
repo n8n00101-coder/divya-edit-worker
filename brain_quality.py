@@ -172,18 +172,77 @@ def critic_review(plan, profile=None):
     return checks
 
 
+def _stamp_or_strip_source(plan, scene, no):
+    """TASTE-SOURCE repair: stamp a resolved research source onto the
+    scene, or deterministically remove the unsourced claim.
+
+    Order: (1) the fact gate's own resolution (scene source_ref ->
+    research record title); (2) a research entry whose title shares
+    >=2 content words with the line; (3) remove the claim sentences
+    (spoken numbers / fact claims) from the voice line — an
+    unsourced number never renders on a taste film."""
+    if not taste_pack.source_required(scene) or taste_pack.has_source(scene):
+        return None
+    research = (plan or {}).get("research") or []
+    try:
+        import anti_boring as _ab
+        title = _ab.resolved_source_title(scene, research)
+    except Exception:
+        title = None
+    if title:
+        scene["source"] = title
+        return f"beat {no}: stamped resolved source '{title}'"
+    vo_words = set(_words(scene.get("vo")))
+    best, best_overlap = None, 0
+    for entry in research:
+        if not isinstance(entry, dict):
+            continue
+        entry_words = set(_words(str(entry.get("title") or "") + " " +
+                                 str(entry.get("snippet") or entry.get("text") or "")))
+        overlap = len(vo_words & entry_words)
+        if overlap > best_overlap:
+            best, best_overlap = entry, overlap
+    if best is not None and best_overlap >= 2 and str(best.get("title") or "").strip():
+        scene["source_ref"] = str(best.get("title")).strip()
+        scene["source"] = str(best.get("title")).strip()
+        return (f"beat {no}: matched research source "
+                f"'{scene['source']}' ({best_overlap} shared words)")
+    # No source resolves: remove claim sentences from the line.
+    import re as _re
+    vo = str(scene.get("vo") or "")
+    sentences = [s.strip() for s in _re.split(r"(?<=[.!?])\s+", vo) if s.strip()]
+    kept = []
+    for sent in sentences:
+        probe = dict(scene, vo=sent)
+        if taste_pack.source_required(probe):
+            continue
+        kept.append(sent)
+    if kept and len(kept) < len(sentences):
+        scene["vo"] = " ".join(kept)
+        scene.pop("value", None)
+        return f"beat {no}: removed unsourced claim sentence(s)"
+    if sentences and not kept:
+        scene["vo"] = "And that feeling is exactly where this story begins."
+        scene.pop("value", None)
+        return f"beat {no}: unsourced claim line replaced with a non-claim line"
+    return None
+
+
 def repair_plan(plan, profile=None):
     """Deterministic pre-render repair rounds (bounded by caller).
 
-    Repairs only plan fields: banned visuals become footage beats,
-    internal labels are cleared, source-card misuse is demoted, and
-    unsearchable queries are replaced by the line's visible subject.
-    Voice lines are never rewritten here; unsourced claims remain a
-    fact-gate failure for the caller to surface.
+    Repairs plan fields: banned visuals become footage beats,
+    internal labels are cleared, source-card misuse is demoted,
+    unsearchable queries are replaced by the line's visible subject,
+    and unsourced claims are source-stamped from the plan's research
+    record or removed — the taste gate never renders them.
     """
     profile = profile or taste_pack.PROFILES["wtu_long_sheet"]
     fixes = []
     for i, scene in enumerate((plan or {}).get("scenes") or []):
+        _src_fix = _stamp_or_strip_source(plan, scene, int(scene.get("no") or i + 1))
+        if _src_fix:
+            fixes.append(_src_fix)
         no = int(scene.get("no") or i + 1)
         if taste_pack.label_is_internal(scene.get("label")):
             fixes.append(f"beat {no}: cleared internal label '{scene.get('label')}'")
