@@ -235,16 +235,25 @@ def _stamp_or_strip_source(plan, scene, no):
         return f"beat {no}: removed unsourced claim sentence(s)"
     if sentences and not kept:
         # Beat-specific non-claim fallback: identical fallback lines
-        # would restate each other and fail the story check.
-        _fallbacks = (
-            "And that feeling is exactly where this story begins.",
-            "But the moment itself tells a quieter story.",
-            "Watch the room again, a little more closely.",
-            "That small pause carries the whole weight here.",
-            "Notice how the room changes around that thought.",
-            "The next moment makes the feeling harder to ignore.",
+        # would restate each other and fail the story check, so the
+        # line carries this beat's own visible subject.
+        _subject = ""
+        _label = str(scene.get("label") or "").strip()
+        if _label and not taste_pack.source_required({"vo": "", "label": _label}):
+            _subject = _label.lower()
+        if not _subject:
+            _qs = [q for q in (scene.get("queries") or []) if str(q).strip()]
+            if _qs:
+                _subject = " ".join(str(_qs[0]).split()[:3]).lower()
+        _templates = (
+            "Watch the {s} again, a little more closely.",
+            "That moment with the {s} carries the weight here.",
+            "Notice how the {s} changes the feeling in the room.",
+            "The {s} makes that small pause harder to ignore.",
         )
-        scene["vo"] = _fallbacks[(int(no) - 1) % len(_fallbacks)]
+        scene["vo"] = (_templates[(int(no) - 1) % len(_templates)].format(s=_subject)
+                       if _subject else
+                       "And that feeling is exactly where this story begins.")
         scene.pop("value", None)
         if taste_pack.source_required(scene):
             scene["label"] = ""
