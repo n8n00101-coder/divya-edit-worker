@@ -248,7 +248,19 @@ def audit_footage_share(scenes, cfg, target=0.70):
     for every long film. FAIL below the documentary target —
     drawn/generated visuals are the justified exception (each
     carries a logged waiver), never the default."""
-    if (cfg or {}).get("kind") != "long":
+    # Taste-guarantee: taste-profile jobs enforce their profile's
+    # footage floor even when the render kind is short (WTU shorts
+    # and AI reels are footage-first too).
+    _taste_id = str((cfg or {}).get("taste_profile") or "")
+    if _taste_id:
+        try:
+            import taste_pack as _tp_ab
+            _prof_ab = _tp_ab.PROFILES.get(_taste_id)
+            if _prof_ab:
+                target = float(_prof_ab.get("footage_min_share") or target)
+        except Exception:
+            pass
+    elif (cfg or {}).get("kind") != "long":
         return []
     have, total, share = footage_share(scenes)
     if not total:

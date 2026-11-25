@@ -40,6 +40,11 @@ HTML; templates below only supply layout + motion):
                   # or explicit timings:
                   # "words": [{"text": "But", "at": 0.6}, ...]
   lower_third     {"type": "lower_third", "name": "...", "role": "..."}
+  source_card     {"type": "source_card", "kicker": "...",
+                   "headline": "...", "stat": "46", "unit": "%",
+                   "quote": "...", "source": "Gilovich et al. (2000)"}
+  diagram         {"type": "diagram", "kind": "wave|growth|checks|arrow",
+                   "title": "...", "items": ["...", "..."]}
 
 Honesty rules, baked into the templates (not left to the caller):
   * Every scene REQUIRES a real footage/image asset — graphics are
@@ -97,8 +102,19 @@ def _slug(name):
 def _decimals(value):
     s = repr(float(value))
     if "." in s and "e" not in s and "E" not in s:
-        return min(3, len(s.split(".")[1].rstrip("0")) or 1)
+        frac = s.split(".")[1].rstrip("0")
+        return min(3, len(frac))
     return 0
+
+
+def _display_decimals(display, value):
+    """Decimals for the count-up: the DISPLAY string's precision wins
+    (a spoken '46%' must count 0..46, never flash '46.0' because the
+    float repr carried a trailing zero)."""
+    m = re.search(r"\d[\d,]*(?:\.(\d+))?", str(display or ""))
+    if m:
+        return min(3, len(m.group(1) or ""))
+    return _decimals(value)
 
 
 # ------------------------------------------------------- layer templates
@@ -264,8 +280,8 @@ def _layer_data_chart(spec, p, dur, track, scale, flags, scene_no):
     t = 0.9
     for i, b in enumerate(bars):
         v = float(b.get("value") or 0)
-        dec = _decimals(b.get("value") or 0)
         disp = str(b.get("display") or "")
+        dec = _display_decimals(disp, b.get("value") or 0)
         js.append(f'tl.fromTo("#{p}-dat-bar{i}", {{scaleX: 0}}, '
                   f'{{scaleX: 1, duration: 0.85, ease: "power3.inOut"}}, '
                   f'{_t(t)});')
@@ -458,15 +474,147 @@ def _layer_lower_third(spec, p, dur, track, scale):
     return css, body, js
 
 
+def _layer_source_card(spec, p, dur, track, scale, flags, scene_no):
+    """Sheet-style research card: paper card, big stat, visible source.
+
+    The taste gate blocks sourceless facts before render; if one still
+    reaches codegen, the missing source is rendered explicitly and
+    flagged, never hidden."""
+    kicker = str(spec.get("kicker") or "THE RESEARCH")
+    headline = str(spec.get("headline") or spec.get("title") or "")
+    stat = str(spec.get("stat") or spec.get("display") or spec.get("value") or "")
+    unit = str(spec.get("unit") or "")
+    quote = str(spec.get("quote") or spec.get("note") or "")
+    source = str(spec.get("source") or "").strip()
+    source_missing = not source
+    if source_missing:
+        flags.append(
+            f"scene {scene_no}: source_card has NO source — rendered "
+            f"with the explicit placeholder '{MISSING_SOURCE_LINE}'")
+        source_line = MISSING_SOURCE_LINE
+    else:
+        source_line = source if source.lower().startswith("source") \
+            else "Source: " + source
+    css = f"""
+    #{p}-src-card {{ position: absolute; right: {int(96*scale)}px;
+      top: {int(110*scale)}px; width: {int(620*scale)}px;
+      padding: {int(44*scale)}px {int(48*scale)}px {int(40*scale)}px;
+      background: rgba(248,246,240,0.96); color: #161616;
+      border-radius: 14px; box-shadow: 0 18px 50px rgba(0,0,0,0.35); }}
+    #{p}-src-kicker {{ font-family: Inter, sans-serif; font-weight: 800;
+      font-size: {int(22*scale)}px; letter-spacing: 3px; color: #8a5a12;
+      text-transform: uppercase; }}
+    #{p}-src-head {{ margin-top: 10px; font-family: Inter, sans-serif;
+      font-weight: 800; font-size: {int(36*scale)}px; line-height: 1.18; }}
+    #{p}-src-stat {{ margin-top: {int(26*scale)}px; display: flex;
+      align-items: baseline; gap: {int(14*scale)}px; }}
+    #{p}-src-num {{ font-family: Oswald, sans-serif; font-weight: 700;
+      font-size: {int(92*scale)}px; color: #d97706; line-height: 1; }}
+    #{p}-src-unit {{ font-family: Inter, sans-serif; font-weight: 700;
+      font-size: {int(28*scale)}px; color: #444; }}
+    #{p}-src-quote {{ margin-top: {int(22*scale)}px; font-family: Inter, sans-serif;
+      font-size: {int(27*scale)}px; line-height: 1.35; color: #333;
+      border-left: 5px solid #d97706; padding-left: {int(18*scale)}px; }}
+    #{p}-src-line {{ margin-top: {int(24*scale)}px; font-family: Inter, sans-serif;
+      font-size: {int(23*scale)}px; color: #555; }}
+    #{p}-src-line.missing {{ color: #b3261e; font-weight: 800; }}"""
+    parts = [f'<div id="{p}-src-card" class="clip" data-start="0" '
+             f'data-duration="{_t(dur)}" data-track-index="{track}">',
+             f'<div id="{p}-src-kicker">{_esc(kicker)}</div>']
+    if headline:
+        parts.append(f'<div id="{p}-src-head">{_esc(headline)}</div>')
+    if stat:
+        parts.append(
+            f'<div id="{p}-src-stat"><div id="{p}-src-num">{_esc(stat)}</div>'
+            + (f'<div id="{p}-src-unit">{_esc(unit)}</div>' if unit else "")
+            + '</div>')
+    if quote:
+        parts.append(f'<div id="{p}-src-quote">{_esc(quote)}</div>')
+    parts.append(
+        f'<div id="{p}-src-line"'
+        + (' class="missing" data-source-missing="true"' if source_missing else "")
+        + f'>{_esc(source_line)}</div></div>')
+    js = [f'tl.fromTo("#{p}-src-card", {{opacity: 0, x: 60}}, '
+          f'{{opacity: 1, x: 0, duration: 0.7, ease: "power3.out"}}, 0.4);']
+    return css, "".join(parts), js
+
+
+def _layer_diagram(spec, p, dur, track, scale):
+    """Minimal sheet diagrams: wave / growth / checks / arrow.
+
+    Deliberately small and caption-safe: the diagram supports the
+    footage; it never replaces it or enters the caption band."""
+    kind = str(spec.get("kind") or "wave").lower()
+    if kind not in ("wave", "growth", "checks", "arrow"):
+        kind = "wave"
+    title = str(spec.get("title") or "")
+    items = [str(x)[:48] for x in (spec.get("items") or []) if str(x).strip()][:4]
+    css = f"""
+    #{p}-dia {{ position: absolute; right: {int(110*scale)}px;
+      top: {int(150*scale)}px; width: {int(560*scale)}px;
+      padding: {int(36*scale)}px; background: rgba(8,14,20,0.72);
+      border: 1px solid rgba(255,255,255,0.16); border-radius: 18px;
+      color: #fff; font-family: Inter, sans-serif; }}
+    #{p}-dia-title {{ font-size: {int(25*scale)}px; font-weight: 800;
+      letter-spacing: 2px; text-transform: uppercase; }}
+    .{p}-dia-row {{ display: flex; align-items: center; gap: {int(16*scale)}px;
+      margin-top: {int(24*scale)}px; font-size: {int(27*scale)}px; }}
+    .{p}-dia-dot {{ width: {int(22*scale)}px; height: {int(22*scale)}px;
+      border-radius: 50%; background: #ffb340; flex: 0 0 auto; }}
+    .{p}-dia-bar {{ height: {int(18*scale)}px; border-radius: 999px;
+      background: #ffb340; }}
+    .{p}-dia-check {{ width: {int(34*scale)}px; height: {int(34*scale)}px;
+      border-radius: 50%; border: 3px solid #8fd18b; color: #8fd18b;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 900; flex: 0 0 auto; }}"""
+    rows = []
+    if kind == "growth":
+        vals = [35, 55, 78, 100]
+        for i, v in enumerate(vals):
+            rows.append(
+                f'<div class="{p}-dia-row"><div class="{p}-dia-bar" '
+                f'style="width:{int(v * 4 * scale)}px"></div>'
+                f'<div>{_esc(items[i] if i < len(items) else "")}</div></div>')
+    elif kind == "checks":
+        for i, it in enumerate(items or ["A starting point", "A sentence"]):
+            rows.append(
+                f'<div class="{p}-dia-row"><div class="{p}-dia-check">✓</div>'
+                f'<div>{_esc(it)}</div></div>')
+    elif kind == "arrow":
+        rows.append(
+            f'<div class="{p}-dia-row"><div class="{p}-dia-dot"></div>'
+            f'<div class="{p}-dia-bar" style="width:{int(300*scale)}px"></div>'
+            f'<div class="{p}-dia-dot"></div></div>')
+        for it in items:
+            rows.append(f'<div class="{p}-dia-row"><div>{_esc(it)}</div></div>')
+    else:  # wave
+        rows.append(
+            f'<div class="{p}-dia-row"><div class="{p}-dia-dot"></div>'
+            f'<div class="{p}-dia-bar" style="width:{int(180*scale)}px"></div>'
+            f'<div class="{p}-dia-dot"></div>'
+            f'<div class="{p}-dia-bar" style="width:{int(120*scale)}px"></div></div>')
+        for it in items:
+            rows.append(f'<div class="{p}-dia-row"><div>{_esc(it)}</div></div>')
+    body = (f'<div id="{p}-dia" class="clip" data-start="0" '
+            f'data-duration="{_t(dur)}" data-track-index="{track}">'
+            + (f'<div id="{p}-dia-title">{_esc(title)}</div>' if title else "")
+            + "".join(rows) + '</div>')
+    js = [f'tl.fromTo("#{p}-dia", {{opacity: 0, y: 24}}, '
+          f'{{opacity: 1, y: 0, duration: 0.6, ease: "power3.out"}}, 0.5);']
+    return css, body, js
+
+
 _LAYER_BUILDERS = {
     "title": _layer_title,
     "data_chart": None,          # special-cased (needs flags)
+    "source_card": None,         # special-cased (needs flags)
+    "diagram": _layer_diagram,
     "map_card": _layer_map_card,
     "kinetic_caption": _layer_kinetic_caption,
     "lower_third": _layer_lower_third,
 }
-LAYER_TYPES = ("title", "data_chart", "map_card", "kinetic_caption",
-               "lower_third")
+LAYER_TYPES = ("title", "data_chart", "source_card", "diagram", "map_card",
+               "kinetic_caption", "lower_third")
 
 
 # ------------------------------------------------------------- scenes
@@ -533,6 +681,9 @@ def _scene_composition(idx, scene, asset_name, media_start, width,
         if ltype == "data_chart":
             c, b, j = _layer_data_chart(layer, p, dur, track, scale,
                                         flags, idx)
+        elif ltype == "source_card":
+            c, b, j = _layer_source_card(layer, p, dur, track, scale,
+                                         flags, idx)
         elif ltype in _LAYER_BUILDERS and _LAYER_BUILDERS[ltype]:
             c, b, j = _LAYER_BUILDERS[ltype](layer, p, dur, track, scale)
         else:

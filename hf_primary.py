@@ -286,6 +286,31 @@ def beat_layers(scene, plan, first=False):
     value = str(scene.get("value") or "").strip()
     layers = []
     num = _number(value) if value else None
+    taste_profile = str((plan or {}).get("taste_profile") or "")
+    graphic_type = str(scene.get("graphic_type") or "")
+    if taste_profile and graphic_type in ("wave", "growth", "checks", "arrow"):
+        layers.append({
+            "type": "diagram",
+            "kind": graphic_type,
+            "title": label.title(),
+            "items": [str(x)[:48] for x in (scene.get("diagram_items") or [])
+                      if str(x).strip()][:4],
+        })
+        return layers
+    if taste_profile == "wtu_long_sheet" and num is not None \
+            and _spoken_value(scene, num):
+        src = _resolved_source(scene, plan)
+        if src:
+            layers.append({
+                "type": "source_card",
+                "kicker": "THE RESEARCH",
+                "headline": label.title() or "What the study found",
+                "stat": value,
+                "unit": str(scene.get("unit") or ""),
+                "quote": _vo_excerpt(scene, 110),
+                "source": src,
+            })
+            return layers
     if num is not None and _spoken_value(scene, num):
         src = _resolved_source(scene, plan)
         layers.append({
@@ -307,6 +332,15 @@ def beat_layers(scene, plan, first=False):
             "label": label.title(),
             "description": "",
         })
+    elif first and taste_profile == "wtu_long_sheet":
+        # Sheet style: the first beat is footage + captions, never a
+        # title card. A viewer-safe label may ride as a lower-third.
+        if label:
+            layers.append({
+                "type": "lower_third",
+                "name": label.title(),
+                "role": _vo_excerpt(scene),
+            })
     elif first:
         layers.append({
             "type": "title",

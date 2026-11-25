@@ -1019,6 +1019,56 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
     # a directed plan is audited but NOT repair-swapped (see
     # _enforce_plan's repair=False contract)
     _enforce_plan(p, brief, repair=not _directed86)
+    # Taste-guarantee: taste-profile jobs get brain-quality passes,
+    # bounded pre-render repair, and a required video director record.
+    # A taste job without a valid record never renders.
+    try:
+        import taste_pack as _tp_taste
+        _prof_taste = _tp_taste.profile_for_job(brief, cfg, spec)
+        if _prof_taste:
+            import brain_quality as _bq_taste
+            import video_director_gates as _vdg_taste
+            p["taste_profile"] = _prof_taste["id"]
+            if cfg is not None:
+                cfg["taste_profile"] = _prof_taste["id"]
+                cfg["tasteDirectorRequired"] = True
+            _critic_taste = _bq_taste.apply(p, _prof_taste, chat=chat)
+            for _pass_taste in range(2):
+                _crit_fails = [c for c in _critic_taste
+                               if c.get("status") == "FAIL" and
+                               c.get("rule") in _vdg_taste.CRITICAL_RULES]
+                if not _crit_fails:
+                    break
+                _fixes_taste = _bq_taste.repair_plan(p, _prof_taste)
+                if not _fixes_taste:
+                    break
+                p.setdefault("plan_fixes", []).extend(_fixes_taste)
+                _critic_taste = _bq_taste.apply(p, _prof_taste, chat=chat)
+            _vdg_taste.require_record(p, cfg, brief)
+            _crit_fails = [c for c in _critic_taste
+                           if c.get("status") == "FAIL" and
+                           c.get("rule") in _vdg_taste.CRITICAL_RULES]
+            if _crit_fails:
+                raise RuntimeError(
+                    "TASTE DIRECTOR GATE: critic still failing after "
+                    "bounded repair: " + "; ".join(
+                        f"{c.get('rule')} s{c.get('scene')}" for c in _crit_fails[:4]))
+            print(f"taste director: profile {_prof_taste['id']}, "
+                  f"{len(p['video_director']['plan']['steps'])} beat checks armed")
+    except RuntimeError:
+        raise
+    except Exception as _e_taste:
+        # A taste gate that cannot run must not silently render.
+        try:
+            import taste_pack as _tp_taste2
+            if _tp_taste2.is_taste_job(cfg, brief, spec):
+                raise RuntimeError(
+                    f"TASTE DIRECTOR GATE fail-closed: {_e_taste}") from _e_taste
+        except RuntimeError:
+            raise
+        except Exception:
+            pass
+        print("taste director skipped (non-taste job):", str(_e_taste)[:120])
     # v88: stamp the caller's composition flags onto the plan (set by
     # the long path via the module globals above).
     p["grade_lock"] = bool(GRADE_LOCK)
@@ -2208,6 +2258,28 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
     if pool is None:
         pool = _br.FootagePool(state_path=os.path.join(wd, "footage_state.json"))
     p["_footage_pool"] = pool
+
+    def _pool_assign(*_a, **_kw):
+        # Tolerate pool doubles/older pools without strict_verify.
+        try:
+            return pool.assign(*_a, **_kw)
+        except TypeError:
+            _kw.pop("strict_verify", None)
+            return pool.assign(*_a, **_kw)
+    # Taste-guarantee: taste jobs verify footage strictly — only a
+    # vision PASS enters the film; unverified/undecided candidates
+    # re-plan instead of shipping as keyword-only fallbacks.
+    _strict_taste = bool(p.get("taste_profile"))
+    if _strict_taste and getattr(pool, "verifier", None) is None:
+        try:
+            import broll_verify as _bv_taste
+            pool.verifier = _bv_taste.BrollVerifier(
+                call_budget=24,
+                cache_path=os.path.join(wd, "vision_cache.json"),
+                job_id=os.path.basename(wd))
+            print("taste strict broll verification: ON (budget 24)")
+        except Exception as _e_bv:
+            print("taste strict broll verifier unavailable:", str(_e_bv)[:120])
     # PROOF-FIX 2: the candidate gate is relative to THIS video's
     # delivery canvas (a 1920x1080 long accepts 720p landscape
     # stock; the old absolute 1080 floor rejected 92% of it).
@@ -2295,9 +2367,9 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
                 pool._save()
                 print(f"broll scene {i + 1}: saved clip reused ({rec['clip_id']})")
         if rec is None:
-            rec = pool.assign(i + 1, queries, dur_s, dl,
+            rec = _pool_assign(i + 1, queries, dur_s, dl,
                               orientation=orientation, line=str(sc.get("vo") or ""),
-                              canvas=_canvas)
+                              canvas=_canvas, strict_verify=_strict_taste)
         if not rec and every:
             # v100 (Gate 1 — FOOTAGE-FIRST): a beat with NO footage
             # match is RE-PLANNED, never silently islanded. First a
@@ -2315,10 +2387,11 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
                     str(sc.get("vo") or ""), str(sc.get("label") or ""))
                 if _broad100 and _broad100 not in _tried100:
                     _tried100.append(_broad100)
-                    rec = pool.assign(
+                    rec = _pool_assign(
                         i + 1, [_broad100], dur_s, dl,
                         orientation=orientation,
-                        line=str(sc.get("vo") or ""), canvas=_canvas)
+                        line=str(sc.get("vo") or ""), canvas=_canvas,
+                        strict_verify=_strict_taste)
                 if not rec and replan is not None:
                     _newq100 = replan(sc, i + 1) or []
                     _newq100, _dropq100 = _ab100b.searchable_queries(
@@ -2328,10 +2401,11 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
                                 if q not in _tried100]
                     if _newq100:
                         _tried100 += _newq100
-                        rec = pool.assign(
+                        rec = _pool_assign(
                             i + 1, _newq100, dur_s, dl,
                             orientation=orientation,
-                            line=str(sc.get("vo") or ""), canvas=_canvas)
+                            line=str(sc.get("vo") or ""), canvas=_canvas,
+                            strict_verify=_strict_taste)
                         if rec:
                             sc["queries"] = _newq100
                             print(f"broll scene {i + 1}: footage "
@@ -2364,9 +2438,9 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
             continue
         entry = {"dir": fdir, "frames": nframes}
         if dur_s > 4.0:
-            rec2 = pool.assign(i + 1, queries, dur_s / 2, dl,
+            rec2 = _pool_assign(i + 1, queries, dur_s / 2, dl,
                                orientation=orientation, line=str(sc.get("vo") or ""),
-                               canvas=_canvas)
+                               canvas=_canvas, strict_verify=_strict_taste)
             if rec2:
                 fdir2 = os.path.join(wd, "broll_frames", f"sc{i}b")
                 _push2 = bool(rec2.get("static")) and "zoom" not in (cfg.get("excludes") or [])
@@ -3737,6 +3811,17 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             "FACT GATE fail-closed: this documentary pass carries "
             "no fact-gate event — an ungated script never renders "
             "(re-plan so the gate runs, or fix the gate)")
+    # Taste-guarantee choke point: plan_override/edit passes also need
+    # a valid video director record before any render work starts.
+    try:
+        import taste_pack as _tp_mv
+        if _tp_mv.is_taste_job(cfg, brief, spec):
+            import video_director_gates as _vdg_mv
+            _vdg_mv.require_record(p, cfg, brief)
+    except RuntimeError:
+        raise
+    except Exception as _e_mv:
+        raise RuntimeError(f"TASTE DIRECTOR GATE fail-closed: {_e_mv}") from _e_mv
     # v32 (Blind codegen): ONE engine writes tr_/fx_/vis_ in a single call
     # (codegen.run: PLAN -> CODE -> sandbox -> fix x2 -> library fallback),
     # while the QC scores the plan in parallel. A failed custom function
@@ -4235,6 +4320,65 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                             "detail": f"media inspection could not run: "
                                       f"{str(_e)[:80]}",
                             "scene": None})
+        # Taste-guarantee post-render gate: frame taste audit + director
+        # checks/review on the rendered file. The review rides into the
+        # compliance report/project; delivery is blocked below when the
+        # verdict is not deliver.
+        _taste_review = None
+        try:
+            import taste_pack as _tp_post
+            _prof_post = _tp_post.profile_for_job(brief, cfg, spec)
+            if _prof_post:
+                import frame_taste_qc as _ftq_post
+                import video_director_gates as _vdg_post
+                _beats_post = []
+                for _i_post, _s_post in enumerate(p["scenes"]):
+                    _beats_post.append({
+                        "beat": _i_post + 1,
+                        "line": str(_s_post.get("vo") or ""),
+                        "promise": str(_s_post.get("promise") or _s_post.get("why") or ""),
+                        "why": str(_s_post.get("why") or ""),
+                        "start": float((p.get("starts") or [0] * len(p["scenes"]))[_i_post]),
+                        "duration": float(_s_post.get("d") or 0),
+                        "graphic_type": _s_post.get("graphic_type") or "",
+                        "source_required": bool(_s_post.get("source_required")),
+                    })
+                _vision_post = None
+                try:
+                    import vision as _vis_post
+                    if _vis_post.available():
+                        _vision_post = _vis_post.describe_images
+                except Exception:
+                    _vision_post = None
+                _ftaste_post = await _ftq_post.audit_beats(
+                    out, _beats_post, os.path.join(wd, "taste_frames"),
+                    vision=_vision_post)
+                p["frame_taste"] = _ftaste_post
+                _lra_post = None
+                try:
+                    _lra_post = _comp.measure_lra(out)
+                except Exception:
+                    _lra_post = None
+                _taste_review = _vdg_post.apply_checks_and_review(
+                    p, _prof_post, compliance_checks=_checks,
+                    frame_qc=_fq, frame_taste=_ftaste_post,
+                    media_info={"lra": _lra_post})
+                _checks += [c for c in (p.get("taste_checks") or [])
+                            if c.get("rule") not in {x.get("rule") for x in _checks}
+                            or c.get("status") == "FAIL"]
+                print(f"taste director post-render: {_taste_review.get('verdict')} "
+                      f"defects={len(_taste_review.get('defects') or [])}")
+        except Exception as _e_post:
+            try:
+                import taste_pack as _tp_post2
+                if _tp_post2.is_taste_job(cfg, brief, spec):
+                    raise RuntimeError(
+                        f"TASTE DIRECTOR GATE fail-closed: {_e_post}") from _e_post
+            except RuntimeError:
+                raise
+            except Exception:
+                pass
+            print("taste post-render gate skipped (non-taste job):", str(_e_post)[:120])
         _plan_info = {
             "lang": p.get("lang"), "topic": p.get("topic", brief),
             # ROUND 4 (Fix 1b): the topic verdict judges the
@@ -4297,6 +4441,25 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
               + ("; ".join(f"{c['rule']}: {c['detail'][:60]}" for c in _nf[:4]) if _nf else "all checks clean"))
     except Exception as _e:
         print("compliance run failed:", str(_e)[:200])
+    # Taste-guarantee delivery block: a taste-profile film whose
+    # director review is not deliver is an honest failure, never a
+    # successful delivery. Artifacts above stay on disk for diagnosis.
+    try:
+        import taste_pack as _tp_block
+        if _tp_block.is_taste_job(cfg, brief, spec):
+            import video_director_gates as _vdg_block
+            if not _vdg_block.delivery_allowed(p):
+                _rev_block = ((p.get("video_director") or {}).get("review") or {})
+                _defs_block = _rev_block.get("defects") or []
+                raise RuntimeError(
+                    "TASTE DIRECTOR GATE: delivery blocked — review "
+                    f"{_rev_block.get('verdict') or 'missing'}; " +
+                    "; ".join(str(d)[:100] for d in _defs_block[:5]))
+    except RuntimeError:
+        raise
+    except Exception as _e_block:
+        raise RuntimeError(
+            f"TASTE DIRECTOR GATE fail-closed: {_e_block}") from _e_block
     # v36 (Blind D): record this video's look so the next video never repeats it.
     record_look(p.get("look"))
     # v72: close the amendment book — everything the engine applied is
@@ -4332,6 +4495,10 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             # stage that fell back is labelled FALLBACK in the job's
             # report, never presented as brain work.
             "brain_status": _brain_status_summary(),
+            "video_director": p.get("video_director"),
+            "taste_profile": p.get("taste_profile"),
+            "taste_checks": p.get("taste_checks"),
+            "brain_quality": p.get("brain_quality"),
             "frame_qc": _fq, "qc_passed": _fq["passed"]}
 
 

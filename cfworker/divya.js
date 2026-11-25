@@ -637,7 +637,18 @@ async function startCreate(env, user, brief, userPrompt) {
   // v79 (FIX 1): the user's EXACT words ride on the job record — the
   // runner extracts prompt_spec from them, never from the rewritten
   // brief (R-P6: the topic is only one requirement).
-  await env.KV.put(`job:${job}`, JSON.stringify({ mode: "create", brief: (brief === "AUTO" ? "AUTO" : brief) + durLine + healthHint + ctx, recent, to: user, user_prompt: String(userPrompt || "").slice(0, 2000) }), { expirationTtl: 86400 });
+  // Taste-guarantee: stamp the channel style profile on the job.
+  // Documentary/long creates ride the WTU long sheet profile; named
+  // AI-reel styles ride their AI profiles; WTU shorts ride wtu_short.
+  const _tasteText = `${brief || ""} ${userPrompt || ""}`.toLowerCase();
+  const tasteProfile = /ai-?1\b/.test(_tasteText) ? "todays_ai_ai1"
+    : /ai-?2\b/.test(_tasteText) ? "todays_ai_ai2"
+    : /ai-?3\b/.test(_tasteText) ? "todays_ai_ai3"
+    : /quiet page|quiet_page/.test(_tasteText) ? "quiet_page"
+    : (/long|documentary|16:9|who taught us|wtu/.test(_tasteText) && !/\bshort\b|reel/.test(_tasteText)) ? "wtu_long_sheet"
+    : (/who taught us|wtu/.test(_tasteText) && /\bshort\b|reel/.test(_tasteText)) ? "wtu_short"
+    : "";
+  await env.KV.put(`job:${job}`, JSON.stringify({ mode: "create", brief: (brief === "AUTO" ? "AUTO" : brief) + durLine + healthHint + ctx, recent, to: user, user_prompt: String(userPrompt || "").slice(0, 2000), ...(tasteProfile ? { tasteProfile } : {}) }), { expirationTtl: 86400 });
   const r = await fetch(`https://api.github.com/repos/${env.GH_REPO}/actions/workflows/edit.yml/dispatches`, {
     method: "POST",
     headers: { Authorization: `token ${env.GH_TOKEN}`, "User-Agent": "divya", Accept: "application/vnd.github+json" },
@@ -9126,6 +9137,55 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
     r0.state = "done"; r0.doneAt = Date.now(); r0.reply = text; r0.waId = sent.id || "";
     await env.KV.put(`ccmsg:${id}`, JSON.stringify(r0), { expirationTtl: 86400 * 2 });
     return Response.json({ ok: true, id: sent.id || "" });
+  }
+  // Taste-guarantee: video jobs (job:<job>, not setupjob) post
+  // Julie's own video director record here. It is stored on the job
+  // record as videoDirector, readable back via /internal/state —
+  // the audit trail that a taste film was planned, checked and
+  // reviewed by Julie herself before delivery.
+  if (p === "setup/runner/videodirector" && req.method === "POST") {
+    const vjob = String((body && body.job) || url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, "");
+    if (!vjob) return new Response("job required", { status: 400 });
+    const jrec = parseRec(await env.KV.get(`job:${vjob}`));
+    if (!jrec) return new Response("missing job", { status: 404 });
+    const record = (body && body.record) || null;
+    if (!record || typeof record !== "object" || !record.plan || !record.review) return new Response("bad video director record", { status: 400 });
+    const cleanSteps = (Array.isArray(record.plan.steps) ? record.plan.steps : []).slice(0, 40).map(s => ({
+      beat: Number((s && s.beat) || 0),
+      title: String((s && s.title) || "").slice(0, 80),
+      promise: String((s && s.promise) || "").slice(0, 240),
+      acceptance: String((s && s.acceptance) || "").slice(0, 240),
+      source_required: !!(s && s.source_required),
+      graphic_type: String((s && s.graphic_type) || "").slice(0, 32),
+    }));
+    const cleanChecks = (Array.isArray(record.checks) ? record.checks : []).slice(0, 120).map(c => ({
+      beat: Number((c && c.beat) || 0),
+      verdict: ["pass", "fail"].includes(String((c && c.verdict) || "")) ? String(c.verdict) : "fail",
+      evidence: String((c && c.evidence) || "").slice(0, 240),
+    }));
+    const cleanReview = {
+      verdict: ["deliver", "rework", "fail"].includes(String(record.review.verdict || "")) ? String(record.review.verdict) : "fail",
+      summary: String(record.review.summary || "").slice(0, 400),
+      defects: (Array.isArray(record.review.defects) ? record.review.defects : []).slice(0, 12).map(x => String(x || "").slice(0, 160)),
+      at: Number(record.review.at) || Date.now(),
+    };
+    jrec.videoDirector = {
+      version: String(record.version || "").slice(0, 40),
+      profile: String(record.profile || (body && body.tasteProfile) || "").slice(0, 40),
+      plan: { vision: String(record.plan.vision || "").slice(0, 400), steps: cleanSteps, risks: (Array.isArray(record.plan.risks) ? record.plan.risks : []).slice(0, 6).map(r => String(r || "").slice(0, 120)), at: Number(record.plan.at) || Date.now() },
+      checks: cleanChecks,
+      review: cleanReview,
+    };
+    jrec.tasteProfile = String((body && body.tasteProfile) || jrec.tasteProfile || "").slice(0, 40);
+    jrec.tasteChecks = (Array.isArray(body && body.tasteChecks) ? body.tasteChecks : []).slice(0, 120).map(c => ({
+      rule: String((c && c.rule) || "").slice(0, 40),
+      status: String((c && c.status) || "").slice(0, 16),
+      detail: String((c && c.detail) || "").slice(0, 200),
+      scene: (c && c.scene) ?? null,
+    }));
+    jrec.videoDirectorAt = Date.now();
+    await env.KV.put(`job:${vjob}`, JSON.stringify(jrec), { expirationTtl: 86400 });
+    return Response.json({ ok: true, checks: cleanChecks.length, verdict: cleanReview.verdict });
   }
   const job = String(url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, "");
   const rec = job ? parseRec(await env.KV.get(`setupjob:${job}`)) : null;

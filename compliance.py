@@ -1332,6 +1332,27 @@ def audit_media(path, cfg, spec, chapter_breaks=(),
         checks.append({"rule": "R11", "status": "FAIL",
                        "detail": f"{len(real_gaps)} silence(s) over 0.8 s outside chapter breaks (first at {real_gaps[0][0]:.1f}s)",
                        "scene": None})
+    # Taste-guarantee: the sound floor is a delivery blocker on
+    # taste-profile films, measured on the delivered file.
+    if (cfg or {}).get("taste_profile"):
+        _lra_t = measure_lra(path)
+        info["lra"] = _lra_t
+        _lra_min_t = 5.0
+        try:
+            import taste_pack as _tp_comp
+            _prof_comp = _tp_comp.PROFILES.get(str(cfg.get("taste_profile")))
+            if _prof_comp:
+                _lra_min_t = float(_prof_comp.get("lra_min") or _lra_min_t)
+        except Exception:
+            pass
+        if _lra_t is None:
+            checks.append({"rule": "MQ-LRA", "status": "UNVERIFIED",
+                           "detail": "loudness range (LRA) could not be measured",
+                           "scene": None})
+        elif _lra_t < _lra_min_t:
+            checks.append({"rule": "MQ-LRA", "status": "FAIL",
+                           "detail": f"loudness range {_lra_t:.1f} LU below taste floor {_lra_min_t:.0f} LU — flat mix",
+                           "scene": None})
     return checks, info
 
 

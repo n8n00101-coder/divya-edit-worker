@@ -1394,6 +1394,39 @@ async def create_job(j, wa, note):
                   f"{_cfg['width']}x{_cfg['height']}")
         except Exception as e:
             print("v98 long cfg fallback failed:", str(e)[:200])
+    # Taste-guarantee: a taste-profile job resolves its channel style
+    # profile into the render config before any engine runs. The
+    # profile (canvas, kind, footage floor, director requirement)
+    # rides cfg into doc/long; the video director record is posted
+    # back after render and delivery is blocked unless it delivers.
+    _taste_profile_id = str(j.get("tasteProfile") or j.get("taste_profile") or "")
+    _taste_prof = None
+    if _taste_profile_id:
+        try:
+            import taste_pack as _tp_run
+            _taste_prof = _tp_run.PROFILES.get(_taste_profile_id)
+            if _taste_prof:
+                import spec_engine as _se_taste
+                _base_cfg = _se_taste.resolve_render_config(
+                    _spec, str(_taste_prof.get("kind") or "short"))
+                _base_cfg.update({
+                    "kind": str(_taste_prof.get("kind") or "short"),
+                    "width": int(_taste_prof["width"]),
+                    "height": int(_taste_prof["height"]),
+                    "orientation": str(_taste_prof.get("orientation") or "portrait"),
+                    "taste_profile": _taste_profile_id,
+                    "tasteDirectorRequired": True,
+                    "footage_only": bool(_taste_prof.get("footage_only")),
+                })
+                if _target_s:
+                    _base_cfg["duration_s"] = float(_target_s)
+                _cfg = _base_cfg
+                print(f"taste profile: {_taste_profile_id} "
+                      f"{_cfg['width']}x{_cfg['height']} kind={_cfg['kind']}")
+        except Exception as _e_taste_run:
+            print("taste profile resolve failed:", str(_e_taste_run)[:150])
+            app_state("failed", "Taste profile resolve fail ayyindi — job aapesa.")
+            return
     try:
         res = None
         # v69 FIX (Ajju 2026-11-13): WhatsApp creates only ever made ~1-min
@@ -1467,7 +1500,7 @@ async def create_job(j, wa, note):
                     # into the engine — every step renders FROM it.
                     # Only when the spec is non-empty (see the long
                     # call): an empty spec is no contract.
-                    if _cfg is not None and _spec:
+                    if _cfg is not None and (_spec or _taste_prof):
                         kw["spec"] = _spec
                         kw["cfg"] = _cfg
                     res = await create.make_video(_brief_run, _chat, notify=note, **kw)
@@ -1496,6 +1529,31 @@ async def create_job(j, wa, note):
                     raise
         size = os.path.getsize(res["path"]) / 1e6
         print("video", res["path"], round(size, 2), "MB", res.get("duration"))
+        # Taste-guarantee: post Julie's own video director record to
+        # the Worker (readable via /internal/state), and block the
+        # upload/delivery unless the review verdict is deliver.
+        if _taste_prof:
+            _vd_rec = (res.get("video_director")
+                       or ((res.get("plan") or {}).get("video_director")))
+            try:
+                _vr = httpx.post(
+                    f"{WORKER}/setup/runner/videodirector?job={JOB}",
+                    json={"job": JOB, "record": _vd_rec,
+                          "tasteProfile": _taste_profile_id,
+                          "tasteChecks": res.get("taste_checks")},
+                    headers={"x-runner-key": KEY}, timeout=30)
+                print("videodirector post:", _vr.status_code)
+            except Exception as _e_vd:
+                print("videodirector post failed:", str(_e_vd)[:120])
+            _vd_verdict = (((_vd_rec or {}).get("review") or {}).get("verdict"))
+            if _vd_verdict != "deliver":
+                _vd_defs = (((_vd_rec or {}).get("review") or {}).get("defects") or [])
+                _vd_line = ("Taste director gate: video deliver cheyyaledu — "
+                            + ("; ".join(str(d)[:80] for d in _vd_defs[:3])
+                               or f"review {_vd_verdict or 'missing'}"))
+                print(_vd_line)
+                app_state("failed", _vd_line[:290])
+                return
         # Duration backstop — PROOF-FIX 5 REPLACES the v24 hard trim.
         # The v24 rule cut any over-length film to the target with
         # ffmpeg -t: on the proof short (38.5 s of voice for a 30 s

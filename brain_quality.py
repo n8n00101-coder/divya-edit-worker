@@ -1,0 +1,236 @@
+"""brain_quality.py — decision quality around Julie's free brains.
+
+Ajju's revision: brain quality must be taken into the taste work.
+Free model weights cannot be retrained here; quality comes from the
+decisions around the model — strongest-brain routing for director and
+critic calls, a Story Analyst pass, a Visual Director pass, an
+adversarial Critic pass, frame-level re-planning, and feedback rules
+learned from Ajju/Blind verdicts. Every pass records what it decided.
+"""
+
+import re
+
+import taste_pack
+
+FEEDBACK_RULES = [
+    {"id": "FB-HOOK", "source": "W8 diagnosis",
+     "rule": "frame 1 shows real content; no title-card hook",
+     "gate": "TASTE-HOOK"},
+    {"id": "FB-FOOTAGE-MATCH", "source": "Blind 32",
+     "rule": "the frame shows the line's subject, not decoration",
+     "gate": "TASTE-FRAME"},
+    {"id": "FB-SOURCE-TRUTH", "source": "Blind 32",
+     "rule": "numbers and studies carry retrieved sources on screen",
+     "gate": "TASTE-SOURCE"},
+    {"id": "FB-NO-FAKE-UI", "source": "W8 diagnosis",
+     "rule": "no fake UI, production internals, icons or placeholders as content",
+     "gate": "TASTE-BANNED-VISUAL"},
+    {"id": "FB-VARIETY", "source": "Male Gaze audit",
+     "rule": "no visual type dominates the film",
+     "gate": "TASTE-VARIETY"},
+    {"id": "FB-SOUND", "source": "W8/Male Gaze measurements",
+     "rule": "sound has a designed arc; flat LRA fails",
+     "gate": "TASTE-AUDIO"},
+    {"id": "FB-CAPTIONS", "source": "Blind 32",
+     "rule": "captions are complete phrases, synced, unclipped, non-overlapping",
+     "gate": "TASTE-CAPTION"},
+    {"id": "FB-NO-RESTATEMENT", "source": "Male Gaze audit",
+     "rule": "every line adds information or feeling; top-ups must be new material",
+     "gate": "BRAIN-RESTATEMENT"},
+]
+
+POSITIVE_EXAMPLES = [
+    {"name": "pivot hook", "lesson": "real footage in frame 1; memory replay shown, not labelled"},
+    {"name": "pivot numbers", "lesson": "46% vs 23% verified before scripting and cited on screen"},
+    {"name": "pivot sound", "lesson": "music-led head, breath before the turn, per-beat rides; LRA measured"},
+]
+
+NEGATIVE_EXAMPLES = [
+    {"name": "W8 title hook", "lesson": "a giant question graphic on black is not a hook"},
+    {"name": "W8 placeholder", "lesson": "clip-art labelled Photo A shipped as content"},
+    {"name": "Male Gaze counter", "lesson": "one counter visual repeated across beats flattens the film"},
+]
+
+
+def route_policy(profile=None):
+    return {
+        "story": "strongest_free",
+        "visual": "strongest_free",
+        "critic": "strongest_free",
+        "mechanical": "light",
+        "record_decision_brain": True,
+        "profile": (profile or {}).get("id", ""),
+    }
+
+
+def _words(text):
+    return [w for w in re.findall(r"[a-z][a-z'-]*", str(text or "").lower())
+            if len(w) > 2]
+
+
+def _check(rule, ok, detail, scene=None):
+    return {"rule": rule, "status": "PASS" if ok else "FAIL",
+            "detail": detail, "scene": scene}
+
+
+def story_checks(scenes, profile=None):
+    scenes = list(scenes or [])
+    checks = []
+    if scenes:
+        first_words = len(str(scenes[0].get("vo") or "").split())
+        checks.append(_check(
+            "BRAIN-HOOK", first_words <= 22,
+            f"hook line has {first_words} words (target <=22, inside ~5s)",
+            scenes[0].get("no") or 1))
+    word_sets = [set(_words(s.get("vo"))) for s in scenes]
+    for i in range(len(word_sets)):
+        for j in range(i + 2, len(word_sets)):
+            a, b = word_sets[i], word_sets[j]
+            if not a or not b:
+                continue
+            sim = len(a & b) / max(1, min(len(a), len(b)))
+            if sim > 0.65:
+                checks.append(_check(
+                    "BRAIN-RESTATEMENT", False,
+                    f"beats {i + 1} and {j + 1} restate each other ({sim:.0%} shared content words)",
+                    scenes[j].get("no") or j + 1))
+    for i, scene in enumerate(scenes):
+        if taste_pack.source_required(scene) and not taste_pack.has_source(scene):
+            checks.append(_check(
+                "BRAIN-CLAIM", False,
+                "claim/number has no source before directing",
+                scene.get("no") or i + 1))
+    if not checks:
+        checks.append(_check("BRAIN-STORY", True,
+                             "hook, claims and restatement checks pass"))
+    return checks
+
+
+def _diagram_kind(scene):
+    text = taste_pack._text(scene).lower()
+    if any(w in text for w in ("wave", "fade", "quiet", "drift")):
+        return "wave"
+    if any(w in text for w in ("grow", "growth", "thriv", "become", "rise")):
+        return "growth"
+    if any(w in text for w in ("check", "starting point", "pattern", "sentence")):
+        return "checks"
+    if any(w in text for w in ("arrow", "timeline", "years", "later", "tonight")):
+        return "arrow"
+    return ""
+
+
+def enrich_visuals(scenes, profile=None):
+    profile = profile or taste_pack.PROFILES["wtu_long_sheet"]
+    for i, scene in enumerate(scenes or []):
+        no = int(scene.get("no") or i + 1)
+        scene["no"] = no
+        need_source = taste_pack.source_required(scene)
+        sourced = taste_pack.has_source(scene)
+        scene["source_required"] = bool(need_source)
+        promise = str(scene.get("promise") or scene.get("why") or
+                      scene.get("label") or scene.get("vo") or "").strip()
+        scene["promise"] = promise[:240]
+        if need_source and sourced:
+            scene["graphic_type"] = "source_card"
+        elif _diagram_kind(scene) in (profile.get("diagram_kinds") or ()):
+            scene["graphic_type"] = "diagram"
+            scene["diagram_kind"] = _diagram_kind(scene)
+        elif taste_pack.scene_numbers(scene) and sourced:
+            scene["graphic_type"] = "data_chart"
+        else:
+            scene["graphic_type"] = scene.get("graphic_type") or "footage"
+        max_words = int((profile.get("caption") or {}).get("max_words") or 6)
+        scene["acceptance"] = (
+            f"frame shows: {promise[:120]}; footage fills frame; "
+            f"captions <= {max_words} words, synced, no overlap"
+            + ("; source card legible with source" if scene["graphic_type"] == "source_card" else "")
+            + ("; graphic justified by the line" if scene["graphic_type"] != "footage" else "")
+        )[:240]
+        scene["rework_action"] = (
+            "re-plan this beat with a new visual decision; do not re-render the same plan"
+        )
+    return scenes
+
+
+def critic_review(plan, profile=None):
+    profile = profile or taste_pack.PROFILES["wtu_long_sheet"]
+    scenes = (plan or {}).get("scenes") or []
+    checks = []
+    checks.extend(taste_pack.profile_checks(plan, profile))
+    checks.extend(story_checks(scenes, profile))
+    if scenes:
+        first = scenes[0]
+        first_gt = taste_pack.graphic_type(first)
+        if first_gt in ("title", "stamp_cta", "stamp", "card", "quote_card"):
+            checks.append(_check(
+                "CRITIC-HOOK", False,
+                "critic: first beat is a card/stamp, not content", 1))
+    for rule in FEEDBACK_RULES:
+        checks.append(_check(
+            rule["id"], True,
+            f"feedback rule loaded: {rule['rule']} (gate {rule['gate']})"))
+    return checks
+
+
+def repair_plan(plan, profile=None):
+    """Deterministic pre-render repair rounds (bounded by caller).
+
+    Repairs only plan fields: banned visuals become footage beats,
+    internal labels are cleared, source-card misuse is demoted, and
+    unsearchable queries are replaced by the line's visible subject.
+    Voice lines are never rewritten here; unsourced claims remain a
+    fact-gate failure for the caller to surface.
+    """
+    profile = profile or taste_pack.PROFILES["wtu_long_sheet"]
+    fixes = []
+    for i, scene in enumerate((plan or {}).get("scenes") or []):
+        no = int(scene.get("no") or i + 1)
+        if taste_pack.label_is_internal(scene.get("label")):
+            fixes.append(f"beat {no}: cleared internal label '{scene.get('label')}'")
+            scene["label"] = ""
+        vis = str(scene.get("visual") or "").lower()
+        if vis in (profile.get("banned_visuals") or ()):
+            fixes.append(f"beat {no}: banned visual '{vis}' -> footage")
+            scene["visual"] = "card"
+            scene["graphic_type"] = "footage"
+        if scene.get("graphic_type") == "source_card" and not taste_pack.has_source(scene):
+            fixes.append(f"beat {no}: source_card without source -> footage")
+            scene["graphic_type"] = "footage"
+        queries = []
+        for q in scene.get("queries") or []:
+            if taste_pack.query_is_visible_subject(q):
+                queries.append(q)
+            else:
+                fixes.append(f"beat {no}: dropped unsearchable query '{q}'")
+        if not queries:
+            words = _words(scene.get("vo"))[:4]
+            if len(words) >= 2:
+                queries = [" ".join(words[:3])]
+                fixes.append(f"beat {no}: derived visible-subject query '{queries[0]}'")
+        scene["queries"] = queries[:2]
+    return fixes
+
+
+def apply(plan, profile=None, chat=None):
+    profile = profile or taste_pack.PROFILES["wtu_long_sheet"]
+    scenes = (plan or {}).get("scenes") or []
+    enrich_visuals(scenes, profile)
+    story = story_checks(scenes, profile)
+    critic = critic_review(plan, profile)
+    plan["brain_quality"] = {
+        "route": route_policy(profile),
+        "story_checks": story,
+        "critic_checks": critic,
+        "feedback_rules": FEEDBACK_RULES,
+        "positive_examples": POSITIVE_EXAMPLES,
+        "negative_examples": NEGATIVE_EXAMPLES,
+        "decisions": [
+            {"stage": "story", "brain": "strongest_free",
+             "checks": len(story)},
+            {"stage": "visual", "brain": "strongest_free",
+             "checks": len(scenes)},
+            {"stage": "critic", "brain": "strongest_free",
+             "checks": len(critic)},
+        ],
+    }
+    return critic

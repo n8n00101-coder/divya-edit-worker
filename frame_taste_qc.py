@@ -32,13 +32,19 @@ _Q = (
     "promised: {promise}\nBecause of the narration line: \"{line}\"\n"
     "Look at this frame from the rendered video and answer ONLY with "
     "strict JSON: {{\"shows\": true|false, \"fills_frame\": "
-    "true|false, \"text_ok\": true|false, \"note\": \"<one short "
+    "true|false, \"text_ok\": true|false, "
+    "\"source_card_ok\": true|false, \"graphic_ok\": true|false, "
+    "\"face_ok\": true|false, \"note\": \"<one short "
     "sentence>\"}}\n"
     "shows = the frame visibly presents the promised visual idea. "
     "fills_frame = the visual occupies the frame properly, not a "
     "small island on an empty background. text_ok = no visible text "
     "is clipped, cut off, garbled or wrong (true when there is no "
-    "text to judge).")
+    "text to judge). source_card_ok = any research/source card is "
+    "legible and shows its source (true when no card is present). "
+    "graphic_ok = any chart/diagram is justified by the line and "
+    "does not replace the footage (true when no graphic). face_ok = "
+    "no graphic or card covers a person's face (true when no face).")
 
 
 def extract_frame(video, t, out_path):
@@ -103,7 +109,15 @@ async def audit_beats(video_path, beats, outdir, vision=None):
             results.append(entry)
             continue
         entry["note"] = str(v.get("note") or "")[:200]
-        if not v.get("shows") or not v.get("text_ok"):
+        entry["sheet"] = {
+            "source_card_ok": v.get("source_card_ok", True),
+            "graphic_ok": v.get("graphic_ok", True),
+            "face_ok": v.get("face_ok", True),
+        }
+        if not v.get("shows") or not v.get("text_ok") \
+                or not v.get("source_card_ok", True) \
+                or not v.get("graphic_ok", True) \
+                or not v.get("face_ok", True):
             entry["status"] = "FAIL"
         elif not v.get("fills_frame"):
             entry["status"] = "WARN"

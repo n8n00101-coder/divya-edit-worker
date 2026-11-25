@@ -576,7 +576,8 @@ class FootagePool:
                 "clip_id": clip_id}
 
     def assign(self, scene_no, queries, needed_s, workdir,
-               orientation="portrait", line="", canvas=None):
+               orientation="portrait", line="", canvas=None,
+               strict_verify=False):
         """queries: the scene's shot-list queries (meaning, not the
         topic word). Returns {path, clip_id, provider, source_url,
         query, keyword, start, static} or None. `canvas` (w, h) is
@@ -689,11 +690,34 @@ class FootagePool:
                                  "reason": f"vision verification failed: {_reason}"})
                             used.add(cand["id"])
                             continue
+                        # Taste-guarantee strict mode: only a PASS
+                        # verdict may enter a taste film. Unverified
+                        # and undecided candidates are rejected and
+                        # the search re-plans; they are never kept
+                        # as a silent fallback.
+                        if strict_verify and _v != "pass":
+                            self.rejected.append(
+                                {**cand, "scene": scene_no, "query": query,
+                                 "reason": f"taste strict verify rejected ({_v}): {_reason}"})
+                            used.add(cand["id"])
+                            continue
                     except Exception as _e:
                         _verify = {"verdict": "unverified",
                                    "reason": str(_e)[:100]}
+                        if strict_verify:
+                            self.rejected.append(
+                                {**cand, "scene": scene_no, "query": query,
+                                 "reason": f"taste strict verify error: {str(_e)[:80]}"})
+                            used.add(cand["id"])
+                            continue
+                if strict_verify and self.verifier is None:
+                    self.rejected.append(
+                        {**cand, "scene": scene_no, "query": query,
+                         "reason": "taste strict verify: no verifier attached"})
+                    used.add(cand["id"])
+                    continue
                 return _finish(cand, dest, _verify)
-            if _pending_undecided is not None:
+            if _pending_undecided is not None and not strict_verify:
                 _pc, _pd, _pv = _pending_undecided
                 return _finish(_pc, _pd, _pv)
         self.rejected.append({"scene": scene_no,

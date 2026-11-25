@@ -1127,6 +1127,21 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
             b["sfx"] = _sfx_map.get(b.get("fact_type") or
                                     b.get("hit_type") or "calm", "pop")
         b["no"] = bi + 1
+        # Taste-guarantee: every directed beat carries the director
+        # record fields the video gates enforce (promise, acceptance,
+        # source requirement, graphic type, rework action).
+        try:
+            import brain_quality as _bq_taste
+            import taste_pack as _tp_taste
+            _prof_taste = _tp_taste.profile_for_job(brief, cfg) or \
+                _tp_taste.PROFILES["wtu_long_sheet"]
+            _bq_taste.enrich_visuals([b], _prof_taste)
+        except Exception:
+            b.setdefault("promise", b.get("why") or bt)
+            b.setdefault("acceptance", "frame shows the line subject; captions synced")
+            b.setdefault("source_required", bool(b.get("value")))
+            b.setdefault("graphic_type", "footage")
+            b.setdefault("rework_action", "re-plan this beat with a new visual decision")
         b["dir"] = {"template": cand["template"],
                     "asset_type": cand["asset_type"],
                     "role": role, "section": section, "bg_kind": bg}
@@ -1170,6 +1185,11 @@ def direct_plan(plan, brief="", cfg=None, chapter_index=None,
                 "; ".join(notes[:3])),
             "rejected_candidates": notes,
             "arc_role": role,
+            "promise": b.get("promise") or b.get("why") or bt,
+            "acceptance": b.get("acceptance") or "frame shows the line subject",
+            "source_required": bool(b.get("source_required")),
+            "graphic_type": b.get("graphic_type") or "footage",
+            "rework_action": b.get("rework_action") or "re-plan this beat",
         })
         beats.append(b)
         window.append(eff)

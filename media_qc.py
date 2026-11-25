@@ -431,7 +431,7 @@ def inspect_file(path, cfg=None, chapter_starts=None, workdir=None,
                                      "be measured",
                            "scene": None})
         elif _lra < cfg["lra_min_lu"]:
-            _long = cfg.get("kind") == "long"
+            _long = cfg.get("kind") == "long" or bool(cfg.get("taste_profile"))
             checks.append({
                 "rule": "MQ-LRA",
                 "status": "FAIL" if _long else "WARN",
