@@ -206,15 +206,24 @@ def _distinct_line(plan, scene, no):
     others = [str(s.get("vo") or "") for s in (plan or {}).get("scenes") or []
               if s is not scene]
     subjects = []
+
+    def _safe_subject(text):
+        text = " ".join(str(text or "").split()[:3]).lower()
+        return text if text and not taste_pack.source_required(
+            {"vo": text}) else ""
+
     _label = str(scene.get("label") or "").strip()
     if _label and not taste_pack.source_required({"vo": "", "label": _label}):
         subjects.append(_label.lower())
     for q in scene.get("queries") or []:
-        if str(q).strip():
-            subjects.append(" ".join(str(q).split()[:3]).lower())
+        s = _safe_subject(q)
+        if s:
+            subjects.append(s)
     _pw = _words(scene.get("promise") or scene.get("why"))[:3]
     if len(_pw) >= 2:
-        subjects.append(" ".join(_pw))
+        s = _safe_subject(" ".join(_pw))
+        if s:
+            subjects.append(s)
     templates = (
         "Watch the {s} again, a little more closely.",
         "That moment with the {s} carries the weight here.",
@@ -333,7 +342,8 @@ def repair_plan(plan, profile=None):
         vis = str(scene.get("visual") or "").lower()
         if vis in (profile.get("banned_visuals") or ()):
             fixes.append(f"beat {no}: banned visual '{vis}' -> footage")
-            scene["visual"] = "card"
+            # First beat must open on content, never a card.
+            scene["visual"] = "question" if no == 1 else "card"
             scene["graphic_type"] = "footage"
         if scene.get("graphic_type") == "source_card" and not taste_pack.has_source(scene):
             fixes.append(f"beat {no}: source_card without source -> footage")
@@ -401,7 +411,9 @@ def repair_plan(plan, profile=None):
                 return bool(str(s.get("label") or "").strip())
             return True
 
-        hist = _CounterV(_eff(s) for s in scenes)
+        # "card" is the plain footage-backed beat, not a template —
+        # the cap governs template visuals only.
+        hist = _CounterV(_eff(s) for s in scenes if _eff(s) != "card")
         allowed_v = max(2, int(0.25 * len(scenes)))
         vplan = (plan or {}).get("visual_plan") or []
         for kind, count in hist.items():
