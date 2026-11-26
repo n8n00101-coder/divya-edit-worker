@@ -464,18 +464,6 @@ def repair_plan(plan, profile=None, duration_s=None):
                 fixes.append(
                     f"beat {no}: visual variety demotion {kind} -> {_rotate_visual(no)} "
                     f"({kind} capped at {allowed_v}/{len(scenes)})")
-    # BRAIN-RESTATEMENT repair: a later beat that restates an earlier
-    # one gets a distinct non-claim line built from its own subject.
-    scenes = (plan or {}).get("scenes") or []
-    for j in range(len(scenes)):
-        for i in range(j):
-            if _line_sim(scenes[i].get("vo"), scenes[j].get("vo")) > 0.65:
-                no = int(scenes[j].get("no") or j + 1)
-                scenes[j]["vo"] = _distinct_line(plan, scenes[j], no)
-                fixes.append(
-                    f"beat {no}: restatement of beat {i + 1} replaced "
-                    "with a distinct line")
-                break
     # Duration lengthening: the writer under-delivers words against
     # the ordered length, and a re-plan note alone does not fix it.
     # Append one beat-specific non-claim elaboration sentence per
@@ -510,6 +498,18 @@ def repair_plan(plan, profile=None, duration_s=None):
             fixes.append(
                 f"duration: elaborated {_added} beat(s) to "
                 f"{_words_now} words for the {duration_s}s order")
+    # BRAIN-RESTATEMENT repair: a later beat that restates an earlier
+    # one gets a distinct non-claim line built from its own subject.
+    scenes = (plan or {}).get("scenes") or []
+    for j in range(len(scenes)):
+        for i in range(j):
+            if _line_sim(scenes[i].get("vo"), scenes[j].get("vo")) > 0.65:
+                no = int(scenes[j].get("no") or j + 1)
+                scenes[j]["vo"] = _distinct_line(plan, scenes[j], no)
+                fixes.append(
+                    f"beat {no}: restatement of beat {i + 1} replaced "
+                    "with a distinct line")
+                break
     return fixes
 
 
