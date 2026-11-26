@@ -2876,6 +2876,12 @@ def transition(a, b, p, name, acc):
     # per-video function from video_fx.py (VIDEO_FX); anything else falls back
     # to the old FX library. All take (A, B, p) and return an RGB frame.
     p = clamp(p)
+    # A scene frame at a stray size must not kill the render chunk:
+    # normalize both sides to the canvas before blending.
+    if a.size != (W, H):
+        a = a.convert("RGB").resize((W, H))
+    if b.size != (W, H):
+        b = b.convert("RGB").resize((W, H))
     if name and name.startswith("tr_") and VIDEO_FX is not None:
         fn = getattr(VIDEO_FX, name, None)
         if callable(fn):
@@ -2896,13 +2902,16 @@ def frame_at(p, T):
     trs = p.get("transitions") or []
     def tname(j):
         return trs[j] if 0 <= j < len(trs) else "crossfade"
+    def _sf(j, t):
+        im = scene_frame(p, j, t)
+        return im if im.size == (W, H) else im.convert("RGB").resize((W, H))
     if i + 1 < n and nxt - T < TR / 2:
-        return transition(scene_frame(p, i, loc), scene_frame(p, i + 1, 0), (T - (nxt - TR / 2)) / TR, tname(i), MOODS[p["scenes"][i + 1]["mood"]][2])
+        return transition(_sf(i, loc), _sf(i + 1, 0), (T - (nxt - TR / 2)) / TR, tname(i), MOODS[p["scenes"][i + 1]["mood"]][2])
     if i > 0 and loc < TR / 2:
-        return transition(scene_frame(p, i - 1, T - st[i - 1]), scene_frame(p, i, loc), (loc + TR / 2) / TR, tname(i - 1), MOODS[p["scenes"][i]["mood"]][2])
+        return transition(_sf(i - 1, T - st[i - 1]), _sf(i, loc), (loc + TR / 2) / TR, tname(i - 1), MOODS[p["scenes"][i]["mood"]][2])
     if i + 1 >= n and end - T < TR / 2:
-        return transition(scene_frame(p, i, loc), outro(p, 0), (T - (end - TR / 2)) / TR, "crossfade", (255, 255, 255))
-    return scene_frame(p, i, loc)
+        return transition(_sf(i, loc), outro(p, 0), (T - (end - TR / 2)) / TR, "crossfade", (255, 255, 255))
+    return _sf(i, loc)
 
 _P = None
 def _render_chunk(args):
