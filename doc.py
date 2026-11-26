@@ -1039,7 +1039,9 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
                                c.get("rule") in _vdg_taste.CRITICAL_RULES]
                 if not _crit_fails:
                     break
-                _fixes_taste = _bq_taste.repair_plan(p, _prof_taste)
+                _fixes_taste = _bq_taste.repair_plan(
+                    p, _prof_taste,
+                    duration_s=(cfg or {}).get("duration_s"))
                 print(f"taste repair pass {_pass_taste + 1}: "
                       + ("; ".join(_fixes_taste[:6]) or "no fixes"))
                 if not _fixes_taste:
@@ -4118,7 +4120,15 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                     _hits.append((starts[i] + _t0 + _k * 0.12, "tick"))
     # voice track positioned exactly
     ins = sum([["-i", s["audio"]] for s in p["scenes"]], [])
-    fc = "".join(f"[{i}:a]adelay={int(st * 1000)}|{int(st * 1000)}[a{i}];" for i, st in enumerate(starts))
+    if (cfg or {}).get("taste_profile"):
+        # Voice loudness arc: quieter at the turning dip, stronger
+        # at hook/payoff — the spread moves the loudness range.
+        fc = "".join(
+            f"[{i}:a]volume={0.65 + 0.6 * float(s.get('music_intensity') or 0.5):.2f},"
+            f"adelay={int(st * 1000)}|{int(st * 1000)}[a{i}];"
+            for i, (s, st) in enumerate(zip(p["scenes"], starts)))
+    else:
+        fc = "".join(f"[{i}:a]adelay={int(st * 1000)}|{int(st * 1000)}[a{i}];" for i, st in enumerate(starts))
     fc += "".join(f"[a{i}]" for i in range(len(starts))) + f"amix=inputs={len(starts)}:normalize=0,apad,atrim=0:{total:.2f}[o]"
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *ins, "-filter_complex", fc, "-map", "[o]", "-ar", str(SR), "-ac", "1", f"{wd}/voice.wav"], check=True)
     _payoff = starts[_payoff_idx(p)] if starts else None

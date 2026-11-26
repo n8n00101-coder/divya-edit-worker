@@ -330,7 +330,7 @@ def _stamp_or_strip_source(plan, scene, no):
     return None
 
 
-def repair_plan(plan, profile=None):
+def repair_plan(plan, profile=None, duration_s=None):
     """Deterministic pre-render repair rounds (bounded by caller).
 
     Repairs plan fields: banned visuals become footage beats,
@@ -476,6 +476,40 @@ def repair_plan(plan, profile=None):
                     f"beat {no}: restatement of beat {i + 1} replaced "
                     "with a distinct line")
                 break
+    # Duration lengthening: the writer under-delivers words against
+    # the ordered length, and a re-plan note alone does not fix it.
+    # Append one beat-specific non-claim elaboration sentence per
+    # beat (never the hook) until the script fills its length.
+    if duration_s and scenes:
+        _words_now = sum(len(str(s.get("vo") or "").split()) for s in scenes)
+        _voice_target = float(duration_s) - 1.1 * (len(scenes) - 1) - 1.0
+        _need = int(_voice_target * 2.15)
+        _templates = (
+            "Think of {s} in an ordinary moment, the kind nobody plans for.",
+            "That is where {s} quietly shapes what happens next.",
+            "Most people never notice {s} at work in that moment.",
+            "And {s} keeps its grip until something interrupts it.",
+            "Picture {s} again, this time from the outside looking in.",
+            "That small shift around {s} changes the whole feeling.",
+            "It is easy to miss {s} while the moment is still unfolding.",
+            "Later, {s} is the part that stays in the mind.",
+        )
+        _added = 0
+        for _i, _s in enumerate(scenes):
+            if _words_now >= _need:
+                break
+            if _i == 0:
+                continue
+            _subj_words = _words(_s.get("vo"))[:3]
+            _subj = " ".join(_subj_words) if _subj_words else "that feeling"
+            _sent = _templates[_i % len(_templates)].format(s=_subj)
+            _s["vo"] = (str(_s.get("vo") or "").rstrip() + " " + _sent).strip()
+            _words_now += len(_sent.split())
+            _added += 1
+        if _added:
+            fixes.append(
+                f"duration: elaborated {_added} beat(s) to "
+                f"{_words_now} words for the {duration_s}s order")
     return fixes
 
 
