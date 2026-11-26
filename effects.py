@@ -138,8 +138,8 @@ def wiggle(L, t, at, d=.5, deg=6, cx=W/2, cy=H/2):                              
 def glow(L, t, at, d=.5, col=(255, 210, 0), r=18):                                            # reveal, number
     p = prog(t, at, d); k = math.sin(p*math.pi) if 0 < p < 1 else 0
     if k <= 0: return L
-    g = Image.new("RGBA", (W, H), col+(0,)); g.putalpha(L.getchannel("A").filter(ImageFilter.GaussianBlur(r)).point(lambda v: int(v*k)))
-    out = blank(); out.alpha_composite(g); out.alpha_composite(L); return out
+    g = Image.new("RGBA", L.size, col+(0,)); g.putalpha(L.getchannel("A").filter(ImageFilter.GaussianBlur(r)).point(lambda v: int(v*k)))
+    out = Image.new("RGBA", L.size, (0, 0, 0, 0)); out.alpha_composite(g); out.alpha_composite(L); return out
 def flash(t, at, d=.18, col=(255, 255, 255)):                                                 # shock (full-screen, very short)
     p = prog(t, at, d); a = int(120*(1-p)) if 0 < p < 1 else 0
     return Image.new("RGBA", (W, H), col+(a,))

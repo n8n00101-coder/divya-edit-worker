@@ -3019,7 +3019,7 @@ def music(total, starts, moods, path, hits=None, payoff=None,
             _a = int(max(0.0, _bounds[_i]) * SR)
             _b = int(min(_bounds[_i + 1], total) * SR)
             if _b > _a:
-                _g[_a:_b] = 0.25 + 1.35 * float(intensity[_i])
+                _g[_a:_b] = 0.15 + 1.6 * float(intensity[_i])
         _k = max(1, int(0.35 * SR))
         _ker = np.ones(_k) / _k
         _g = np.convolve(np.pad(_g, (_k, _k), mode="edge"),
@@ -4133,7 +4133,7 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         # Voice loudness arc: quieter at the turning dip, stronger
         # at hook/payoff — the spread moves the loudness range.
         fc = "".join(
-            f"[{i}:a]volume={0.65 + 0.6 * float(s.get('music_intensity') or 0.5):.2f},"
+            f"[{i}:a]volume={0.5 + 0.8 * float(s.get('music_intensity') or 0.5):.2f},"
             f"adelay={int(st * 1000)}|{int(st * 1000)}[a{i}];"
             for i, (s, st) in enumerate(zip(p["scenes"], starts)))
     else:

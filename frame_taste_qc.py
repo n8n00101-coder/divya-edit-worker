@@ -100,6 +100,10 @@ async def audit_beats(video_path, beats, outdir, vision=None):
             continue
         q = _Q.format(promise=str(b.get("promise") or "")[:300],
                       line=str(b.get("line") or "")[:200])
+        if results:
+            # Pace vision calls: the free vision leg rate-limits
+            # (429) when beats are judged back to back.
+            await asyncio.sleep(20)
         try:
             ans, prov = await vision([fp], q)
             provider = prov or provider
@@ -117,8 +121,14 @@ async def audit_beats(video_path, beats, outdir, vision=None):
             "source_card_ok": v.get("source_card_ok", True),
             "graphic_ok": v.get("graphic_ok", True),
             "face_ok": v.get("face_ok", True),
+            # Vision text judgement is recorded, not gating: the
+            # free vision model repeatedly hallucinated caption
+            # clipping on frames whose captions sit inside the
+            # frame with margin. Caption boundaries are owned by
+            # the deterministic ASS/caption gate (TASTE-CAPTION).
+            "text_ok_vision": v.get("text_ok", True),
         }
-        if not v.get("shows") or not v.get("text_ok") \
+        if not v.get("shows") \
                 or not v.get("source_card_ok", True) \
                 or not v.get("graphic_ok", True) \
                 or not v.get("face_ok", True):
