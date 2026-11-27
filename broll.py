@@ -652,7 +652,13 @@ class FootagePool:
                 # the verifier); UNVERIFIED keeps the clip but is
                 # reported as unverified — never as a pass.
                 _verify = None
-                if self.verifier is not None and _verified_count < 2:
+                # Strict (taste) mode verifies EVERY candidate: the
+                # old 2-candidate cap let a third, never-checked
+                # clip into a taste film (ta57e022 step 5 showed a
+                # mask/Scrabble tiles instead of the promised
+                # subject). Non-strict mode keeps the budget cap.
+                if self.verifier is not None and (
+                        strict_verify or _verified_count < 2):
                     _verified_count += 1
                     try:
                         _v, _reason, _cached = self.verifier.verify_candidate(
@@ -714,6 +720,15 @@ class FootagePool:
                     self.rejected.append(
                         {**cand, "scene": scene_no, "query": query,
                          "reason": "taste strict verify: no verifier attached"})
+                    used.add(cand["id"])
+                    continue
+                if strict_verify and _verify is None:
+                    # No verdict was produced for this candidate
+                    # (budget/cap path) — a taste film never takes
+                    # an unchecked clip; re-plan instead.
+                    self.rejected.append(
+                        {**cand, "scene": scene_no, "query": query,
+                         "reason": "taste strict verify: no verdict for candidate"})
                     used.add(cand["id"])
                     continue
                 return _finish(cand, dest, _verify)

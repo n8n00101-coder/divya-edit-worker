@@ -425,6 +425,23 @@ def validate_scene(scene, profile, beat_index=0):
     return checks
 
 
+def caption_safe_margin_px(profile, width=None):
+    """Side safe margin for captions: at least 80 px, and 6% of the
+    canvas width on wide frames (1920 -> 115 px) so text never
+    touches the frame edge."""
+    w = int(width or (profile or {}).get("width") or 1080)
+    return max(80, int(round(w * 0.06)))
+
+
+def caption_estimated_width(text, font_size):
+    """Conservative rendered-width estimate for the caption font
+    (Anton, bold, uppercase karaoke): ~0.62 em per glyph plus
+    spacing. Deliberately pessimistic — a phrase that passes here
+    fits inside the safe margins when rendered."""
+    t = str(text or "")
+    return len(t) * float(font_size) * 0.62 + max(0, len(t) - 1) * 1.0
+
+
 def caption_events_ok(events, profile):
     profile = profile or PROFILES["wtu_long_sheet"]
     max_words = int((profile.get("caption") or {}).get("max_words") or 6)
@@ -433,7 +450,8 @@ def caption_events_ok(events, profile):
     for i, ev in enumerate(events or []):
         start = float(ev.get("start") or 0)
         end = float(ev.get("end") or start)
-        words = len(str(ev.get("text") or "").split())
+        text = str(ev.get("text") or "")
+        words = len(text.split())
         if words > max_words:
             checks.append(_check(
                 "TASTE-CAPTION", False,
@@ -444,10 +462,35 @@ def caption_events_ok(events, profile):
                 "TASTE-CAPTION", False,
                 f"caption event {i + 1} overlaps the previous event",
                 ev.get("scene")))
+        # Safe-margin rule: when the event carries canvas/font
+        # evidence (or the profile canvas is known), the rendered
+        # phrase must fit inside the side margins.
+        width = ev.get("width") or profile.get("width")
+        font_size = ev.get("font_size")
+        if width and font_size:
+            margin = caption_safe_margin_px(profile, width)
+            est = caption_estimated_width(text, font_size)
+            if est > float(width) - 2 * margin:
+                checks.append(_check(
+                    "TASTE-CAPTION", False,
+                    f"caption event {i + 1} breaks the safe margin "
+                    f"(est {est:.0f}px > {float(width) - 2 * margin:.0f}px "
+                    f"inside {margin}px margins)",
+                    ev.get("scene")))
+        for side in ("margin_l", "margin_r"):
+            if ev.get(side) is not None and width:
+                margin = caption_safe_margin_px(profile, width)
+                if float(ev.get(side)) < margin:
+                    checks.append(_check(
+                        "TASTE-CAPTION", False,
+                        f"caption event {i + 1} {side} "
+                        f"{float(ev.get(side)):.0f}px below safe "
+                        f"margin {margin}px",
+                        ev.get("scene")))
         prev_end = max(prev_end or end, end)
     if not checks:
         checks.append(_check("TASTE-CAPTION", True,
-                             "caption events are phrase-level and non-overlapping"))
+                             "caption events are phrase-level, non-overlapping and inside safe margins"))
     return checks
 
 

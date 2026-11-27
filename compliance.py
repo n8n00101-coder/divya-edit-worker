@@ -1269,6 +1269,93 @@ def silence_gaps(path, max_gap=0.8, noise="-45dB"):
     return list(zip(starts, ends))
 
 
+def _undesigned_gaps(path, designed_silences=(), max_gap=0.8):
+    designed = [(float(a), float(b)) for a, b in (designed_silences or [])
+                if float(b) > float(a)]
+    return [(a, b) for a, b in silence_gaps(path, max_gap=max_gap)
+            if not any(a < we + 0.3 and b > ws - 0.3
+                       for ws, we in designed)]
+
+
+def repair_audio_delivery(path, bed_path=None, designed_silences=(),
+                          peak_max=-1.0, silence_max=0.8,
+                          target_lufs=-14.0):
+    """Repair R11 delivery defects on a rendered mix, in place.
+
+    Single-pass loudnorm does not guarantee the measured true peak
+    after AAC encode (ta57e022 shipped -0.8 dB against a TP=-1.0
+    setting), and a voice pause over a ducked bed can read as dead
+    air. This pass measures first, then — only when a defect is
+    real — fills undesigned >silence_max gaps with the music bed at
+    low level (designed pauses stay silent), re-normalises to a
+    -1.5 dBTP ceiling and limits, so the encoded file keeps
+    headroom under the -1 dB gate. Returns measured before/after
+    evidence; never raises."""
+    info = {"repaired": False, "peak_before": None, "peak_after": None,
+            "lufs_before": None, "lufs_after": None,
+            "gaps_before": [], "gaps_after": [], "error": ""}
+    try:
+        i_lufs, tp = measure_loudness(path)
+        gaps = _undesigned_gaps(path, designed_silences, silence_max)
+        info.update({"peak_before": tp, "lufs_before": i_lufs,
+                     "gaps_before": gaps})
+        peak_bad = tp is not None and tp > peak_max
+        if not peak_bad and not gaps:
+            info.update({"peak_after": tp, "lufs_after": i_lufs,
+                         "gaps_after": gaps})
+            return info
+        tmp = f"{path}.repair.wav"
+        inputs = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(path)]
+        bed = bed_path and os.path.exists(str(bed_path))
+        if gaps and bed:
+            inputs += ["-i", str(bed_path)]
+            n = len(gaps)
+            fc = (f"[1:a]asplit={n}"
+                  + "".join(f"[bs{i}]" for i in range(n)) + ";")
+            for i, (a, b) in enumerate(gaps):
+                fc += (f"[bs{i}]atrim=start={a:.3f}:end={b:.3f},"
+                       f"asetpts=PTS-STARTPTS,volume=0.10,"
+                       f"lowpass=f=6000,adelay={int(a * 1000)}:all=1"
+                       f"[bed{i}];")
+            fc += ("[0:a]" + "".join(f"[bed{i}]" for i in range(n))
+                   + f"amix=inputs={n + 1}:normalize=0[mix];")
+            src = "[mix]"
+        else:
+            fc = ""
+            src = "[0:a]"
+        fc += (f"{src}loudnorm=I={target_lufs:.0f}:TP=-1.5:LRA=11,"
+               f"alimiter=limit=0.85:level=false[out]")
+        r = subprocess.run(inputs + ["-filter_complex", fc, "-map",
+                                     "[out]", "-c:a", "pcm_s16le", tmp],
+                           capture_output=True, text=True, timeout=600)
+        if r.returncode != 0 or not os.path.exists(tmp):
+            info["error"] = (r.stderr or "audio repair ffmpeg failed")[-200:]
+            return info
+        # A limiter pass can still leave an overshoot on some
+        # material; one bounded gain step closes it.
+        i2, tp2 = measure_loudness(tmp)
+        if tp2 is not None and tp2 > peak_max:
+            tmp2 = f"{path}.repair2.wav"
+            gain = (peak_max - 0.4) - tp2
+            r = subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-i", tmp,
+                 "-af", f"volume={gain:.2f}dB,alimiter=limit=0.85:level=false",
+                 "-c:a", "pcm_s16le", tmp2],
+                capture_output=True, text=True, timeout=600)
+            if r.returncode == 0 and os.path.exists(tmp2):
+                os.replace(tmp2, tmp)
+        os.replace(tmp, path)
+        i3, tp3 = measure_loudness(path)
+        info.update({"repaired": True, "peak_after": tp3,
+                     "lufs_after": i3,
+                     "gaps_after": _undesigned_gaps(
+                         path, designed_silences, silence_max)})
+        return info
+    except Exception as e:
+        info["error"] = str(e)[:200]
+        return info
+
+
 def sample_frame_diffs(path, every_s=4.0, still_thresh=2.0):
     """R12 sampling, light version: extract 1 frame every `every_s`
     seconds and return the list of mean abs diffs between consecutive
@@ -1320,7 +1407,7 @@ def audit_media(path, cfg, spec, chapter_breaks=(),
         if abs(i_lufs - (-14.0)) > 1.5:
             checks.append({"rule": "R11", "status": "FAIL",
                            "detail": f"loudness {i_lufs:.1f} LUFS (target -14)", "scene": None})
-        if tp is not None and tp > -0.9:
+        if tp is not None and tp > -1.0:
             checks.append({"rule": "R11", "status": "FAIL",
                            "detail": f"true peak {tp:.1f} dB (must be <= -1 dB)", "scene": None})
     gaps = silence_gaps(path)

@@ -1432,6 +1432,24 @@ async def create_job(j, wa, note):
             print("taste profile resolve failed:", str(_e_taste_run)[:150])
             app_state("failed", "Taste profile resolve fail ayyindi — job aapesa.")
             return
+    def _post_video_director(rec, checks=None):
+        """Post Julie's video director record to the Worker
+        (readable via /internal/state). Used on BOTH the delivered
+        path and the blocked path — a rework-blocked run's record
+        must not vanish with its exception."""
+        if not rec:
+            return
+        try:
+            _vr = httpx.post(
+                f"{WORKER}/setup/runner/videodirector?job={JOB}",
+                json={"job": JOB, "record": rec,
+                      "tasteProfile": _taste_profile_id,
+                      "tasteChecks": checks},
+                headers={"x-runner-key": KEY}, timeout=30)
+            print("videodirector post:", _vr.status_code)
+        except Exception as _e_vd:
+            print("videodirector post failed:", str(_e_vd)[:120])
+
     try:
         res = None
         # v69 FIX (Ajju 2026-11-13): WhatsApp creates only ever made ~1-min
@@ -1515,6 +1533,18 @@ async def create_job(j, wa, note):
                     if attempt:
                         raise
                 except Exception as e:
+                    # Blocked taste runs carry their director
+                    # record on the exception — post it before any
+                    # rework/failure handling so /internal/state
+                    # shows the blocked verdict and defects.
+                    if _taste_prof:
+                        _vd_exc = (getattr(e, "video_director", None)
+                                   or getattr(getattr(e, "__cause__", None),
+                                              "video_director", None))
+                        if _vd_exc:
+                            _post_video_director(
+                                _vd_exc,
+                                getattr(e, "taste_checks", None))
                     # PROOF-FIX 5: the engine's duration gate fired —
                     # re-plan ONCE with a hard word budget in the
                     # brief; a second overrun fails the job honestly
@@ -1562,16 +1592,7 @@ async def create_job(j, wa, note):
         if _taste_prof:
             _vd_rec = (res.get("video_director")
                        or ((res.get("plan") or {}).get("video_director")))
-            try:
-                _vr = httpx.post(
-                    f"{WORKER}/setup/runner/videodirector?job={JOB}",
-                    json={"job": JOB, "record": _vd_rec,
-                          "tasteProfile": _taste_profile_id,
-                          "tasteChecks": res.get("taste_checks")},
-                    headers={"x-runner-key": KEY}, timeout=30)
-                print("videodirector post:", _vr.status_code)
-            except Exception as _e_vd:
-                print("videodirector post failed:", str(_e_vd)[:120])
+            _post_video_director(_vd_rec, res.get("taste_checks"))
             _vd_review = ((_vd_rec or {}).get("review")
                           or (((_vd_rec or {}).get("reviews") or [{}])[-1]))
             _vd_verdict = (_vd_review or {}).get("verdict")

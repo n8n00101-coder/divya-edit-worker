@@ -6,12 +6,18 @@ video director record is required, source cards need sources, caption
 overlaps fail, and delivery is blocked unless the review delivers.
 """
 
+import asyncio
 import os
+import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import brain_quality
+import compliance
+import frame_taste_qc
+import hf_primary
 import hyperframes_codegen
 import taste_pack
 import video_director_gates
@@ -205,6 +211,148 @@ restate_fails = fails(brain_quality.story_checks(restate_plan["scenes"], prof),
                       "BRAIN-RESTATEMENT")
 check("T12 no BRAIN-RESTATEMENT failures after repair", not restate_fails,
       str(restate_fails))
+
+# T13: caption safe margins (ta57e022 step 7: caption cut by frame edge).
+margin_checks = taste_pack.caption_events_ok([
+    {"start": 0.0, "end": 1.0,
+     "text": "extraordinary circumstances everywhere surrounding everything",
+     "width": 1920, "font_size": 54}], prof)
+check("T13 caption safe-margin breach rejected",
+      bool(fails(margin_checks, "TASTE-CAPTION")), str(margin_checks))
+check("T13 safe margin is 6% of 1920",
+      taste_pack.caption_safe_margin_px(prof, 1920) == 115)
+try:
+    import doc as _doc_t13
+    _doc_t13.W, _doc_t13.H = 1920, 1080
+    _words_t13 = [(i * 0.4, 0.4, w) for i, w in enumerate(
+        "extraordinary circumstances everywhere surrounding".split())]
+    _plan_t13 = {"lang": "en",
+                 "render_config": {"kind": "long",
+                                   "taste_profile": "wtu_long_sheet"},
+                 "scenes": [{"vo": "extraordinary circumstances "
+                                    "everywhere surrounding",
+                             "words": _words_t13, "adur": 1.6}],
+                 "starts": [0.0]}
+    with tempfile.TemporaryDirectory() as _td13:
+        _ass_t13 = os.path.join(_td13, "subs.ass")
+        _doc_t13.write_ass(_plan_t13, _ass_t13)
+        _ass_txt = open(_ass_t13, encoding="utf-8").read()
+    check("T13 ASS uses taste safe margins", ",115,115," in _ass_txt)
+    check("T13 ASS has no 106% caption overshoot", "fscx106" not in _ass_txt)
+    check("T13 wide phrase split inside margins",
+          _ass_txt.count("Dialogue:") > 1, _ass_txt[:400])
+except Exception as _e13:
+    check("T13 ASS safe-margin render", False, str(_e13))
+
+# T14: blocked runs carry a review-bearing director record.
+blk_plan = {"topic": "blocked", "render_config": taste_pack.cfg_for_profile(prof),
+            "scenes": [dict(sourced)]}
+blk_err = video_director_gates.blocked_error(
+    blk_plan, "TASTE DIRECTOR GATE: delivery blocked — review rework",
+    defects=["step 5: frame shows the wrong subject"], profile=prof)
+check("T14 blocked error carries record",
+      bool(getattr(blk_err, "video_director", None)))
+check("T14 blocked record has review for the Worker route",
+      ((blk_err.video_director or {}).get("review") or {}).get("verdict") == "rework")
+blk_allowed, _blk_why = video_director_gates.delivery_allowed(
+    blk_plan, blk_plan["render_config"])
+check("T14 blocked record still blocks delivery", not blk_allowed)
+
+# T15: frame taste vision retry — 429 then answer passes; always
+# failing stays UNVERIFIED (never upgraded).
+try:
+    with tempfile.TemporaryDirectory() as _td15:
+        _vid15 = os.path.join(_td15, "v.mp4")
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f",
+                        "lavfi", "-i", "testsrc=duration=2:size=320x240:rate=10",
+                        "-pix_fmt", "yuv420p", _vid15],
+                       check=True, timeout=60)
+        _calls15 = {"n": 0}
+
+        async def _flaky15(images, question):
+            _calls15["n"] += 1
+            if _calls15["n"] == 1:
+                raise RuntimeError("qwen 429")
+            return ('{"shows": true, "fills_frame": true, "text_ok": true, '
+                    '"source_card_ok": true, "graphic_ok": true, '
+                    '"face_ok": true, "note": "shows the subject"}'), "stub"
+
+        _rep15 = asyncio.run(frame_taste_qc.audit_beats(
+            _vid15, [{"beat": 1, "line": "x", "promise": "y",
+                      "start": 0, "duration": 2}],
+            os.path.join(_td15, "frames"), vision=_flaky15,
+            vision_attempts=2, retry_sleep_s=0, pace_s=0))
+        check("T15 vision 429 retried then judged",
+              _rep15["beats"][0]["status"] == "PASS" and _calls15["n"] == 2,
+              str(_rep15))
+
+        async def _dead15(images, question):
+            raise RuntimeError("vision 429")
+
+        _rep15b = asyncio.run(frame_taste_qc.audit_beats(
+            _vid15, [{"beat": 1, "line": "x", "promise": "y",
+                      "start": 0, "duration": 2}],
+            os.path.join(_td15, "frames2"), vision=_dead15,
+            vision_attempts=2, retry_sleep_s=0, pace_s=0))
+        check("T15 vision outage stays UNVERIFIED",
+              _rep15b["beats"][0]["status"] == "UNVERIFIED", str(_rep15b))
+except Exception as _e15:
+    check("T15 frame taste retry rig", False, str(_e15))
+
+# T16: audio repair — true peak ceiling + undesigned silence fill.
+try:
+    with tempfile.TemporaryDirectory() as _td16:
+        _mix16 = os.path.join(_td16, "mix.wav")
+        _bed16 = os.path.join(_td16, "bed.wav")
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error",
+             "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+             "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+             "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+             "-filter_complex",
+             "[1:a]atrim=duration=1.2[s];[0:a]volume=0.95[a];"
+             "[2:a]volume=0.95[b];[a][s][b]concat=n=3:v=0:a=1[o]",
+             "-map", "[o]", "-c:a", "pcm_s16le", _mix16],
+            check=True, timeout=60)
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+             "-i", "sine=frequency=220:duration=3.2", "-af",
+             "volume=0.2", "-c:a", "pcm_s16le", _bed16],
+            check=True, timeout=60)
+        _rep16 = compliance.repair_audio_delivery(_mix16, bed_path=_bed16)
+        check("T16 audio repair ran", bool(_rep16.get("repaired")),
+              str(_rep16))
+        check("T16 true peak at/below -1 dB after repair",
+              _rep16.get("peak_after") is not None
+              and _rep16["peak_after"] <= -1.0, str(_rep16))
+        check("T16 undesigned silence filled",
+              not _rep16.get("gaps_after"), str(_rep16))
+except Exception as _e16:
+    check("T16 audio repair rig", False, str(_e16))
+
+# T17: strict footage verification has no unverified-candidate hole;
+# taste transitions never dip through black.
+_broll_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "broll.py"), encoding="utf-8").read()
+check("T17 strict mode verifies every candidate",
+      "strict_verify or _verified_count < 2" in _broll_src
+      and "no verdict for candidate" in _broll_src)
+check("T17 taste transition never fadeblack",
+      hf_primary._xfade_for("dip to black", 1, [], taste=True) == "dissolve"
+      and hf_primary._xfade_for("dip to black", 1, [], taste=False) == "fadeblack")
+
+# T18: consecutive blank-ish frames count across kind changes.
+try:
+    import doc as _doc_t18
+    _flaws18 = _doc_t18._consecutive_blank_flaws([
+        ("f0091.jpg", "blank/black (mean 3.0)"),
+        ("f0092.jpg", "solid colour (std 2.0)"),
+        ("f0093.jpg", None),
+        ("f0094.jpg", "blank/black (mean 2.0)")])
+    check("T18 alternating blank kinds still flaw", len(_flaws18) == 1,
+          str(_flaws18))
+except Exception as _e18:
+    check("T18 blank-run helper", False, str(_e18))
 
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:

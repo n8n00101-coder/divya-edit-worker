@@ -76,10 +76,15 @@ def _parse(raw):
         return None
 
 
-async def audit_beats(video_path, beats, outdir, vision=None):
+async def audit_beats(video_path, beats, outdir, vision=None,
+                      vision_attempts=2, retry_sleep_s=45, pace_s=20):
     """beats: [{beat, line, promise, why, start, duration}].
     Returns {version, vision: provider|'unavailable', beats: [{beat,
-    status, note, frame}], counts}. Never raises."""
+    status, note, frame}], counts}. Never raises.
+
+    A vision failure (429/outage/unparseable) is retried ONCE after
+    a cooldown sleep before the beat is left UNVERIFIED — bounded,
+    and UNVERIFIED is never upgraded to PASS."""
     os.makedirs(outdir, exist_ok=True)
     results = []
     provider = None
@@ -100,20 +105,28 @@ async def audit_beats(video_path, beats, outdir, vision=None):
             continue
         q = _Q.format(promise=str(b.get("promise") or "")[:300],
                       line=str(b.get("line") or "")[:200])
-        if results:
+        if results and pace_s:
             # Pace vision calls: the free vision leg rate-limits
             # (429) when beats are judged back to back.
-            await asyncio.sleep(20)
-        try:
-            ans, prov = await vision([fp], q)
-            provider = prov or provider
-        except Exception as e:
-            entry["note"] = f"vision failed: {str(e)[:100]}"
-            results.append(entry)
-            continue
-        v = _parse(ans)
+            await asyncio.sleep(pace_s)
+        v = None
+        last_note = "vision unavailable"
+        for attempt in range(max(1, int(vision_attempts))):
+            try:
+                ans, prov = await vision([fp], q)
+                provider = prov or provider
+            except Exception as e:
+                last_note = f"vision failed: {str(e)[:100]}"
+                ans = None
+            if ans is not None:
+                v = _parse(ans)
+                if v is not None:
+                    break
+                last_note = "vision reply unparseable"
+            if attempt + 1 < max(1, int(vision_attempts)) and retry_sleep_s:
+                await asyncio.sleep(retry_sleep_s)
         if v is None:
-            entry["note"] = "vision reply unparseable"
+            entry["note"] = last_note
             results.append(entry)
             continue
         entry["note"] = str(v.get("note") or "")[:200]

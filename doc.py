@@ -1053,12 +1053,15 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
                            if c.get("status") == "FAIL" and
                            c.get("rule") in _vdg_taste.CRITICAL_RULES]
             if _crit_fails:
-                raise RuntimeError(
+                _defs_crit = [
+                    f"{c.get('rule')} s{c.get('scene')}: "
+                    f"{str(c.get('detail') or '')[:90]}"
+                    for c in _crit_fails[:4]]
+                raise _vdg_taste.blocked_error(
+                    p,
                     "TASTE DIRECTOR GATE: critic still failing after "
-                    "bounded repair: " + "; ".join(
-                        f"{c.get('rule')} s{c.get('scene')}: "
-                        f"{str(c.get('detail') or '')[:90]}"
-                        for c in _crit_fails[:4]))
+                    "bounded repair: " + "; ".join(_defs_crit),
+                    defects=_defs_crit, profile=_prof_taste, brief=brief)
             print(f"taste director: profile {_prof_taste['id']}, "
                   f"{len(p['video_director']['plan']['steps'])} beat checks armed")
     except RuntimeError:
@@ -3079,6 +3082,18 @@ def write_ass(p, path):
         primary = f"&H00{b:02X}{g:02X}{r:02X}"
     border_style = 3 if cfg.get("kind") == "long" else 1
     margin_v = int(round(200 * (H / 1920.0))) or 60
+    # Taste safe margins: captions never touch the frame edge.
+    # Taste films use the profile margin (6% of width, min 80);
+    # other films keep the historical 80 px.
+    _taste_cap = bool(cfg.get("taste_profile"))
+    margin_lr = 80
+    if _taste_cap:
+        try:
+            import taste_pack as _tp_cap
+            _prof_cap = _tp_cap.PROFILES.get(str(cfg.get("taste_profile"))) or {}
+            margin_lr = _tp_cap.caption_safe_margin_px(_prof_cap, W)
+        except Exception:
+            margin_lr = max(80, int(round(W * 0.06)))
     head = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
@@ -3087,7 +3102,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: K,{fn},{size},{primary},&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,1,0,{border_style},6,3,2,80,80,{margin_v},1
+Style: K,{fn},{size},{primary},&H00FFFFFF,&H00000000,&H96000000,1,0,0,0,100,100,1,0,{border_style},6,3,2,{margin_lr},{margin_lr},{margin_v},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -3107,13 +3122,44 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             ws = [(a, d, _translit.transliterate(w, p["lang"]))
                   for (a, d, w) in ws]
         groups = _comp.chunk_caption_words(ws, wmin, wmax)
+        if _taste_cap:
+            # Split any phrase whose estimated rendered width
+            # would break the safe margins (timings preserved:
+            # subgroups keep their own word offsets).
+            try:
+                import taste_pack as _tp_cap2
+                _avail_cap = W - 2 * margin_lr
+                _split_cap = []
+                for _g_cap in groups:
+                    _cur_cap = []
+                    for _w_cap in _g_cap:
+                        _trial_cap = _cur_cap + [_w_cap]
+                        _txt_cap = " ".join(
+                            x[2].upper() if p["lang"] == "en" else x[2]
+                            for x in _trial_cap)
+                        if _cur_cap and _tp_cap2.caption_estimated_width(
+                                _txt_cap, size) > _avail_cap:
+                            _split_cap.append(_cur_cap)
+                            _cur_cap = [_w_cap]
+                        else:
+                            _cur_cap = _trial_cap
+                    if _cur_cap:
+                        _split_cap.append(_cur_cap)
+                groups = _split_cap or groups
+            except Exception:
+                pass
+        # Taste films: no scale overshoot past 100% — the 106%
+        # pop could push a fitted phrase into the frame edge.
+        _anim_cap = ("{\\fad(40,0)\\fscx92\\fscy92\\t(0,110,\\fscx100\\fscy100)}"
+                     if _taste_cap else
+                     "{\\fad(40,0)\\fscx80\\fscy80\\t(0,110,\\fscx106\\fscy106)\\t(110,200,\\fscx100\\fscy100)}")
         for gi, g in enumerate(groups):
             a = st + g[0][0]; b = st + (groups[gi + 1][0][0] if gi + 1 < len(groups) else g[-1][0] + g[-1][1] + 0.25)
             parts = []
             for wi, (o, d, txt) in enumerate(g):
                 nxt = g[wi + 1][0] if wi + 1 < len(g) else o + d
                 parts.append("{\\k%d}%s" % (max(1, int((nxt - o) * 100)), txt.upper() if p["lang"] == "en" else txt))
-            ev.append(f"Dialogue: 0,{ass_t(a)},{ass_t(b)},K,,0,0,0,,{{\\fad(40,0)\\fscx80\\fscy80\\t(0,110,\\fscx106\\fscy106)\\t(110,200,\\fscx100\\fscy100)}}" + " ".join(parts))
+            ev.append(f"Dialogue: 0,{ass_t(a)},{ass_t(b)},K,,0,0,0,,{_anim_cap}" + " ".join(parts))
     open(path, "w", encoding="utf-8").write(head + "\n".join(ev) + "\n")
 
 
@@ -3379,6 +3425,21 @@ def _qc_bg_gray(mood, look, section, shape):
                       .convert("L"), dtype=np.float32)
 
 
+def _consecutive_blank_flaws(samples):
+    """samples: [(filename, kind_or_None)] in time order. Two
+    consecutive blank-ish samples (>= 0.5 s of blank at the 0.5 s
+    sampling) are a flaw — the KIND may change between samples
+    (blank/black -> solid colour is still one blank stretch)."""
+    flaws = []
+    prev = None
+    for fn, kind in samples or []:
+        if kind and prev:
+            flaws.append(
+                f"rendered frames {prev[0]} + {fn} are {kind} for >= 0.5 s")
+        prev = (fn, kind) if kind else None
+    return flaws
+
+
 def frame_qc(p, video_path, wd=None):
     """v35 (Ajju: "Divya is not checking at all"). Automated post-render
     frame check. The old team_qc scores the PLAN text and never looks at a
@@ -3500,7 +3561,7 @@ def frame_qc(p, video_path, wd=None):
             # point is ~60 ms), so a flaw needs TWO consecutive 0.5 s
             # samples both blank/solid/unchanged (>= 0.5 s of blank).
             _bgs = {}
-            _prev = None  # (kind, fn) of the previous frame's blank, if any
+            _blank_samples = []
             for _k, _fn in enumerate(_frames):
                 _im = np.asarray(Image.open(os.path.join(_fdir, _fn)).convert("L"), dtype=np.float32)
                 _mean, _std = float(_im.mean()), float(_im.std())
@@ -3520,9 +3581,8 @@ def frame_qc(p, video_path, wd=None):
                             p["scenes"][_si].get("section"), _im.shape)
                     if float(np.abs(_im - _bgs[_si]).mean()) < 2.55:
                         _kind = f"blank vs background (t={_t:.1f}s, scene {_si + 1}, <1% change)"
-                if _kind and _prev and _prev[0] == _kind.split(" (")[0]:
-                    all_flaws.append(f"rendered frames {_prev[1]} + {_fn} are {_kind} for >= 0.5 s")
-                _prev = (_kind.split(" (")[0], _fn) if _kind else None
+                _blank_samples.append((_fn, _kind))
+            all_flaws += _consecutive_blank_flaws(_blank_samples)
         except Exception as e:
             all_flaws.append(f"frame check failed: {str(e)[:100]}")
     result = {"passed": not all_flaws, "scenes": scenes_out, "flaws": all_flaws,
@@ -4196,6 +4256,32 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                     # v79 (R11): true peak -1 dB (was -1.5; the compromise
                     # video peaked at 0.0 and clipped).
                     "[vv][md][sx]amix=inputs=3:normalize=0,loudnorm=I=-14:TP=-1.0:LRA=11[o]", "-map", "[o]", "-ar", str(SR), f"{wd}/mix.wav"], check=True)
+    # Taste-wave audio repair: single-pass loudnorm can still
+    # measure above the -1 dBTP gate after encode, and a voice
+    # pause over the ducked bed can read as dead air. Measure the
+    # mix and repair only real defects (designed pauses stay).
+    if _taste_mix:
+        try:
+            import compliance as _comp_mix
+            _dsil_mix = []
+            for _i_mix, _s_mix in enumerate(p["scenes"]):
+                _sa_mix = float(_s_mix.get("silence_after_s") or 0)
+                if _sa_mix > 0 and _i_mix < len(p.get("starts") or []):
+                    _w0_mix = p["starts"][_i_mix] + float(_s_mix.get("d") or 0)
+                    _dsil_mix.append((_w0_mix, _w0_mix + _sa_mix))
+            _rep_mix = _comp_mix.repair_audio_delivery(
+                f"{wd}/mix.wav", bed_path=f"{wd}/music.wav",
+                designed_silences=_dsil_mix)
+            p["audio_repair"] = _rep_mix
+            print(f"audio repair: repaired={_rep_mix.get('repaired')} "
+                  f"peak {_rep_mix.get('peak_before')} -> "
+                  f"{_rep_mix.get('peak_after')} gaps "
+                  f"{len(_rep_mix.get('gaps_before') or [])} -> "
+                  f"{len(_rep_mix.get('gaps_after') or [])}"
+                  + (f" error={_rep_mix.get('error')}" if _rep_mix.get("error") else ""))
+        except Exception as _e_mix:
+            print("audio repair failed (mix stands, QC will judge):",
+                  str(_e_mix)[:120])
     # v72 checkpoint 4 (assembly): transitions + captions land before
     # the frame render and the caption burn — the last point where
     # they can still change THIS video.
@@ -4349,8 +4435,11 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         # as an apparently successful video.
         try:
             import media_qc as _mq85
+            _mq_cfg = ({"card_allowance_s": 0, "peak_max_dbtp": -1.0,
+                        "black_min_s": 0.3, "blank_sample_every_s": 0.5}
+                       if (cfg or {}).get("taste_profile") else None)
             _mq_all, _mq_info = _mq85.inspect_file(
-                out, designed_silences=_dsil)
+                out, cfg=_mq_cfg, designed_silences=_dsil)
             _checks += [c for c in _mq_all if c["rule"] in (
                 "MQ-AVSYNC", "MQ-BLACK", "MQ-FREEZE", "MQ-BLANK",
                 "MQ-REPEAT", "MQ-CUTS")]
@@ -4436,8 +4525,11 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             try:
                 import taste_pack as _tp_post2
                 if _tp_post2.is_taste_job(cfg, brief, spec):
-                    raise RuntimeError(
-                        f"TASTE DIRECTOR GATE fail-closed: {_e_post}") from _e_post
+                    import video_director_gates as _vdg_post2
+                    raise _vdg_post2.blocked_error(
+                        p, f"TASTE DIRECTOR GATE fail-closed: {_e_post}",
+                        defects=[str(_e_post)[:160]],
+                        verdict="fail") from _e_post
             except RuntimeError:
                 raise
             except Exception:
@@ -4516,15 +4608,34 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
             if not _allowed_block:
                 _rev_block = ((p.get("video_director") or {}).get("review") or {})
                 _defs_block = _rev_block.get("defects") or []
-                raise RuntimeError(
+                _msg_block = (
                     "TASTE DIRECTOR GATE: delivery blocked — review "
                     f"{_rev_block.get('verdict') or 'missing'}; " +
                     "; ".join(str(d)[:100] for d in _defs_block[:5]))
+                if _rev_block.get("verdict"):
+                    # The post-render review already exists; carry
+                    # the record on the exception unchanged.
+                    _err_block = RuntimeError(_msg_block)
+                    _err_block.video_director = p.get("video_director")
+                    _err_block.taste_checks = p.get("taste_checks")
+                    raise _err_block
+                raise _vdg_block.blocked_error(
+                    p, _msg_block,
+                    defects=[str(d)[:160] for d in _defs_block[:5]]
+                    or [_why_block])
     except RuntimeError:
         raise
     except Exception as _e_block:
-        raise RuntimeError(
-            f"TASTE DIRECTOR GATE fail-closed: {_e_block}") from _e_block
+        try:
+            import video_director_gates as _vdg_fc
+            raise _vdg_fc.blocked_error(
+                p, f"TASTE DIRECTOR GATE fail-closed: {_e_block}",
+                defects=[str(_e_block)[:160]], verdict="fail") from _e_block
+        except RuntimeError:
+            raise
+        except Exception:
+            raise RuntimeError(
+                f"TASTE DIRECTOR GATE fail-closed: {_e_block}") from _e_block
     # v36 (Blind D): record this video's look so the next video never repeats it.
     record_look(p.get("look"))
     # v72: close the amendment book — everything the engine applied is

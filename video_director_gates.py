@@ -218,6 +218,31 @@ def apply_checks_and_review(plan, profile=None, compliance_checks=None,
     return review
 
 
+def blocked_error(plan, message, defects=None, verdict="rework",
+                  profile=None, brief=""):
+    """A RuntimeError for a taste-blocked run that CARRIES the
+    director record. The record gains a blocked review (the Worker
+    route requires plan+review), so the runner can post it on the
+    blocked path too — a rework-blocked run must stay readable via
+    /internal/state instead of vanishing with the exception."""
+    rec = ensure_record(plan, profile, brief)
+    if rec is not None:
+        defs = [str(d)[:160] for d in (defects or []) if str(d).strip()][:6]
+        if not defs:
+            defs = [str(message)[:160]]
+        review = {"verdict": verdict if verdict in ("rework", "fail") else "rework",
+                  "summary": "Taste director gate blocked delivery: "
+                             + str(message)[:240],
+                  "defects": defs, "at": _now()}
+        rec["reviews"] = (rec.get("reviews") or []) + [review]
+        rec["review"] = review
+        plan["video_director"] = rec
+    err = RuntimeError(str(message))
+    err.video_director = (plan or {}).get("video_director")
+    err.taste_checks = (plan or {}).get("taste_checks")
+    return err
+
+
 def delivery_allowed(plan, cfg=None):
     cfg = cfg or (plan or {}).get("render_config") or {}
     if not taste_pack.is_taste_job(cfg, ""):

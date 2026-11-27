@@ -64,7 +64,7 @@ DEFAULTS = {
     "loud_tol_lufs": 1.5,
     "lra_min_lu": 5.0,            # v100: delivered loudness range floor (documentary pack)
     "kind": "",                   # v100: routing key (see _cfg) — "long" arms the MQ-LRA FAIL
-    "peak_max_dbtp": -0.9,
+    "peak_max_dbtp": -1.0,
     "silence_min_s": 0.8,
     "colour_drift_max": 0.35,    # relative mean-luma drift, chapter to chapter
     "repeat_hash_distance": 5,   # dHash hamming distance for "same visual"

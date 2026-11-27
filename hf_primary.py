@@ -165,7 +165,10 @@ def _xfade_for(plan_name, idx, layer_types, taste=False):
     n = str(plan_name or "").lower().replace("-", "_").replace(" ", "_")
     if n and n not in ("cut", "none", "hard_cut"):
         if "black" in n or "dip" in n:
-            return "fadeblack"
+            # Taste films never dip through black — a black
+            # transition reads as blank/black frames in QC and
+            # breaks the sheet's continuous-footage rule.
+            return "dissolve" if taste else "fadeblack"
         if "slide" in n and "right" in n:
             return "slideright"
         if "slide" in n:
