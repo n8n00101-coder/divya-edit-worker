@@ -84,10 +84,16 @@ def install_fake_edge_tts(mode="good"):
     mod = types.ModuleType("edge_tts")
 
     class Communicate:
+        calls = 0
+
         def __init__(self, text, voice, rate=None, pitch=None, boundary=None):
             self.text = text
 
         async def stream(self):
+            if mode == "flaky":
+                Communicate.calls += 1
+                if Communicate.calls <= 2:
+                    raise RuntimeError("NoAudioReceived: no audio")
             if mode == "raise":
                 raise OSError("synth boom")
             if mode == "silent":
@@ -237,6 +243,21 @@ def test_tts():
                     ok("tts: empty synthesis fails honestly (no fake file)",
                        "no audio" in str(e) and
                        not Path(td, "vo0.mp3").exists(), str(e))
+    finally:
+        restore_edge_tts(prev)
+
+    # transient NoAudioReceived twice, then audio: the bounded
+    # transient ladder must recover (ta57e023 rework death).
+    prev = install_fake_edge_tts("flaky")
+    try:
+        with tempfile.TemporaryDirectory(prefix="v75_tts_") as td:
+            with mock.patch.object(asyncio, "sleep", _instant_sleep):
+                words = asyncio.run(doc.tts(
+                    "hello world", "en-US-AvaMultilingualNeural",
+                    "calm", str(Path(td) / "vo0.mp3")))
+            ok("tts: transient NoAudioReceived retried to success",
+               len(words) == 2 and Path(td, "vo0.mp3").exists(),
+               str(words))
     finally:
         restore_edge_tts(prev)
 

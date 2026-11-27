@@ -72,7 +72,18 @@ TIME_WORDS = {"time", "clock", "second", "seconds", "minute", "minutes",
 
 
 def widget_kind(scene):
-    """The budget kind a scene spends, or None (footage / no widget)."""
+    """The budget kind a scene spends, or None (footage / no widget).
+
+    Taste-profile beats carry a directed graphic_type: a footage
+    (or graphic-locked) beat renders footage, so the writer's stale
+    widget visual spends no budget; a directed card/chart/diagram
+    beat spends its graphic kind. Scenes without a graphic_type
+    (every non-taste plan) are judged exactly as before."""
+    gt = str(scene.get("graphic_type") or "").strip().lower()
+    if scene.get("graphic_locked") or gt == "footage":
+        return None
+    if gt in ("source_card", "data_chart", "diagram", "map_card"):
+        return gt
     v = str(scene.get("visual") or "")
     if v in WIDGET_KINDS:
         return v
@@ -506,6 +517,11 @@ def topic_fidelity(scene, topic_text=""):
     intersection, the footage-query overlap approach). A visual
     that cannot compose from the scene at all is not ok. Scenes
     without a content-bearing visual are trivially ok."""
+    # A taste footage beat renders footage, not the writer's stale
+    # content visual — there is no composed text to judge.
+    _gt = str(scene.get("graphic_type") or "").strip().lower()
+    if scene.get("graphic_locked") or _gt == "footage":
+        return True, ""
     name = effective_visual(scene)
     if name not in CONTENT_TEXT_VISUALS:
         return True, ""

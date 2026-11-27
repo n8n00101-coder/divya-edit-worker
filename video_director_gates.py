@@ -21,6 +21,9 @@ CRITICAL_RULES = {
     "FG-SHARE", "FG-FACT", "FG-TEASE", "VHIST", "MQ-LRA", "MQ-SILENCE",
     "MQ-BLACK", "MQ-FREEZE", "MQ-BLANK", "MQ-REPEAT", "MQ-AVSYNC",
     "R11", "MQ-LOUD",
+    # Compliance beat-replan rules: a repeated widget or a
+    # why/fidelity mismatch blocks delivery like any taste defect.
+    "R1", "PART3-BUDGET", "PART3-WIDGET", "FIDELITY", "R2",
 }
 
 

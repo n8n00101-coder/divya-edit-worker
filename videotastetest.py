@@ -354,6 +354,92 @@ try:
 except Exception as _e18:
     check("T18 blank-run helper", False, str(_e18))
 
+# T19: the videodirector post must hit the /api route and verify the
+# stored verdict — a bare-path post got the landing page's 200 and
+# stored nothing (ta57e023 readback had no videoDirector).
+_runner_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "runner.py"), encoding="utf-8").read()
+check("T19 videodirector post uses /api route",
+      "/api/setup/runner/videodirector" in _runner_src
+      and "{WORKER}/setup/runner/videodirector" not in _runner_src)
+check("T19 videodirector post verifies stored ok",
+      "videodirector post NOT stored" in _runner_src)
+
+# T20: text-edge discipline (ta57e023 steps 1-6: title/caption text
+# at frame edges). Every HF text layer keeps the safe margin and
+# wraps; the deterministic checker flags a synthetic breach.
+try:
+    with tempfile.TemporaryDirectory() as _td20:
+        _img20 = os.path.join(_td20, "foot.jpg")
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
+             "-i", "color=c=gray:s=320x180", "-frames:v", "1", _img20],
+            check=True, timeout=60)
+        _long20 = ("An extremely long viewer label that keeps going "
+                   "well past any reasonable lower third width")
+        _rep20 = hyperframes_codegen.generate_project([
+            {"footage": _img20, "duration": 3.0, "layers": [
+                {"type": "lower_third", "name": _long20,
+                 "role": "Source: A Very Long Research Institute "
+                         "Name With Several Words (2024)"}]},
+            {"footage": _img20, "duration": 3.0, "layers": [
+                {"type": "source_card", "kicker": "THE RESEARCH",
+                 "headline": _long20, "stat": "46", "unit": "%",
+                 "quote": _long20, "source": "Gilovich (2000)"}]},
+            {"footage": _img20, "duration": 3.0, "layers": [
+                {"type": "diagram", "kind": "growth",
+                 "title": _long20, "items": [_long20, "short"]}]},
+            {"footage": _img20, "duration": 3.0, "layers": [
+                {"type": "title", "kicker": _long20,
+                 "headline": _long20, "sub": _long20}]},
+        ], os.path.join(_td20, "proj"))
+        check("T20 no TEXT-EDGE flags on long-text layers",
+              not [f for f in _rep20["flags"] if "TEXT-EDGE" in f],
+              str(_rep20["flags"]))
+        _bad20 = ("#x-lt { position: absolute; left: 40px; "
+                  "max-width: 1900px; }")
+        check("T20 checker flags edge breach",
+              bool(hyperframes_codegen.text_edge_violations(_bad20)))
+        _html20 = open(_rep20["compositions"][0],
+                       encoding="utf-8").read()
+        check("T20 lower-third wraps inside safe margin",
+              "overflow-wrap: anywhere" in _html20
+              and "left: 120px" in _html20)
+except Exception as _e20:
+    check("T20 text-edge rig", False, str(_e20))
+
+# T21: compliance target rules re-plan beats instead of
+# accumulating FAILs (ta57e023: 72 compliance FAILs on the report).
+_plan21 = {"topic": "the spotlight effect", "scenes": []}
+for _i21 in range(6):
+    _plan21["scenes"].append({
+        "no": _i21 + 1,
+        "vo": f"Students in the classroom felt watched moment {_i21}.",
+        "label": "CLASSROOM", "visual": "counter",
+        "value": "", "source": "",
+        "why": "a rotating widget from the pool",
+        "queries": ["students classroom"]})
+_plan21["scenes"][1]["visual"] = "document"
+_plan21["scenes"][1]["why"] = "unrelated paperwork about taxes"
+brain_quality.enrich_visuals(_plan21["scenes"], prof)
+_fails21 = brain_quality.compliance_target_fails(_plan21, prof)
+check("T21 compliance target fails detected", bool(_fails21),
+      str(_fails21[:3]))
+for _pass21 in range(2):
+    brain_quality.repair_plan(_plan21, prof)
+    brain_quality.enrich_visuals(_plan21["scenes"], prof)
+    if not brain_quality.compliance_target_fails(_plan21, prof):
+        break
+check("T21 re-plans clear compliance target fails",
+      not brain_quality.compliance_target_fails(_plan21, prof),
+      str(brain_quality.compliance_target_fails(_plan21, prof)[:3]))
+from collections import Counter as _Counter21
+_kinds21 = _Counter21(compliance.widget_kind(s)
+                      for s in _plan21["scenes"]
+                      if compliance.widget_kind(s))
+check("T21 no widget kind over the long budget",
+      all(v <= 3 for v in _kinds21.values()), str(dict(_kinds21)))
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)

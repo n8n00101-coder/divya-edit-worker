@@ -1033,10 +1033,16 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
                 cfg["taste_profile"] = _prof_taste["id"]
                 cfg["tasteDirectorRequired"] = True
             _critic_taste = _bq_taste.apply(p, _prof_taste, chat=chat)
+
+            def _taste_fails_now():
+                _cf = [c for c in _critic_taste
+                       if c.get("status") == "FAIL" and
+                       c.get("rule") in _vdg_taste.CRITICAL_RULES]
+                _cf += _bq_taste.compliance_target_fails(p, _prof_taste)
+                return _cf
+
             for _pass_taste in range(2):
-                _crit_fails = [c for c in _critic_taste
-                               if c.get("status") == "FAIL" and
-                               c.get("rule") in _vdg_taste.CRITICAL_RULES]
+                _crit_fails = _taste_fails_now()
                 if not _crit_fails:
                     break
                 _fixes_taste = _bq_taste.repair_plan(
@@ -1049,9 +1055,7 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
                 p.setdefault("plan_fixes", []).extend(_fixes_taste)
                 _critic_taste = _bq_taste.apply(p, _prof_taste, chat=chat)
             _vdg_taste.require_record(p, cfg, brief)
-            _crit_fails = [c for c in _critic_taste
-                           if c.get("status") == "FAIL" and
-                           c.get("rule") in _vdg_taste.CRITICAL_RULES]
+            _crit_fails = _taste_fails_now()
             if _crit_fails:
                 _defs_crit = [
                     f"{c.get('rule')} s{c.get('scene')}: "
@@ -1146,6 +1150,21 @@ def _enforce_plan(p, brief="", repair=True):
 
 
 # ---------------- voice ----------------
+# Transient TTS failures (edge-tts NoAudioReceived, timeouts,
+# connection drops, 429/503) get a longer bounded retry ladder —
+# the ta57e023 rework attempt died on one such transient with no
+# taste verdict. Non-transient errors keep the short ladder.
+TTS_TRANSIENT_BACKOFF_S = (2, 5, 10, 20, 30)
+TTS_TRANSIENT_MARKERS = ("noaudioreceived", "no audio", "timeout",
+                         "timed out", "connection", "429", "503",
+                         "temporarily", "eof occurred")
+
+
+def _tts_transient(err):
+    blob = f"{type(err).__name__}: {err}".lower()
+    return any(m in blob for m in TTS_TRANSIENT_MARKERS)
+
+
 async def tts(text, voice, mood, out, rate_add=0):
     import edge_tts
     rate, pitch = MOODS[mood][3]
@@ -1175,7 +1194,8 @@ async def tts(text, voice, mood, out, rate_add=0):
     if _out_dir:
         os.makedirs(_out_dir, exist_ok=True)
     last = None
-    for attempt in range(4):
+    attempt = 0
+    while True:
         try:
             words, buf = [], bytearray()
             async for ch in edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, boundary="WordBoundary").stream():
@@ -1187,7 +1207,17 @@ async def tts(text, voice, mood, out, rate_add=0):
                 raise RuntimeError("synthesis wrote an empty file")
             return words
         except Exception as e:
-            last = e; await asyncio.sleep(1.5 * (attempt + 1))
+            last = e
+            if _tts_transient(e) and attempt < len(TTS_TRANSIENT_BACKOFF_S):
+                print(f"tts: transient failure "
+                      f"({type(e).__name__}), retry "
+                      f"{attempt + 1}/{len(TTS_TRANSIENT_BACKOFF_S)}")
+                await asyncio.sleep(TTS_TRANSIENT_BACKOFF_S[attempt])
+            elif attempt < 3:
+                await asyncio.sleep(1.5 * (attempt + 1))
+            else:
+                break
+            attempt += 1
     # v75: name the exception TYPE so a masked cause can never hide
     # behind a bare errno string again.
     raise RuntimeError(f"TTS failed ({type(last).__name__}): {last}")

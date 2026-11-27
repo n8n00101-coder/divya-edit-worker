@@ -377,6 +377,112 @@ def _stamp_or_strip_source(plan, scene, no):
     return None
 
 
+COMPLIANCE_TARGET_RULES = ("R1", "PART3-BUDGET", "PART3-WIDGET",
+                           "FIDELITY", "R2")
+
+
+def compliance_target_fails(plan, profile=None):
+    """The compliance FAILs a taste beat must re-plan for, not
+    accumulate: widget repeats/budget, wrong widget for a number,
+    topic-fidelity mismatches and why-visual mismatches. Judged
+    with the profile's own kind so a long sheet film is not scored
+    by short-video budgets."""
+    import compliance
+    profile = profile or taste_pack.PROFILES["wtu_long_sheet"]
+    scenes = (plan or {}).get("scenes") or []
+    cfg = {"kind": profile.get("kind") or "long",
+           "width": profile.get("width") or 1920}
+    topic = str((plan or {}).get("topic")
+                or (plan or {}).get("title") or "")
+    checks = compliance.audit_plan(scenes, cfg, topic_text=topic)
+    return [c for c in checks if c.get("status") == "FAIL"
+            and c.get("rule") in COMPLIANCE_TARGET_RULES]
+
+
+def _why_shares_line(scene):
+    import compliance
+    stop = compliance.WEAK_END_WORDS | {
+        "shows", "showing", "show", "scene", "visual", "line",
+        "video", "used", "using", "represents"}
+    line = {w for w in re.findall(r"[a-z]{3,}",
+                                  str(scene.get("vo") or "").lower())} - stop
+    why = {w for w in re.findall(r"[a-z]{3,}",
+                                 str(scene.get("why") or "").lower())} - stop
+    return bool(line & why)
+
+
+def _replan_beat_footage(plan, scene, reason):
+    """Re-plan one beat to footage of its own line subject: the
+    graphic is demoted and locked, the why is rewritten from the
+    line, and a visible-subject query is derived when missing."""
+    no = int(scene.get("no") or 0)
+    scene["graphic_type"] = "footage"
+    scene["graphic_locked"] = True
+    scene.pop("diagram_kind", None)
+    subj = " ".join(_words(scene.get("vo"))[:3])
+    if subj:
+        scene["why"] = f"Shows {subj} from the line"
+        if not scene.get("queries"):
+            scene["queries"] = [subj]
+    return f"beat {no}: re-planned to footage ({reason})"
+
+
+def _compliance_replan(plan, profile):
+    """Bounded beat re-plans for the compliance target rules.
+    Repeated widgets and fidelity/why mismatches re-plan the beat
+    instead of piling up FAILs across the report (ta57e023: 72)."""
+    import compliance
+    fixes = []
+    scenes = (plan or {}).get("scenes") or []
+    topic = str((plan or {}).get("topic")
+                or (plan or {}).get("title") or "").lower()
+    budget = 3 if (profile.get("kind") or "long") == "long" else 1
+    counts = {}
+    for scene in scenes:
+        kind = compliance.widget_kind(scene)
+        if not kind:
+            continue
+        counts[kind] = counts.get(kind, 0) + 1
+        if counts[kind] > budget:
+            fixes.append(_replan_beat_footage(
+                plan, scene,
+                f"widget '{kind}' over budget {budget}"))
+    for scene in scenes:
+        kind = compliance.widget_kind(scene)
+        if kind in ("counter", "donut", "bar_compare", "graph",
+                    "watch", "four", "dot_grid", "bar"):
+            acc = compliance.acceptable_widgets_for_number(
+                scene.get("vo"), scene.get("value"))
+            if acc and kind not in acc:
+                want = compliance.widget_for_number_kind(
+                    scene.get("vo"), scene.get("value"))
+                if want and counts.get(want, 0) < budget:
+                    scene["visual"] = want
+                    scene.pop("lib_visual", None)
+                    counts[want] = counts.get(want, 0) + 1
+                    fixes.append(
+                        f"beat {int(scene.get('no') or 0)}: widget "
+                        f"{kind} -> {want} (number kind)")
+                else:
+                    fixes.append(_replan_beat_footage(
+                        plan, scene,
+                        f"widget '{kind}' wrong for its number"))
+    for scene in scenes:
+        ok, _detail = compliance.topic_fidelity(scene, topic)
+        if not ok:
+            fixes.append(_replan_beat_footage(
+                plan, scene, "topic-fidelity mismatch"))
+            continue
+        if not _why_shares_line(scene):
+            subj = " ".join(_words(scene.get("vo"))[:3])
+            if subj:
+                scene["why"] = f"Shows {subj} from the line"
+                fixes.append(
+                    f"beat {int(scene.get('no') or 0)}: why rewritten "
+                    "from the line subject")
+    return fixes
+
+
 def repair_plan(plan, profile=None, duration_s=None):
     """Deterministic pre-render repair rounds (bounded by caller).
 
@@ -573,6 +679,10 @@ def repair_plan(plan, profile=None, duration_s=None):
             fixes.append(
                 f"beat {no}: restatement of beat {worst_i + 1} could not "
                 f"be repaired below threshold (best {cand_sim:.0%})")
+    # Compliance target rules: repeated widgets and fidelity/why
+    # mismatches re-plan their beats (bounded by the caller's
+    # repair passes) instead of accumulating report FAILs.
+    fixes.extend(_compliance_replan(plan, profile))
     return fixes
 
 

@@ -1440,13 +1440,29 @@ async def create_job(j, wa, note):
         if not rec:
             return
         try:
+            # The route lives under /api (appApi strips the prefix
+            # before routing to appSetupRunner). Posting without it
+            # hit the landing page, whose 200 masqueraded as a
+            # successful record post while nothing was stored
+            # (ta57e023 readback showed no videoDirector).
             _vr = httpx.post(
-                f"{WORKER}/setup/runner/videodirector?job={JOB}",
+                f"{WORKER}/api/setup/runner/videodirector?job={JOB}",
                 json={"job": JOB, "record": rec,
                       "tasteProfile": _taste_profile_id,
                       "tasteChecks": checks},
                 headers={"x-runner-key": KEY}, timeout=30)
-            print("videodirector post:", _vr.status_code)
+            _vd_body = {}
+            try:
+                _vd_body = _vr.json()
+            except Exception:
+                _vd_body = {}
+            if _vr.status_code == 200 and _vd_body.get("ok"):
+                print("videodirector post:", _vr.status_code,
+                      "verdict", _vd_body.get("verdict"),
+                      "checks", _vd_body.get("checks"))
+            else:
+                print("videodirector post NOT stored:",
+                      _vr.status_code, str(_vd_body)[:160])
         except Exception as _e_vd:
             print("videodirector post failed:", str(_e_vd)[:120])
 
@@ -1508,6 +1524,8 @@ async def create_job(j, wa, note):
         else:
             _brief_run = j.get("brief", "")
             _DOE = getattr(create, "DurationOverrunError", None)
+            _last_vd_rec = None
+            _last_vd_checks = None
             for attempt in range(3 if _taste_prof else 2):
                 try:
                     # v28: the last 5 looks (from KV, via the job) so the look never
@@ -1542,9 +1560,30 @@ async def create_job(j, wa, note):
                                    or getattr(getattr(e, "__cause__", None),
                                               "video_director", None))
                         if _vd_exc:
+                            _last_vd_rec = _vd_exc
+                            _last_vd_checks = getattr(
+                                e, "taste_checks", None)
                             _post_video_director(
-                                _vd_exc,
-                                getattr(e, "taste_checks", None))
+                                _vd_exc, _last_vd_checks)
+                    # A transient TTS death (NoAudioReceived and
+                    # kin) must not kill the rework attempt without
+                    # a taste verdict: retry the same brief
+                    # boundedly; on the final attempt re-post the
+                    # last director record so the job still reads
+                    # back its rework verdict and defects.
+                    _e_blob = f"{type(e).__name__}: {e}".lower()
+                    _tts_transient = _taste_prof and any(
+                        m in _e_blob for m in (
+                            "noaudioreceived", "no audio",
+                            "tts failed"))
+                    if _tts_transient and attempt < 2:
+                        print("taste rework: transient TTS failure, "
+                              "retrying same brief:", str(e)[:150])
+                        await asyncio.sleep(45 * (attempt + 1))
+                        continue
+                    if _tts_transient and _last_vd_rec:
+                        _post_video_director(_last_vd_rec,
+                                             _last_vd_checks)
                     # PROOF-FIX 5: the engine's duration gate fired —
                     # re-plan ONCE with a hard word budget in the
                     # brief; a second overrun fails the job honestly

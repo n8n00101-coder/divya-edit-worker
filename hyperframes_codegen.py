@@ -121,6 +121,44 @@ def _display_decimals(display, value):
 # Each returns (css, body_html, js_lines). All element ids/classes are
 # prefixed per scene+layer so layers compose inside one scene file.
 
+def _safe_px(scale):
+    """Text safe margin: no text container may sit closer than this
+    to a frame edge (120 px at 1920 wide — the taste caption margin
+    is 115 px; text layers keep the same discipline)."""
+    return int(120 * scale)
+
+
+def text_edge_violations(content, width=1920):
+    """Deterministic text-edge audit over one composition's CSS:
+    every absolutely-positioned text container must keep the safe
+    margin on both sides. Full-bleed media/scrim/vignette layers
+    are exempt (they carry no text). Returns violation strings."""
+    safe = max(80, int(0.06 * width))
+    out = []
+    for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", str(content)):
+        sel = sel.strip()
+        if "position: absolute" not in body:
+            continue
+        if any(x in sel for x in ("-media", "-scrim", "-vig", "#root")):
+            continue
+
+        def _px(name):
+            m = re.search(rf"{name}:\s*(\d+)px", body)
+            return int(m.group(1)) if m else None
+
+        left, right = _px("left"), _px("right")
+        w = _px("width") or _px("max-width")
+        if left is not None and left < safe:
+            out.append(f"{sel}: left {left}px < safe {safe}px")
+        if right is not None and right < safe:
+            out.append(f"{sel}: right {right}px < safe {safe}px")
+        if left is not None and w is not None \
+                and left + w > width - safe:
+            out.append(f"{sel}: left+width {left + w}px crosses "
+                       f"safe right edge {width - safe}px")
+    return out
+
+
 def _layer_title(spec, p, dur, track, scale):
     kicker = str(spec.get("kicker") or "")
     headline = str(spec.get("headline") or "")
@@ -149,25 +187,28 @@ def _layer_title(spec, p, dur, track, scale):
         return " ".join(out)
 
     css = f"""
-    #{p}-ttl-block {{ position: absolute; left: {int(110*scale)}px;
-      bottom: {int(190*scale)}px; width: {int(1560*scale)}px; }}
+    #{p}-ttl-block {{ position: absolute; left: {_safe_px(scale)}px;
+      bottom: {int(190*scale)}px; width: {int(1680*scale)}px; }}
     #{p}-ttl-krow {{ display: flex; align-items: center;
       gap: {int(26*scale)}px; }}
     #{p}-ttl-rule {{ width: {int(120*scale)}px; height: 5px;
-      background: #ffb340; transform-origin: left center; }}
+      background: #ffb340; transform-origin: left center; flex: 0 0 auto; }}
     #{p}-ttl-kicker {{ font-family: Inter, sans-serif;
       font-size: {int(30*scale)}px; font-weight: 700;
       letter-spacing: {int(12*scale)}px; color: #ffb340;
-      text-shadow: 0 2px 14px rgba(0,0,0,0.8); }}
+      text-shadow: 0 2px 14px rgba(0,0,0,0.8);
+      min-width: 0; overflow-wrap: anywhere; }}
     .{p}-ttl-mask {{ overflow: hidden; }}
     .{p}-ttl-line {{ font-family: Oswald, sans-serif; font-weight: 700;
       font-size: {fs}px; line-height: 1.04; letter-spacing: 1px;
-      color: #ffffff; text-transform: uppercase; }}
+      color: #ffffff; text-transform: uppercase;
+      overflow-wrap: anywhere; }}
     .{p}-ttl-line .accent {{ color: #ffb340; }}
     #{p}-ttl-sub {{ margin-top: {int(26*scale)}px;
       font-family: Inter, sans-serif; font-size: {int(41*scale)}px;
       color: rgba(255,255,255,0.92);
-      text-shadow: 0 2px 14px rgba(0,0,0,0.8); }}"""
+      text-shadow: 0 2px 14px rgba(0,0,0,0.8);
+      overflow-wrap: anywhere; }}"""
     parts = [f'<div id="{p}-ttl-block" class="clip" data-start="0" '
              f'data-duration="{_t(dur)}" data-track-index="{track}">']
     if kicker:
@@ -217,23 +258,27 @@ def _layer_data_chart(spec, p, dur, track, scale, flags, scene_no):
     colours = ["#7fb2d9", "#ffb340", "#8fd18b", "#e58fb1"]
 
     css = f"""
-    #{p}-dat-panel {{ position: absolute; right: {int(96*scale)}px;
+    #{p}-dat-panel {{ position: absolute; right: {_safe_px(scale)}px;
       top: {int(120*scale)}px; width: {int(700*scale)}px;
       padding: {int(52*scale)}px {int(56*scale)}px {int(44*scale)}px;
       background: rgba(8,14,20,0.78);
       border: 1px solid rgba(255,255,255,0.16); border-radius: 18px; }}
     #{p}-dat-title {{ font-family: Oswald, sans-serif; font-weight: 600;
       font-size: {int(44*scale)}px; letter-spacing: 2px; color: #ffffff;
-      text-transform: uppercase; }}
+      text-transform: uppercase; overflow-wrap: anywhere; }}
     #{p}-dat-sub {{ margin-top: 8px; font-family: Inter, sans-serif;
-      font-size: {int(28*scale)}px; color: rgba(255,255,255,0.75); }}
+      font-size: {int(28*scale)}px; color: rgba(255,255,255,0.75);
+      overflow-wrap: anywhere; }}
     .{p}-dat-row {{ margin-top: {int(40*scale)}px; }}
     .{p}-dat-rowhead {{ display: flex; justify-content: space-between;
-      align-items: baseline; font-family: Inter, sans-serif; }}
+      align-items: baseline; font-family: Inter, sans-serif;
+      gap: {int(16*scale)}px; }}
     .{p}-dat-label {{ font-size: {int(30*scale)}px; font-weight: 700;
-      color: #ffffff; letter-spacing: 2px; }}
+      color: #ffffff; letter-spacing: 2px; min-width: 0;
+      overflow-wrap: anywhere; }}
     .{p}-dat-val {{ font-family: Oswald, sans-serif;
-      font-size: {int(46*scale)}px; font-weight: 600; color: #ffffff; }}
+      font-size: {int(46*scale)}px; font-weight: 600; color: #ffffff;
+      min-width: 0; overflow-wrap: anywhere; }}
     .{p}-dat-val small {{ font-size: {int(28*scale)}px;
       color: rgba(255,255,255,0.7); }}
     .{p}-dat-barbg {{ margin-top: 12px; height: {int(34*scale)}px;
@@ -318,7 +363,7 @@ def _layer_map_card(spec, p, dur, track, scale):
     # NOTE: the honesty label is NOT read from the spec — it is baked
     # into this template and cannot be overridden or removed.
     css = f"""
-    #{p}-map-panel {{ position: absolute; left: {int(96*scale)}px;
+    #{p}-map-panel {{ position: absolute; left: {_safe_px(scale)}px;
       top: {int(96*scale)}px; width: {int(520*scale)}px;
       padding: {int(40*scale)}px {int(44*scale)}px {int(34*scale)}px;
       background: rgba(8,14,20,0.78);
@@ -416,14 +461,15 @@ def _layer_kinetic_caption(spec, p, dur, track, scale):
                           accent.strip(".,!?'\"").lower()))
     fs = int(118 * scale)
     css = f"""
-    #{p}-kin {{ position: absolute; left: {int(110*scale)}px;
+    #{p}-kin {{ position: absolute; left: {_safe_px(scale)}px;
       bottom: {int(205*scale)}px; display: flex;
       gap: {int(34*scale)}px; flex-wrap: wrap;
-      max-width: {int(1700*scale)}px;
+      max-width: {int(1680*scale)}px;
       font-family: Oswald, sans-serif; font-weight: 700;
       font-size: {fs}px; letter-spacing: 1px; color: #ffffff;
       text-transform: uppercase;
       text-shadow: 0 3px 18px rgba(0,0,0,0.75); }}
+    #{p}-kin span {{ min-width: 0; overflow-wrap: anywhere; }}
     #{p}-kin .accent {{ color: #ffb340; }}"""
     spans = "".join(
         f'<span id="{p}-kin-w{i}"'
@@ -443,18 +489,22 @@ def _layer_lower_third(spec, p, dur, track, scale):
     name = str(spec.get("name") or "")
     role = str(spec.get("role") or "")
     css = f"""
-    #{p}-lt {{ position: absolute; left: {int(110*scale)}px;
+    #{p}-lt {{ position: absolute; left: {_safe_px(scale)}px;
       bottom: {int(120*scale)}px; display: flex;
-      gap: {int(24*scale)}px; align-items: stretch; }}
-    #{p}-lt-bar {{ width: 8px; background: #ffb340;
+      gap: {int(24*scale)}px; align-items: stretch;
+      max-width: {int(1680*scale)}px; }}
+    #{p}-lt > div {{ min-width: 0; }}
+    #{p}-lt-bar {{ width: 8px; background: #ffb340; flex: 0 0 auto;
       transform-origin: center bottom; }}
     #{p}-lt-name {{ font-family: Oswald, sans-serif; font-weight: 600;
       font-size: {int(54*scale)}px; letter-spacing: 1px; color: #ffffff;
       text-transform: uppercase;
-      text-shadow: 0 2px 14px rgba(0,0,0,0.8); }}
+      text-shadow: 0 2px 14px rgba(0,0,0,0.8);
+      min-width: 0; overflow-wrap: anywhere; }}
     #{p}-lt-role {{ margin-top: 4px; font-family: Inter, sans-serif;
       font-size: {int(30*scale)}px; color: rgba(255,255,255,0.88);
-      text-shadow: 0 2px 14px rgba(0,0,0,0.8); }}"""
+      text-shadow: 0 2px 14px rgba(0,0,0,0.8);
+      min-width: 0; overflow-wrap: anywhere; }}"""
     body = (f'<div id="{p}-lt" class="clip" data-start="0" '
             f'data-duration="{_t(dur)}" data-track-index="{track}">'
             f'<div id="{p}-lt-bar"></div><div>'
@@ -496,7 +546,7 @@ def _layer_source_card(spec, p, dur, track, scale, flags, scene_no):
         source_line = source if source.lower().startswith("source") \
             else "Source: " + source
     css = f"""
-    #{p}-src-card {{ position: absolute; right: {int(96*scale)}px;
+    #{p}-src-card {{ position: absolute; right: {_safe_px(scale)}px;
       top: {int(110*scale)}px; width: {int(620*scale)}px;
       padding: {int(44*scale)}px {int(48*scale)}px {int(40*scale)}px;
       background: rgba(248,246,240,0.96); color: #161616;
@@ -505,18 +555,23 @@ def _layer_source_card(spec, p, dur, track, scale, flags, scene_no):
       font-size: {int(22*scale)}px; letter-spacing: 3px; color: #8a5a12;
       text-transform: uppercase; }}
     #{p}-src-head {{ margin-top: 10px; font-family: Inter, sans-serif;
-      font-weight: 800; font-size: {int(36*scale)}px; line-height: 1.18; }}
+      font-weight: 800; font-size: {int(36*scale)}px; line-height: 1.18;
+      overflow-wrap: anywhere; }}
     #{p}-src-stat {{ margin-top: {int(26*scale)}px; display: flex;
-      align-items: baseline; gap: {int(14*scale)}px; }}
+      align-items: baseline; gap: {int(14*scale)}px; flex-wrap: wrap; }}
     #{p}-src-num {{ font-family: Oswald, sans-serif; font-weight: 700;
-      font-size: {int(92*scale)}px; color: #d97706; line-height: 1; }}
+      font-size: {int(92*scale)}px; color: #d97706; line-height: 1;
+      min-width: 0; overflow-wrap: anywhere; }}
     #{p}-src-unit {{ font-family: Inter, sans-serif; font-weight: 700;
-      font-size: {int(28*scale)}px; color: #444; }}
+      font-size: {int(28*scale)}px; color: #444;
+      min-width: 0; overflow-wrap: anywhere; }}
     #{p}-src-quote {{ margin-top: {int(22*scale)}px; font-family: Inter, sans-serif;
       font-size: {int(27*scale)}px; line-height: 1.35; color: #333;
-      border-left: 5px solid #d97706; padding-left: {int(18*scale)}px; }}
+      border-left: 5px solid #d97706; padding-left: {int(18*scale)}px;
+      overflow-wrap: anywhere; }}
     #{p}-src-line {{ margin-top: {int(24*scale)}px; font-family: Inter, sans-serif;
-      font-size: {int(23*scale)}px; color: #555; }}
+      font-size: {int(23*scale)}px; color: #555;
+      overflow-wrap: anywhere; }}
     #{p}-src-line.missing {{ color: #b3261e; font-weight: 800; }}"""
     parts = [f'<div id="{p}-src-card" class="clip" data-start="0" '
              f'data-duration="{_t(dur)}" data-track-index="{track}">',
@@ -550,19 +605,21 @@ def _layer_diagram(spec, p, dur, track, scale):
     title = str(spec.get("title") or "")
     items = [str(x)[:48] for x in (spec.get("items") or []) if str(x).strip()][:4]
     css = f"""
-    #{p}-dia {{ position: absolute; right: {int(110*scale)}px;
+    #{p}-dia {{ position: absolute; right: {_safe_px(scale)}px;
       top: {int(150*scale)}px; width: {int(560*scale)}px;
       padding: {int(36*scale)}px; background: rgba(8,14,20,0.72);
       border: 1px solid rgba(255,255,255,0.16); border-radius: 18px;
       color: #fff; font-family: Inter, sans-serif; }}
     #{p}-dia-title {{ font-size: {int(25*scale)}px; font-weight: 800;
-      letter-spacing: 2px; text-transform: uppercase; }}
+      letter-spacing: 2px; text-transform: uppercase;
+      overflow-wrap: anywhere; }}
     .{p}-dia-row {{ display: flex; align-items: center; gap: {int(16*scale)}px;
       margin-top: {int(24*scale)}px; font-size: {int(27*scale)}px; }}
+    .{p}-dia-row > div {{ min-width: 0; overflow-wrap: anywhere; }}
     .{p}-dia-dot {{ width: {int(22*scale)}px; height: {int(22*scale)}px;
       border-radius: 50%; background: #ffb340; flex: 0 0 auto; }}
     .{p}-dia-bar {{ height: {int(18*scale)}px; border-radius: 999px;
-      background: #ffb340; }}
+      background: #ffb340; flex: 0 1 auto; }}
     .{p}-dia-check {{ width: {int(34*scale)}px; height: {int(34*scale)}px;
       border-radius: 50%; border: 3px solid #8fd18b; color: #8fd18b;
       display: flex; align-items: center; justify-content: center;
@@ -699,6 +756,8 @@ def _scene_composition(idx, scene, asset_name, media_start, width,
         if isinstance(layer, dict) and layer.get("type"):
             first_type = str(layer["type"])
             break
+    for _tv in text_edge_violations(css, width):
+        flags.append(f"scene {idx}: TEXT-EDGE {_tv}")
     fname = f"scene{idx}_{first_type}.html"
     content = (
         "<template>\n  <style>" + css + "\n  </style>\n"
