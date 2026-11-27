@@ -63,6 +63,9 @@ def route_policy(profile=None):
     }
 
 
+RESTATE_THRESHOLD = 0.65
+
+
 def _words(text):
     return [w for w in re.findall(r"[a-z][a-z'-]*", str(text or "").lower())
             if len(w) > 2]
@@ -89,7 +92,7 @@ def story_checks(scenes, profile=None):
             if not a or not b:
                 continue
             sim = len(a & b) / max(1, min(len(a), len(b)))
-            if sim > 0.65:
+            if sim > RESTATE_THRESHOLD:
                 checks.append(_check(
                     "BRAIN-RESTATEMENT", False,
                     f"beats {i + 1} and {j + 1} restate each other ({sim:.0%} shared content words)",
@@ -251,15 +254,59 @@ def _distinct_line(plan, scene, no):
     ranked.sort(key=lambda x: x[0])
     if not ranked:
         return "And that feeling is exactly where this story begins."
-    # Two sentences: a repaired beat must carry real narration
-    # length, not a 9-word stub that shrinks the film.
-    first = ranked[0][1]
-    second = ""
-    for sim, cand in ranked[1:]:
-        if cand != first and _line_sim(cand, first) <= 0.5:
-            second = cand
-            break
-    return first + (" " + second if second else "")
+
+    def _combined_score(text):
+        return max((_line_sim(text, o) for o in others), default=0.0)
+
+    # Score the COMBINED replacement against every other beat and
+    # accept only below the critic threshold. Scoring the first
+    # sentence alone let an appended second sentence push the pair
+    # back over the threshold (beats 4/11, 77% shared words).
+    options = []
+    singles = [cand for _, cand in ranked]
+    for first in singles:
+        options.append((_combined_score(first), 1, first))
+        for second in singles:
+            if second == first or _line_sim(second, first) > 0.5:
+                continue
+            combined = first + " " + second
+            options.append((_combined_score(combined), 2, combined))
+    acceptable = [o for o in options if o[0] <= RESTATE_THRESHOLD]
+    if acceptable:
+        # Prefer a two-sentence line (real narration length) with
+        # the lowest worst-beat overlap.
+        acceptable.sort(key=lambda o: (-o[1], o[0]))
+        return acceptable[0][2]
+    # Subject-bearing candidates all restate some beat (the subject
+    # itself is the shared material). Fall back to subject-free
+    # lines, scored the same way.
+    fallbacks = (
+        "Hold on the quiet turn before the next breath lands.",
+        "A softer light settles over the pause between words.",
+        "Somewhere nearby, an ordinary sound breaks the spell.",
+        "The next glance arrives slower than expected.",
+        "Even the stillness seems to lean a little closer.",
+        "One small detail refuses to fade into the background.",
+        "Time stretches just enough to notice the change.",
+        "A gentle hush gathers around the edges of the scene.",
+        "The air itself feels different for a passing second.",
+        "Nothing dramatic happens, yet everything shifts slightly.",
+    )
+    fb_options = []
+    for first in fallbacks:
+        fb_options.append((_combined_score(first), 1, first))
+        for second in fallbacks:
+            if second == first or _line_sim(second, first) > 0.5:
+                continue
+            combined = first + " " + second
+            fb_options.append((_combined_score(combined), 2, combined))
+    fb_acceptable = [o for o in fb_options if o[0] <= RESTATE_THRESHOLD]
+    if fb_acceptable:
+        fb_acceptable.sort(key=lambda o: (-o[1], o[0]))
+        return fb_acceptable[0][2]
+    # Nothing scored below the threshold: return the lowest-overlap
+    # option; the repair loop verifies and will not claim a fix.
+    return min(options + fb_options, key=lambda o: o[0])[2]
 
 
 def _stamp_or_strip_source(plan, scene, no):
@@ -502,14 +549,30 @@ def repair_plan(plan, profile=None, duration_s=None):
     # one gets a distinct non-claim line built from its own subject.
     scenes = (plan or {}).get("scenes") or []
     for j in range(len(scenes)):
+        worst_i, worst_sim = None, 0.0
         for i in range(j):
-            if _line_sim(scenes[i].get("vo"), scenes[j].get("vo")) > 0.65:
-                no = int(scenes[j].get("no") or j + 1)
-                scenes[j]["vo"] = _distinct_line(plan, scenes[j], no)
-                fixes.append(
-                    f"beat {no}: restatement of beat {i + 1} replaced "
-                    "with a distinct line")
-                break
+            sim = _line_sim(scenes[i].get("vo"), scenes[j].get("vo"))
+            if sim > worst_sim:
+                worst_i, worst_sim = i, sim
+        if worst_i is None or worst_sim <= RESTATE_THRESHOLD:
+            continue
+        no = int(scenes[j].get("no") or j + 1)
+        cand = _distinct_line(plan, scenes[j], no)
+        # Accept the replacement only if the combined line scores
+        # below the critic threshold against ALL other beats.
+        cand_sim = max(
+            (_line_sim(cand, s.get("vo"))
+             for k, s in enumerate(scenes) if k != j), default=0.0)
+        if cand_sim <= RESTATE_THRESHOLD:
+            scenes[j]["vo"] = cand
+            fixes.append(
+                f"beat {no}: restatement of beat {worst_i + 1} replaced "
+                f"with a distinct line ({worst_sim:.0%} -> {cand_sim:.0%} "
+                "worst overlap)")
+        else:
+            fixes.append(
+                f"beat {no}: restatement of beat {worst_i + 1} could not "
+                f"be repaired below threshold (best {cand_sim:.0%})")
     return fixes
 
 

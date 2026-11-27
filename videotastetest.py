@@ -162,6 +162,50 @@ check("T11 demoted beats stay locked footage",
       len(locked) == 9 and all(s.get("graphic_type") == "footage" for s in locked),
       str([(s.get("no"), s.get("graphic_type")) for s in var_plan["scenes"]]))
 
+# T12: restatement repair scores the COMBINED replacement against
+# all beats (regression: tasteproof beats 4/11 shared 77% of content
+# words after repair because only the first sentence was scored).
+restate_plan = {"scenes": [
+    {"no": 1, "vo": "Morning light spilled across the narrow street below.",
+     "label": "MORNING", "queries": ["morning street light"]},
+    {"no": 2, "vo": "A bicycle bell rang twice near the bakery corner.",
+     "label": "BELL", "queries": ["bicycle bakery corner"]},
+    {"no": 3, "vo": "Children chased paper planes beside the school gate.",
+     "label": "PLANES", "queries": ["children paper planes"]},
+    {"no": 4, "vo": "The quiet room kept the same heavy feeling while "
+                    "everyone waited outside the door.",
+     "label": "QUIET ROOM", "queries": ["quiet room door"]},
+    {"no": 5, "vo": "Steam curled above a cup left beside the ledger.",
+     "label": "STEAM", "queries": ["steam cup ledger"]},
+    {"no": 6, "vo": "Footsteps echoed along the corridor after midnight.",
+     "label": "STEPS", "queries": ["corridor footsteps night"]},
+    {"no": 7, "vo": "A radio murmured weather reports from the kitchen shelf.",
+     "label": "RADIO", "queries": ["kitchen radio shelf"]},
+    {"no": 8, "vo": "Rain tapped the tin roof in uneven rhythms.",
+     "label": "RAIN", "queries": ["rain tin roof"]},
+    {"no": 9, "vo": "The gardener trimmed hedges beside the stone path.",
+     "label": "GARDEN", "queries": ["gardener stone path"]},
+    {"no": 10, "vo": "Distant trains crossed the bridge beyond the fields.",
+     "label": "TRAINS", "queries": ["train bridge fields"]},
+    {"no": 11, "vo": "The quiet room kept the same heavy feeling while "
+                     "everyone waited near the bright window.",
+     "label": "QUIET ROOM", "queries": ["quiet room door"]},
+]}
+pre_sim = brain_quality._line_sim(restate_plan["scenes"][3]["vo"],
+                                  restate_plan["scenes"][10]["vo"])
+check("T12 beats 4/11 start at 77% shared words", pre_sim > 0.65,
+      f"pre_sim={pre_sim:.0%}")
+brain_quality.repair_plan(restate_plan, prof)
+post_sim = brain_quality._line_sim(restate_plan["scenes"][3]["vo"],
+                                   restate_plan["scenes"][10]["vo"])
+check("T12 repair brings beats 4/11 below threshold",
+      post_sim <= brain_quality.RESTATE_THRESHOLD,
+      f"post_sim={post_sim:.0%} vo={restate_plan['scenes'][10]['vo']}")
+restate_fails = fails(brain_quality.story_checks(restate_plan["scenes"], prof),
+                      "BRAIN-RESTATEMENT")
+check("T12 no BRAIN-RESTATEMENT failures after repair", not restate_fails,
+      str(restate_fails))
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)
