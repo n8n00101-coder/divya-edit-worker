@@ -625,3 +625,37 @@ def register_video_tools(reg, root):
     The real implementation lives in video_tools.py."""
     import video_tools
     return video_tools.register_video_tools(reg, root)
+
+
+# ------------------------------------------- routing / brand / research / style
+
+def register_routing_tool(reg):
+    """Register tool_select: the deterministic capability router.
+    The brain classifies the task first and works with the minimal
+    tool set the selector returns. Implementation: tool_routing.py."""
+    import tool_routing
+    return tool_routing.register_routing_tool(reg)
+
+
+def register_brand_tools(reg, root):
+    """Register the brand design system tools (brand_profile_get /
+    brand_questions read-only; brand_profile_set mutating + Allow),
+    confined to the job workspace. Implementation: brand_tools.py."""
+    import brand_tools
+    return brand_tools.register_brand_tools(reg, root)
+
+
+def register_research_tools(reg):
+    """Register yt_research_analyze: structured analysis of
+    PROVIDED video data only — no fetching, no scraping.
+    Implementation: research_tools.py."""
+    import research_tools
+    return research_tools.register_research_tools(reg)
+
+
+def register_style_tools(reg, root):
+    """Register style_profile_extract / script_check /
+    audio_loudness (all read-only; loudness confined to the job
+    workspace). Implementation: style_tools.py."""
+    import style_tools
+    return style_tools.register_style_tools(reg, root)

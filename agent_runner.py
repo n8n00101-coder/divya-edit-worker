@@ -183,6 +183,10 @@ def build_tools(root, job=None):
     tools_registry.register_compute_tools(reg, root)
     tools_registry.register_yt_tools(reg)
     tools_registry.register_video_tools(reg, root)
+    tools_registry.register_routing_tool(reg)
+    tools_registry.register_brand_tools(reg, root)
+    tools_registry.register_research_tools(reg)
+    tools_registry.register_style_tools(reg, root)
     tools_registry.register_plan_tool(reg, job)
     # DIRECTOR LAYER: the plan/check/review tools (bound to the
     # same job dict the loop gates on), the fetch_url verify
