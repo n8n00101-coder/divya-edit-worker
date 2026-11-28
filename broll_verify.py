@@ -126,6 +126,12 @@ def _default_verifier(frames, narration, why, forced=False):
             with open(fp, "rb") as f:
                 jpgs.append(f.read())
     res = doc3.vjson(prompt, jpgs)
+    # Wave 4 root cause: doc3.vjson returns (dict, provider) —
+    # this verifier treated the tuple as "no verdict", so EVERY
+    # real vision answer died as uncertain/undecided and strict
+    # mode rejected every candidate (0/10 footage).
+    if isinstance(res, tuple):
+        res = res[0] if res else {}
     if not isinstance(res, dict):
         return {"verdict": "undecided" if forced else "uncertain",
                 "reason": "vision gave no verdict"}

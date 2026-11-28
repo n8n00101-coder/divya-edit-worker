@@ -535,8 +535,8 @@ try:
     check("T25 429 falls back to Workers AI vision",
           _prov25 == "workers-ai" and _calls25["fb"] == 1,
           f"{_prov25} {_calls25}")
-    check("T25 Groq not hammered (one pass over keys)",
-          _calls25["groq"] <= 2, str(_calls25))
+    check("T25 Groq not hammered (one pass per model over keys)",
+          _calls25["groq"] <= 4, str(_calls25))
     _doc3_25._workers_ai_vision = lambda p, j, m=500: ""
     try:
         _doc3_25.vision("prompt", [b"jpg"])
