@@ -51,7 +51,7 @@ r = tool_routing.select_tools(
 check(r["matched"] and r["caps"] == ["packaging", "hook-scoring"],
       "packaging task caps exact", str(r))
 check(r["tools"] == CORE + ["yt_hook_score", "yt_title_lint",
-                            "yt_package_rank"],
+                            "yt_package_rank", "yt_hook_variants"],
       "packaging task picks only hook/packaging tools", str(r["tools"]))
 
 r = tool_routing.select_tools("transcribe this voiceover and make captions")
@@ -64,7 +64,8 @@ check(r["tools"] == CORE + ["video_scene_list"],
       "footage task picks only video_scene_list", str(r["tools"]))
 
 r = tool_routing.select_tools("research this niche outlier video")
-check(r["tools"] == CORE + ["yt_viral_rank", "yt_research_analyze"],
+check(r["tools"] == CORE + ["yt_viral_rank", "yt_research_analyze",
+                            "yt_competitor_analyze"],
       "research task picks only research tools", str(r["tools"]))
 
 r = tool_routing.select_tools("write a poem about the moon")
