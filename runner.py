@@ -1526,7 +1526,10 @@ async def create_job(j, wa, note):
             _DOE = getattr(create, "DurationOverrunError", None)
             _last_vd_rec = None
             _last_vd_checks = None
-            for attempt in range(3 if _taste_prof else 2):
+            # Wave 4: 4 taste attempts — a TTS transient + an
+            # FG-SHARE rework + a duration re-plan must all fit
+            # the bounded budget (ta57e026 exhausted 3).
+            for attempt in range(4 if _taste_prof else 2):
                 try:
                     # v28: the last 5 looks (from KV, via the job) so the look never
                     # repeats — only the v2 engine (doc.py, pick_look) takes it.
@@ -1576,7 +1579,7 @@ async def create_job(j, wa, note):
                         m in _e_blob for m in (
                             "noaudioreceived", "no audio",
                             "tts failed"))
-                    if _tts_transient and attempt < 2:
+                    if _tts_transient and attempt < 3:
                         print("taste rework: transient TTS failure, "
                               "retrying same brief:", str(e)[:150])
                         await asyncio.sleep(45 * (attempt + 1))
@@ -1590,7 +1593,7 @@ async def create_job(j, wa, note):
                     # (refund) instead of delivering a film whose
                     # ending was trimmed off.
                     if _DOE is not None and isinstance(e, _DOE) \
-                            and attempt < (2 if _taste_prof else 1):
+                            and attempt < (3 if _taste_prof else 1):
                         print("duration gate: re-planning with a "
                               "shorter script:", str(e)[:150])
                         _brief_run = (_brief_run +
@@ -1610,7 +1613,7 @@ async def create_job(j, wa, note):
                     # verdict re-plans the film ONCE with the
                     # director's defects named in the brief; a
                     # second failure is honest (refund path).
-                    if _taste_prof and attempt < 2 and \
+                    if _taste_prof and attempt < 3 and \
                             "delivery blocked — review rework" in str(e):
                         print("taste rework: re-planning once with "
                               "director defects:", str(e)[:200])

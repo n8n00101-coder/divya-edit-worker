@@ -511,6 +511,51 @@ def _fit_script_to_duration(p, brief, chat, cfg=None, spec=None):
     est = _estimate_script_s(scenes, lang)
     fit = {"target_s": target, "estimated_s": round(est, 1),
            "action": "none"}
+    # Wave 4: taste jobs also lengthen an UNDER-length script at
+    # the script stage (64 s voice against a 75 s order reached
+    # TTS because the fit only ever trimmed). One writer round
+    # expands middle scenes toward the word budget.
+    if est < target * 0.92 and (cfg or {}).get("taste_profile"):
+        need_words = max(10, int(target * wps * 0.98))
+        total_words = sum(len(str(s.get("vo", "")).split())
+                          for s in scenes)
+        try:
+            lines = "\n".join(f"{i + 1}. {s.get('vo', '')}"
+                              for i, s in enumerate(scenes))
+            raw = chat([
+                {"role": "system",
+                 "content": "You output strict JSON only."},
+                {"role": "user", "content":
+                 f"This video script runs too short: it estimates "
+                 f"{est:.0f}s but the ordered length is "
+                 f"{target:.0f}s. Expand the voice lines so the "
+                 f"TOTAL across all scenes is about {need_words} "
+                 f"words (now {total_words}). Keep scene 1 (the "
+                 f"hook) and the LAST scene intact in meaning; "
+                 f"add concrete detail to the middle scenes. Same "
+                 f"scene count, same order, same language.\n"
+                 'Reply with strict JSON: {"scenes": [{"vo": '
+                 '"..."}, ...]} — one object per scene.\n\n'
+                 f"SCRIPT:\n{lines}"}])
+            data = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
+            rows = data.get("scenes") or []
+            if len(rows) == len(scenes):
+                for s, r in zip(scenes, rows):
+                    vo = re.sub(r"[*#_`]", "",
+                                str(r.get("vo", ""))).strip()
+                    if vo:
+                        s["vo"] = vo
+                est = _estimate_script_s(scenes, lang)
+                fit["action"] = "writer-lengthen"
+                fit["estimated_s"] = round(est, 1)
+        except Exception as e:
+            print("duration fit: lengthen round failed:",
+                  str(e)[:120])
+        p["duration_fit"] = fit
+        print(f"duration fit: target {target:.0f}s, script "
+              f"estimated {fit['estimated_s']}s after "
+              f"{fit['action']}")
+        return
     if est <= target * 1.02:
         p["duration_fit"] = fit
         return
@@ -2316,7 +2361,7 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
             # flat 24-call budget starved later beats (budget
             # reached -> unverified -> rejected). Scale with the
             # beat count; the cache keeps repeats free.
-            _vb_budget = min(96, max(24, len(scenes) * 8))
+            _vb_budget = min(160, max(24, len(scenes) * 14))
             pool.verifier = _bv_taste.BrollVerifier(
                 call_budget=_vb_budget,
                 cache_path=os.path.join(wd, "vision_cache.json"),

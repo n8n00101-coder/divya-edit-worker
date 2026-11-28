@@ -423,7 +423,10 @@ def _min_height_for_canvas(canvas):
         return 1080
     w, h = int(canvas[0]), int(canvas[1])
     if w >= h:
-        return min(540, h)
+        # Wave 4: 480p floor — 506p Pexels stock (121 rejections
+        # in ta57e026) upscales cleanly under the grade; the 540
+        # floor starved beats delivery could have used.
+        return min(480, h)
     return 1080
 
 
@@ -665,11 +668,18 @@ class FootagePool:
                 # the verifier); UNVERIFIED keeps the clip but is
                 # reported as unverified — never as a pass.
                 _verify = None
-                # Strict (taste) mode verifies EVERY candidate: the
-                # old 2-candidate cap let a third, never-checked
-                # clip into a taste film (ta57e022 step 5 showed a
-                # mask/Scrabble tiles instead of the promised
-                # subject). Non-strict mode keeps the budget cap.
+                # Strict (taste) mode verifies EVERY candidate it
+                # may accept: the old 2-candidate cap let a third,
+                # never-checked clip into a taste film (ta57e022
+                # step 5). Wave 4: verification attempts per scene
+                # are capped (best-scored first) so early scenes
+                # cannot burn the whole job budget (ta57e026:
+                # 431 budget-reached rejections). The cap limits
+                # attempts, never acceptance — strict still
+                # requires a PASS.
+                _verify_cap = 12 if strict_verify else 2
+                if _verified_count >= _verify_cap:
+                    break
                 if self.verifier is not None and (
                         strict_verify or _verified_count < 2):
                     _verified_count += 1

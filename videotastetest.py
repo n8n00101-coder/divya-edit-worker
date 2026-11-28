@@ -573,6 +573,44 @@ try:
 finally:
     _doc3_25.vjson = _orig_vjson26
 
+# T27 (Wave 4): 506p landscape stock passes the strict floor.
+_cands27 = [{"id": "pexels:9", "provider": "pexels", "url": "u",
+             "page": "p", "width": 960, "height": 506,
+             "duration": 20.0, "uploader": "z"}]
+_kept27, _ = _broll24.filter_candidates(
+    _cands27, 7.0, set(), "", canvas=(1920, 1080))
+check("T27 506p clip kept under strict floors",
+      [c["id"] for c in _kept27] == ["pexels:9"], str(_kept27))
+
+# T28 (Wave 4): an under-length taste script is lengthened at the
+# script stage, not left to fail after TTS.
+import doc as _doc28
+_plan28 = {"lang": "en", "scenes": [
+    {"vo": "Everyone watches you enter the room."},
+    {"vo": "You feel every eye on you."},
+    {"vo": "The feeling follows you all day."},
+    {"vo": "But nobody really noticed."}]}
+_long28 = ("The quiet truth is that people remember far less "
+           "about us than we fear, and the room moves on quickly "
+           "while we keep replaying the moment in our heads.")
+
+
+def _chat28(messages):
+    import json as _json28
+    return _json28.dumps({"scenes": [
+        {"vo": _plan28["scenes"][0]["vo"]},
+        {"vo": _long28}, {"vo": _long28},
+        {"vo": _plan28["scenes"][3]["vo"]}]})
+
+
+_doc28._fit_script_to_duration(
+    _plan28, "75 seconds", _chat28,
+    cfg={"duration_s": 75, "taste_profile": "wtu_long_sheet"})
+check("T28 under-length taste script lengthened",
+      _plan28.get("duration_fit", {}).get("action") == "writer-lengthen"
+      and _plan28["duration_fit"]["estimated_s"] > 25,
+      str(_plan28.get("duration_fit")))
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)
