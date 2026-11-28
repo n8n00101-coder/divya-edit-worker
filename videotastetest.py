@@ -704,6 +704,13 @@ check("T34 unverified not cached, re-asked and passes",
       _v34a == "unverified" and _v34b == "pass" and not _c34,
       f"{_v34a} {_v34b} cached={_c34}")
 
+# T35 (Wave 4): truncated plan JSON salvages, garbage does not.
+_s35 = _doc28._salvage_json(
+    'prose {"scenes": [{"vo": "a",}, {"vo": "b')
+check("T35 salvage truncated JSON",
+      bool(_s35) and len(_s35.get("scenes") or []) == 2
+      and _doc28._salvage_json("no json here") is None)
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)

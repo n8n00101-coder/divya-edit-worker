@@ -655,6 +655,52 @@ def _brain_status_summary():
         return {}
 
 
+def _salvage_json(raw):
+    """Wave 4: salvage a truncated/malformed JSON object reply —
+    cut at the balanced end, drop trailing commas, close open
+    braces/brackets. Returns None when nothing parses; the
+    caller re-asks then. Never invents content."""
+    s = str(raw or "")
+    i = s.find("{")
+    if i < 0:
+        return None
+    s = s[i:]
+    depth = []
+    in_str = False
+    esc = False
+    end = None
+    for idx, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "{[":
+            depth.append(ch)
+        elif ch in "}]":
+            if depth:
+                depth.pop()
+            if not depth:
+                end = idx + 1
+                break
+    cand = s[:end] if end else s
+    if in_str:
+        cand += '"'
+    cand = re.sub(r",\s*([}\]])", r"\1", cand)
+    for ch in reversed(depth):
+        cand += "}" if ch == "{" else "]"
+    try:
+        out = json.loads(cand)
+        return out if isinstance(out, dict) else None
+    except Exception:
+        return None
+
+
 def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=None, cfg=None):
     # v25: the TOPIC MOOD picks the design system (A/B/C/D) FIRST, so the LLM
     # designs every scene for that look — never one fixed style.
@@ -693,6 +739,10 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
             p = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
             break
         except Exception:
+            p = _salvage_json(raw)
+            if p is not None:
+                print("plan: salvaged truncated JSON reply")
+                break
             # Wave 4: a malformed plan reply is a brain hiccup,
             # not a job death (ta57e034 died on JSONDecodeError).
             print(f"plan: invalid JSON reply, re-asking "
