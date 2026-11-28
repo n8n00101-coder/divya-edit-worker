@@ -2364,7 +2364,7 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
             # flat 24-call budget starved later beats (budget
             # reached -> unverified -> rejected). Scale with the
             # beat count; the cache keeps repeats free.
-            _vb_budget = min(160, max(24, len(scenes) * 14))
+            _vb_budget = min(420, max(24, len(scenes) * 42))
             pool.verifier = _bv_taste.BrollVerifier(
                 call_budget=_vb_budget,
                 cache_path=os.path.join(wd, "vision_cache.json"),

@@ -251,7 +251,7 @@ class BrollVerifier:
         fh = dhash_file(frames[0]) or hashlib.sha256(
             open(frames[0], "rb").read()).hexdigest()[:16]
         key = self._cache_key(fh, narration, why)
-        if key in self.cache and self.cache[key].get("verdict") != "uncertain":
+        if key in self.cache and self.cache[key].get("verdict") in ("pass", "fail"):
             v = self.cache[key]
             self.log.append({"candidate": cid, "verdict": v["verdict"],
                              "reason": v["reason"], "calls": 0,
@@ -313,8 +313,13 @@ class BrollVerifier:
             self.decisive += 1
         elif verdict == "undecided":
             self.undecided += 1
-        self.cache[key] = {"verdict": verdict, "reason": reason}
-        self._save_cache()
+        # Wave 4: only decisive verdicts are cached. Caching
+        # "unverified" (budget reached / vision unavailable)
+        # poisons every later attempt with a verdict no vision
+        # model ever gave (ta57e030: 1051 budget rejections).
+        if verdict in ("pass", "fail"):
+            self.cache[key] = {"verdict": verdict, "reason": reason}
+            self._save_cache()
         self.log.append({"candidate": cid, "verdict": verdict,
                          "reason": reason, "calls": calls_used})
         if self.memory is not None and verdict == "fail":

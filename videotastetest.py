@@ -681,6 +681,29 @@ check("T33 taste gap estimate longer",
       _doc28._estimate_script_s(_sc33, "en", gap_s=1.1)
       > _doc28._estimate_script_s(_sc33, "en", gap_s=0.45) + 2.0)
 
+# T34 (Wave 4): unverified verdicts are never cached — a later
+# attempt must re-ask vision, not inherit a budget artifact.
+_calls34 = {"n": 0}
+
+
+def _verifier34(frames, narration, why, forced=False):
+    _calls34["n"] += 1
+    if _calls34["n"] == 1:
+        raise RuntimeError("vision unavailable: 429")
+    return {"verdict": "pass", "reason": "shows it"}
+
+
+_cache34 = os.path.join(tempfile.mkdtemp(), "vcache.json")
+_bv34 = _bv26.BrollVerifier(call_budget=10, cache_path=_cache34,
+                            verifier=_verifier34)
+_v34a, _, _ = _bv34.verify_candidate(
+    {"id": "x:1", "path": _vid32}, "line", "why")
+_v34b, _, _c34 = _bv34.verify_candidate(
+    {"id": "x:1", "path": _vid32}, "line", "why")
+check("T34 unverified not cached, re-asked and passes",
+      _v34a == "unverified" and _v34b == "pass" and not _c34,
+      f"{_v34a} {_v34b} cached={_c34}")
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)

@@ -582,21 +582,24 @@ def _workers_ai_vision(prompt, jpgs, max_tokens=500):
     rkey = os.environ.get("RUNNER_KEY") or ""
     if not worker or not rkey or not jpgs:
         return ""
-    try:
-        r = httpx.post(f"{worker}/api/setup/runner/vision",
-                       headers={"x-runner-key": rkey},
-                       json={"prompt": prompt,
-                             "image_b64": base64.b64encode(jpgs[0]).decode(),
-                             "max_tokens": max_tokens},
-                       timeout=90)
-        if r.status_code == 200:
-            txt = str((r.json() or {}).get("text") or "").strip()
-            if txt:
-                VISION_STATE["used"]["workers-ai"] = VISION_STATE["used"].get("workers-ai", 0) + 1
-                return txt
-        log("workers-ai vision", r.status_code)
-    except Exception as e:
-        log("workers-ai vision err", type(e).__name__)
+    for _attempt in range(2):
+        try:
+            r = httpx.post(f"{worker}/api/setup/runner/vision",
+                           headers={"x-runner-key": rkey},
+                           json={"prompt": prompt,
+                                 "image_b64": base64.b64encode(jpgs[0]).decode(),
+                                 "max_tokens": max_tokens},
+                           timeout=90)
+            if r.status_code == 200:
+                txt = str((r.json() or {}).get("text") or "").strip()
+                if txt:
+                    VISION_STATE["used"]["workers-ai"] = VISION_STATE["used"].get("workers-ai", 0) + 1
+                    return txt
+            log("workers-ai vision", r.status_code)
+        except Exception as e:
+            log("workers-ai vision err", type(e).__name__)
+        if _attempt == 0:
+            time.sleep(15)
     return ""
 
 
