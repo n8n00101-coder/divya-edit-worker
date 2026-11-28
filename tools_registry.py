@@ -627,6 +627,17 @@ def register_video_tools(reg, root):
     return video_tools.register_video_tools(reg, root)
 
 
+# --------------------------------------------------------- hark gates
+
+def register_hark_tools(reg):
+    """Register hark_gate_check: the deterministic Hark editing
+    gates (clip reuse, spoken vs on-screen numbers, hook opening,
+    pacing, single ending, audio peak/gaps). A FAIL blocks delivery
+    as success. Implementation: hark_gates.py."""
+    import hark_gates
+    return hark_gates.register_hark_tools(reg)
+
+
 # ------------------------------------------- routing / brand / research / style
 
 def register_routing_tool(reg):

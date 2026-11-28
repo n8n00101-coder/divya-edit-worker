@@ -355,6 +355,79 @@ def package_rank(titles, thumbs):
     return {"pairs": pairs, "best": pairs[0] if pairs else None}
 
 
+# ------------------------------------------------- variants + competitors
+
+def hook_variants(topic, angle="", count=5, extra_hooks=None):
+    """First-3-seconds variants for a brief: deterministic formula
+    variants from hooks_lib plus any caller-supplied hooks, all
+    scored and ranked. fits_3s flags lines short enough to land in
+    the opening 3 seconds (~12 words at narration pace). Variants
+    are built only from the topic words given — no invented facts."""
+    rows = []
+    for v in hooks_lib.generate_hook_variants(topic, angle, count=count):
+        rows.append({"hook": v["text"], "formula": v["formula"],
+                     "total": v["score"]["total"],
+                     "band": v["score"]["band"], "source": "formula"})
+    for h in extra_hooks or []:
+        text = str(h or "").strip()
+        if not text:
+            continue
+        sc = hooks_lib.score_hook(text)
+        rows.append({"hook": text, "formula": sc["formula"],
+                     "total": sc["total"], "band": sc["band"],
+                     "source": "provided"})
+    seen = set()
+    ranked = []
+    for r in sorted(rows, key=lambda r: -r["total"]):
+        key = r["hook"].lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        words = len(r["hook"].split())
+        r["words"] = words
+        r["fits_3s"] = words <= 12
+        ranked.append(r)
+    return {"variants": ranked,
+            "best_fits_3s": next((r for r in ranked if r["fits_3s"]),
+                                 None)}
+
+
+def competitor_analyze(competitors, ours=None):
+    """Competitor/trend analysis over PROVIDED rows only — never
+    collects. competitors: [{channel,title,views}]. Returns outlier
+    ranking (rank_viral), hook-formula distribution across competitor
+    titles, average title length, and — when our titles are given —
+    formulas competitors use that we do not (the gap list)."""
+    rows = [r for r in (competitors or []) if r]
+    formulas = {}
+    title_words = []
+    for r in rows:
+        title = str(r.get("title") or "")
+        name, _hits = hooks_lib.classify_hook(title)
+        if name:
+            formulas[name] = formulas.get(name, 0) + 1
+        if title:
+            title_words.append(len(title.split()))
+    our_formulas = {}
+    for title in ours or []:
+        name, _hits = hooks_lib.classify_hook(str(title))
+        if name:
+            our_formulas[name] = our_formulas.get(name, 0) + 1
+    gaps = sorted(f for f in formulas if f not in our_formulas) \
+        if ours else []
+    return {
+        "videos": len(rows),
+        "outliers": rank_viral(rows),
+        "formula_distribution": dict(
+            sorted(formulas.items(), key=lambda kv: -kv[1])),
+        "avg_title_words": (round(sum(title_words) / len(title_words), 1)
+                            if title_words else None),
+        "our_formulas": our_formulas,
+        "formula_gaps": gaps,
+        "note": "provided data only; nothing was collected or scraped",
+    }
+
+
 # ------------------------------------------------------------ registry
 
 def register_yt_tools(reg):
@@ -409,5 +482,21 @@ def register_yt_tools(reg):
         {"titles": {"type": "array", "required": True, "desc": "title candidates"},
          "thumbs": {"type": "array", "required": True, "desc": "thumbnail text candidates"}},
         lambda a: (True, package_rank(a.get("titles"), a.get("thumbs"))),
+        mutating=False, needs_allow=False, timeout=30)
+    reg.register(
+        "yt_hook_variants",
+        "First-3-seconds hook variants for a topic: deterministic formula variants plus provided hooks, scored and ranked, with fits_3s flags. Args: {topic, angle?, count?, hooks?}. Built only from given words; invents no facts. Read-only.",
+        {"topic": {"type": "string", "required": True, "desc": "video topic in plain words"},
+         "angle": {"type": "string", "required": False, "desc": "optional angle phrase"},
+         "count": {"type": "number", "required": False, "desc": "formula variants to build (default 5)"},
+         "hooks": {"type": "array", "required": False, "desc": "extra hook lines to rank alongside"}},
+        lambda a: (True, hook_variants(a.get("topic"), a.get("angle") or "", a.get("count") or 5, a.get("hooks"))),
+        mutating=False, needs_allow=False, timeout=30)
+    reg.register(
+        "yt_competitor_analyze",
+        "Competitor/trend analysis over PROVIDED video rows only: outlier ranking, hook-formula distribution, title length, formula gaps vs our titles. Args: {competitors: [{channel,title,views}], ours?: [titles]}. Never collects data. Read-only.",
+        {"competitors": {"type": "array", "required": True, "desc": "provided competitor video rows"},
+         "ours": {"type": "array", "required": False, "desc": "our recent titles for the gap comparison"}},
+        lambda a: (True, competitor_analyze(a.get("competitors"), a.get("ours"))),
         mutating=False, needs_allow=False, timeout=30)
     return reg
