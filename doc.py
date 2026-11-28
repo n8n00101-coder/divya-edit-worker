@@ -455,16 +455,18 @@ class DurationOverrunError(Exception):
 WORDS_PER_SEC = {"en": 2.5, "te": 1.8, "hi": 2.3}
 
 
-def _estimate_script_s(scenes, lang):
+def _estimate_script_s(scenes, lang, gap_s=0.45):
     """Estimated delivered seconds for a script: the make_video
-    timing formula (0.4 s pre-roll, per-scene voice + 0.45 s gap,
+    timing formula (0.4 s pre-roll, per-scene voice + gap,
     1 s outro) with voice duration estimated from word counts at
-    the language's speaking rate."""
+    the language's speaking rate. Wave 4: taste films run a
+    1.1 s inter-scene gap — estimating with 0.45 under-read the
+    delivered length by ~6 s and oscillated the duration gate."""
     wps = WORDS_PER_SEC.get(lang or "te", 1.8)
     t = 0.4
     for s in scenes or []:
         words = len(str(s.get("vo", "")).split())
-        t += words / wps + 0.45
+        t += words / wps + gap_s
     return t + OUTRO
 
 
@@ -508,7 +510,8 @@ def _fit_script_to_duration(p, brief, chat, cfg=None, spec=None):
         return
     lang = p.get("lang") or "te"
     wps = WORDS_PER_SEC.get(lang, 1.8)
-    est = _estimate_script_s(scenes, lang)
+    _gap_est = 1.1 if (cfg or {}).get("taste_profile") else 0.45
+    est = _estimate_script_s(scenes, lang, gap_s=_gap_est)
     fit = {"target_s": target, "estimated_s": round(est, 1),
            "action": "none"}
     # Wave 4: taste jobs also lengthen an UNDER-length script at
@@ -545,7 +548,7 @@ def _fit_script_to_duration(p, brief, chat, cfg=None, spec=None):
                                 str(r.get("vo", ""))).strip()
                     if vo:
                         s["vo"] = vo
-                est = _estimate_script_s(scenes, lang)
+                est = _estimate_script_s(scenes, lang, gap_s=_gap_est)
                 fit["action"] = "writer-lengthen"
                 fit["estimated_s"] = round(est, 1)
         except Exception as e:
@@ -585,7 +588,7 @@ def _fit_script_to_duration(p, brief, chat, cfg=None, spec=None):
                 vo = re.sub(r"[*#_`]", "", str(r.get("vo", ""))).strip()
                 if vo:
                     s["vo"] = vo
-            est = _estimate_script_s(scenes, lang)
+            est = _estimate_script_s(scenes, lang, gap_s=_gap_est)
             fit["action"] = "writer-rewrite"
             fit["estimated_s"] = round(est, 1)
     except Exception as e:
@@ -614,7 +617,7 @@ def _fit_script_to_duration(p, brief, chat, cfg=None, spec=None):
             if len(new.split()) < len(vo.split()):
                 trimmed += len(vo.split()) - len(new.split())
                 scenes[i]["vo"] = new
-                est = _estimate_script_s(scenes, lang)
+                est = _estimate_script_s(scenes, lang, gap_s=_gap_est)
         fit["action"] = (fit["action"] + "+trim").strip("+") \
             if fit["action"] != "none" else "trim"
         fit["trimmed_words"] = trimmed
@@ -2525,6 +2528,38 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
                                         blur=blur)
         if nframes <= 0:
             continue
+        # Wave 4 black-frame guard: a clip whose sampled frames
+        # are near-black renders as MQ-BLACK (ta57e029 23.9-25.9 s).
+        # Reject it pre-render and take the next clip once.
+        def _frames_dark(_fd):
+            try:
+                from PIL import Image as _ImDark
+                _fs = sorted(os.listdir(_fd))
+                if not _fs:
+                    return True
+                _im = _ImDark.open(os.path.join(_fd, _fs[0])).convert("L")
+                _px = list(_im.resize((32, 18)).getdata())
+                return (sum(_px) / max(1, len(_px))) < 12
+            except Exception:
+                return False
+        if _frames_dark(fdir):
+            print(f"broll scene {i + 1}: clip frames near-black — "
+                  "trying next clip")
+            rec = _pool_assign(i + 1, queries, dur_s, dl,
+                               orientation=orientation,
+                               line=str(sc.get("vo") or ""),
+                               canvas=_canvas,
+                               strict_verify=_strict_taste)
+            if not rec:
+                continue
+            _push = bool(rec.get("static")) and "zoom" not in (cfg.get("excludes") or [])
+            nframes = _extract_broll_frames(
+                rec["path"], fdir, dur_s,
+                start_s=rec.get("start", 1.0), static=_push, blur=blur)
+            if nframes <= 0 or _frames_dark(fdir):
+                print(f"broll scene {i + 1}: replacement also dark "
+                      "— beat left unattached")
+                continue
         entry = {"dir": fdir, "frames": nframes}
         if dur_s > 4.0:
             rec2 = _pool_assign(i + 1, queries, dur_s / 2, dl,

@@ -675,6 +675,12 @@ check("T32 forced-choice decides prose reply",
       _res32["beats"][0]["status"] == "PASS"
       and _calls32["n"] >= 2, str(_res32["beats"]))
 
+# T33 (Wave 4): taste duration estimate uses the 1.1 s gap.
+_sc33 = [{"vo": "one two three four five"}] * 4
+check("T33 taste gap estimate longer",
+      _doc28._estimate_script_s(_sc33, "en", gap_s=1.1)
+      > _doc28._estimate_script_s(_sc33, "en", gap_s=0.45) + 2.0)
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)

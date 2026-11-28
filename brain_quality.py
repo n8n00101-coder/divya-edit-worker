@@ -174,8 +174,10 @@ def enrich_visuals(scenes, profile=None):
                 scene["music_intensity"] = 1.0
             elif i == n - 1:
                 scene["music_intensity"] = 1.0
-            elif n >= 5 and i == int(n * 0.6):
-                scene["music_intensity"] = 0.05
+            elif n >= 5 and i in (int(n * 0.6), int(n * 0.6) + 1):
+                # Wave 4: a two-beat dip — one quiet beat barely
+                # moves the LRA percentile (measured 4.3 < 6).
+                scene["music_intensity"] = 0.0
             elif mood in ("tense", "excited", "mystery"):
                 scene["music_intensity"] = 0.8
             elif mood in ("sad", "calm"):
