@@ -56,7 +56,10 @@ sourced = {"no": 1, "vo": "Students guessed 46% had noticed.",
 unsourced = {"no": 2, "vo": "Sales rose 30% overnight.",
              "label": "SALES", "value": "30%", "source": "",
              "queries": ["people shopping street"]}
-brain_quality.enrich_visuals([sourced, unsourced], prof)
+hook = {"no": 1, "vo": "You walk in and feel watched.",
+        "label": "WATCHED", "value": "", "source": "",
+        "queries": ["person entering room"]}
+brain_quality.enrich_visuals([hook, sourced, unsourced], prof)
 check("T2 sourced fact -> source_card", sourced.get("graphic_type") == "source_card",
       str(sourced))
 check("T2 unsourced number blocked",
