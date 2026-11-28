@@ -181,6 +181,7 @@ def build_tools(root, job=None):
     reg = tools_registry.default_registry()
     tools_registry.register_workspace_tools(reg, root, job_record=job)
     tools_registry.register_compute_tools(reg, root)
+    tools_registry.register_yt_tools(reg)
     tools_registry.register_plan_tool(reg, job)
     # DIRECTOR LAYER: the plan/check/review tools (bound to the
     # same job dict the loop gates on), the fetch_url verify

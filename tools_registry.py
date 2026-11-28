@@ -599,3 +599,17 @@ def register_compute_tools(reg, root):
     and a failed check is a FAILED step, never a silent pass."""
     import compute_tools
     return compute_tools.register_compute_tools(reg, root)
+
+
+# ----------------------------------------------------- youtube tools
+
+def register_yt_tools(reg):
+    """Register the deterministic YouTube packaging tools
+    (yt_hook_score / yt_title_lint / yt_chapters_validate /
+    yt_chapters_from_cues / yt_viral_rank / yt_retention_read /
+    yt_package_rank). All read-only pure functions over their args —
+    no files, no network, no collection, no publishing. The real
+    implementation lives in yt_tools.py (imported lazily, like
+    compute_tools above)."""
+    import yt_tools
+    return yt_tools.register_yt_tools(reg)
