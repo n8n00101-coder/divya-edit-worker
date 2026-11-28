@@ -737,22 +737,27 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
         raw = chat(_plan_msgs)
         try:
             p = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
-            break
         except Exception:
             p = _salvage_json(raw)
             if p is not None:
                 print("plan: salvaged truncated JSON reply")
-                break
-            # Wave 4: a malformed plan reply is a brain hiccup,
-            # not a job death (ta57e034 died on JSONDecodeError).
-            print(f"plan: invalid JSON reply, re-asking "
-                  f"({_plan_try + 1}/3)")
-            _plan_msgs = _plan_msgs + [
-                {"role": "assistant", "content": str(raw)[:2000]},
-                {"role": "user", "content":
-                 "That reply was not valid JSON. Reply again with "
-                 "ONLY the strict JSON object, no prose, no "
-                 "trailing commas."}]
+        # Wave 4: a parsed-but-useless plan (truncated to <4
+        # scenes by a capped brain reply) re-asks like invalid
+        # JSON instead of dying on "plan too short" (ta57e036).
+        _usable = p is not None and len(
+            [s for s in (p.get("scenes") or [])
+             if str(s.get("vo", "")).strip()]) >= 4
+        if _usable:
+            break
+        p = None
+        print(f"plan: unusable reply, re-asking ({_plan_try + 1}/3)")
+        _plan_msgs = _plan_msgs + [
+            {"role": "assistant", "content": str(raw)[:2000]},
+            {"role": "user", "content":
+             "That reply was not a complete valid plan. Reply "
+             "again with ONLY the strict JSON object: 8-10 "
+             "scenes, each with a vo line, no prose, no "
+             "trailing commas."}]
     if p is None:
         raise ValueError("plan reply never valid JSON")
     # v36 (Blind E4): the end card needs a question; default if the LLM omits it.
