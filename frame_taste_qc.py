@@ -143,6 +143,26 @@ async def audit_beats(video_path, beats, outdir, vision=None,
             if attempt + 1 < max(1, int(vision_attempts)) and retry_sleep_s:
                 await asyncio.sleep(retry_sleep_s)
         if v is None:
+            # Wave 4 forced-choice: prose-only replies carry no
+            # parseable verdict. One bounded YES/NO re-ask on the
+            # critical question (does the frame show the promise)
+            # decides the beat; silence stays UNVERIFIED.
+            try:
+                fq = (f"Does this frame visibly show: "
+                      f"{str(b.get('promise') or '')[:200]}? "
+                      "Answer YES or NO only.")
+                fans, fprov = await vision([fp], fq)
+                provider = fprov or provider
+                low = str(fans or "").strip().lower()
+                if low.startswith("yes"):
+                    v = {"shows": True, "fills_frame": True,
+                         "note": "forced-choice: frame shows the promise"}
+                elif low.startswith("no"):
+                    v = {"shows": False, "fills_frame": True,
+                         "note": "forced-choice: frame does not show the promise"}
+            except Exception:
+                v = None
+        if v is None:
             entry["note"] = last_note
             results.append(entry)
             continue

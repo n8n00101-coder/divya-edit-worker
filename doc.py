@@ -3102,7 +3102,9 @@ def music(total, starts, moods, path, hits=None, payoff=None,
             _a = int(max(0.0, _bounds[_i]) * SR)
             _b = int(min(_bounds[_i + 1], total) * SR)
             if _b > _a:
-                _g[_a:_b] = 0.15 + 1.6 * float(intensity[_i])
+                # Wave 4: wider executed arc — LRA measured
+                # 3.3-3.5 LU against the 6 LU floor.
+                _g[_a:_b] = 0.05 + 2.2 * float(intensity[_i])
         _k = max(1, int(0.35 * SR))
         _ker = np.ones(_k) / _k
         _g = np.convolve(np.pad(_g, (_k, _k), mode="edge"),
@@ -4320,7 +4322,7 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
         # Voice loudness arc: quieter at the turning dip, stronger
         # at hook/payoff — the spread moves the loudness range.
         fc = "".join(
-            f"[{i}:a]volume={0.5 + 0.8 * float(s.get('music_intensity') or 0.5):.2f},"
+            f"[{i}:a]volume={0.35 + 1.15 * float(s.get('music_intensity') or 0.5):.2f},"
             f"adelay={int(st * 1000)}|{int(st * 1000)}[a{i}];"
             for i, (s, st) in enumerate(zip(p["scenes"], starts)))
     else:
@@ -4382,7 +4384,7 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                     # v32 (M6, Mark): final loudnorm -14 LUFS (was alimiter)
                     # v79 (R11): true peak -1 dB (was -1.5; the compromise
                     # video peaked at 0.0 and clipped).
-                    "[vv][md][sx]amix=inputs=3:normalize=0,loudnorm=I=-14:TP=-1.0:LRA=11[o]", "-map", "[o]", "-ar", str(SR), f"{wd}/mix.wav"], check=True)
+                    "[vv][md][sx]amix=inputs=3:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[o]", "-map", "[o]", "-ar", str(SR), f"{wd}/mix.wav"], check=True)
     # Taste-wave audio repair: single-pass loudnorm can still
     # measure above the -1 dBTP gate after encode, and a voice
     # pause over the ducked bed can read as dead air. Measure the

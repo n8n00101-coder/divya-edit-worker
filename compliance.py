@@ -1346,8 +1346,10 @@ def repair_audio_delivery(path, bed_path=None, designed_silences=(),
         else:
             fc = ""
             src = "[0:a]"
-        fc += (f"{src}loudnorm=I={target_lufs:.0f}:TP=-1.5:LRA=11,"
-               f"alimiter=limit=0.85:level=false[out]")
+        # Wave 4: limiter ceiling tightened — AAC encode after
+        # this repair still measured -0.9 dBTP (gate -1.0).
+        fc += (f"{src}loudnorm=I={target_lufs:.0f}:TP=-2.0:LRA=11,"
+               f"alimiter=limit=0.79:level=false[out]")
         r = subprocess.run(inputs + ["-filter_complex", fc, "-map",
                                      "[out]", "-c:a", "pcm_s16le", tmp],
                            capture_output=True, text=True, timeout=600)
@@ -1359,10 +1361,10 @@ def repair_audio_delivery(path, bed_path=None, designed_silences=(),
         i2, tp2 = measure_loudness(tmp)
         if tp2 is not None and tp2 > peak_max:
             tmp2 = f"{path}.repair2.wav"
-            gain = (peak_max - 0.4) - tp2
+            gain = (peak_max - 0.8) - tp2
             r = subprocess.run(
                 ["ffmpeg", "-y", "-loglevel", "error", "-i", tmp,
-                 "-af", f"volume={gain:.2f}dB,alimiter=limit=0.85:level=false",
+                 "-af", f"volume={gain:.2f}dB,alimiter=limit=0.79:level=false",
                  "-c:a", "pcm_s16le", tmp2],
                 capture_output=True, text=True, timeout=600)
             if r.returncode == 0 and os.path.exists(tmp2):

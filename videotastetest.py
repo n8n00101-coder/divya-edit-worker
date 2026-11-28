@@ -649,6 +649,32 @@ check("T31 real-duration R1 repeat demoted",
       _plan31["scenes"][1].get("graphic_type") == "footage",
       str(_fixes31))
 
+# T32 (Wave 4): prose-only frame replies get one forced-choice
+# YES/NO re-ask instead of dying UNVERIFIED.
+import asyncio as _asyncio32
+_vid32 = os.path.join(tempfile.mkdtemp(), "t32.mp4")
+subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi",
+                "-i", "testsrc=duration=3:size=320x180:rate=10",
+                "-pix_fmt", "yuv420p", _vid32], check=True)
+_calls32 = {"n": 0}
+
+
+async def _vision32(images, question):
+    _calls32["n"] += 1
+    if "YES or NO" in question:
+        return "YES", "stub"
+    return "A colorful test pattern fills the screen.", "stub"
+
+
+_res32 = _asyncio32.run(frame_taste_qc.audit_beats(
+    _vid32, [{"beat": 1, "line": "test", "promise": "test pattern",
+              "start": 0, "duration": 3}],
+    tempfile.mkdtemp(), vision=_vision32,
+    vision_attempts=1, retry_sleep_s=0, pace_s=0))
+check("T32 forced-choice decides prose reply",
+      _res32["beats"][0]["status"] == "PASS"
+      and _calls32["n"] >= 2, str(_res32["beats"]))
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)
