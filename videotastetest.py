@@ -611,6 +611,41 @@ check("T28 under-length taste script lengthened",
       and _plan28["duration_fit"]["estimated_s"] > 25,
       str(_plan28.get("duration_fit")))
 
+# T29 (Wave 4): the hook beat is footage even when sourced.
+_hook29 = {"no": 1, "vo": "Students guessed 46% had noticed.",
+           "label": "THE GUESS", "value": "46%",
+           "source": "Gilovich (2000)",
+           "queries": ["students classroom"]}
+brain_quality.enrich_visuals([_hook29], prof)
+check("T29 hook beat stays footage",
+      _hook29.get("graphic_type") == "footage",
+      str(_hook29.get("graphic_type")))
+
+# T30 (Wave 4): prose frame-taste replies parse; verdict-free
+# prose stays unparseable.
+_p30 = frame_taste_qc._parse(
+    "shows: true, fills_frame: false, text_ok: true, "
+    "note: the frame shows students")
+check("T30 prose frame verdict parsed",
+      bool(_p30) and _p30.get("shows") is True
+      and _p30.get("fills_frame") is False, str(_p30))
+check("T30 verdict-free prose unparseable",
+      frame_taste_qc._parse("A bright colorful frame.") is None)
+
+# T31 (Wave 4): R1 timing re-plan on real durations demotes the
+# repeating source_card.
+_plan31 = {"topic": "spotlight", "scenes": [
+    {"no": 1, "d": 35, "vo": "Students guessed 46% had noticed.",
+     "label": "GUESS", "value": "46%", "source": "Gilovich (2000)",
+     "graphic_type": "source_card", "queries": ["students"]},
+    {"no": 2, "d": 35, "vo": "Only 23% actually noticed.",
+     "label": "TRUTH", "value": "23%", "source": "Gilovich (2000)",
+     "graphic_type": "source_card", "queries": ["students"]}]}
+_fixes31 = brain_quality.compliance_replan(_plan31, prof)
+check("T31 real-duration R1 repeat demoted",
+      _plan31["scenes"][1].get("graphic_type") == "footage",
+      str(_fixes31))
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)

@@ -4145,6 +4145,20 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                 f"duration underrun: voice ran {total:.1f}s against "
                 f"the {_dur_t:.0f}s ordered length — re-plan with "
                 "MORE words per scene so the film fills its length")
+    # Wave 4: R1 timing repeats re-checked on REAL durations.
+    # Planned durations can hide a source_card repeat that real
+    # TTS timing creates (ta57e027 step 9). Demotions only —
+    # voice lines are untouched after TTS.
+    if (cfg or {}).get("taste_profile"):
+        try:
+            import brain_quality as _bq_r1
+            _r1_fixes = _bq_r1.compliance_replan(p)
+            if _r1_fixes:
+                print("post-TTS compliance re-plan:",
+                      "; ".join(_r1_fixes[:4]))
+        except Exception as _e_r1:
+            print("post-TTS compliance re-plan failed:",
+                  str(_e_r1)[:100])
     if notify: await notify("Voice ready. Scenes render chestunna (animation + music).")
     # v69: stock B-roll for ~half the scenes (see _attach_broll). Runs
     # BEFORE the pre-render geometry QC so the QC renders the real

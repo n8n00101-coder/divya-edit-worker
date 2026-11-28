@@ -135,7 +135,14 @@ def enrich_visuals(scenes, profile=None):
         promise = str(scene.get("label") or scene.get("vo") or
                       scene.get("promise") or scene.get("why") or "").strip()
         scene["promise"] = promise[:240]
-        if scene.get("graphic_locked"):
+        if i == 0:
+            # Wave 4: the hook beat is full-frame footage — a
+            # source card / diagram on beat 1 renders as a split
+            # frame with empty area (ta57e027 step 1 WARN). Sourced
+            # facts earn their card on later beats.
+            scene["graphic_type"] = "footage"
+            scene.pop("diagram_kind", None)
+        elif scene.get("graphic_locked"):
             # A variety repair demoted this beat to footage; the
             # visual pass must not re-assign the graphic it removed.
             scene["graphic_type"] = scene.get("graphic_type") or "footage"
@@ -425,6 +432,18 @@ def _replan_beat_footage(plan, scene, reason):
         if not scene.get("queries"):
             scene["queries"] = [subj]
     return f"beat {no}: re-planned to footage ({reason})"
+
+
+def compliance_replan(plan, profile=None):
+    """Public beat re-plans for compliance target rules (widget
+    budget, R1 60 s timing repeats, number-kind, fidelity).
+    Safe after TTS: it only demotes graphics to footage, never
+    touches voice lines — so the R1 timing check can re-run on
+    REAL durations before render (ta57e027 step 9 repeated a
+    source_card inside 60 s of real time while planned
+    durations said otherwise)."""
+    profile = profile or taste_pack.PROFILES["wtu_long_sheet"]
+    return _compliance_replan(plan, profile)
 
 
 def _compliance_replan(plan, profile):

@@ -68,12 +68,29 @@ def _parse(raw):
     if not raw:
         return None
     m = re.search(r"\{[\s\S]*\}", str(raw))
-    if not m:
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            pass
+    # Wave 4: the Workers AI fallback answers in prose with
+    # key:value fragments instead of strict JSON — three beats
+    # died UNVERIFIED ("vision reply unparseable") in ta57e027.
+    # Recover explicit verdicts; a reply with no `shows` verdict
+    # stays unparseable (UNVERIFIED, never a pass).
+    text = str(raw)
+    out = {}
+    for key in ("shows", "fills_frame", "text_ok",
+                "source_card_ok", "graphic_ok", "face_ok"):
+        km = re.search(rf'"?{key}"?\s*[:=]\s*(true|false)',
+                       text.lower())
+        if km:
+            out[key] = km.group(1) == "true"
+    if "shows" not in out:
         return None
-    try:
-        return json.loads(m.group(0))
-    except Exception:
-        return None
+    nm = re.search(r'"?note"?\s*[:=]\s*"?([^"\n}]{3,200})', text)
+    out["note"] = nm.group(1).strip() if nm else text[:160]
+    return out
 
 
 async def audit_beats(video_path, beats, outdir, vision=None,
