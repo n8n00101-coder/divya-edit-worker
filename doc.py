@@ -521,6 +521,7 @@ def _fit_script_to_duration(p, brief, chat, cfg=None, spec=None):
     # TTS because the fit only ever trimmed). One writer round
     # expands middle scenes toward the word budget.
     if est < target * 0.92 and (cfg or {}).get("taste_profile"):
+      for _len_round in range(2):
         need_words = max(10, int(target * wps * 0.98))
         total_words = sum(len(str(s.get("vo", "")).split())
                           for s in scenes)
@@ -556,6 +557,9 @@ def _fit_script_to_duration(p, brief, chat, cfg=None, spec=None):
         except Exception as e:
             print("duration fit: lengthen round failed:",
                   str(e)[:120])
+            break
+        if est >= target * 0.92:
+            break
         p["duration_fit"] = fit
         print(f"duration fit: target {target:.0f}s, script "
               f"estimated {fit['estimated_s']}s after "
@@ -2366,7 +2370,7 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
             # flat 24-call budget starved later beats (budget
             # reached -> unverified -> rejected). Scale with the
             # beat count; the cache keeps repeats free.
-            _vb_budget = min(420, max(24, len(scenes) * 42))
+            _vb_budget = min(300, max(24, len(scenes) * 30))
             pool.verifier = _bv_taste.BrollVerifier(
                 call_budget=_vb_budget,
                 cache_path=os.path.join(wd, "vision_cache.json"),

@@ -9162,6 +9162,23 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
       return Response.json({ ok: false, error: "vision failed" }, { status: 502 });
     }
   }
+  if (p === "setup/runner/textchat" && req.method === "POST") {
+    // Wave 4: runner text-brain fallback. When every runner-side
+    // provider is rate-limited (sustained Groq 429s killed
+    // ta57e031-033 at the plan stage), the channel asks the Worker
+    // brain (chatWithFallback: shared Groq/OpenRouter/Gemini legs)
+    // instead of dying. Runner-key auth above; keys never leave
+    // the Worker; an empty brain answer is an honest 502.
+    const msgs = (Array.isArray(body && body.messages) ? body.messages : [])
+      .slice(-12)
+      .map(m => ({ role: String((m && m.role) || "user").slice(0, 16),
+                   content: String((m && m.content) || "").slice(0, 12000) }))
+      .filter(m => m.content);
+    if (!msgs.length) return new Response("no messages", { status: 400 });
+    const out = await chatWithFallback(env, { n: "runner" }, msgs).catch(() => "");
+    if (!out) return Response.json({ ok: false, error: "brain" }, { status: 502 });
+    return Response.json({ ok: true, text: out });
+  }
   if (p === "setup/runner/videodirector" && req.method === "POST") {
     const vjob = String((body && body.job) || url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, "");
     if (!vjob) return new Response("job required", { status: 400 });

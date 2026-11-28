@@ -343,6 +343,26 @@ def _pace():
 
 
 # ------------------------------------------------------------ the call
+def _worker_text_leg(messages):
+    """Wave 4: Worker-brain text fallback (setup/runner/textchat).
+    Returns "" on any failure — the caller keeps its honest
+    ChannelError. Bounded: one call, 120 s."""
+    worker = (os.environ.get("WORKER_URL") or "").rstrip("/")
+    rkey = os.environ.get("RUNNER_KEY") or ""
+    if not worker or not rkey:
+        return ""
+    try:
+        r = _post(f"{worker}/api/setup/runner/textchat",
+                  json={"messages": messages[-12:]},
+                  headers={"x-runner-key": rkey}, timeout=120)
+        if r.status_code == 200:
+            return str((r.json() or {}).get("text") or "").strip()
+        print("channel: worker text leg", r.status_code)
+    except Exception as e:
+        print("channel: worker text leg err", type(e).__name__)
+    return ""
+
+
 def chat(messages):
     """The pipeline's LLM call. Same contract as runner.groq_chat
     (returns the reply text; raises RuntimeError when nothing can
@@ -403,6 +423,16 @@ def chat(messages):
             print(f"channel: call {call_no} served by {name}")
             return out
         reasons.append(f"{name}: unavailable")
+    # Wave 4: every runner-side provider failed or is cooling —
+    # ask the Worker brain (shared OpenRouter/Gemini legs) before
+    # declaring the channel dead. One bounded call; failure keeps
+    # the honest ChannelError below.
+    _wt = _worker_text_leg(messages)
+    if _wt:
+        _LOG.append({"call": call_no, "provider": "worker",
+                     "chars": _n_chars})
+        print(f"channel: call {call_no} served by worker")
+        return _wt
     raise ChannelError(
         "every provider failed or is rate-limited ("
         + "; ".join(reasons[-4:]) + ") — this stage falls back "

@@ -653,7 +653,7 @@ class FootagePool:
                 # Wave 4: cap check before download — verifying
                 # beyond the per-scene cap wastes downloads and
                 # budget alike.
-                if _verified_count >= (12 if strict_verify else 2):
+                if _verified_count >= (6 if strict_verify else 2):
                     break
                 dest = os.path.join(
                     workdir, f"pool_{cand['provider']}_{str(cand['id']).split(':')[-1]}.mp4")
