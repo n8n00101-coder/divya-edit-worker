@@ -684,9 +684,27 @@ def plan(brief, chat, recent="", recent_styles=None, recent_families=(), spec=No
                  f"Motion personality: {LOOKS[look]['motion_personality']}. "
                  f"Transition family: {LOOKS[look]['transition_family']}."
                  + (f" Topic family: {fam} ({TOPIC_FAMILIES[fam]['desc']})." if fam else ""))
-    raw = chat([{"role": "system", "content": "You output strict JSON only."},
-                {"role": "user", "content": PLAN.replace("{recent}", recent or "none").replace("{look}", look_line) + _spec_block(spec) + (brief or "AUTO")}])
-    p = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
+    _plan_msgs = [{"role": "system", "content": "You output strict JSON only."},
+                {"role": "user", "content": PLAN.replace("{recent}", recent or "none").replace("{look}", look_line) + _spec_block(spec) + (brief or "AUTO")}]
+    p = None
+    for _plan_try in range(3):
+        raw = chat(_plan_msgs)
+        try:
+            p = json.loads(re.search(r"\{[\s\S]*\}", raw).group(0))
+            break
+        except Exception:
+            # Wave 4: a malformed plan reply is a brain hiccup,
+            # not a job death (ta57e034 died on JSONDecodeError).
+            print(f"plan: invalid JSON reply, re-asking "
+                  f"({_plan_try + 1}/3)")
+            _plan_msgs = _plan_msgs + [
+                {"role": "assistant", "content": str(raw)[:2000]},
+                {"role": "user", "content":
+                 "That reply was not valid JSON. Reply again with "
+                 "ONLY the strict JSON object, no prose, no "
+                 "trailing commas."}]
+    if p is None:
+        raise ValueError("plan reply never valid JSON")
     # v36 (Blind E4): the end card needs a question; default if the LLM omits it.
     if not str(p.get("end_question", "")).strip():
         p["end_question"] = "Did you know this?"
