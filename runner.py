@@ -1526,10 +1526,10 @@ async def create_job(j, wa, note):
             _DOE = getattr(create, "DurationOverrunError", None)
             _last_vd_rec = None
             _last_vd_checks = None
-            # Wave 4: 6 taste attempts — TTS transients must not
-            # eat the rework budget (ta57e027: 2 transients + 1
-            # render rework + 1 duration overrun exhausted 4).
-            for attempt in range(6 if _taste_prof else 2):
+            # Wave 4: 8 taste attempts — provider transients
+            # (TTS + channel 429s) must not eat the rework budget
+            # (ta57e032: sustained Groq 429s exhausted 6).
+            for attempt in range(8 if _taste_prof else 2):
                 try:
                     # v28: the last 5 looks (from KV, via the job) so the look never
                     # repeats — only the v2 engine (doc.py, pick_look) takes it.
@@ -1584,10 +1584,10 @@ async def create_job(j, wa, note):
                             # (ta57e031 died on ChannelError).
                             "channelerror",
                             "every provider failed"))
-                    if _tts_transient and attempt < 5:
+                    if _tts_transient and attempt < 7:
                         print("taste rework: transient TTS failure, "
                               "retrying same brief:", str(e)[:150])
-                        await asyncio.sleep(45 * (attempt + 1))
+                        await asyncio.sleep(150 * (attempt + 1))
                         continue
                     if _tts_transient and _last_vd_rec:
                         _post_video_director(_last_vd_rec,
@@ -1598,7 +1598,7 @@ async def create_job(j, wa, note):
                     # (refund) instead of delivering a film whose
                     # ending was trimmed off.
                     if _DOE is not None and isinstance(e, _DOE) \
-                            and attempt < (5 if _taste_prof else 1):
+                            and attempt < (7 if _taste_prof else 1):
                         print("duration gate: re-planning with a "
                               "shorter script:", str(e)[:150])
                         _brief_run = (_brief_run +
@@ -1618,7 +1618,7 @@ async def create_job(j, wa, note):
                     # verdict re-plans the film ONCE with the
                     # director's defects named in the brief; a
                     # second failure is honest (refund path).
-                    if _taste_prof and attempt < 5 and \
+                    if _taste_prof and attempt < 7 and \
                             "delivery blocked — review rework" in str(e):
                         print("taste rework: re-planning once with "
                               "director defects:", str(e)[:200])

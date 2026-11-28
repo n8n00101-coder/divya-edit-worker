@@ -351,7 +351,7 @@ card for a phone number or helpline, watch for a stopwatch or rate, stamp for a 
 verdict, stamp_cta for the final call to action.
 Language: follow the owner. If they ask for English voice/voice-over -> lang "en" (vo in English). Telugu -> "te" (vo in Telugu script).
 Hindi -> "hi". If they say nothing about language, use "te".
-Length: honour any duration they ask (e.g. "1 min" = 60 s). Default 50-60 s. English speaks ~2.15 words/s, Telugu ~1.8 words/s:
+Length: honour any duration they ask (e.g. "1 min" = 60 s). Default 50-60 s. English speaks ~2.0 words/s, Telugu ~1.8 words/s:
 size the total vo words to the target duration. 9-14 scenes, each vo 6-22 words.
 Writing: documentary storytelling that sounds like a real human talking to a friend - contractions, short punchy sentences,
 rhetorical questions, a surprising fact or tension in the first line (hook), then context, a twist, the payoff, and a short
@@ -454,7 +454,7 @@ class DurationOverrunError(Exception):
 # estimator the writer is told to size by, now enforced in code.
 # Wave 4 calibration: measured edge-TTS English runs ~2.1 wps
 # (scripts estimated 75 s delivered 82-90 s of voice).
-WORDS_PER_SEC = {"en": 2.15, "te": 1.8, "hi": 2.3}
+WORDS_PER_SEC = {"en": 2.0, "te": 1.8, "hi": 2.3}
 
 
 def _estimate_script_s(scenes, lang, gap_s=0.45):
