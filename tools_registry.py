@@ -613,3 +613,15 @@ def register_yt_tools(reg):
     compute_tools above)."""
     import yt_tools
     return yt_tools.register_yt_tools(reg)
+
+
+# ----------------------------------------------------- video tools
+
+def register_video_tools(reg, root):
+    """Register the read-only video analysis tools
+    (video_scene_list / video_word_transcript), confined to the
+    job workspace. Heavy dependencies load lazily inside the
+    handlers; a missing dependency is a FAILED step, not a crash.
+    The real implementation lives in video_tools.py."""
+    import video_tools
+    return video_tools.register_video_tools(reg, root)
