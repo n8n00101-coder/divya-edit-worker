@@ -9143,6 +9143,25 @@ async function appSetupRunner(req, env, p, url, body, ctx) {
   // record as videoDirector, readable back via /internal/state —
   // the audit trail that a taste film was planned, checked and
   // reviewed by Julie herself before delivery.
+  // Wave 4: runner vision fallback. When the runner's primary
+  // vision provider is rate-limited (Groq qwen 429), the runner
+  // asks Workers AI vision here instead of starving the film of
+  // footage. Runner-key auth above; one bounded call; the runner
+  // treats any failure as UNVERIFIED, never a pass.
+  if (p === "setup/runner/vision" && req.method === "POST") {
+    if (!env.AI) return Response.json({ ok: false, error: "ai binding missing" }, { status: 503 });
+    const vprompt = String((body && body.prompt) || "").slice(0, 4000);
+    const vb64 = String((body && body.image_b64) || "");
+    if (!vprompt || !vb64 || vb64.length > 4000000) return Response.json({ ok: false, error: "bad vision request" }, { status: 400 });
+    try {
+      const vr = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", { image: Array.from(unb64(vb64)), prompt: vprompt, max_tokens: Math.min(900, Math.max(50, Number((body && body.max_tokens) || 500))) });
+      const vtext = String((vr && vr.response) || "").trim();
+      if (!vtext) return Response.json({ ok: false, error: "empty vision reply" }, { status: 502 });
+      return Response.json({ ok: true, text: vtext, via: "workers-ai" });
+    } catch (e) {
+      return Response.json({ ok: false, error: "vision failed" }, { status: 502 });
+    }
+  }
   if (p === "setup/runner/videodirector" && req.method === "POST") {
     const vjob = String((body && body.job) || url.searchParams.get("job") || "").replace(/[^a-z0-9]/g, "");
     if (!vjob) return new Response("job required", { status: 400 });

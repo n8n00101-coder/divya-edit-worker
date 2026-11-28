@@ -2312,11 +2312,16 @@ def _attach_broll(p, wd, all_scenes=False, cfg=None, pool=None,
     if _strict_taste and getattr(pool, "verifier", None) is None:
         try:
             import broll_verify as _bv_taste
+            # Wave 4: strict mode verifies EVERY candidate, so a
+            # flat 24-call budget starved later beats (budget
+            # reached -> unverified -> rejected). Scale with the
+            # beat count; the cache keeps repeats free.
+            _vb_budget = min(96, max(24, len(scenes) * 8))
             pool.verifier = _bv_taste.BrollVerifier(
-                call_budget=24,
+                call_budget=_vb_budget,
                 cache_path=os.path.join(wd, "vision_cache.json"),
                 job_id=os.path.basename(wd))
-            print("taste strict broll verification: ON (budget 24)")
+            print(f"taste strict broll verification: ON (budget {_vb_budget})")
         except Exception as _e_bv:
             print("taste strict broll verifier unavailable:", str(_e_bv)[:120])
     # PROOF-FIX 2: the candidate gate is relative to THIS video's
@@ -4087,7 +4092,10 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     if _dur_t and not plan_override and \
             ((cfg or {}).get("kind") != "long" or _is_taste_dur):
         _check_duration_gate(total, _dur_t)
-        if _is_taste_dur and total < _dur_t * 0.8:
+        # Wave 4: taste tolerance is ±10% of the ordered length
+        # (66.4 s against a 75 s order shipped as a defect at the
+        # old 0.8 floor). Underrun re-plans with more words.
+        if _is_taste_dur and total < _dur_t * 0.9:
             raise DurationOverrunError(
                 f"duration underrun: voice ran {total:.1f}s against "
                 f"the {_dur_t:.0f}s ordered length — re-plan with "
@@ -4143,6 +4151,24 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
                           replan=_replan100)
         except Exception as e:
             print("broll attach failed:", str(e)[:150])
+    # Wave 4: FG-SHARE pre-render block. A taste film whose real
+    # footage share is below target stops HERE — before any
+    # render spends on a title-card candidate (ta57e024). The
+    # blocked error carries the director record and the rework
+    # wording the runner re-plans on, once, boundedly.
+    if (cfg or {}).get("taste_profile"):
+        try:
+            import video_director_gates as _vdg_fg
+            _fg_defect = _vdg_fg.footage_share_block(p)
+        except Exception as _e_fg:
+            _fg_defect = None
+            print("FG-SHARE pre-render check failed:", str(_e_fg)[:120])
+        if _fg_defect:
+            raise _vdg_fg.blocked_error(
+                p,
+                "TASTE DIRECTOR GATE: delivery blocked — review "
+                "rework: " + _fg_defect,
+                defects=[_fg_defect])
     if p.get("broll_sources") and notify:
         await notify(f"B-roll: {len(p['broll_sources'])} stock footage clips "
                      f"({', '.join(sorted({s['provider'] for s in p['broll_sources']}))}).")

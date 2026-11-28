@@ -257,7 +257,12 @@ def audit_footage_share(scenes, cfg, target=0.70):
             import taste_pack as _tp_ab
             _prof_ab = _tp_ab.PROFILES.get(_taste_id)
             if _prof_ab:
-                target = float(_prof_ab.get("footage_min_share") or target)
+                # Wave 4: profiles carry footage_share_min; the
+                # old key read never fired and FG-SHARE silently
+                # kept the 0.70 default for taste jobs.
+                target = float(_prof_ab.get("footage_share_min")
+                               or _prof_ab.get("footage_min_share")
+                               or target)
         except Exception:
             pass
     elif (cfg or {}).get("kind") != "long":

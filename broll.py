@@ -136,7 +136,7 @@ def _best_file(files, orientation):
     return files[0] if files else None
 
 
-def _pexels_candidates(query, key, orientation, per_page=15):
+def _pexels_candidates(query, key, orientation, per_page=30):
     """Mail 1 Part 2: search Pexels with per_page=15, size=medium.
     Returns candidate dicts (id/provider/url/page/width/height/
     duration/uploader/slug) — filtering + scoring happen in the pool."""
@@ -175,7 +175,7 @@ def _pexels_search(query, key, orientation):
     return {"url": c["url"], "page": c["page"]}
 
 
-def _pixabay_candidates(query, key, orientation, per_page=20):
+def _pixabay_candidates(query, key, orientation, per_page=30):
     """Mail 1 Part 2: Pixabay search, per_page=20. Candidate dicts,
     same shape as _pexels_candidates (tags come from the hit)."""
     data = _get_json("https://pixabay.com/api/videos/",
@@ -235,7 +235,7 @@ def commons_enabled():
     return (os.environ.get("JULIE_COMMONS_FOOTAGE") or "").strip() == "1"
 
 
-def _commons_candidates(query, orientation, per_page=10):
+def _commons_candidates(query, orientation, per_page=20):
     """Commons video search -> candidate dicts (same shape as the
     Pexels/Pixabay candidates, plus transcode=True). Title-gated:
     an ungated Commons search returns lectures and newsreels whose
@@ -428,7 +428,7 @@ def _min_height_for_canvas(canvas):
 
 
 def filter_candidates(cands, needed_s, used_ids, last_uploader,
-                      canvas=None):
+                      canvas=None, relax=False):
     """Mail 1 Part 2 filters + the NO-REPEAT rule. Returns
     (kept, rejected) — every rejection carries its reason for
     footage.json.
@@ -436,15 +436,26 @@ def filter_candidates(cands, needed_s, used_ids, last_uploader,
     PROOF-FIX 2: with a landscape `canvas`, a PORTRAIT clip is
     rejected outright (cropping it into a landscape frame breaks
     the frame-fill rule) and the height floor is canvas-relative
-    (see _min_height_for_canvas)."""
+    (see _min_height_for_canvas).
+
+    Wave 4: `relax=True` is the starvation sweep — floors drop
+    to what delivery can still use (a shorter clip loops/slows
+    into the beat; 360p landscape upscales under the grade).
+    Relaxed keeps are marked `relaxed_floors` so the record
+    never hides which floor admitted them. NO-REPEAT and the
+    portrait rule never relax."""
     kept, rejected = [], []
     min_h = _min_height_for_canvas(canvas)
+    if relax:
+        min_h = min(min_h, 360)
+    dur_floor = (max(2.5, needed_s * 0.8) if relax
+                 else needed_s + 1)
     landscape = bool(canvas) and int(canvas[0]) >= int(canvas[1])
     for c in cands:
         if c["id"] in used_ids:
             rejected.append({**c, "reason": "already used in this video (NO-REPEAT)"})
-        elif (c.get("duration") or 0) < needed_s + 1:
-            rejected.append({**c, "reason": f"too short: {c.get('duration')}s < needed {needed_s + 1}s"})
+        elif (c.get("duration") or 0) < dur_floor:
+            rejected.append({**c, "reason": f"too short: {c.get('duration')}s < needed {dur_floor}s"})
         elif landscape and (c.get("width") or 0) < (c.get("height") or 0):
             rejected.append({**c, "reason": f"portrait clip {c.get('width')}x{c.get('height')} for a landscape {canvas[0]}x{canvas[1]} frame — would break frame-fill"})
         elif (c.get("height") or 0) < min_h:
@@ -452,7 +463,7 @@ def filter_candidates(cands, needed_s, used_ids, last_uploader,
         elif last_uploader and c.get("uploader") and c["uploader"] == last_uploader:
             rejected.append({**c, "reason": "same uploader as the previous clip"})
         else:
-            kept.append(c)
+            kept.append({**c, "relaxed_floors": True} if relax else c)
     return kept, rejected
 
 
@@ -590,6 +601,7 @@ class FootagePool:
         os.makedirs(workdir, exist_ok=True)
         used = set(self.used_ids)
         _verified_count = 0  # v84: max 2 candidates verified per scene
+        _all_cands = []  # Wave 4: every candidate seen, for the relaxed sweep
         for query in [q for q in (queries or []) if str(q).strip()]:
             cands = []
             pk = (os.environ.get("PEXELS_KEY") or "").strip()
@@ -600,6 +612,7 @@ class FootagePool:
                 cands += _pixabay_candidates(query, xk, orientation)
             if commons_enabled():
                 cands += _commons_candidates(query, orientation)
+            _all_cands.extend({**c, "_q": query} for c in cands)
             kept, rejected = filter_candidates(cands, needed_s, used,
                                                self.last_uploader,
                                                canvas=canvas)
@@ -735,6 +748,66 @@ class FootagePool:
             if _pending_undecided is not None and not strict_verify:
                 _pc, _pd, _pv = _pending_undecided
                 return _finish(_pc, _pd, _pv)
+        # Wave 4 starvation sweep: every query failed under the
+        # strict floors (ta57e024: 0/10 beats got footage). One
+        # relaxed-floor pass over ALL candidates seen — strict
+        # vision verification still applies; only the height /
+        # duration floors drop to what delivery can use.
+        if _all_cands:
+            _kept_r, _rej_r = filter_candidates(
+                _all_cands, needed_s, used, self.last_uploader,
+                canvas=canvas, relax=True)
+            _kept_r.sort(key=lambda c: -score_candidate(
+                c, c.get("_q") or ""))
+            for cand in _kept_r:
+                _q_r = cand.get("_q") or ""
+                dest = os.path.join(
+                    workdir, f"pool_{cand['provider']}_{str(cand['id']).split(':')[-1]}.mp4")
+                if not (os.path.exists(dest) and os.path.getsize(dest) > 50_000):
+                    _dl_ok = (_download_transcoded(cand["url"], dest)
+                              if cand.get("transcode")
+                              else _download(cand["url"], dest))
+                    if not _dl_ok:
+                        continue
+                _verify = None
+                if self.verifier is not None:
+                    try:
+                        _v, _reason, _cached = self.verifier.verify_candidate(
+                            {"id": cand["id"], "path": dest}, line, _q_r,
+                            workdir=workdir)
+                        _verify = {"verdict": _v, "reason": _reason,
+                                   "cached": _cached}
+                        if _v == "fail":
+                            used.add(cand["id"])
+                            continue
+                        if strict_verify and _v != "pass":
+                            self.rejected.append(
+                                {**cand, "scene": scene_no, "query": _q_r,
+                                 "reason": f"taste strict verify rejected ({_v}): {_reason}"})
+                            used.add(cand["id"])
+                            continue
+                    except Exception as _e:
+                        if strict_verify:
+                            used.add(cand["id"])
+                            continue
+                        _verify = {"verdict": "unverified",
+                                   "reason": str(_e)[:100]}
+                elif strict_verify:
+                    continue
+                start, motion = active_window(dest, needed_s)
+                rec = {"scene": scene_no, "clip_id": cand["id"],
+                       "provider": cand["provider"],
+                       "source_url": cand["page"], "query": _q_r,
+                       "keyword": "", "start": round(start, 2),
+                       "path": dest, "static": motion < 1.2,
+                       "uploader": cand.get("uploader", ""),
+                       "relaxed_floors": True,
+                       **({"verify": _verify} if _verify else {})}
+                self.used_ids.append(cand["id"])
+                self.last_uploader = cand.get("uploader", "")
+                self.assignments.append(rec)
+                self._save()
+                return rec
         self.rejected.append({"scene": scene_no,
                               "reason": "no unused clip matched any query"})
         self._save()

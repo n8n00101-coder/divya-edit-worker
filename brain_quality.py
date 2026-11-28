@@ -447,6 +447,27 @@ def _compliance_replan(plan, profile):
             fixes.append(_replan_beat_footage(
                 plan, scene,
                 f"widget '{kind}' over budget {budget}"))
+    # Wave 4: R1 timing repeats re-plan pre-render too — a kind
+    # repeating within 60 s of planned time demotes the later
+    # beat to footage, not just kinds used more than 3 times
+    # (ta57e024 scene 7 source_card repeat).
+    if (profile.get("kind") or "long") == "long" and scenes and all(
+            float(s.get("d") or 0) > 0 for s in scenes):
+        _starts, _t = [], 0.0
+        for scene in scenes:
+            _starts.append(_t)
+            _t += float(scene.get("d") or 0)
+        _last = {}
+        for _i, scene in enumerate(scenes):
+            kind = compliance.widget_kind(scene)
+            if not kind:
+                continue
+            if kind in _last and _starts[_i] - _last[kind] < 60:
+                fixes.append(_replan_beat_footage(
+                    plan, scene,
+                    f"widget '{kind}' repeats within 60 s (R1)"))
+            else:
+                _last[kind] = _starts[_i]
     for scene in scenes:
         kind = compliance.widget_kind(scene)
         if kind in ("counter", "donut", "bar_compare", "graph",

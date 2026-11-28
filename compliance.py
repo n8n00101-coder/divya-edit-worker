@@ -651,6 +651,13 @@ def audit_plan(scenes, cfg, topic_text="", measure=None, have_timing=False):
     for s in scenes:
         starts.append(t)
         t += float(s.get("d") or 0)
+    # Wave 4: the 60 s timing-repeat check runs whenever scene
+    # durations exist — planned durations pre-render are enough
+    # to catch a source_card repeat before it renders (ta57e024
+    # scene 7 slipped through because the pre-render audit ran
+    # without have_timing).
+    timed = have_timing or all(
+        float(s.get("d") or 0) > 0 for s in scenes)
     for i, s in enumerate(scenes):
         k = widget_kind(s)
         if not k:
@@ -659,7 +666,7 @@ def audit_plan(scenes, cfg, topic_text="", measure=None, have_timing=False):
         if long:
             if counts[k] > 3:
                 add("R1", "FAIL", f"widget '{k}' used {counts[k]} times in one long video (max 3)", i + 1)
-            if k in last_used and have_timing and starts[i] - last_used[k] < 60:
+            if k in last_used and timed and starts[i] - last_used[k] < 60:
                 add("R1", "FAIL", f"widget '{k}' repeats within 60 s", i + 1)
         else:
             if counts[k] > 1:

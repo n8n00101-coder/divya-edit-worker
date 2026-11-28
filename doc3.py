@@ -533,8 +533,13 @@ def vision(prompt, jpgs, max_tokens=500):
     last = ""; keys = groq_keys()
     for m in GROQ_VISION:
         dead = False
-        for attempt in range(5):
+        # Wave 4: a 429 on every key is a rate limit, not a reason
+        # to hammer the provider five times per candidate — one
+        # full all-429 pass circuit-breaks to the fallback route.
+        for attempt in range(3):
             ra_min = 60.0
+            saw_429 = False
+            answered = False
             for k in keys:
                 try:
                     r = httpx.post("https://api.groq.com/openai/v1/chat/completions", headers={"Authorization": f"Bearer {k}"},
@@ -542,19 +547,57 @@ def vision(prompt, jpgs, max_tokens=500):
                                    timeout=90)
                 except Exception as e:
                     last = type(e).__name__; continue
+                answered = True
                 if r.status_code == 200:
                     VISION_STATE["used"][f"groq:{m}"] = VISION_STATE["used"].get(f"groq:{m}", 0) + 1
                     return re.sub(r"<think>[\s\S]*?</think>", "", r.json()["choices"][0]["message"].get("content") or ""), f"groq:{m}"
                 last = f"{m} {r.status_code}"
                 if r.status_code == 429:
+                    saw_429 = True
                     try: ra_min = min(ra_min, float(r.headers.get("retry-after", "10")))
                     except Exception: ra_min = min(ra_min, 10)
                     continue
                 dead = True; break
             if dead:
                 break
-            time.sleep(min(30, ra_min) + 1)
+            if saw_429 and answered:
+                break  # rate-limited: fall through to Workers AI
+            time.sleep(min(15, ra_min) + 1)
+    # Wave 4 fallback: Cloudflare Workers AI vision through the
+    # Worker's runner-only route (setup/runner/vision). A Groq 429
+    # must not zero out a film's footage — the fallback is a real
+    # vision verdict, never a silent pass. Bounded: one call on
+    # the first frame.
+    fb = _workers_ai_vision(prompt, jpgs, max_tokens)
+    if fb:
+        return fb, "workers-ai"
     raise RuntimeError("vision failed: " + last)
+
+
+def _workers_ai_vision(prompt, jpgs, max_tokens=500):
+    """One bounded Workers AI vision call via the Worker route.
+    Returns the model text or '' on any failure (the caller then
+    reports the candidate UNVERIFIED — never a pass)."""
+    worker = (os.environ.get("WORKER_URL") or "").rstrip("/")
+    rkey = os.environ.get("RUNNER_KEY") or ""
+    if not worker or not rkey or not jpgs:
+        return ""
+    try:
+        r = httpx.post(f"{worker}/api/setup/runner/vision",
+                       headers={"x-runner-key": rkey},
+                       json={"prompt": prompt,
+                             "image_b64": base64.b64encode(jpgs[0]).decode(),
+                             "max_tokens": max_tokens},
+                       timeout=90)
+        if r.status_code == 200:
+            txt = str((r.json() or {}).get("text") or "").strip()
+            if txt:
+                VISION_STATE["used"]["workers-ai"] = VISION_STATE["used"].get("workers-ai", 0) + 1
+                return txt
+        log("workers-ai vision", r.status_code)
+    except Exception as e:
+        log("workers-ai vision err", type(e).__name__)
+    return ""
 
 
 def vjson(prompt, jpgs, max_tokens=500):

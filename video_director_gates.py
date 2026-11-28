@@ -246,6 +246,32 @@ def blocked_error(plan, message, defects=None, verdict="rework",
     return err
 
 
+def footage_share_block(plan, profile=None):
+    """Wave 4 pre-render FG-SHARE block: returns the named defect
+    when the achieved real-footage share is below the profile
+    target, else None. A taste film below target must re-plan /
+    re-fetch or fail BEFORE rendering — the title-card fallback
+    is not an acceptable taste-film render (ta57e024 rendered
+    0/10 beats on title cards)."""
+    profile = profile or taste_pack.profile_for_job(
+        "", (plan or {}).get("render_config") or {})
+    scenes = (plan or {}).get("scenes") or []
+    if not scenes:
+        return None
+    target = float((profile or {}).get("footage_share_min")
+                   or (profile or {}).get("footage_min_share") or 0.70)
+    # FG-SHARE's delivery floor is 0.70; the profile may ask more.
+    target = max(0.70, min(target, 0.95))
+    have = sum(1 for s in scenes if s.get("has_footage"))
+    share = have / len(scenes)
+    if share >= target:
+        return None
+    return (f"FG-SHARE: real footage on {have}/{len(scenes)} beats "
+            f"({share:.0%}), target >= {target:.0%} — re-plan / "
+            "re-fetch footage before render; title-card fallback "
+            "is not a taste film")
+
+
 def delivery_allowed(plan, cfg=None):
     cfg = cfg or (plan or {}).get("render_config") or {}
     if not taste_pack.is_taste_job(cfg, ""):

@@ -440,6 +440,115 @@ _kinds21 = _Counter21(compliance.widget_kind(s)
 check("T21 no widget kind over the long budget",
       all(v <= 3 for v in _kinds21.values()), str(dict(_kinds21)))
 
+# T22 (Wave 4): R1 timing repeat is caught pre-render from planned
+# durations and re-planned, not just kinds used more than 3 times.
+_plan22 = {"topic": "spotlight effect", "scenes": [
+    {"no": 1, "d": 10, "vo": "Students guessed 46% had noticed.",
+     "label": "THE GUESS", "value": "46%",
+     "source": "Gilovich (2000)", "graphic_type": "source_card",
+     "queries": ["students classroom"]},
+    {"no": 2, "d": 10, "vo": "The room felt watched by everyone.",
+     "label": "THE ROOM", "value": "", "source": "",
+     "graphic_type": "footage", "queries": ["students classroom"]},
+    {"no": 3, "d": 10, "vo": "Only 23% actually noticed the shirt.",
+     "label": "THE TRUTH", "value": "23%",
+     "source": "Gilovich (2000)", "graphic_type": "source_card",
+     "queries": ["students classroom"]}]}
+_fails22 = brain_quality.compliance_target_fails(_plan22, prof)
+check("T22 R1 60s repeat caught pre-render",
+      any(c.get("rule") == "R1" and "60" in str(c.get("detail"))
+          for c in _fails22), str(_fails22[:3]))
+brain_quality.repair_plan(_plan22, prof)
+check("T22 R1 repeat re-planned to footage",
+      _plan22["scenes"][2].get("graphic_type") == "footage",
+      str(_plan22["scenes"][2].get("graphic_type")))
+
+# T23 (Wave 4): FG-SHARE pre-render block names the defect below
+# target and stays silent at/above it.
+_plan23 = {"scenes": [{"has_footage": True}, {"has_footage": True},
+                      {}, {}, {}, {}, {}, {}, {}, {}]}
+check("T23 FG-SHARE block fires at 2/10",
+      bool(video_director_gates.footage_share_block(_plan23, prof)))
+_plan23b = {"scenes": [{"has_footage": True}] * 9 + [{}]}
+check("T23 FG-SHARE block silent at 9/10",
+      video_director_gates.footage_share_block(_plan23b, prof) is None)
+
+# T24 (Wave 4): relaxed floors admit usable footage the strict
+# floors starved, and mark the keep as relaxed.
+import broll as _broll24
+_cands24 = [
+    {"id": "pexels:1", "provider": "pexels", "url": "u", "page": "p",
+     "width": 854, "height": 480, "duration": 6.0, "uploader": "a"},
+    {"id": "pexels:2", "provider": "pexels", "url": "u", "page": "p",
+     "width": 640, "height": 360, "duration": 3.0, "uploader": "b"},
+    {"id": "pexels:3", "provider": "pexels", "url": "u", "page": "p",
+     "width": 360, "height": 640, "duration": 30.0, "uploader": "c"}]
+_kept24, _ = _broll24.filter_candidates(
+    _cands24, 7.0, set(), "", canvas=(1920, 1080))
+check("T24 strict floors keep only full-height long clip",
+      _kept24 == [], str(_kept24))
+_kept24r, _ = _broll24.filter_candidates(
+    _cands24, 7.0, set(), "", canvas=(1920, 1080), relax=True)
+check("T24 relaxed floors admit 480p clip, portrait still rejected",
+      [c["id"] for c in _kept24r] == ["pexels:1"]
+      and _kept24r[0].get("relaxed_floors") is True,
+      str(_kept24r))
+
+# T25 (Wave 4): vision 429 circuit-breaks to the Workers AI
+# fallback instead of hammering Groq; fallback failure is an
+# honest error, never a pass.
+try:
+    import httpx  # noqa: F401
+except ImportError:
+    import types as _types25
+    _fake_httpx = _types25.ModuleType("httpx")
+    _fake_httpx.post = lambda *a, **k: None
+    sys.modules["httpx"] = _fake_httpx
+import doc3 as _doc3_25
+_calls25 = {"groq": 0, "fb": 0}
+
+
+class _R429:
+    status_code = 429
+    headers = {"retry-after": "30"}
+
+
+def _post25(url, **kw):
+    if "groq.com" in url:
+        _calls25["groq"] += 1
+        return _R429()
+    raise AssertionError(url)
+
+
+_orig_post25 = _doc3_25.httpx.post
+_orig_fb25 = _doc3_25._workers_ai_vision
+_orig_keys25 = _doc3_25.groq_keys
+_orig_gem25 = _doc3_25.gemini_keys
+try:
+    _doc3_25.httpx.post = _post25
+    _doc3_25.groq_keys = lambda: ["k1", "k2"]
+    _doc3_25.gemini_keys = lambda: []
+    _doc3_25._workers_ai_vision = lambda p, j, m=500: (
+        _calls25.__setitem__("fb", _calls25["fb"] + 1)
+        or '{"match": true, "reason": "fallback saw it"}')
+    _txt25, _prov25 = _doc3_25.vision("prompt", [b"jpg"])
+    check("T25 429 falls back to Workers AI vision",
+          _prov25 == "workers-ai" and _calls25["fb"] == 1,
+          f"{_prov25} {_calls25}")
+    check("T25 Groq not hammered (one pass over keys)",
+          _calls25["groq"] <= 2, str(_calls25))
+    _doc3_25._workers_ai_vision = lambda p, j, m=500: ""
+    try:
+        _doc3_25.vision("prompt", [b"jpg"])
+        check("T25 fallback failure raises honestly", False)
+    except RuntimeError:
+        check("T25 fallback failure raises honestly", True)
+finally:
+    _doc3_25.httpx.post = _orig_post25
+    _doc3_25._workers_ai_vision = _orig_fb25
+    _doc3_25.groq_keys = _orig_keys25
+    _doc3_25.gemini_keys = _orig_gem25
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)
