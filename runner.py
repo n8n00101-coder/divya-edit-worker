@@ -1578,7 +1578,12 @@ async def create_job(j, wa, note):
                     _tts_transient = _taste_prof and any(
                         m in _e_blob for m in (
                             "noaudioreceived", "no audio",
-                            "tts failed"))
+                            "tts failed",
+                            # Wave 4: a full-provider 429 at the
+                            # plan stage is transient too
+                            # (ta57e031 died on ChannelError).
+                            "channelerror",
+                            "every provider failed"))
                     if _tts_transient and attempt < 5:
                         print("taste rework: transient TTS failure, "
                               "retrying same brief:", str(e)[:150])
