@@ -4157,6 +4157,18 @@ async def make_video(brief, chat, notify=None, workdir=None, recent="", workers=
     # blocked error carries the director record and the rework
     # wording the runner re-plans on, once, boundedly.
     if (cfg or {}).get("taste_profile"):
+        # Wave 4 diagnostics: name WHY footage starved, in the
+        # run log — rejection-reason histogram from the pool.
+        try:
+            from collections import Counter as _Ctr_fg
+            _rej_fg = _Ctr_fg(
+                str(r.get("reason") or "")[:60]
+                for r in (p.get("footage") or {}).get("rejected") or [])
+            print("broll rejection histogram:",
+                  "; ".join(f"{n}x {r}" for r, n in
+                            _rej_fg.most_common(6)) or "none")
+        except Exception as _e_hist:
+            print("broll histogram failed:", str(_e_hist)[:80])
         try:
             import video_director_gates as _vdg_fg
             _fg_defect = _vdg_fg.footage_share_block(p)

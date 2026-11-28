@@ -26,6 +26,7 @@ imports doc3 (heavy) only when a real check is attempted.
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 
@@ -128,6 +129,23 @@ def _default_verifier(frames, narration, why, forced=False):
     if not isinstance(res, dict):
         return {"verdict": "undecided" if forced else "uncertain",
                 "reason": "vision gave no verdict"}
+    # Wave 4: the Workers AI fallback model often answers in
+    # prose despite the JSON instruction — vjson then returns
+    # {"_raw": ...} with no match key, and every candidate died
+    # as undecided. Parse the raw text for an explicit verdict
+    # before giving up; prose with no verdict stays undecided.
+    if "match" not in res and res.get("_raw"):
+        raw = str(res.get("_raw") or "")
+        mm = re.search(r'"?match"?\s*[:=]\s*(true|false)', raw.lower())
+        if mm:
+            res = {"match": mm.group(1) == "true",
+                   "reason": raw[:160]}
+        elif forced:
+            low = raw.strip().lower()
+            if low.startswith("yes"):
+                res = {"match": True, "reason": raw[:160]}
+            elif low.startswith("no"):
+                res = {"match": False, "reason": raw[:160]}
     m = res.get("match")
     if m is True:
         return {"verdict": "pass", "reason": str(res.get("reason", ""))[:200]}

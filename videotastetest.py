@@ -549,6 +549,30 @@ finally:
     _doc3_25.groq_keys = _orig_keys25
     _doc3_25.gemini_keys = _orig_gem25
 
+# T26 (Wave 4): prose vision replies (Workers AI fallback) still
+# yield a verdict when they state one; verdict-free prose stays
+# undecided, never a pass.
+import broll_verify as _bv26
+_orig_vjson26 = _doc3_25.vjson
+try:
+    _doc3_25.vjson = lambda p, j, max_tokens=500: (
+        {"_raw": 'The frames show students. "match": true'}, "workers-ai")
+    _r26 = _bv26._default_verifier([b"jpg"], "line", "why")
+    check("T26 raw match:true parsed as pass",
+          _r26.get("verdict") == "pass", str(_r26))
+    _doc3_25.vjson = lambda p, j, max_tokens=500: (
+        {"_raw": "Yes, the clip shows a classroom."}, "workers-ai")
+    _r26b = _bv26._default_verifier([b"jpg"], "line", "why", forced=True)
+    check("T26 forced yes parsed as pass",
+          _r26b.get("verdict") == "pass", str(_r26b))
+    _doc3_25.vjson = lambda p, j, max_tokens=500: (
+        {"_raw": "The image is colorful and bright."}, "workers-ai")
+    _r26c = _bv26._default_verifier([b"jpg"], "line", "why", forced=True)
+    check("T26 verdict-free prose stays undecided",
+          _r26c.get("verdict") == "undecided", str(_r26c))
+finally:
+    _doc3_25.vjson = _orig_vjson26
+
 print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:
     sys.exit(1)
